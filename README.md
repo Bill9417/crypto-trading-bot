@@ -1,5 +1,7 @@
 <div align="center">
 
+<img src="assets/banner.svg" alt="Wolf Scanner — crypto futures scanner & live executor HUD" width="100%">
+
 # 🐺 Wolf Scanner
 
 ### An automated crypto futures scanner, live executor & web dashboard
