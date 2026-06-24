@@ -1,0 +1,10 @@
+ccxt
+pandas
+numpy
+ta
+apscheduler
+requests
+python-dotenv
+flask
+flask-sqlalchemy
+flask-login

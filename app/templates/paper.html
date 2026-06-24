@@ -1,0 +1,279 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Wolf Scanner — Dry-Run S4</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <link rel="manifest" href="/manifest.webmanifest">
+    <meta name="theme-color" content="#0e1018">
+    <link rel="apple-touch-icon" href="/static/apple-touch-icon.png">
+    <link rel="stylesheet" href="/static/app.css?v=20260622b">
+    <style>
+        :root{--green:#34d399;}  /* shared theme vars come from static/app.css */
+        *{box-sizing:border-box;}
+        body{margin:0;background:var(--wolf-slate);background-image:var(--page-bg-glow);
+          color:var(--wolf-text);font-family:'Inter',-apple-system,sans-serif;-webkit-font-smoothing:antialiased;min-height:100vh;}
+        .num{font-variant-numeric:tabular-nums;}
+        .page-wrap{max-width:var(--page-max);margin:0 auto;padding:12px 16px 40px;}
+        .top-bar{background:var(--wolf-card);border:1px solid var(--wolf-border);border-radius:var(--radius);box-shadow:var(--shadow);
+          backdrop-filter:blur(12px);padding:14px 18px;margin-bottom:14px;display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;border-left:4px solid var(--green);}
+        .brand{display:flex;align-items:center;gap:12px;}
+        .brand-icon{font-size:2rem;line-height:1;filter:drop-shadow(0 0 6px rgba(52,211,153,.4));}
+        .brand h1{font-size:1.15rem;font-weight:800;margin:0;letter-spacing:-.4px;}
+        .brand h1 span{color:var(--green);}
+        .brand-sub{font-size:.75rem;color:var(--wolf-muted);margin-top:2px;}
+        .btn-wolf{background:var(--green);border:none;color:#04150d;font-weight:700;font-size:.8rem;padding:9px 18px;border-radius:10px;cursor:pointer;transition:.15s;}
+        .btn-wolf:hover{background:#2bbf88;transform:translateY(-1px);box-shadow:0 4px 14px rgba(52,211,153,.3);}
+        .btn-wolf:disabled{opacity:.55;cursor:not-allowed;transform:none;}
+        .btn-ghost{background:rgba(255,255,255,.03);border:1px solid var(--wolf-border);color:var(--wolf-muted);font-weight:600;font-size:.8rem;padding:8px 14px;border-radius:10px;text-decoration:none;cursor:pointer;}
+        .btn-ghost:hover{border-color:rgba(52,211,153,.35);color:var(--wolf-text);}
+        .panel{background:var(--wolf-card);border:1px solid var(--wolf-border);border-radius:var(--radius);box-shadow:0 10px 28px rgba(0,0,0,.2);padding:18px;margin-bottom:14px;backdrop-filter:blur(10px);}
+        .panel-title{font-size:.78rem;font-weight:800;letter-spacing:.06em;text-transform:uppercase;color:var(--wolf-muted);margin-bottom:14px;display:flex;justify-content:space-between;align-items:center;gap:10px;}
+        .meta-row{display:flex;flex-wrap:wrap;gap:18px;align-items:center;font-size:.78rem;color:var(--wolf-muted);}
+        .meta-row b{color:var(--wolf-text);font-weight:700;}
+        .live-dot{display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--green);box-shadow:0 0 0 0 rgba(52,211,153,.6);animation:pulse 1.8s infinite;margin-right:6px;vertical-align:1px;}
+        @keyframes pulse{0%{box-shadow:0 0 0 0 rgba(52,211,153,.5);}70%{box-shadow:0 0 0 7px rgba(52,211,153,0);}100%{box-shadow:0 0 0 0 rgba(52,211,153,0);}}
+        .btc-badge{font-size:.62rem;font-weight:800;padding:2px 9px;border-radius:999px;text-transform:uppercase;letter-spacing:.04em;}
+        .btc-bull{background:rgba(52,211,153,.18);color:var(--green);}
+        .btc-bear{background:rgba(239,68,68,.18);color:#f87171;}
+        .btc-neutral{background:rgba(138,153,173,.18);color:var(--wolf-muted);}
+        .stats{display:grid;grid-template-columns:repeat(6,1fr);gap:12px;margin-bottom:14px;}
+        @media(max-width:900px){.stats{grid-template-columns:repeat(3,1fr);}}
+        @media(max-width:560px){.stats{grid-template-columns:repeat(2,1fr);}}
+        .stat{background:var(--wolf-card);border:1px solid var(--wolf-border);border-radius:12px;padding:14px 16px;position:relative;overflow:hidden;}
+        .stat::after{content:"";position:absolute;top:0;left:0;right:0;height:2px;background:linear-gradient(90deg,var(--green),transparent);}
+        .stat-label{font-size:.6rem;text-transform:uppercase;letter-spacing:.05em;color:var(--wolf-muted);}
+        .stat-value{font-size:1.4rem;font-weight:800;margin-top:5px;line-height:1;}
+        .stat-note{font-size:.64rem;color:var(--wolf-muted);margin-top:6px;}
+        .win{color:var(--green);}.loss{color:#f87171;}.dim{color:var(--wolf-muted);}
+        table{width:100%;border-collapse:collapse;font-size:.8rem;}
+        th{text-align:right;font-size:.62rem;text-transform:uppercase;letter-spacing:.04em;color:var(--wolf-muted);font-weight:700;padding:7px 8px;white-space:nowrap;}
+        th:first-child,td:first-child{text-align:left;}
+        td{text-align:right;padding:9px 8px;border-top:1px solid rgba(255,255,255,.045);white-space:nowrap;}
+        .pill{font-size:.6rem;font-weight:700;padding:2px 8px;border-radius:999px;}
+        .pill.long{background:rgba(16,185,129,.18);color:var(--green);}
+        .pill.short{background:rgba(239,68,68,.18);color:#f87171;}
+        .pill.pending{background:rgba(255,207,75,.16);color:var(--wolf-gold);}
+        .pill.open{background:rgba(0,210,255,.16);color:var(--wolf-blue);}
+        .table-wrap{overflow-x:auto;}
+        .empty{text-align:center;color:var(--wolf-muted);font-size:.82rem;padding:26px 10px;}
+        .errbar{background:rgba(220,38,38,.12);border:1px solid rgba(220,38,38,.3);color:#fca5a5;font-size:.78rem;padding:10px 14px;border-radius:11px;margin-bottom:12px;}
+        .spin{display:inline-block;width:12px;height:12px;border:2px solid rgba(52,211,153,.3);border-top-color:var(--green);border-radius:50%;animation:sp .7s linear infinite;vertical-align:-2px;margin-right:6px;}
+        @keyframes sp{to{transform:rotate(360deg);}}
+        .note{font-size:.7rem;color:var(--wolf-muted);margin-top:4px;line-height:1.5;}
+        ::-webkit-scrollbar{width:9px;height:9px;}::-webkit-scrollbar-track{background:rgba(255,255,255,.02);}
+        ::-webkit-scrollbar-thumb{background:rgba(255,255,255,.14);border-radius:999px;}
+        ::-webkit-scrollbar-thumb:hover{background:rgba(52,211,153,.45);}
+    </style>
+</head>
+<body>
+    <div class="page-wrap">
+        <div class="top-bar">
+            <div class="brand">
+                <div class="brand-icon">🧪</div>
+                <div><h1>DRY-RUN <span id="brand-strat">STRATEGY</span></h1>
+                    <div class="brand-sub" id="brand-sub">Live forward paper-trade — no real orders</div></div>
+            </div>
+        </div>
+
+        <div class="nav-standalone">{% include '_nav.html' %}</div>
+
+        <div class="panel">
+            <div class="panel-title">
+                <span><span class="live-dot"></span>Paper engine</span>
+                <span style="display:flex;gap:8px;align-items:center;">
+                    <label style="display:flex;align-items:center;gap:6px;font-size:.7rem;color:var(--wolf-muted);text-transform:none;letter-spacing:0;font-weight:600;">Strategy
+                        <select id="strat-select" onchange="changeStrategy()"
+                            style="background:rgba(255,255,255,.04);border:1px solid var(--wolf-border);color:var(--wolf-text);font-size:.78rem;font-weight:600;padding:6px 8px;border-radius:8px;cursor:pointer;"></select>
+                    </label>
+                    <button class="btn-wolf" id="scan-btn" onclick="scanNow()">Scan now</button>
+                    {% if user.is_admin %}<button class="btn-ghost" onclick="resetPaper()">Reset</button>{% endif %}
+                </span>
+            </div>
+            <div id="errbox"></div>
+            <div class="meta-row" id="meta">
+                <span>Status: <b id="m-status">loading…</b></span>
+                <span>Timeframe: <b>1h</b></span>
+                <span>Universe: <b id="m-universe">—</b> pairs</span>
+                <span>BTC regime: <span id="m-regime" class="btc-badge btc-neutral">—</span></span>
+                <span>Last scan: <b id="m-tick">—</b></span>
+                <span>Scans: <b id="m-count">—</b></span>
+            </div>
+            <div class="meta-row" id="acct-row" style="margin-top:10px;">
+                <span>Account: <b id="a-start">—</b> seed</span>
+                <span>Margin/trade: <b id="a-margin">—</b></span>
+                <span>Leverage: <b id="a-lev">—</b></span>
+                <span>Notional/trade: <b id="a-notional">—</b></span>
+                <span>Max concurrent: <b id="a-maxc">—</b></span>
+            </div>
+            <div class="note"><span id="strat-note">—</span> <b>Dollar figures assume a fixed notional per trade</b> (margin × leverage); funding is not modelled. Each strategy keeps its own forward track record — switching the dropdown shows that strategy's history.</div>
+        </div>
+
+        <div class="stats">
+            <div class="stat"><div class="stat-label">Open now</div><div class="stat-value" id="s-open">—</div><div class="stat-note">pending + filled</div></div>
+            <div class="stat"><div class="stat-label">Closed</div><div class="stat-value" id="s-closed">—</div><div class="stat-note" id="s-wl">—</div></div>
+            <div class="stat"><div class="stat-label">Win rate</div><div class="stat-value" id="s-wr">—</div><div class="stat-note">of closed trades</div></div>
+            <div class="stat"><div class="stat-label">Expectancy</div><div class="stat-value" id="s-exp">—</div><div class="stat-note" id="s-totr-note">per trade</div></div>
+            <div class="stat"><div class="stat-label">Net P&L</div><div class="stat-value" id="s-netusd">—</div><div class="stat-note" id="s-ret">sum of trade %</div></div>
+            <div class="stat"><div class="stat-label">Balance</div><div class="stat-value" id="s-bal">—</div><div class="stat-note" id="s-balnote">USDT account</div></div>
+        </div>
+
+        <div class="panel">
+            <div class="panel-title">Open positions</div>
+            <div class="table-wrap">
+                <table id="open-tbl">
+                    <thead><tr><th>Symbol</th><th>Dir</th><th>Status</th><th>Entry</th><th>Stop</th><th>Init SL</th><th>Signal (TW)</th></tr></thead>
+                    <tbody id="open-body"><tr><td colspan="7" class="empty">Loading…</td></tr></tbody>
+                </table>
+            </div>
+        </div>
+
+        <div class="panel">
+            <div class="panel-title">Trade history</div>
+            <div class="table-wrap">
+                <table id="closed-tbl">
+                    <thead><tr><th>Symbol</th><th>Dir</th><th>Outcome</th><th>R</th><th>PnL %</th><th>PnL $</th><th>Entry</th><th>Exit</th><th>Closed (TW)</th></tr></thead>
+                    <tbody id="closed-body"><tr><td colspan="9" class="empty">Loading…</td></tr></tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const CSRF = "{{ csrf_token() }}";
+        const fmt = (x,d=4)=> (x===null||x===undefined)?'—':Number(x).toLocaleString(undefined,{maximumFractionDigits:d});
+        const sign = x => (x>0?'+':'') + x;
+
+        function pill(dir){ return `<span class="pill ${dir==='LONG'?'long':'short'}">${dir}</span>`; }
+        function statusPill(s){ return `<span class="pill ${s==='OPEN'?'open':'pending'}">${s}</span>`; }
+
+        function renderOpen(rows){
+            const b = document.getElementById('open-body');
+            if(!rows.length){ b.innerHTML = `<tr><td colspan="7" class="empty">No open positions — S4 is waiting for a qualifying breakout.</td></tr>`; return; }
+            b.innerHTML = rows.map(t=>`<tr>
+                <td><b>${t.sym}</b></td>
+                <td>${pill(t.dir)}</td>
+                <td>${statusPill(t.status)}</td>
+                <td class="num">${fmt(t.entry)}</td>
+                <td class="num">${t.status==='OPEN'?fmt(t.stop):'—'}</td>
+                <td class="num dim">${fmt(t.sl)}</td>
+                <td class="dim">${t.signal_time||'—'}</td>
+            </tr>`).join('');
+        }
+
+        function renderClosed(rows){
+            const b = document.getElementById('closed-body');
+            if(!rows.length){ b.innerHTML = `<tr><td colspan="9" class="empty">No closed trades yet.</td></tr>`; return; }
+            b.innerHTML = rows.map(t=>{
+                if(t.status==='CANCELLED'){
+                    return `<tr><td><b>${t.sym}</b></td><td>${pill(t.dir)}</td>
+                        <td><span class="pill" style="background:rgba(138,153,173,.16);color:var(--wolf-muted);">CANCELLED</span></td>
+                        <td class="dim">—</td><td class="dim">—</td><td class="dim">—</td><td class="num dim">${fmt(t.entry)}</td><td class="dim">—</td>
+                        <td class="dim">${t.exit_time||'—'}</td></tr>`;
+                }
+                const cls = t.win?'win':'loss';
+                return `<tr><td><b>${t.sym}</b></td><td>${pill(t.dir)}</td>
+                    <td><span class="pill ${t.win?'open':'short'}" style="${t.win?'background:rgba(52,211,153,.18);color:var(--green);':''}">${t.win?'WIN':'LOSS'}</span></td>
+                    <td class="num ${cls}">${sign(fmt(t.rr,2))}R</td>
+                    <td class="num ${cls}">${sign(fmt(t.pnl_pct,2))}%</td>
+                    <td class="num ${cls}">${sign(fmt(t.pnl_usd,2))}</td>
+                    <td class="num dim">${fmt(t.entry)}</td>
+                    <td class="num dim">${fmt(t.exit)}</td>
+                    <td class="dim">${t.exit_time||'—'}</td></tr>`;
+            }).join('');
+        }
+
+        function refresh(){
+            return fetch('/api/paper/state').then(r=>r.json()).then(d=>{
+                const eb = document.getElementById('errbox');
+                eb.innerHTML = d.last_error ? `<div class="errbar">Last scan error: ${d.last_error}</div>` : '';
+
+                // strategy selector + dynamic copy
+                const sel = document.getElementById('strat-select');
+                if(d.strategies && sel.options.length !== d.strategies.length){
+                    sel.innerHTML = d.strategies.map(s=>`<option value="${s.key}">${s.name}</option>`).join('');
+                }
+                if(d.strategy && document.activeElement !== sel) sel.value = d.strategy;
+                document.getElementById('brand-strat').textContent =
+                    (d.strategy_name||'STRATEGY').split('—')[0].trim().toUpperCase() || 'STRATEGY';
+                document.getElementById('brand-sub').textContent =
+                    d.strategy_name ? `Live forward paper-trade of ${d.strategy_name} — no real orders`
+                                    : 'Live forward paper-trade — no real orders';
+                document.getElementById('strat-note').textContent = d.strategy_desc || '';
+
+                document.getElementById('m-status').textContent = d.tick_count ? 'running' : 'starting…';
+                document.getElementById('m-universe').textContent = d.universe;
+                document.getElementById('m-tick').textContent = d.last_tick || 'never';
+                document.getElementById('m-count').textContent = d.tick_count;
+                const reg = document.getElementById('m-regime');
+                reg.textContent = (d.btc_regime||'neutral').toUpperCase();
+                reg.className = 'btc-badge btc-' + (d.btc_regime||'neutral');
+
+                const a = d.account || {};
+                document.getElementById('a-start').textContent = fmt(a.start_balance,2)+' USDT';
+                document.getElementById('a-margin').textContent = fmt(a.margin_usdt,2)+' USDT';
+                document.getElementById('a-lev').textContent = fmt(a.leverage,0)+'×';
+                document.getElementById('a-notional').textContent = fmt(a.notional_usdt,2)+' USDT';
+                document.getElementById('a-maxc').textContent = a.max_concurrent;
+
+                const s = d.summary;
+                document.getElementById('s-open').textContent = d.open_count;
+                document.getElementById('s-closed').textContent = s.closed;
+                document.getElementById('s-wl').textContent = `${s.wins}W / ${s.losses}L · ${s.cancelled} cxl`;
+                document.getElementById('s-wr').textContent = s.closed ? s.win_rate+'%' : '—';
+                const exp = document.getElementById('s-exp');
+                exp.textContent = s.closed ? sign(s.expectancy_r)+'R' : '—';
+                exp.className = 'stat-value ' + (s.expectancy_r>=0?'win':'loss');
+                document.getElementById('s-totr-note').textContent = s.closed ? `per trade · ${sign(s.total_r)}R total` : 'per trade';
+
+                const nu = document.getElementById('s-netusd');
+                nu.textContent = s.closed ? sign(fmt(s.net_pnl_usd,2))+' USDT' : '—';
+                nu.className = 'stat-value ' + (s.net_pnl_usd>=0?'win':'loss');
+                document.getElementById('s-ret').textContent = s.closed ? `${sign(s.return_pct)}% on account · ${sign(s.total_return_pct)}% sum` : 'sum of trade %';
+
+                const bal = document.getElementById('s-bal');
+                bal.textContent = fmt(s.balance,2);
+                bal.className = 'stat-value ' + (s.balance>=(a.start_balance||0)?'win':'loss');
+                document.getElementById('s-balnote').textContent = `from ${fmt(a.start_balance,0)} USDT · best ${sign(fmt(s.best_usd,2))} / worst ${sign(fmt(s.worst_usd,2))}`;
+
+                renderOpen(d.open);
+                renderClosed(d.closed);
+            }).catch(()=>{});
+        }
+
+        function changeStrategy(){
+            const sel = document.getElementById('strat-select');
+            sel.disabled = true;
+            const body = new URLSearchParams(); body.set('csrf_token', CSRF); body.set('strategy', sel.value);
+            fetch('/api/paper/strategy',{method:'POST',headers:{'X-CSRFToken':CSRF},body})
+                .then(r=>r.json())
+                .then(()=>refresh())
+                .catch(()=>{})
+                .finally(()=>{ sel.disabled=false; });
+        }
+
+        function scanNow(){
+            const btn = document.getElementById('scan-btn');
+            btn.disabled = true; btn.innerHTML = '<span class="spin"></span>Scanning…';
+            const body = new URLSearchParams(); body.set('csrf_token', CSRF);
+            fetch('/api/paper/tick',{method:'POST',headers:{'X-CSRFToken':CSRF},body})
+                .then(()=>{
+                    // poll a few times while the scan runs in the background
+                    let n=0; const iv=setInterval(()=>{ refresh(); if(++n>=8){ clearInterval(iv); btn.disabled=false; btn.textContent='Scan now'; } }, 4000);
+                })
+                .catch(()=>{ btn.disabled=false; btn.textContent='Scan now'; });
+        }
+
+        function resetPaper(){
+            if(!confirm('Wipe all paper-trade history for S4? This cannot be undone.')) return;
+            const body = new URLSearchParams(); body.set('csrf_token', CSRF);
+            fetch('/api/paper/reset',{method:'POST',headers:{'X-CSRFToken':CSRF},body}).then(()=>refresh());
+        }
+
+        refresh();
+        setInterval(refresh, 20000);
+    </script>
+</body>
+</html>

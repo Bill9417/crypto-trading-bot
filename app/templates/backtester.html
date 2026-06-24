@@ -1,0 +1,486 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Wolf Scanner — Backtester</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <link rel="manifest" href="/manifest.webmanifest">
+    <meta name="theme-color" content="#0e1018">
+    <link rel="apple-touch-icon" href="/static/apple-touch-icon.png">
+    <link rel="stylesheet" href="/static/app.css?v=20260622b">
+    <style>
+        /* theme variables now come from static/app.css */
+        *{box-sizing:border-box;}
+        body{margin:0;background:var(--wolf-slate);background-image:var(--page-bg-glow);
+          color:var(--wolf-text);font-family:'Inter',-apple-system,sans-serif;-webkit-font-smoothing:antialiased;min-height:100vh;}
+        .num{font-variant-numeric:tabular-nums;}
+        .page-wrap{max-width:var(--page-max);margin:0 auto;padding:12px 16px 40px;}
+        .top-bar{background:var(--wolf-card);border:1px solid var(--wolf-border);border-radius:var(--radius);box-shadow:var(--shadow);
+          backdrop-filter:blur(12px);padding:14px 18px;margin-bottom:14px;display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;border-left:4px solid var(--wolf-blue);}
+        .brand{display:flex;align-items:center;gap:12px;}
+        .brand-icon{font-size:2rem;line-height:1;filter:drop-shadow(0 0 6px rgba(0,210,255,.35));}
+        .brand h1{font-size:1.15rem;font-weight:800;margin:0;letter-spacing:-.4px;}
+        .brand h1 span{color:var(--wolf-blue);}
+        .brand-sub{font-size:.75rem;color:var(--wolf-muted);margin-top:2px;}
+        .btn-wolf{background:var(--wolf-blue);border:none;color:#000;font-weight:700;font-size:.8rem;padding:9px 18px;border-radius:10px;cursor:pointer;transition:.15s;}
+        .btn-wolf:hover{background:#00b8e6;transform:translateY(-1px);box-shadow:0 4px 14px rgba(0,210,255,.3);}
+        .btn-wolf:disabled{opacity:.55;cursor:not-allowed;transform:none;}
+        .btn-ghost{background:rgba(255,255,255,.03);border:1px solid var(--wolf-border);color:var(--wolf-muted);font-weight:600;font-size:.8rem;padding:8px 14px;border-radius:10px;text-decoration:none;}
+        .btn-ghost:hover{border-color:rgba(0,210,255,.35);color:var(--wolf-text);}
+        .panel{background:var(--wolf-card);border:1px solid var(--wolf-border);border-radius:var(--radius);box-shadow:0 10px 28px rgba(0,0,0,.2);padding:18px;margin-bottom:14px;backdrop-filter:blur(10px);}
+        .panel-title{font-size:.78rem;font-weight:800;letter-spacing:.06em;text-transform:uppercase;color:var(--wolf-muted);margin-bottom:14px;}
+        .form-grid{display:flex;flex-wrap:wrap;gap:16px;align-items:flex-end;}
+        .field{display:flex;flex-direction:column;gap:5px;}
+        .field label{font-size:.66rem;text-transform:uppercase;letter-spacing:.05em;color:var(--wolf-muted);font-weight:700;min-height:1.6em;display:flex;align-items:flex-end;}
+        .field input,.field select{height:40px;box-sizing:border-box;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.12);color:var(--wolf-text);font-size:.85rem;padding:0 12px;border-radius:9px;outline:none;}
+        .field select{cursor:pointer;}
+        #bt-run{height:40px;}
+        .field input:focus{border-color:var(--wolf-blue);box-shadow:0 0 8px rgba(0,210,255,.2);}
+        .field.tickers{flex:1;min-width:200px;}
+        .field.tickers input{width:100%;}
+        .hint{font-size:.66rem;color:var(--wolf-muted);margin-top:8px;}
+        /* progress */
+        #progress{display:none;margin-top:14px;}
+        .bar{height:9px;border-radius:999px;background:rgba(255,255,255,.07);overflow:hidden;}
+        .bar>span{display:block;height:100%;width:0;border-radius:999px;background:linear-gradient(90deg,var(--wolf-blue),var(--wolf-gold));transition:width .3s;}
+        .prog-msg{font-size:.74rem;color:var(--wolf-muted);margin-top:7px;}
+        .spin{display:inline-block;width:12px;height:12px;border:2px solid rgba(0,210,255,.3);border-top-color:var(--wolf-blue);border-radius:50%;animation:sp .7s linear infinite;vertical-align:-2px;margin-right:6px;}
+        @keyframes sp{to{transform:rotate(360deg);}}
+        /* results */
+        #results{display:none;}
+        .stats{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:14px;}
+        @media(max-width:760px){.stats{grid-template-columns:repeat(2,1fr);}.form-grid{gap:10px;}}
+        .stat{background:var(--wolf-card);border:1px solid var(--wolf-border);border-radius:12px;padding:14px 16px;position:relative;overflow:hidden;}
+        .stat::after{content:"";position:absolute;top:0;left:0;right:0;height:2px;background:linear-gradient(90deg,var(--wolf-blue),transparent);}
+        .stat-label{font-size:.62rem;text-transform:uppercase;letter-spacing:.05em;color:var(--wolf-muted);}
+        .stat-value{font-size:1.5rem;font-weight:800;margin-top:5px;line-height:1;}
+        .stat-note{font-size:.66rem;color:var(--wolf-muted);margin-top:6px;}
+        .win{color:#34d399;}.loss{color:#f87171;}
+        .split{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:14px;}
+        @media(max-width:640px){.split{grid-template-columns:1fr;}}
+        .split-card{border:1px solid var(--wolf-border);border-radius:12px;padding:14px;}
+        .split-card.l{background:rgba(16,185,129,.05);border-color:rgba(16,185,129,.25);}
+        .split-card.s{background:rgba(239,68,68,.05);border-color:rgba(239,68,68,.25);}
+        .split-row{display:flex;justify-content:space-between;font-size:.8rem;padding:4px 0;}
+        .split-row span{color:var(--wolf-muted);}
+        .split-row b{font-weight:800;}
+        table{width:100%;border-collapse:collapse;font-size:.8rem;}
+        th{text-align:right;font-size:.62rem;text-transform:uppercase;letter-spacing:.04em;color:var(--wolf-muted);font-weight:700;padding:7px 8px;}
+        th:first-child,td:first-child{text-align:left;}
+        td{text-align:right;padding:9px 8px;border-top:1px solid rgba(255,255,255,.045);}
+        .pill{font-size:.62rem;font-weight:700;padding:2px 8px;border-radius:999px;}
+        .pill.long{background:rgba(16,185,129,.18);color:#34d399;}
+        .pill.short{background:rgba(239,68,68,.18);color:#f87171;}
+        .errbar{background:rgba(220,38,38,.12);border:1px solid rgba(220,38,38,.3);color:#fca5a5;font-size:.78rem;padding:10px 14px;border-radius:11px;margin-top:12px;}
+        .save-row{display:flex;gap:10px;align-items:center;flex-wrap:wrap;background:rgba(0,210,255,.06);border:1px solid rgba(0,210,255,.25);border-radius:12px;padding:12px 14px;margin-bottom:14px;}
+        .save-tag{font-size:.72rem;font-weight:800;color:var(--wolf-blue);text-transform:uppercase;letter-spacing:.04em;}
+        .save-row input{flex:1;min-width:180px;background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.12);color:var(--wolf-text);font-size:.82rem;padding:8px 12px;border-radius:9px;outline:none;}
+        .save-row input:focus{border-color:var(--wolf-blue);}
+        .icon-btn{background:rgba(255,255,255,.06);border:1px solid var(--wolf-border);color:var(--wolf-muted);width:28px;height:28px;border-radius:8px;cursor:pointer;font-size:.8rem;line-height:1;}
+        .icon-btn:hover{border-color:var(--wolf-blue);color:var(--wolf-text);}
+        .icon-btn.del:hover{border-color:var(--short);color:var(--short);}
+        #saved-body td{vertical-align:middle;}
+        .an-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px;}
+        @media(max-width:680px){.an-grid{grid-template-columns:1fr;}}
+        .an-box{border:1px solid var(--wolf-border);border-radius:12px;padding:12px;background:rgba(10,14,24,.4);}
+        .an-bt{font-size:.66rem;text-transform:uppercase;letter-spacing:.04em;color:var(--wolf-muted);font-weight:700;margin-bottom:8px;}
+        .an-wrap{position:relative;height:170px;width:100%;}
+        /* ── Global polish (desktop + phone) ── */
+        html { scroll-behavior: smooth; }
+        ::-webkit-scrollbar { width: 9px; height: 9px; }
+        ::-webkit-scrollbar-track { background: rgba(255,255,255,0.02); }
+        ::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.14); border-radius: 999px; }
+        ::-webkit-scrollbar-thumb:hover { background: rgba(0,210,255,0.45); }
+        * { scrollbar-width: thin; scrollbar-color: rgba(255,255,255,0.18) transparent; }
+        a, button, input, select { -webkit-tap-highlight-color: transparent; }
+        :focus-visible { outline: 2px solid var(--wolf-blue); outline-offset: 2px; border-radius: 8px; }
+        ::selection { background: rgba(0,210,255,0.32); color: #fff; }
+        .btn-wolf:active, .btn-ghost:active { transform: translateY(1px) scale(0.98); }
+        @media (max-width: 640px) {
+            .page-wrap { padding: 10px 12px 40px; }
+            .form-grid { gap: 12px; }
+            .form-grid .field, .form-grid .field input, .form-grid .field select { width: 100% !important; }
+            .field.tickers { min-width: 0; }
+            #bt-run { width: 100%; }
+            .stats { grid-template-columns: repeat(2, 1fr) !important; }
+        }
+        .stat { transition: transform .15s, border-color .15s; }
+        .stat:hover { transform: translateY(-2px); border-color: rgba(0,210,255,0.22); }
+        .panel { transition: border-color .15s; }
+        .panel:hover { border-color: rgba(255,255,255,0.13); }
+    </style>
+</head>
+<body>
+    <div class="page-wrap">
+        <div class="top-bar">
+            <div class="brand">
+                <div class="brand-icon">🐺</div>
+                <div><h1>WOLF <span>BACKTESTER</span></h1>
+                    <div class="brand-sub">Replay the live strategy over history — results in seconds</div></div>
+            </div>
+        </div>
+
+        <div class="nav-standalone">{% include '_nav.html' %}</div>
+
+        <div class="panel">
+            <div class="panel-title">Run a Backtest</div>
+            <div class="form-grid">
+                <div class="field"><label>Strategy</label>
+                    <select id="bt-strategy" style="min-width:240px;" onchange="onStrategyChange()">
+                        <option value="default">Strategy 1 — Wolf Confluence (live bot)</option>
+                    </select>
+                </div>
+                <div class="field"><label>Days of history</label><input id="bt-days" type="number" value="30" min="3" max="120" style="width:110px;"></div>
+                <div class="field"><label>Top symbols (by volume)</label><input id="bt-symbols" type="number" value="40" min="1" max="200" style="width:130px;"></div>
+                <div class="field"><label>Timeframe</label>
+                    <select id="bt-tf">
+                        <option value="1h" selected>1h (current)</option>
+                        <option value="15m">15m</option>
+                        <option value="4h">4h</option>
+                    </select>
+                </div>
+                <div class="field tickers"><label>Or specific tickers (optional, comma-sep)</label><input id="bt-tickers" type="text" placeholder="e.g. BTC, ETH, SOL — overrides top-symbols"></div>
+                <div class="field"><label>Realistic costs</label>
+                    <label style="display:flex;align-items:center;gap:6px;font-size:.82rem;cursor:pointer;white-space:nowrap;">
+                        <input id="bt-realism" type="checkbox" checked> slippage + funding</label></div>
+                <div class="field"><label>ADX trend filter <span title="Optional trend-strength gate for Strategy 1. 'Force ON' previews the live ADX filter on history without touching .env. Only affects S1 — S2/S4 have their own built-in ADX gate.">ⓘ</span></label>
+                    <select id="bt-adx" title="Only affects Strategy 1 (default). S2/S4 have their own ADX gate.">
+                        <option value="default">Config default</option>
+                        <option value="on">Force ON (preview)</option>
+                        <option value="off">Force OFF</option>
+                    </select></div>
+                <button class="btn-wolf" id="bt-run" onclick="runBacktest()">▶ Run Backtest</button>
+            </div>
+            <div class="hint" id="strategy-desc" style="color:var(--wolf-blue);"></div>
+            <div class="hint" style="color:var(--wolf-gold);">⚠ Universe = coins that are <b>top-volume today</b>, replayed over history (survivorship bias) — live forward results will be lower. Use the 🧪 dry-run for an honest preview. "Realistic costs" adds slippage on each fill + funding per 8h held.</div>
+            <div class="hint"><b>S1</b> = your live bot (config.py, validated 1h: ~64% win, +0.29R). <b>S2</b> = trend-following breakout, fixed 1R/2R exit. <b>S3</b> = same entry + Chandelier ATR trailing stop (winners run; low win rate, big average wins). <b>S4 (optimised)</b> = S3 plus quality filters — ATR breakout buffer, ADX≥25 & rising, 1h/4h trend agreement, regime-confirmed, long-only — far fewer but much cleaner trades (1h backtests: ~+0.25–0.46R). <b>Trend strategies (S2–S4) need a real sample: run 30+ symbols over 60–90 days on 1h.</b> Small symbol counts are dominated by variance. 15m over long windows is slow.</div>
+            <div id="progress">
+                <div class="bar"><span id="bt-bar"></span></div>
+                <div class="prog-msg"><span class="spin"></span><span id="bt-msg">Starting…</span></div>
+            </div>
+            <div id="bt-error"></div>
+        </div>
+
+        <div id="results">
+            <div class="save-row" id="save-row">
+                <span class="save-tag" id="save-tag">Backtest complete</span>
+                <input id="save-label" type="text" placeholder="Label this run (e.g. 'BTC filter OFF')" maxlength="60">
+                <button class="btn-wolf" onclick="saveRun()">💾 Save run</button>
+                <button class="btn-ghost" onclick="analyzeCurrent()">🔬 Deep analysis</button>
+            </div>
+
+            <div class="stats">
+                <div class="stat"><div class="stat-label">Expectancy / Trade</div><div class="stat-value num" id="r-exp">—</div><div class="stat-note">avg R per trade — the edge</div></div>
+                <div class="stat"><div class="stat-label">Win Rate</div><div class="stat-value num" id="r-wr">—</div><div class="stat-note" id="r-wl">—</div></div>
+                <div class="stat"><div class="stat-label">Avg Win / Loss</div><div class="stat-value num" id="r-wl-r">—</div><div class="stat-note" id="r-dd">in R (risk units)</div></div>
+                <div class="stat"><div class="stat-label">Total Trades</div><div class="stat-value num" id="r-total">—</div><div class="stat-note" id="r-scope">—</div></div>
+            </div>
+
+            <div class="panel">
+                <div class="panel-title">Equity Curve <span id="eq-title" style="color:var(--wolf-blue);text-transform:none;letter-spacing:0;font-weight:600;"></span></div>
+                <div style="position:relative;height:240px;width:100%;"><canvas id="equityChart"></canvas></div>
+            </div>
+
+            <div class="split">
+                <div class="split-card l">
+                    <div class="panel-title" style="margin-bottom:8px;color:#34d399;">LONG</div>
+                    <div class="split-row"><span>Trades</span><b id="rl-n">0</b></div>
+                    <div class="split-row"><span>Win rate</span><b id="rl-wr">0%</b></div>
+                    <div class="split-row"><span>Expectancy</span><b id="rl-exp">0R</b></div>
+                </div>
+                <div class="split-card s">
+                    <div class="panel-title" style="margin-bottom:8px;color:#f87171;">SHORT</div>
+                    <div class="split-row"><span>Trades</span><b id="rs-n">0</b></div>
+                    <div class="split-row"><span>Win rate</span><b id="rs-wr">0%</b></div>
+                    <div class="split-row"><span>Expectancy</span><b id="rs-exp">0R</b></div>
+                </div>
+            </div>
+
+            <div class="panel">
+                <div class="panel-title">By Conviction Tier</div>
+                <table><thead><tr><th>Tier</th><th>Trades</th><th>Win %</th><th>Expectancy</th></tr></thead><tbody id="r-tiers"></tbody></table>
+            </div>
+
+            <div class="panel">
+                <div class="panel-title">Trades (best → worst)</div>
+                <table><thead><tr><th>Symbol</th><th>Side</th><th>Lights</th><th>Risk (R)</th><th>P&L</th><th>R-mult</th></tr></thead><tbody id="r-trades"></tbody></table>
+            </div>
+        </div>
+
+        <!-- Saved runs — compare before/after a config change -->
+        <div class="panel" id="saved-panel">
+            <div class="panel-title">Saved Runs — Compare</div>
+            <div style="overflow-x:auto;">
+            <table><thead><tr><th>Label</th><th>When</th><th>Scope</th><th>Trades</th><th>Win %</th><th>Expectancy</th><th>Total %</th><th>Max DD</th><th></th></tr></thead>
+                <tbody id="saved-body"><tr><td colspan="9" style="color:var(--wolf-muted);padding:14px;">No saved runs yet. Run a backtest and click <b>Save run</b> to compare before/after a config change.</td></tr></tbody>
+            </table>
+            </div>
+            <div class="hint">Click <b>📈</b> to overlay a run's equity curve, <b>🔬</b> to deep-analyze it. Save a run before and after changing <code>config.py</code> to see the impact side by side.</div>
+        </div>
+
+        <!-- Deep analysis of one run -->
+        <div class="panel" id="analysis-panel" style="display:none;">
+            <div class="panel-title">Deep Analysis <span id="an-label" style="color:var(--wolf-blue);text-transform:none;letter-spacing:0;font-weight:600;"></span></div>
+            <div class="an-grid">
+                <div class="an-box"><div class="an-bt">Win Rate by Lights</div><div class="an-wrap"><canvas id="anLights"></canvas></div></div>
+                <div class="an-box"><div class="an-bt">Expectancy by Lights (R)</div><div class="an-wrap"><canvas id="anLightsExp"></canvas></div></div>
+                <div class="an-box"><div class="an-bt">LONG vs SHORT</div><div class="an-wrap"><canvas id="anDir"></canvas></div></div>
+                <div class="an-box"><div class="an-bt">R-Multiple Distribution</div><div class="an-wrap"><canvas id="anDist"></canvas></div></div>
+            </div>
+            <div class="panel-title" style="margin:16px 0 8px;">By Symbol (most active first)</div>
+            <div style="overflow-x:auto;">
+            <table><thead><tr><th>Symbol</th><th>Trades</th><th>Win %</th><th>Expectancy</th><th>Total P&L</th></tr></thead><tbody id="an-symbols"></tbody></table>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const CSRF = "{{ csrf_token() }}";
+        let poll = null, currentJobId = null, eqChart = null, savedCache = [], overlays = {};
+        const PALETTE = ['#ffcf4b','#c084fc','#34d399','#f87171','#67e8f9','#fb923c'];
+        let STRATEGIES = {};  // id -> {name, desc}
+
+        // Populate the strategy dropdown from the backend (data-driven, future-proof).
+        function loadStrategies(){
+            fetch('/api/backtest/strategies').then(r=>r.json()).then(list=>{
+                STRATEGIES = {}; const sel = document.getElementById('bt-strategy');
+                sel.innerHTML = list.map((s,i)=>{ STRATEGIES[s.id]=s;
+                    return `<option value="${s.id}">${escapeHtml('Strategy '+(i+1)+' — '+s.name.replace(/^Strategy \d+ — /,''))}</option>`;
+                }).join('');
+                onStrategyChange();
+            }).catch(()=>{});
+        }
+        function onStrategyChange(){
+            const id=document.getElementById('bt-strategy').value;
+            const s=STRATEGIES[id];
+            document.getElementById('strategy-desc').textContent = s ? ('▸ '+s.desc) : '';
+        }
+        // Short tag for labels/tables, e.g. "S1" / "S2".
+        function strategyTag(id){ const keys=Object.keys(STRATEGIES); const i=keys.indexOf(id);
+            return i>=0 ? 'S'+(i+1) : (id==='trend_breakout'?'S2':'S1'); }
+
+        function runBacktest(){
+            const btn=document.getElementById('bt-run'); btn.disabled=true;
+            document.getElementById('results').style.display='none';
+            document.getElementById('bt-error').innerHTML='';
+            document.getElementById('progress').style.display='block';
+            document.getElementById('bt-bar').style.width='0%';
+            document.getElementById('bt-msg').textContent='Starting…';
+
+            const body=new URLSearchParams();
+            body.set('csrf_token',CSRF);
+            body.set('days',document.getElementById('bt-days').value||21);
+            body.set('symbols',document.getElementById('bt-symbols').value||20);
+            body.set('timeframe',document.getElementById('bt-tf').value||'1h');
+            body.set('strategy',document.getElementById('bt-strategy').value||'default');
+            body.set('tickers',document.getElementById('bt-tickers').value||'');
+            body.set('realism',document.getElementById('bt-realism').checked?'1':'0');
+            body.set('adx',document.getElementById('bt-adx').value||'default');
+
+            fetch('/api/backtest/start',{method:'POST',headers:{'X-CSRFToken':CSRF},body}).then(r=>r.json()).then(d=>{
+                if(d.error){ showError(d.error); btn.disabled=false; return; }
+                currentJobId=d.job_id;
+                document.getElementById('bt-msg').textContent=`Running ${d.symbols} symbols · ${d.days}d · ${d.timeframe||'1h'} · ${d.strategy_name||'Strategy 1'}…`;
+                poll=setInterval(()=>checkStatus(d.job_id),1500);
+            }).catch(e=>{ showError(String(e)); btn.disabled=false; });
+        }
+
+        function checkStatus(id){
+            fetch('/api/backtest/status/'+id).then(r=>r.json()).then(j=>{
+                if(j.total){ const pct=Math.round((j.done/j.total)*100); document.getElementById('bt-bar').style.width=pct+'%'; }
+                if(j.message) document.getElementById('bt-msg').textContent=j.message;
+                if(j.status==='done'){ clearInterval(poll); finish(j.result); }
+                else if(j.status==='error'){ clearInterval(poll); showError(j.error||'backtest failed'); document.getElementById('bt-run').disabled=false; }
+                else if(j.status==='unknown'){ clearInterval(poll); showError('job expired'); document.getElementById('bt-run').disabled=false; }
+            }).catch(()=>{});
+        }
+
+        function showError(msg){ document.getElementById('progress').style.display='none';
+            document.getElementById('bt-error').innerHTML='<div class="errbar">⚠ '+msg+'</div>'; }
+
+        const sgn=v=>(v>0?'+':'')+v;
+        function finish(r){
+            document.getElementById('progress').style.display='none';
+            document.getElementById('bt-run').disabled=false;
+            if(!r||r.total===0){ document.getElementById('bt-error').innerHTML='<div class="errbar">No trades qualified in this window — try more symbols / more days, or loosen a filter.</div>'; return; }
+            document.getElementById('results').style.display='block';
+            const exp=document.getElementById('r-exp'); exp.textContent=sgn(r.expectancy_r)+'R';
+            exp.className='stat-value num '+(r.expectancy_r>0?'win':r.expectancy_r<0?'loss':'');
+            document.getElementById('r-wr').textContent=r.win_rate+'%';
+            document.getElementById('r-wl').textContent=r.wins+'W / '+r.losses+'L';
+            document.getElementById('r-wl-r').innerHTML='<span class="win">+'+r.avg_win_r+'R</span> / <span class="loss">'+r.avg_loss_r+'R</span>';
+            document.getElementById('r-dd').textContent='Max drawdown '+(r.max_drawdown_r||0)+'R';
+            document.getElementById('r-total').textContent=r.total;
+            let scope=(strategyTag(r.strategy||'default'))+' · '+(r.timeframe||'1h')+' · '+r.n_symbols+' symbols · '+r.days+'d · '+r.seconds+'s';
+            scope+=' · costs '+(r.realism?'realistic':'fees-only');
+            if(r.adx_filter){ scope+=' · ADX gate ON'; }
+            if(r.top3_share_pct!=null){
+                scope+=' · top-3 winners = '+r.top3_share_pct+'% of R (ex-top3 '+sgn(r.total_r_ex_top3)+'R)';
+            }
+            document.getElementById('r-scope').textContent=scope;
+            if(r.strategy_name){ document.getElementById('save-tag').textContent=r.strategy_name; }
+            // equity curve — reset to just this run; saved runs can be overlaid
+            overlays={}; window._lastCurve=r.curve; window._lastResult=r;
+            renderEquity([{label:'Current run',color:'#00d2ff',curve:r.curve}]);
+            document.getElementById('eq-title').textContent='(cumulative R over '+r.total+' trades)';
+            // Auto default label so every run can be saved with one click.
+            document.getElementById('save-label').value=defaultLabel(r);
+            const L=r.by_direction.LONG, S=r.by_direction.SHORT;
+            document.getElementById('rl-n').textContent=L.trades; document.getElementById('rl-wr').textContent=L.win_rate+'%';
+            document.getElementById('rl-exp').textContent=sgn(L.expectancy_r)+'R'; document.getElementById('rl-exp').className=L.expectancy_r>0?'win':L.expectancy_r<0?'loss':'';
+            document.getElementById('rs-n').textContent=S.trades; document.getElementById('rs-wr').textContent=S.win_rate+'%';
+            document.getElementById('rs-exp').textContent=sgn(S.expectancy_r)+'R'; document.getElementById('rs-exp').className=S.expectancy_r>0?'win':S.expectancy_r<0?'loss':'';
+            const tiers={'4':'4 lights','5':'5 lights','6+':'6+ lights'};
+            document.getElementById('r-tiers').innerHTML=Object.keys(tiers).map(k=>{const t=r.by_tier[k];
+                return t.trades?`<tr><td>${tiers[k]}</td><td class="num">${t.trades}</td><td class="num ${t.win_rate>=50?'win':'loss'}">${t.win_rate}%</td><td class="num ${t.expectancy_r>0?'win':'loss'}">${sgn(t.expectancy_r)}R</td></tr>`:'';}).join('')||'<tr><td colspan="4" style="color:var(--wolf-muted)">—</td></tr>';
+            document.getElementById('r-trades').innerHTML=r.trades.map(t=>`<tr>
+                <td><b>${t.symbol}</b></td>
+                <td><span class="pill ${t.dir.toLowerCase()}">${t.dir}</span></td>
+                <td class="num">${t.lights}</td>
+                <td class="num" style="color:var(--wolf-muted)">${t.R}%</td>
+                <td class="num ${t.pnl>0?'win':'loss'}">${sgn(t.pnl)}%</td>
+                <td class="num ${t.rr>0?'win':'loss'}">${sgn(t.rr)}R</td></tr>`).join('');
+            loadSaved();
+        }
+
+        // ── Equity curve (supports overlaying saved runs for comparison) ──
+        function renderEquity(series){
+            const ctx=document.getElementById('equityChart').getContext('2d');
+            const datasets=series.map(s=>({
+                label:s.label,
+                data:(s.curve||[]).map(p=>({x:p.i,y:p.cum_r})),
+                borderColor:s.color, backgroundColor:s.color+'22',
+                borderWidth:2, pointRadius:0, tension:0.15,
+                fill:series.length===1
+            }));
+            if(eqChart) eqChart.destroy();
+            eqChart=new Chart(ctx,{type:'line',data:{datasets},
+                options:{responsive:true,maintainAspectRatio:false,
+                    plugins:{legend:{display:series.length>1,labels:{color:'#8a99ad',font:{size:10},boxWidth:12}}},
+                    scales:{x:{type:'linear',title:{display:true,text:'trade #',color:'#8a99ad',font:{size:9}},grid:{color:'rgba(255,255,255,.05)'},ticks:{color:'#8a99ad',font:{size:9}}},
+                        y:{title:{display:true,text:'cumulative R',color:'#8a99ad',font:{size:9}},grid:{color:'rgba(255,255,255,.05)'},ticks:{color:'#8a99ad',font:{size:9}}}}}});
+        }
+
+        // Build a descriptive default label, e.g. "15m · 30d × 40 sym · +0.31R"
+        function defaultLabel(r){
+            const tf=r.timeframe||'1h';
+            const exp=(r.expectancy_r>0?'+':'')+r.expectancy_r+'R';
+            return `${strategyTag(r.strategy||'default')} · ${tf} · ${r.days}d × ${r.n_symbols} sym${r.adx_filter?' · ADX':''} · ${exp}`;
+        }
+
+        // ── Save / compare ──
+        function saveRun(){
+            if(!currentJobId){ return; }
+            let label=document.getElementById('save-label').value.trim();
+            if(!label && window._lastResult) label=defaultLabel(window._lastResult);  // never save blank
+            const body=new URLSearchParams(); body.set('csrf_token',CSRF); body.set('job_id',currentJobId); body.set('label',label);
+            fetch('/api/backtest/save',{method:'POST',headers:{'X-CSRFToken':CSRF},body}).then(r=>r.json()).then(d=>{
+                if(d.error){ alert(d.error); return; }
+                document.getElementById('save-label').value='';
+                loadSaved();
+            });
+        }
+        function loadSaved(){
+            fetch('/api/backtest/saved').then(r=>r.json()).then(runs=>{
+                savedCache=runs;
+                const body=document.getElementById('saved-body');
+                if(!runs.length){ body.innerHTML='<tr><td colspan="9" style="color:var(--wolf-muted);padding:14px;">No saved runs yet. Run a backtest and click <b>Save run</b> to compare before/after a config change.</td></tr>'; return; }
+                body.innerHTML=runs.map(run=>{const s=run.summary; const on=overlays[run.id]?'style="border-color:var(--wolf-blue);color:var(--wolf-blue)"':'';
+                    return `<tr>
+                        <td><b>${escapeHtml(run.label)}</b></td>
+                        <td style="color:var(--wolf-muted)">${run.saved_at}</td>
+                        <td style="color:var(--wolf-muted)" class="num">${strategyTag(s.strategy||'default')} · ${s.timeframe||'1h'} ${s.days}d×${s.n_symbols}${s.adx_filter?' · ADX':''}</td>
+                        <td class="num">${s.total}</td>
+                        <td class="num ${s.win_rate>=50?'win':'loss'}">${s.win_rate}%</td>
+                        <td class="num ${s.expectancy_r>0?'win':'loss'}">${sgn(s.expectancy_r)}R</td>
+                        <td class="num ${s.total_return>0?'win':'loss'}">${sgn(s.total_return)}%</td>
+                        <td class="num loss">${s.max_drawdown_r||0}R</td>
+                        <td style="text-align:right;white-space:nowrap;">
+                            <button class="icon-btn" title="Deep analysis" onclick="analyzeSaved('${run.id}')">🔬</button>
+                            <button class="icon-btn" ${on} title="Overlay equity curve" onclick="toggleOverlay('${run.id}')">📈</button>
+                            <button class="icon-btn del" title="Delete" onclick="deleteRun('${run.id}')">🗑</button>
+                        </td></tr>`;}).join('');
+            });
+        }
+        function toggleOverlay(id){
+            const run=savedCache.find(r=>r.id===id); if(!run) return;
+            if(overlays[id]){ delete overlays[id]; } else { overlays[id]=run; }
+            // rebuild chart: current run (if shown) + all overlays
+            const series=[];
+            const cur=document.getElementById('results').style.display!=='none';
+            if(cur && window._lastCurve) series.push({label:'Current run',color:'#00d2ff',curve:window._lastCurve});
+            let pi=0;
+            Object.values(overlays).forEach(o=>{ series.push({label:o.label,color:PALETTE[pi++%PALETTE.length],curve:o.summary.curve}); });
+            if(!series.length && run) series.push({label:run.label,color:'#00d2ff',curve:run.summary.curve});
+            document.getElementById('results').style.display='block';
+            document.getElementById('eq-title').textContent='(comparing '+series.length+' run'+(series.length>1?'s':'')+')';
+            renderEquity(series); loadSaved();
+        }
+        function deleteRun(id){
+            if(!confirm('Delete this saved run?')) return;
+            const body=new URLSearchParams(); body.set('csrf_token',CSRF);
+            fetch('/api/backtest/delete/'+id,{method:'POST',headers:{'X-CSRFToken':CSRF},body}).then(r=>r.json()).then(()=>{ delete overlays[id]; loadSaved(); });
+        }
+        function escapeHtml(s){return (s||'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));}
+
+        // ── Deep analysis (works for the current run or any saved run) ──
+        let anCharts={};
+        const GREEN='rgba(16,185,129,.75)', RED='rgba(239,68,68,.75)';
+        function _mkBar(id,labels,data,colors,yLabel,counts){
+            const ctx=document.getElementById(id).getContext('2d');
+            if(anCharts[id]) anCharts[id].destroy();
+            anCharts[id]=new Chart(ctx,{type:'bar',
+                data:{labels,datasets:[{data,backgroundColor:colors,borderRadius:5}]},
+                options:{responsive:true,maintainAspectRatio:false,
+                    plugins:{legend:{display:false},tooltip:{callbacks:{label:c=>{
+                        let s=yLabel+': '+c.raw; if(counts) s+='  ('+counts[c.dataIndex]+' trades)'; return s;}}}},
+                    scales:{x:{grid:{display:false},ticks:{color:'#8a99ad',font:{size:9}}},
+                        y:{grid:{color:'rgba(255,255,255,.05)'},ticks:{color:'#8a99ad',font:{size:9}}}}}});
+        }
+        function renderAnalysis(s,label){
+            const T=(s&&s.trades)||[];
+            if(!T.length){ alert('That run has no trades to analyze.'); return; }
+            document.getElementById('analysis-panel').style.display='block';
+            document.getElementById('an-label').textContent='— '+label;
+            // by exact lights
+            const lights=[...new Set(T.map(t=>t.lights))].sort((a,b)=>a-b);
+            const wr=[],exp=[],cnt=[];
+            lights.forEach(l=>{const sub=T.filter(t=>t.lights===l);cnt.push(sub.length);
+                wr.push(Math.round(sub.filter(t=>t.win).length/sub.length*100));
+                exp.push(Math.round(sub.reduce((a,t)=>a+t.rr,0)/sub.length*100)/100);});
+            _mkBar('anLights',lights.map(l=>l+'L'),wr,wr.map(v=>v>=50?GREEN:RED),'Win %',cnt);
+            _mkBar('anLightsExp',lights.map(l=>l+'L'),exp,exp.map(v=>v>0?GREEN:RED),'Exp',cnt);
+            // direction
+            const dwr=[],dcnt=[];
+            ['LONG','SHORT'].forEach(d=>{const sub=T.filter(t=>t.dir===d);dcnt.push(sub.length);
+                dwr.push(sub.length?Math.round(sub.filter(t=>t.win).length/sub.length*100):0);});
+            _mkBar('anDir',['LONG','SHORT'],dwr,[GREEN,RED],'Win %',dcnt);
+            // R-multiple distribution
+            const buckets=[['≤ -1',t=>t.rr<=-1],['-1..0',t=>t.rr>-1&&t.rr<0],['0..1',t=>t.rr>=0&&t.rr<1],
+                ['1..2',t=>t.rr>=1&&t.rr<2],['2..3',t=>t.rr>=2&&t.rr<3],['≥ 3',t=>t.rr>=3]];
+            _mkBar('anDist',buckets.map(b=>b[0]),buckets.map(b=>T.filter(b[1]).length),
+                buckets.map((b,i)=>i<2?RED:GREEN),'Trades');
+            // by symbol
+            const bySym={}; T.forEach(t=>{(bySym[t.symbol]=bySym[t.symbol]||[]).push(t);});
+            const rows=Object.entries(bySym).map(([sym,a])=>({sym,n:a.length,
+                wr:Math.round(a.filter(t=>t.win).length/a.length*100),
+                exp:Math.round(a.reduce((x,t)=>x+t.rr,0)/a.length*100)/100,
+                pnl:Math.round(a.reduce((x,t)=>x+t.pnl,0)*10)/10})).sort((a,b)=>b.n-a.n);
+            document.getElementById('an-symbols').innerHTML=rows.slice(0,15).map(r=>`<tr>
+                <td><b>${escapeHtml(r.sym)}</b></td><td class="num">${r.n}</td>
+                <td class="num ${r.wr>=50?'win':'loss'}">${r.wr}%</td>
+                <td class="num ${r.exp>0?'win':'loss'}">${sgn(r.exp)}R</td>
+                <td class="num ${r.pnl>0?'win':'loss'}">${sgn(r.pnl)}%</td></tr>`).join('');
+            document.getElementById('analysis-panel').scrollIntoView({behavior:'smooth'});
+        }
+        function analyzeCurrent(){ if(window._lastResult) renderAnalysis(window._lastResult,'Current run'); }
+        function analyzeSaved(id){ const run=savedCache.find(r=>r.id===id); if(run) renderAnalysis(run.summary,run.label); }
+
+        loadStrategies();  // populate the strategy dropdown
+        loadSaved();  // show saved runs on page load
+    </script>
+</body>
+</html>

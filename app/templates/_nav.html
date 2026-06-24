@@ -1,0 +1,42 @@
+{# Global navigation — included on every authenticated page. Active page is
+   derived from request.endpoint so no variable needs to be passed in.
+   Account + Admin are admin-only. Styling lives in static/app.css. #}
+<nav class="tb-nav">
+    <a href="{{ url_for('index') }}" class="nav-pill home{% if request.endpoint == 'index' %} active{% endif %}">🏠 DASHBOARD</a>
+    {% if current_user.is_admin %}
+    <a href="{{ url_for('account') }}" class="nav-pill account{% if request.endpoint == 'account' %} active{% endif %}">💰 ACCOUNT</a>
+    {% endif %}
+    <a href="{{ url_for('performance') }}" class="nav-pill perf{% if request.endpoint == 'performance' %} active{% endif %}">📊 PERFORMANCE</a>
+    <a href="{{ url_for('funnel') }}" class="nav-pill funnel{% if request.endpoint == 'funnel' %} active{% endif %}">🔻 FUNNEL</a>
+    <a href="{{ url_for('market') }}" class="nav-pill market{% if request.endpoint == 'market' %} active{% endif %}">🌐 MARKET</a>
+    <a href="{{ url_for('backtester') }}" class="nav-pill backtest{% if request.endpoint == 'backtester' %} active{% endif %}">🔬 BACKTESTER</a>
+    <a href="{{ url_for('paper') }}" class="nav-pill paper{% if request.endpoint == 'paper' %} active{% endif %}">🧪 DRY-RUN</a>
+    {% if current_user.is_admin %}
+    <a href="{{ url_for('admin_users') }}" class="nav-pill admin{% if request.endpoint == 'admin_users' %} active{% endif %}">⚙ ADMIN</a>
+    {% endif %}
+    <span class="nav-regime neutral" id="nav-regime" title="BTC trend regime — gates every trade (LONGs blocked in BEAR, SHORTs in BULL)"><span class="nr-dot" aria-hidden="true"></span><span class="nr-tag">BTC</span><span class="nr-state" id="nav-regime-state">—</span></span>
+    <a href="{{ url_for('logout') }}" class="nav-pill logout">🚪 LOGOUT</a>
+</nav>
+<script>
+/* Keep the nav's BTC-regime chip in sync on every page. Read-only, login-gated. */
+(function () {
+    function paint(reg) {
+        var el = document.getElementById('nav-regime');
+        var st = document.getElementById('nav-regime-state');
+        if (!el || !st) return;
+        reg = (reg || 'neutral').toString().toLowerCase();
+        if (['bull', 'bear', 'neutral', 'off'].indexOf(reg) < 0) reg = 'neutral';
+        var arrow = reg === 'bull' ? '▲' : reg === 'bear' ? '▼' : reg === 'off' ? '○' : '◆';
+        el.className = 'nav-regime ' + reg;
+        st.textContent = arrow + ' ' + reg.toUpperCase();
+    }
+    function load() {
+        fetch('/api/dashboard_summary')
+            .then(function (r) { return r.ok ? r.json() : null; })
+            .then(function (d) { if (d) paint(d.btc_regime); })
+            .catch(function () {});
+    }
+    load();
+    setInterval(load, 30000);
+})();
+</script>

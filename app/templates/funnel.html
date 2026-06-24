@@ -1,0 +1,316 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <title>Wolf Scanner — Signal Funnel</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
+    <link rel="manifest" href="/manifest.webmanifest">
+    <meta name="theme-color" content="#0e1018">
+    <link rel="apple-touch-icon" href="/static/apple-touch-icon.png">
+    <link rel="stylesheet" href="/static/app.css?v=20260622b">
+    <style>
+        :root {
+            --blue: #00d2ff;
+            --blue-dim: rgba(0,210,255,.14);
+            --gold: #ffcf4b;
+            --slate: #0e1018;
+            --card: rgba(30,36,56,.72);
+            --card-solid: #191d2b;
+            --border: rgba(255,255,255,.08);
+            --muted: #8a99ad;
+            --text: #f1f5f9;
+            --long: #16a34a;
+            --short: #dc2626;
+            --amber: #f59e0b;
+            --radius: 14px;
+            --shadow: 0 14px 40px rgba(0,0,0,.4);
+        }
+        * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+        html { -webkit-text-size-adjust: 100%; }
+        body {
+            margin: 0; background: var(--slate);
+            background-image: var(--page-bg-glow);
+            color: var(--text);
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+            -webkit-font-smoothing: antialiased; min-height: 100vh;
+        }
+        .num { font-variant-numeric: tabular-nums; }
+        .wrap { max-width: var(--page-max); margin: 0 auto; padding: 10px clamp(12px,4vw,20px) calc(34px + env(safe-area-inset-bottom)); }
+
+        /* ── Sticky header ── */
+        .bar {
+            position: sticky; top: 0; z-index: 20;
+            background: rgba(10,12,20,.82); backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
+            border: 1px solid var(--border); border-left: 4px solid var(--blue);
+            border-radius: var(--radius); box-shadow: var(--shadow);
+            padding: 12px 16px; margin: 4px 0 16px;
+            display: flex; align-items: center; justify-content: space-between; gap: 10px;
+        }
+        .brand { display: flex; align-items: center; gap: 11px; min-width: 0; }
+        .brand-icon { font-size: 1.7rem; line-height: 1; filter: drop-shadow(0 0 7px rgba(0,210,255,.4)); }
+        .brand h1 { font-size: clamp(1rem,3.6vw,1.2rem); font-weight: 900; margin: 0; letter-spacing: -.4px; white-space: nowrap; }
+        .brand h1 span { color: var(--blue); }
+        .brand-sub { font-size: .7rem; color: var(--muted); margin-top: 2px; display: flex; align-items: center; gap: 6px; }
+        .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--long); box-shadow: 0 0 8px var(--long); animation: pulse 2s infinite; flex-shrink: 0; }
+        @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.3} }
+        .actions { display: flex; gap: 8px; flex-shrink: 0; }
+        .btn {
+            background: rgba(255,255,255,.04); border: 1px solid var(--border);
+            color: var(--muted); font: inherit; font-weight: 700; font-size: .78rem;
+            padding: 9px 13px; border-radius: 11px; text-decoration: none; cursor: pointer;
+            display: inline-flex; align-items: center; gap: 6px; transition: .15s; white-space: nowrap;
+        }
+        .btn:hover, .btn:active { border-color: rgba(0,210,255,.4); color: var(--text); background: rgba(255,255,255,.07); }
+        .btn .lbl-full { display: inline; }
+
+        /* ── Hero verdict ── */
+        .hero {
+            background: linear-gradient(135deg, rgba(30,36,56,.85), rgba(14,17,28,.85));
+            border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow);
+            padding: 18px 20px; margin-bottom: 14px; position: relative; overflow: hidden;
+        }
+        .hero::before { content:""; position:absolute; inset:0 auto 0 0; width:5px;
+            background: var(--blue); }
+        .hero.has-queued::before { background: var(--gold); }
+        .hero-top { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; }
+        .hero-big { font-size: clamp(2.4rem,11vw,3.4rem); font-weight: 900; line-height: 1; letter-spacing: -1.5px; }
+        .hero-big.zero { color: var(--text); }
+        .hero-big.go { color: var(--gold); }
+        .hero-cap { font-size: .82rem; color: var(--muted); font-weight: 700; text-transform: uppercase; letter-spacing: .8px; }
+        .hero-msg { margin-top: 12px; font-size: clamp(.85rem,2.6vw,.95rem); line-height: 1.55; color: #cdd6e2; }
+        .hero-msg b { color: var(--blue); }
+        .hero-msg .reg-bear { color: var(--short); font-weight: 800; }
+        .hero-msg .reg-bull { color: var(--long); font-weight: 800; }
+
+        /* ── Chips row ── */
+        .chips { display: grid; grid-template-columns: repeat(4,1fr); gap: 9px; margin-bottom: 16px; }
+        .chip { background: var(--card); border: 1px solid var(--border); border-radius: 13px; padding: 11px 12px; text-align: center; }
+        .chip .k { font-size: .62rem; text-transform: uppercase; letter-spacing: .6px; color: var(--muted); font-weight: 700; }
+        .chip .v { font-size: clamp(1.3rem,5vw,1.6rem); font-weight: 900; margin-top: 3px; }
+        .chip .v.blue { color: var(--blue); }
+        .chip .v.gold { color: var(--gold); }
+        .reg-pill { display: inline-block; padding: 4px 11px; border-radius: 999px; font-size: .85rem; font-weight: 900; letter-spacing: .5px; margin-top: 5px; }
+        .reg-bear { background: rgba(239,68,68,.16); color: var(--short); }
+        .reg-bull { background: rgba(34,197,94,.16); color: var(--long); }
+        .reg-neutral, .reg-unknown, .reg-off { background: rgba(245,158,11,.16); color: var(--amber); }
+
+        /* ── Card shell ── */
+        .card { background: var(--card); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow); padding: 16px clamp(13px,3.5vw,20px); margin-bottom: 14px; }
+        .card-h { display: flex; align-items: center; gap: 9px; margin-bottom: 3px; }
+        .card-h .ic { font-size: 1.05rem; }
+        .card-h h2 { font-size: .98rem; font-weight: 800; margin: 0; }
+        .card .hint { font-size: .74rem; color: var(--muted); margin: 0 0 15px; line-height: 1.45; }
+
+        /* ── Funnel stages ── */
+        .stage { margin-bottom: 9px; }
+        .stage-top { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; margin-bottom: 4px; }
+        .stage-name { font-size: .8rem; font-weight: 600; color: var(--text); }
+        .stage-name .pct-keep { color: var(--muted); font-weight: 600; font-size: .72rem; margin-left: 6px; }
+        .stage-right { display: flex; align-items: baseline; gap: 8px; flex-shrink: 0; }
+        .stage-count { font-size: .92rem; font-weight: 900; }
+        .stage-drop { font-size: .68rem; font-weight: 700; color: var(--short); background: rgba(239,68,68,.12); padding: 2px 7px; border-radius: 999px; }
+        .stage-drop.none { color: var(--muted); background: rgba(255,255,255,.05); }
+        .track { background: rgba(255,255,255,.05); border-radius: 9px; height: 26px; overflow: hidden; }
+        .fill { height: 100%; border-radius: 9px; background: linear-gradient(90deg, var(--blue), #0090c8); width: 0; transition: width .6s cubic-bezier(.22,1,.36,1); min-width: 3px; }
+        .fill.queued { background: linear-gradient(90deg, var(--gold), #d9a900); }
+        .fill.zero { background: rgba(239,68,68,.5); min-width: 4px; }
+        .fill.bottleneck { box-shadow: inset 0 0 0 2px rgba(255,255,255,.35); }
+        .stage.is-bottleneck .stage-name::after { content:" ⚠ biggest drop"; color: var(--amber); font-size: .66rem; font-weight: 800; }
+
+        /* ── Blocker leaderboard ── */
+        .blk { margin-bottom: 11px; }
+        .blk-top { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; margin-bottom: 4px; }
+        .blk-name { font-size: .8rem; font-weight: 600; }
+        .blk-val { font-size: .76rem; font-weight: 800; color: var(--muted); flex-shrink: 0; }
+        .blk-track { background: rgba(255,255,255,.05); border-radius: 8px; height: 14px; overflow: hidden; }
+        .blk-fill { height: 100%; border-radius: 8px; width: 0; transition: width .6s cubic-bezier(.22,1,.36,1); }
+        .sev-hi { background: linear-gradient(90deg,var(--short),#b91c1c); }
+        .sev-mid { background: linear-gradient(90deg,var(--amber),#c2740a); }
+        .sev-lo { background: linear-gradient(90deg,var(--blue),#0090c8); }
+
+        /* ── Closest cards ── */
+        .setups { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+        .setup { background: rgba(255,255,255,.025); border: 1px solid var(--border); border-radius: 12px; padding: 12px 13px; }
+        .setup-h { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 9px; }
+        .setup-sym { font-size: .92rem; font-weight: 800; color: var(--blue); text-decoration: none; }
+        .dir { font-size: .66rem; font-weight: 900; padding: 3px 8px; border-radius: 999px; letter-spacing: .5px; }
+        .dir.LONG { background: rgba(34,197,94,.16); color: var(--long); }
+        .dir.SHORT { background: rgba(239,68,68,.16); color: var(--short); }
+        .setup-meta { font-size: .7rem; color: var(--muted); margin-bottom: 9px; display: flex; gap: 10px; }
+        .setup-meta b { color: var(--text); }
+        .rchips { display: flex; flex-wrap: wrap; gap: 5px; }
+        .rchip { font-size: .66rem; font-weight: 600; color: #e6c07a; background: rgba(245,158,11,.12); border: 1px solid rgba(245,158,11,.2); padding: 2px 7px; border-radius: 7px; }
+        .empty { color: var(--muted); font-size: .82rem; padding: 8px 0; }
+
+        .thr { font-size: .72rem; color: var(--muted); margin-top: 13px; line-height: 1.7; }
+        .thr code { color: var(--gold); background: rgba(255,207,75,.09); padding: 1px 7px; border-radius: 6px; font-family: inherit; font-weight: 700; }
+
+        @media (max-width: 560px) {
+            .chips { grid-template-columns: repeat(2,1fr); }
+            .setups { grid-template-columns: 1fr; }
+            .btn .lbl-full { display: none; }
+            .btn { padding: 9px 11px; }
+        }
+    </style>
+</head>
+<body>
+<div class="wrap">
+    <header class="bar">
+        <div class="brand">
+            <div class="brand-icon">🔻</div>
+            <div style="min-width:0">
+                <h1>Wolf <span>Funnel</span></h1>
+                <div class="brand-sub"><span class="dot"></span><span id="lastUpdate">{{ funnel.last_update or '—' }}</span></div>
+            </div>
+        </div>
+        <div class="actions">
+            <button class="btn" onclick="loadFunnel(this)">↻<span class="lbl-full">&nbsp;Refresh</span></button>
+        </div>
+    </header>
+
+    <div class="nav-standalone">{% include '_nav.html' %}</div>
+
+    <section class="hero" id="hero">
+        <div class="hero-top">
+            <div class="hero-big zero" id="heroBig">{{ funnel.queued }}</div>
+            <div class="hero-cap">setups queued<br>waiting for entry</div>
+        </div>
+        <div class="hero-msg" id="heroMsg"></div>
+    </section>
+
+    <div class="chips">
+        <div class="chip"><div class="k">Scanned</div><div class="v num" id="c-total">{{ funnel.total }}</div></div>
+        <div class="chip"><div class="k">Tradeable</div><div class="v num blue" id="c-trade">{{ funnel.tradeable }}</div></div>
+        <div class="chip"><div class="k">Queued</div><div class="v num gold" id="c-queued">{{ funnel.queued }}</div></div>
+        <div class="chip"><div class="k">BTC Regime</div><div><span class="reg-pill reg-{{ funnel.btc_regime }}" id="c-regime">{{ funnel.btc_regime|upper }}</span></div></div>
+    </div>
+
+    <div class="card">
+        <div class="card-h"><span class="ic">🔻</span><h2>Drop-off funnel</h2></div>
+        <p class="hint">Survivors after each gate, in screening order. A setup must clear <em>every</em> gate to queue. The widest drop is your bottleneck.</p>
+        <div id="stages"></div>
+        <div class="thr" id="thr"></div>
+    </div>
+
+    <div class="card">
+        <div class="card-h"><span class="ic">🚧</span><h2>Biggest blockers</h2></div>
+        <p class="hint">How many of all scanned setups each gate rejects (one setup can fail several). The top bar is the knob with the most leverage.</p>
+        <div id="blockers"></div>
+    </div>
+
+    <div class="card">
+        <div class="card-h"><span class="ic">🎯</span><h2>Closest to qualifying</h2></div>
+        <p class="hint">Tradeable setups failing the fewest gates right now — the next in line if conditions shift.</p>
+        <div class="setups" id="closest"></div>
+    </div>
+</div>
+
+<script>
+const INITIAL = {{ funnel|tojson }};
+const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+
+function render(f) {
+    const total = f.total || 1;
+
+    document.getElementById('c-total').textContent = f.total;
+    document.getElementById('c-trade').textContent = f.tradeable;
+    document.getElementById('c-queued').textContent = f.queued;
+    document.getElementById('heroBig').textContent = f.queued;
+    document.getElementById('lastUpdate').textContent = f.last_update || '—';
+
+    const reg = (f.btc_regime || 'unknown');
+    const regEl = document.getElementById('c-regime');
+    regEl.textContent = reg.toUpperCase();
+    regEl.className = 'reg-pill reg-' + reg;
+
+    // Hero verdict
+    const hero = document.getElementById('hero');
+    const big = document.getElementById('heroBig');
+    const top1 = f.leaderboard && f.leaderboard[0];
+    let msg;
+    if (f.queued > 0) {
+        hero.classList.add('has-queued'); big.className = 'hero-big go';
+        msg = `<b>${f.queued}</b> setup(s) cleared every gate and are resting at their entry. You'll get a Telegram ping when one fills.`;
+    } else {
+        hero.classList.remove('has-queued'); big.className = 'hero-big zero';
+        const regNote = reg === 'bear' ? ` BTC is <span class="reg-bear">BEAR</span>, so every <b>long</b> is blocked — only shorts can pass.`
+                      : reg === 'bull' ? ` BTC is <span class="reg-bull">BULL</span>, so every <b>short</b> is blocked — only longs can pass.` : '';
+        msg = top1
+            ? `Nothing queued. The biggest single blocker is <b>${esc(top1.label)}</b>, knocking out <b>${top1.pct}%</b> of setups.${regNote}`
+            : 'No scan data yet.';
+    }
+    document.getElementById('heroMsg').innerHTML = msg;
+
+    // Funnel stages — find biggest drop (excluding the final queued line)
+    let maxDrop = -1, maxIdx = -1;
+    f.stages.forEach((s, i) => { if (i > 0 && i < f.stages.length - 1 && s.dropped > maxDrop) { maxDrop = s.dropped; maxIdx = i; } });
+    document.getElementById('stages').innerHTML = f.stages.map((s, i) => {
+        const w = Math.max(2, 100 * s.survivors / total);
+        const keep = Math.round(100 * s.survivors / total);
+        const isQ = s.key === 'queued';
+        const cls = isQ ? 'queued' : (s.survivors === 0 ? 'zero' : '');
+        const bn = (i === maxIdx && maxDrop > 0);
+        const dropTxt = s.dropped > 0 ? `−${s.dropped}` : '·';
+        return `<div class="stage ${bn ? 'is-bottleneck' : ''}">
+            <div class="stage-top">
+                <div class="stage-name">${esc(s.label)}<span class="pct-keep">${keep}% kept</span></div>
+                <div class="stage-right">
+                    <span class="stage-count">${s.survivors}</span>
+                    <span class="stage-drop ${s.dropped > 0 ? '' : 'none'}">${dropTxt}</span>
+                </div>
+            </div>
+            <div class="track"><div class="fill ${cls} ${bn ? 'bottleneck' : ''}" style="width:${w}%"></div></div>
+        </div>`;
+    }).join('');
+
+    const th = f.thresholds || {};
+    document.getElementById('thr').innerHTML =
+        `Live thresholds — volume ≥ <code>${th.volume_mult}×</code> avg · lights ≥ <code>${th.min_lights}</code> (base ≥ <code>${th.min_base_lights}</code>) · tradeable = top <code>${th.top_symbol_limit}</code> by volume`;
+
+    // Blockers
+    const maxC = Math.max(1, ...f.leaderboard.map(r => r.count));
+    document.getElementById('blockers').innerHTML = f.leaderboard.map(r => {
+        const sev = r.pct >= 60 ? 'sev-hi' : r.pct >= 30 ? 'sev-mid' : 'sev-lo';
+        const w = Math.max(2, 100 * r.count / maxC);
+        return `<div class="blk">
+            <div class="blk-top"><span class="blk-name">${esc(r.label)}</span><span class="blk-val">${r.count} · ${r.pct}%</span></div>
+            <div class="blk-track"><div class="blk-fill ${sev}" style="width:${w}%"></div></div>
+        </div>`;
+    }).join('');
+
+    // Closest setups
+    const box = document.getElementById('closest');
+    if (!f.closest || !f.closest.length) {
+        box.innerHTML = `<div class="empty">No tradeable setups in the last scan.</div>`;
+    } else {
+        box.innerHTML = f.closest.map(r => {
+            const dir = (r.direction || '').toUpperCase();
+            const sym = r.tv_url ? `<a class="setup-sym" href="${esc(r.tv_url)}" target="_blank" rel="noopener">${esc(r.symbol)}</a>` : `<span class="setup-sym">${esc(r.symbol)}</span>`;
+            const chips = (r.reason || '').split(';').map(x => x.trim()).filter(Boolean)
+                .map(x => `<span class="rchip">${esc(x)}</span>`).join('') || '<span class="rchip">—</span>';
+            return `<div class="setup">
+                <div class="setup-h">${sym}<span class="dir ${dir}">${dir || '—'}</span></div>
+                <div class="setup-meta"><span>Lights <b>${r.lights ?? '—'}</b></span><span>Fails <b>${r.fails}</b></span></div>
+                <div class="rchips">${chips}</div>
+            </div>`;
+        }).join('');
+    }
+}
+
+async function loadFunnel(btn) {
+    if (btn) { btn.style.opacity = '.5'; }
+    try {
+        const r = await fetch('/api/funnel', { headers: { 'Accept': 'application/json' } });
+        if (r.ok) render(await r.json());
+    } catch (e) { /* keep last render */ }
+    finally { if (btn) btn.style.opacity = ''; }
+}
+
+render(INITIAL);
+setInterval(() => loadFunnel(), 30000);
+</script>
+</body>
+</html>

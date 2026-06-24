@@ -1,0 +1,61 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# SECRETS / CREDENTIALS — NEVER COMMIT. Real Binance keys + Telegram token live
+# in app/.env. The .env.example template (placeholders only) IS committed.
+# ─────────────────────────────────────────────────────────────────────────────
+.env
+*.env
+!.env.example
+!app/.env.example
+
+# ── Flask instance: user logins (users.db) + signal DBs + session secrets ──
+instance/
+*.db
+*.db.*
+*.sqlite
+*.sqlite3
+
+# ── Runtime logs ──
+logs/
+*.log
+*.out
+
+# ── Runtime state / locks ──
+*.lock
+bot.lock
+circuit_state.json
+bot_strategy.json
+paper_active.json
+paper_state_*.json
+scan_results.json
+
+# ── Large generated caches / data dumps ──
+ohlcv_cache.json
+backtest_runs.json
+
+# ── Old local archive (may contain stale creds / server config) ──
+_archive/
+
+# ── Python ──
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
+env/
+ENV/
+
+# ── Claude Code local settings (machine-specific) ──
+.claude/settings.local.json
+
+# ── OS / editor cruft ──
+.DS_Store
+.DS_Store?
+._*
+*.swp
+*~
+.idea/
+.vscode/

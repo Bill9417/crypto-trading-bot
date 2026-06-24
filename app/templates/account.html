@@ -1,0 +1,457 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Wolf Scanner — Binance Account</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <link rel="manifest" href="/manifest.webmanifest">
+    <meta name="theme-color" content="#0e1018">
+    <link rel="apple-touch-icon" href="/static/apple-touch-icon.png">
+    <link rel="stylesheet" href="/static/app.css?v=20260622b">
+    <style>
+        :root{--green:#34d399;}
+        *{box-sizing:border-box;}
+        body{margin:0;background:var(--wolf-slate);background-image:var(--page-bg-glow);
+          color:var(--wolf-text);font-family:'Inter',-apple-system,sans-serif;-webkit-font-smoothing:antialiased;min-height:100vh;}
+        .num{font-variant-numeric:tabular-nums;}
+        .page-wrap{max-width:var(--page-max);margin:0 auto;padding:12px 16px 40px;}
+        .top-bar{background:var(--wolf-card);border:1px solid var(--wolf-border);border-radius:var(--radius);box-shadow:var(--shadow);
+          backdrop-filter:blur(12px);padding:14px 18px;margin-bottom:14px;display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;border-left:4px solid var(--wolf-gold);}
+        .brand{display:flex;align-items:center;gap:12px;}
+        .brand-icon{font-size:2rem;line-height:1;filter:drop-shadow(0 0 6px rgba(255,207,75,.4));}
+        .brand h1{font-size:1.15rem;font-weight:800;margin:0;letter-spacing:-.4px;}
+        .brand h1 span{color:var(--wolf-gold);}
+        .brand-sub{font-size:.75rem;color:var(--wolf-muted);margin-top:2px;}
+        .btn-ghost{background:rgba(255,255,255,.03);border:1px solid var(--wolf-border);color:var(--wolf-muted);font-weight:600;font-size:.8rem;padding:8px 14px;border-radius:10px;text-decoration:none;cursor:pointer;}
+        .btn-ghost:hover{border-color:rgba(255,207,75,.35);color:var(--wolf-text);}
+        .panel{background:var(--wolf-card);border:1px solid var(--wolf-border);border-radius:var(--radius);box-shadow:0 10px 28px rgba(0,0,0,.2);padding:18px;margin-bottom:14px;backdrop-filter:blur(10px);}
+        .panel-title{font-size:.78rem;font-weight:800;letter-spacing:.06em;text-transform:uppercase;color:var(--wolf-muted);margin-bottom:14px;display:flex;justify-content:space-between;align-items:center;gap:10px;}
+        .live-dot{display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--green);box-shadow:0 0 0 0 rgba(52,211,153,.6);animation:pulse 1.8s infinite;margin-right:6px;vertical-align:1px;}
+        @keyframes pulse{0%{box-shadow:0 0 0 0 rgba(52,211,153,.5);}70%{box-shadow:0 0 0 7px rgba(52,211,153,0);}100%{box-shadow:0 0 0 0 rgba(52,211,153,0);}}
+        .net-badge{font-size:.62rem;font-weight:800;padding:3px 10px;border-radius:999px;text-transform:uppercase;letter-spacing:.04em;}
+        .net-mainnet{background:rgba(239,68,68,.16);color:#f87171;}
+        .net-testnet{background:rgba(0,210,255,.16);color:var(--wolf-blue);}
+        .net-off{background:rgba(138,153,173,.18);color:var(--wolf-muted);}
+        .stats{display:grid;grid-template-columns:repeat(6,1fr);gap:12px;margin-bottom:14px;}
+        @media(max-width:900px){.stats{grid-template-columns:repeat(3,1fr);}}
+        @media(max-width:560px){.stats{grid-template-columns:repeat(2,1fr);}}
+        .stat{background:var(--wolf-card);border:1px solid var(--wolf-border);border-radius:12px;padding:14px 16px;position:relative;overflow:hidden;}
+        .stat::after{content:"";position:absolute;top:0;left:0;right:0;height:2px;background:linear-gradient(90deg,var(--wolf-gold),transparent);}
+        .stat-label{font-size:.6rem;text-transform:uppercase;letter-spacing:.05em;color:var(--wolf-muted);}
+        .stat-value{font-size:1.4rem;font-weight:800;margin-top:5px;line-height:1;}
+        .stat-note{font-size:.64rem;color:var(--wolf-muted);margin-top:6px;}
+        .win{color:var(--green);}.loss{color:#f87171;}.dim{color:var(--wolf-muted);}
+        table{width:100%;border-collapse:collapse;font-size:.8rem;}
+        th{text-align:right;font-size:.62rem;text-transform:uppercase;letter-spacing:.04em;color:var(--wolf-muted);font-weight:700;padding:7px 8px;white-space:nowrap;}
+        th:first-child,td:first-child{text-align:left;}
+        td{text-align:right;padding:9px 8px;border-top:1px solid rgba(255,255,255,.045);white-space:nowrap;}
+        .pill{font-size:.6rem;font-weight:700;padding:2px 8px;border-radius:999px;}
+        .pill.long{background:rgba(16,185,129,.18);color:var(--green);}
+        .pill.short{background:rgba(239,68,68,.18);color:#f87171;}
+        .pill.entry{background:rgba(0,210,255,.16);color:var(--wolf-blue);}
+        .pill.sl{background:rgba(239,68,68,.16);color:#f87171;}
+        .pill.tp{background:rgba(52,211,153,.18);color:var(--green);}
+        .pill.flag{background:rgba(138,153,173,.16);color:var(--wolf-muted);}
+        .table-wrap{overflow-x:auto;}
+        .protsum{border-radius:12px;padding:10px 14px;margin-bottom:14px;font-size:.82rem;font-weight:700;border:1px solid;}
+        .protsum.ok{color:#34d399;background:rgba(16,185,129,.1);border-color:rgba(16,185,129,.4);}
+        .protsum.warn{color:#fca5a5;background:rgba(239,68,68,.12);border-color:rgba(239,68,68,.5);}
+        .empty{text-align:center;color:var(--wolf-muted);font-size:.82rem;padding:26px 10px;}
+        .mini{width:74px;background:rgba(255,255,255,.04);border:1px solid var(--wolf-border);color:var(--wolf-text);
+          font-size:.72rem;padding:5px 7px;border-radius:7px;text-align:right;font-variant-numeric:tabular-nums;}
+        .mini::placeholder{color:var(--wolf-muted);}
+        .btn-mini{font-size:.66rem;font-weight:700;padding:5px 10px;border-radius:7px;border:1px solid var(--wolf-border);cursor:pointer;background:rgba(255,255,255,.04);color:var(--wolf-text);}
+        .btn-mini.set{border-color:rgba(0,210,255,.4);color:var(--wolf-blue);}
+        .btn-mini.set:hover{background:rgba(0,210,255,.14);}
+        .btn-mini.reset{border-color:rgba(251,191,36,.45);color:#fbbf24;}
+        .btn-mini.reset:hover{background:rgba(251,191,36,.16);}
+        .btn-mini.close{border-color:rgba(239,68,68,.45);color:#f87171;}
+        .btn-mini.close:hover{background:rgba(239,68,68,.16);}
+        .manage{display:flex;gap:5px;align-items:center;justify-content:flex-end;flex-wrap:nowrap;}
+        .toast{position:fixed;bottom:18px;left:50%;transform:translateX(-50%);background:var(--wolf-card);border:1px solid var(--wolf-border);
+          color:var(--wolf-text);font-size:.8rem;padding:11px 18px;border-radius:11px;box-shadow:var(--shadow);z-index:50;opacity:0;transition:opacity .25s;pointer-events:none;}
+        .toast.show{opacity:1;}
+        .toast.ok{border-left:4px solid var(--green);}
+        .toast.err{border-left:4px solid #f87171;}
+        .errbar{background:rgba(220,38,38,.12);border:1px solid rgba(220,38,38,.3);color:#fca5a5;font-size:.78rem;padding:10px 14px;border-radius:11px;margin-bottom:12px;}
+        .note{font-size:.7rem;color:var(--wolf-muted);margin-top:4px;line-height:1.5;}
+        .meta-row{display:flex;flex-wrap:wrap;gap:18px;align-items:center;font-size:.76rem;color:var(--wolf-muted);}
+        .meta-row b{color:var(--wolf-text);font-weight:700;}
+        ::-webkit-scrollbar{width:9px;height:9px;}::-webkit-scrollbar-track{background:rgba(255,255,255,.02);}
+        ::-webkit-scrollbar-thumb{background:rgba(255,255,255,.14);border-radius:999px;}
+        ::-webkit-scrollbar-thumb:hover{background:rgba(255,207,75,.45);}
+    </style>
+</head>
+<body>
+    <div class="page-wrap">
+        <div class="top-bar">
+            <div class="brand">
+                <div class="brand-icon">💰</div>
+                <div><h1>BINANCE <span>FUTURES ACCOUNT</span></h1>
+                    <div class="brand-sub">Live USD-M account — balance, positions &amp; open orders</div></div>
+            </div>
+            <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+                <span id="net-badge" class="net-badge net-off">—</span>
+            </div>
+        </div>
+
+        <div class="nav-standalone">{% include '_nav.html' %}</div>
+
+        <div id="errbox"></div>
+        <div id="protbar"></div>
+
+        <div class="stats">
+            <div class="stat"><div class="stat-label">Margin balance</div><div class="stat-value num" id="s-margin">—</div><div class="stat-note">wallet + unrealized</div></div>
+            <div class="stat"><div class="stat-label">Wallet balance</div><div class="stat-value num" id="s-wallet">—</div><div class="stat-note">realized USDT</div></div>
+            <div class="stat"><div class="stat-label">Unrealized P&L</div><div class="stat-value num" id="s-upnl">—</div><div class="stat-note">open positions</div></div>
+            <div class="stat"><div class="stat-label">Available</div><div class="stat-value num" id="s-avail">—</div><div class="stat-note">free margin</div></div>
+            <div class="stat"><div class="stat-label">Open positions</div><div class="stat-value num" id="s-pos">—</div><div class="stat-note" id="s-poscap">—</div></div>
+            <div class="stat"><div class="stat-label">Open orders</div><div class="stat-value num" id="s-ord">—</div><div class="stat-note">resting + brackets</div></div>
+        </div>
+
+        <div class="panel" style="border-left:4px solid var(--wolf-gold);">
+            <div class="panel-title">
+                <span>⚙ Live strategy <span class="dim" style="font-size:.66rem;font-weight:600;">what the bot trades with REAL money — change it here</span></span>
+            </div>
+            {% if live_strategy.diverged %}
+            <div class="errbar" style="background:rgba(255,207,75,.12);border:1px solid rgba(255,207,75,.35);color:var(--wolf-gold);font-size:.78rem;padding:10px 14px;border-radius:11px;margin-bottom:12px;">
+                Running bot is on <b>{{ live_strategy.running_name or live_strategy.running }}</b> but the saved setting is <b>{{ live_strategy.saved_name }}</b>. Restart the bot (<code>./run_all.sh</code>) to apply.
+            </div>
+            {% endif %}
+            <div class="meta-row" style="align-items:center;">
+                <span>Saved: <b id="ls-saved">{{ live_strategy.saved_name }}</b></span>
+                <span>Running: <b id="ls-running">{{ live_strategy.running_name or '—' }}</b></span>
+                <label style="display:flex;align-items:center;gap:8px;margin-left:auto;">
+                    <select id="ls-select" style="background:rgba(255,255,255,.04);border:1px solid var(--wolf-border);color:var(--wolf-text);font-size:.82rem;font-weight:600;padding:8px 10px;border-radius:9px;cursor:pointer;">
+                        {% for s in live_strategy.strategies %}
+                        <option value="{{ s.key }}" data-manage="{{ s.manage }}" data-desc="{{ s.desc }}" {% if s.key == live_strategy.saved %}selected{% endif %}>{{ s.name }}</option>
+                        {% endfor %}
+                    </select>
+                    <button class="btn-wolf" id="ls-save" onclick="saveLiveStrategy()">Save</button>
+                </label>
+            </div>
+            <div class="note" id="ls-desc" style="margin-top:8px;"></div>
+            <div class="note"><b>Changing this trades real money.</b> It takes effect only after you restart the bot (<code>./run_all.sh</code>) — a running bot is never hot-reloaded. S3/S4 manage the position with a trailing stop (no fixed take-profit).</div>
+        </div>
+
+        <div class="panel">
+            <div class="panel-title">
+                <span><span class="live-dot"></span>Open positions</span>
+                <span class="dim" id="updated" style="font-size:.66rem;font-weight:600;">—</span>
+            </div>
+            <div class="table-wrap">
+                <table>
+                    <thead><tr><th>Symbol</th><th>Side</th><th>Size</th><th>Notional</th><th>Entry</th><th>Mark</th><th>Liq.</th><th>Lev</th><th>uPnL</th><th>uPnL %</th><th>Manage</th></tr></thead>
+                    <tbody id="pos-body"><tr><td colspan="11" class="empty">Loading…</td></tr></tbody>
+                </table>
+            </div>
+        </div>
+
+        <div class="panel">
+            <div class="panel-title">Open orders</div>
+            <div class="table-wrap">
+                <table>
+                    <thead><tr><th>Symbol</th><th>Side</th><th>Type</th><th>Limit price</th><th>Trigger</th><th>Amount</th><th>Flags</th></tr></thead>
+                    <tbody id="ord-body"><tr><td colspan="7" class="empty">Loading…</td></tr></tbody>
+                </table>
+            </div>
+        </div>
+
+        <div class="panel">
+            <div class="panel-title">Realized P&L history <span class="dim" style="font-size:.66rem;font-weight:600;">bot + manual</span></div>
+            <div class="table-wrap">
+                <table>
+                    <thead><tr><th>Time</th><th>Symbol</th><th>Realized P&L</th></tr></thead>
+                    <tbody id="hist-body"><tr><td colspan="3" class="empty">Loading…</td></tr></tbody>
+                </table>
+            </div>
+        </div>
+
+        <div class="panel">
+            <div class="panel-title">Execution config</div>
+            <div class="meta-row">
+                <span>Mode: <b>{{ status_line }}</b></span>
+            </div>
+            <div class="meta-row" style="margin-top:8px;">
+                <span>Leverage: <b>{{ cfg.leverage }}×</b></span>
+                <span>Margin/trade: <b>{{ cfg.margin }} USDT</b> (max {{ cfg.max_margin }})</span>
+                <span>Max concurrent: <b>{{ cfg.max_concurrent }}</b></span>
+                <span>Take-profit: <b>{% if cfg.partial_tp %}50/50 partial{% else %}single @ {{ cfg.tp_target|upper }}{% endif %}</b></span>
+            </div>
+            <div class="note">This page reads directly from Binance (cached ~5s) and auto-refreshes. <b>Set</b> replaces a position's SL/TP, <b>Reset</b> cancels all its SL/TP, <b>Close</b> exits at market — these are the only actions that write.</div>
+        </div>
+    </div>
+
+    <script>
+        const CSRF = "{{ csrf_token() }}";
+        const fmt = (x,d=2)=> (x===null||x===undefined||x==='')?'—':Number(x).toLocaleString(undefined,{maximumFractionDigits:d});
+        const sgn = (x,d=2)=> (x===null||x===undefined)?'—':((Number(x)>0?'+':'')+fmt(x,d));
+        const cls = x => (x===null||x===undefined)?'dim':(Number(x)>=0?'win':'loss');
+        const keyOf = s => (s||'').replace(/[^a-z0-9]/gi,'_');
+
+        let toastTimer=null;
+        function toast(msg, ok=true){
+            let t=document.getElementById('toast');
+            if(!t){ t=document.createElement('div'); t.id='toast'; document.body.appendChild(t); }
+            t.className='toast '+(ok?'ok':'err'); t.textContent=msg; t.classList.add('show');
+            clearTimeout(toastTimer); toastTimer=setTimeout(()=>t.classList.remove('show'), 4200);
+        }
+        function post(url, fields){
+            const body=new URLSearchParams(); body.set('csrf_token',CSRF);
+            Object.entries(fields).forEach(([k,v])=>{ if(v!==undefined&&v!==null&&v!=='') body.set(k,v); });
+            return fetch(url,{method:'POST',headers:{'X-CSRFToken':CSRF},body}).then(r=>r.json());
+        }
+
+        function lsDescUpdate(){
+            const sel=document.getElementById('ls-select'); if(!sel) return;
+            const o=sel.options[sel.selectedIndex];
+            document.getElementById('ls-desc').textContent =
+                (o.dataset.desc||'') + '  ·  management: ' + (o.dataset.manage||'bracket');
+        }
+        function saveLiveStrategy(){
+            const sel=document.getElementById('ls-select');
+            const o=sel.options[sel.selectedIndex];
+            if(!confirm('Set the LIVE bot strategy to "'+o.textContent+'"?\n\n'+
+                        'This controls what trades REAL money. It takes effect only after you '+
+                        'restart the bot (./run_all.sh) — a running bot is not hot-reloaded.')) return;
+            const btn=document.getElementById('ls-save'); btn.disabled=true;
+            post('/api/account/live_strategy',{strategy:sel.value}).then(d=>{
+                btn.disabled=false;
+                if(d.ok){ document.getElementById('ls-saved').textContent=(d.state&&d.state.saved_name)||sel.value;
+                          toast('Saved. Restart the bot (./run_all.sh) to apply.'); }
+                else toast(d.error||'Save failed', false);
+            }).catch(()=>{ btn.disabled=false; toast('Save failed', false); });
+        }
+
+        function sidePill(s){ const k = s==='LONG'||s==='BUY'?'long':'short'; return `<span class="pill ${k}">${s||'—'}</span>`; }
+        function typePill(t){
+            const u=(t||'').toUpperCase();
+            let k='flag';
+            if(u.includes('STOP')) k='sl';
+            else if(u.includes('TAKE_PROFIT')) k='tp';
+            else if(u==='LIMIT'||u==='MARKET') k='entry';
+            return `<span class="pill ${k}">${u||'—'}</span>`;
+        }
+
+        // Find the current SL/TP trigger prices for a symbol from the open orders
+        // (covers protection set via THIS page OR directly on Binance).
+        function protFor(symbol, orders){
+            let sl=null, tp=null;
+            (orders||[]).forEach(o=>{
+                if(o.symbol!==symbol) return;
+                const t=(o.type||'').toUpperCase();
+                if(t.includes('STOP')) sl = o.trigger;
+                else if(t.includes('TAKE_PROFIT')) tp = o.trigger;
+            });
+            return {sl, tp};
+        }
+
+        // Protection badge — the critical one is "is there a STOP-LOSS?".
+        function protBadge(pr){
+            const hasSL = pr.sl!=null, hasTP = pr.tp!=null;
+            if(hasSL && hasTP) return '<span class="prot-badge prot-yes">🛡 SL+TP</span>';
+            if(hasSL)          return '<span class="prot-badge prot-yes">🛡 SL set</span>';
+            if(hasTP)          return '<span class="prot-badge prot-no">⚠ NO STOP</span>';
+            return '<span class="prot-badge prot-no">⚠ NAKED</span>';
+        }
+
+        // Risk context for a position: distance to SL / liquidation, $ at risk, R:R.
+        function riskInfo(p, pr){
+            const mark=+p.mark, entry=+p.entry, qty=Math.abs(+p.contracts||0);
+            const isLong = (p.side==='LONG'||p.side==='BUY');
+            const pct = (from,to)=> (from&&to) ? ((to-from)/from*100) : null;
+            const slDist = pr.sl!=null && mark ? Math.abs(pct(mark, +pr.sl)) : null;
+            const tpDist = pr.tp!=null && mark ? Math.abs(pct(mark, +pr.tp)) : null;
+            const liqDist = p.liq && mark ? Math.abs(pct(mark, +p.liq)) : null;
+            const riskUsd = (pr.sl!=null && entry) ? Math.abs(entry-(+pr.sl))*qty : null;
+            const rr = (pr.sl!=null && pr.tp!=null && entry) ?
+                Math.abs((+pr.tp)-entry)/Math.max(1e-9,Math.abs(entry-(+pr.sl))) : null;
+            return {slDist, tpDist, liqDist, riskUsd, rr};
+        }
+
+        // Preserve what the user has typed (and their cursor) across the 6s refresh.
+        function captureInputs(){
+            const vals={};
+            document.querySelectorAll('#pos-body input.mini').forEach(i=>{ if(i.value) vals[i.id]=i.value; });
+            const a=document.activeElement;
+            const focus=(a && a.classList && a.classList.contains('mini'))
+                ? {id:a.id, start:a.selectionStart, end:a.selectionEnd} : null;
+            return {vals, focus};
+        }
+        function restoreInputs(st){
+            Object.entries(st.vals).forEach(([id,v])=>{ const el=document.getElementById(id); if(el) el.value=v; });
+            if(st.focus){ const el=document.getElementById(st.focus.id);
+                if(el){ el.focus(); try{ el.setSelectionRange(st.focus.start, st.focus.end); }catch(e){} } }
+        }
+
+        function renderPositions(rows, orders){
+            const b = document.getElementById('pos-body');
+            if(!rows || !rows.length){ b.innerHTML = `<tr><td colspan="11" class="empty">No open positions.</td></tr>`; return; }
+            const st = captureInputs();           // remember typed values + focus
+            b.innerHTML = rows.map(p=>{
+                const k = keyOf(p.symbol);
+                const pr = protFor(p.symbol, orders);
+                const ri = riskInfo(p, pr);
+                const d = (v,suffix='%')=> v==null?'':' <span class="dim">('+(v>=0?'':'')+v.toFixed(1)+suffix+')</span>';
+                return `<tr>
+                <td><b>${(p.symbol||'').replace(':USDT','')}</b><br>${protBadge(pr)}${p.db_diverged?'<br><span class="prot-badge prot-partial" title="The bot recorded this trade as '+(p.db_status||'closed')+', but it is still open here. The bot is not managing it.">⚠ bot: '+(p.db_status||'closed')+'</span>':''}</td>
+                <td>${sidePill(p.side)}</td>
+                <td class="num">${fmt(p.contracts,6)}</td>
+                <td class="num dim">${fmt(p.notional)} </td>
+                <td class="num">${fmt(p.entry,6)}</td>
+                <td class="num">${fmt(p.mark,6)}</td>
+                <td class="num loss">${fmt(p.liq,6)}${ri.liqDist!=null?'<br><span class="dim" style="font-size:.58rem;">'+ri.liqDist.toFixed(1)+'% away</span>':''}</td>
+                <td class="num dim">${fmt(p.leverage,0)}×</td>
+                <td class="num ${cls(p.unrealized_pnl)}">${sgn(p.unrealized_pnl)}</td>
+                <td class="num ${cls(p.pnl_pct)}">${sgn(p.pnl_pct)}%</td>
+                <td><div class="manage">
+                    <div style="font-size:.58rem;line-height:1.4;text-align:right;min-width:96px;" title="Stop-loss / take-profit on the exchange, distance from mark, $ at risk and reward:risk">
+                        <span class="dim">SL</span> ${pr.sl?'<b class="loss">'+fmt(pr.sl,6)+'</b>'+d(ri.slDist):'<span class="loss">none</span>'}<br>
+                        <span class="dim">TP</span> ${pr.tp?'<b class="profit">'+fmt(pr.tp,6)+'</b>'+d(ri.tpDist):'<span class="dim">none</span>'}<br>
+                        <span class="dim">${ri.riskUsd!=null?'risk $'+ri.riskUsd.toFixed(2):''}${ri.rr!=null?' · R:R '+ri.rr.toFixed(1):''}</span>
+                    </div>
+                    <input class="mini" id="sl_${k}" placeholder="${pr.sl?fmt(pr.sl,6):'SL'}">
+                    <input class="mini" id="tp_${k}" placeholder="${pr.tp?fmt(pr.tp,6):'TP'}">
+                    <button class="btn-mini set" onclick="setProt('${p.symbol}')">Set</button>
+                    <button class="btn-mini reset" onclick="resetProt('${p.symbol}')" title="Cancel ALL SL/TP for this coin (clears stacked conditional orders)">Reset</button>
+                    <button class="btn-mini close" onclick="closePos('${p.symbol}')">Close</button>
+                </div></td>
+            </tr>`;}).join('');
+            restoreInputs(st);                    // put them back after the rebuild
+        }
+
+        function setProt(symbol){
+            const k = keyOf(symbol);
+            const sl = document.getElementById('sl_'+k).value.trim();
+            const tp = document.getElementById('tp_'+k).value.trim();
+            if(!sl && !tp){ toast('Enter a stop-loss and/or take-profit price.', false); return; }
+            post('/api/account/protect', {symbol, sl, tp}).then(d=>{
+                if(d.ok){
+                    const parts = (d.placed||[]).map(p=>p.role.toUpperCase()+' '+p.price);
+                    const sym = symbol.replace(':USDT','');
+                    const errs = d.errors||[];
+                    if(errs.length){
+                        // Partial success — a leg (often the SL) failed; never hide it.
+                        toast('⚠ '+sym+' placed '+(parts.join(' · ')||'nothing')+' but FAILED: '+errs.join('; '), false);
+                    } else {
+                        toast('✅ '+sym+' '+(parts.join(' · ')||'set')+' — view in app: Open Orders → Conditional');
+                    }
+                    document.getElementById('sl_'+k).value='';
+                    document.getElementById('tp_'+k).value='';
+                    refresh();
+                } else toast(d.error||'Failed to set protection.', false);
+            }).catch(()=>toast('Network error.', false));
+        }
+
+        function resetProt(symbol){
+            const sym = symbol.replace(':USDT','');
+            if(!confirm('Cancel ALL stop-loss / take-profit orders for '+sym+'?\n\nThe position stays OPEN but UNPROTECTED until you set new ones.')) return;
+            post('/api/account/cancel_protection', {symbol}).then(d=>{
+                if(d.ok){ toast('🧹 '+sym+' — cleared '+d.cancelled+' SL/TP order(s)'); refresh(); }
+                else toast(d.error||'Failed to reset protection.', false);
+            }).catch(()=>toast('Network error.', false));
+        }
+
+        function closePos(symbol){
+            if(!confirm('Close your '+symbol.replace(':USDT','')+' position at MARKET now?')) return;
+            post('/api/account/close', {symbol}).then(d=>{
+                if(d.ok){ toast('Closed '+symbol.replace(':USDT','')+' ('+fmt(d.closed,4)+')'); refresh(); loadHistory(); }
+                else toast(d.error||'Failed to close.', false);
+            }).catch(()=>toast('Network error.', false));
+        }
+
+        function renderHistory(rows){
+            const b = document.getElementById('hist-body');
+            if(!rows || !rows.length){ b.innerHTML = `<tr><td colspan="3" class="empty">No realized P&L yet.</td></tr>`; return; }
+            b.innerHTML = rows.map(t=>`<tr>
+                <td class="dim">${t.time?new Date(t.time).toLocaleString():'—'}</td>
+                <td><b>${(t.symbol||'').replace(':USDT','')}</b></td>
+                <td class="num ${cls(t.pnl)}">${sgn(t.pnl,4)} ${t.asset||''}</td>
+            </tr>`).join('');
+        }
+
+        function loadHistory(){
+            return fetch('/api/account/history').then(r=>r.json()).then(d=>{
+                renderHistory(d.ok ? d.trades : []);
+            }).catch(()=>{});
+        }
+
+        function renderOrders(rows){
+            const b = document.getElementById('ord-body');
+            if(!rows || !rows.length){ b.innerHTML = `<tr><td colspan="7" class="empty">No open orders.</td></tr>`; return; }
+            b.innerHTML = rows.map(o=>{
+                const flags = [];
+                if(o.reduce_only) flags.push('reduceOnly');
+                if(o.close_position) flags.push('closePosition');
+                return `<tr>
+                    <td><b>${(o.symbol||'').replace(':USDT','')}</b></td>
+                    <td>${sidePill(o.side)}</td>
+                    <td>${typePill(o.type)}</td>
+                    <td class="num">${o.price?fmt(o.price,6):'—'}</td>
+                    <td class="num">${o.trigger?fmt(o.trigger,6):'—'}</td>
+                    <td class="num">${o.close_position?'(full)':fmt(o.amount,6)}</td>
+                    <td class="dim" style="font-size:.66rem;">${flags.join(' · ')||'—'}</td>
+                </tr>`;
+            }).join('');
+        }
+
+        // Top banner: how many open positions actually have a stop-loss. A
+        // position with no stop is the exact failure that ran unprotected before.
+        function renderProtBar(pos, ord){
+            const bar = document.getElementById('protbar');
+            if(!pos || !pos.length){ bar.innerHTML=''; return; }
+            const naked = pos.filter(p => protFor(p.symbol, ord).sl == null);
+            const total = pos.length, safe = total - naked.length;
+            if(naked.length === 0){
+                bar.innerHTML = `<div class="protsum ok">🛡 All ${total} position${total>1?'s':''} have a stop-loss.</div>`;
+            } else {
+                const names = naked.map(p=>(p.symbol||'').replace(':USDT','')).join(', ');
+                bar.innerHTML = `<div class="protsum warn">⚠ ${naked.length} of ${total} position${total>1?'s':''} have NO stop-loss: <b>${names}</b> — set one below.</div>`;
+            }
+        }
+
+        function setNet(net, live){
+            const el = document.getElementById('net-badge');
+            if(!net){ el.className='net-badge net-off'; el.textContent='NO KEYS'; return; }
+            el.className = 'net-badge ' + (net==='MAINNET'?'net-mainnet':'net-testnet');
+            el.textContent = (net==='MAINNET'?'LIVE MAINNET':'TESTNET') + (live?' · ARMED':' · READ-ONLY');
+        }
+
+        function refresh(){
+            return fetch('/api/account').then(r=>r.json()).then(d=>{
+                const eb = document.getElementById('errbox');
+                eb.innerHTML = d.ok ? '' : `<div class="errbar">⚠ ${d.error||'Could not load account.'}</div>`;
+                setNet(d.net, d.live);
+
+                const bal = d.balance || {};
+                document.getElementById('s-margin').textContent = fmt(bal.margin_balance);
+                document.getElementById('s-wallet').textContent = fmt(bal.wallet);
+                const up = document.getElementById('s-upnl');
+                up.textContent = sgn(bal.unrealized_pnl); up.className = 'stat-value num ' + cls(bal.unrealized_pnl);
+                document.getElementById('s-avail').textContent = fmt(bal.available);
+
+                const pos = d.positions||[], ord = d.orders||[];
+                document.getElementById('s-pos').textContent = pos.length;
+                document.getElementById('s-poscap').textContent = `of {{ cfg.max_concurrent }} max`;
+                document.getElementById('s-ord').textContent = ord.length;
+
+                renderPositions(pos, ord);
+                renderOrders(ord);
+                renderProtBar(pos, ord);
+                document.getElementById('updated').textContent = 'updated ' + new Date().toLocaleTimeString();
+            }).catch(()=>{
+                document.getElementById('errbox').innerHTML = `<div class="errbar">⚠ Network error reaching the dashboard API.</div>`;
+            });
+        }
+
+        const _lsSel=document.getElementById('ls-select');
+        if(_lsSel){ _lsSel.addEventListener('change', lsDescUpdate); lsDescUpdate(); }
+        refresh();
+        loadHistory();
+        setInterval(refresh, 6000);
+        setInterval(loadHistory, 30000);
+    </script>
+</body>
+</html>

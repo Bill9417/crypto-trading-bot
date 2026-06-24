@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Wolf Scanner - Register</title>
+    <link rel="manifest" href="/manifest.webmanifest">
+    <meta name="theme-color" content="#0e1018">
+    <link rel="apple-touch-icon" href="/static/apple-touch-icon.png">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="/static/app.css?v=20260622b">
+    <style>
+        :root {
+            --wolf-blue: #00d2ff;
+            --wolf-gold: #ffcf4b;
+            --wolf-bg: #0e1018;
+            --wolf-card: rgba(30, 36, 56, 0.78);
+            --wolf-border: rgba(255, 255, 255, 0.08);
+            --wolf-text: #f1f5f9;
+            --wolf-muted: #8a99ad;
+        }
+        body { 
+            background-color: var(--wolf-bg); 
+            color: var(--wolf-text); 
+            display: flex; 
+            align-items: center; 
+            justify-content: center; 
+            min-height: 100vh;
+            padding: 20px;
+            font-family: 'Inter', -apple-system, sans-serif;
+            background-image: radial-gradient(circle at 10% 20%, rgba(0, 210, 255, 0.08) 0%, transparent 38%),
+                              radial-gradient(circle at 90% 80%, rgba(255, 207, 75, 0.04) 0%, transparent 32%);
+        }
+        .login-card { 
+            background: var(--wolf-card); 
+            padding: 40px; 
+            border-radius: 24px; 
+            width: 100%; 
+            max-width: 420px; 
+            box-shadow: 0 24px 48px rgba(0,0,0,0.38); 
+            border: 1px solid var(--wolf-border);
+            backdrop-filter: blur(14px);
+            -webkit-backdrop-filter: blur(14px);
+            position: relative;
+            overflow: hidden;
+        }
+        .login-card::before {
+            content: "";
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 6px;
+            background: linear-gradient(90deg, var(--wolf-blue), var(--wolf-gold));
+        }
+        .wolf-brand {
+            text-align: center;
+            margin-bottom: 30px;
+        }
+        .wolf-icon {
+            font-size: 3.5rem;
+            margin-bottom: 10px;
+            display: inline-block;
+            filter: drop-shadow(0 0 8px rgba(0, 210, 255, 0.3));
+        }
+        h3 { color: var(--wolf-text); font-weight: 900; letter-spacing: -1px; margin-bottom: 5px; }
+        h3 span { color: var(--wolf-blue); }
+        
+        .form-control { 
+            background-color: rgba(255, 255, 255, 0.04); 
+            border: 1px solid var(--wolf-border); 
+            color: var(--wolf-text); 
+            padding: 14px;
+            border-radius: 12px;
+            font-size: 0.95rem;
+        }
+        .form-control::placeholder { color: var(--wolf-muted); }
+        .form-control:focus { 
+            background-color: rgba(255, 255, 255, 0.06); 
+            border-color: var(--wolf-blue); 
+            box-shadow: 0 0 0 4px rgba(0, 210, 255, 0.1); 
+            color: var(--wolf-text);
+        }
+        .btn-primary { 
+            background: var(--wolf-blue); 
+            border: none; 
+            padding: 14px; 
+            font-weight: 700; 
+            border-radius: 12px;
+            margin-top: 10px;
+            color: #000;
+            transition: all 0.3s;
+        }
+        .btn-primary:hover { background: #00b8e6; transform: translateY(-1px); box-shadow: 0 5px 15px rgba(0, 210, 255, 0.3); color: #000; }
+        
+        .alert { border-radius: 12px; font-size: 0.9rem; font-weight: 600; border: 1px solid var(--wolf-border); }
+        .label-text { font-size: 0.7rem; font-weight: 800; color: var(--wolf-muted); margin-bottom: 8px; letter-spacing: 1px; }
+        .text-muted { color: var(--wolf-muted) !important; }
+
+        @media (max-width: 480px) {
+            .login-card { padding: 35px 25px; }
+        }
+        /* ── Global polish ── */
+        ::-webkit-scrollbar { width: 9px; }
+        ::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.14); border-radius: 999px; }
+        a, button, input { -webkit-tap-highlight-color: transparent; }
+        :focus-visible { outline: 2px solid var(--wolf-blue); outline-offset: 2px; }
+        ::selection { background: rgba(0,210,255,0.32); color: #fff; }
+        .form-control:focus { border-color: var(--wolf-blue) !important; box-shadow: 0 0 0 3px rgba(0,210,255,0.12) !important; }
+    </style>
+</head>
+<body>
+    <div class="login-card">
+        <div class="wolf-brand">
+            <div class="wolf-icon">🐺</div>
+            <h3>WOLF <span>SCANNER</span></h3>
+            <p class="text-muted small">
+                {% if registration_enabled %}Join the pack today{% else %}Public registration is disabled{% endif %}
+            </p>
+        </div>
+        
+        {% with messages = get_flashed_messages(with_categories=true) %}
+          {% if messages %}
+            {% for category, message in messages %}
+              <div class="alert alert-{{ 'danger' if category == 'danger' else 'success' }} bg-opacity-10 text-{{ category }} py-3 mb-4 text-center">
+                  {{ message }}
+              </div>
+            {% endfor %}
+          {% endif %}
+        {% endwith %}
+
+        {% if registration_enabled %}
+        <form method="POST">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <div class="mb-3">
+                <label class="label-text">CHOOSE TRADER ID</label>
+                <input type="text" name="username" class="form-control" placeholder="Choose a username" required autocomplete="username">
+            </div>
+            <div class="mb-4">
+                <label class="label-text">CREATE ACCESS KEY</label>
+                <input type="password" name="password" class="form-control" placeholder="Create a password" required autocomplete="new-password">
+            </div>
+            <button type="submit" class="btn btn-primary w-100 mb-4">CREATE ACCOUNT</button>
+            <div class="text-center">
+                <span class="text-muted small">Already in the pack? <a href="{{ url_for('login') }}" class="text-decoration-none fw-bold" style="color: var(--wolf-blue);">Sign In</a></span>
+            </div>
+        </form>
+        {% else %}
+        <div class="alert alert-danger bg-opacity-10 text-center py-3 mb-0">
+            Please ask the admin to create your account from the admin panel.
+        </div>
+        <div class="text-center mt-4">
+            <a href="{{ url_for('login') }}" class="text-decoration-none fw-bold" style="color: var(--wolf-blue);">Back to Login</a>
+        </div>
+        {% endif %}
+    </div>
+</body>
+</html>

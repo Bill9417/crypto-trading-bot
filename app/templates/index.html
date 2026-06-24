@@ -1,0 +1,2650 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Wolf Scanner - Dashboard</title>
+    <!-- PWA: installable on phone home screen -->
+    <link rel="manifest" href="/manifest.webmanifest">
+    <meta name="theme-color" content="#0e1018">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="Wolf">
+    <link rel="apple-touch-icon" href="/static/apple-touch-icon.png">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="/static/app.css?v=20260622b">
+    <style>
+        :root {
+            --wolf-blue: #00d2ff;
+            --wolf-blue-dim: rgba(0, 210, 255, 0.16);
+            --wolf-gold: #ffcf4b;
+            --wolf-dark: #171a26;
+            --wolf-slate: #0e1018;
+            --wolf-card: rgba(30, 36, 56, 0.72);
+            --wolf-border: rgba(255, 255, 255, 0.08);
+            --wolf-muted: #8a99ad;
+            --wolf-text: #f1f5f9;
+            --long: #16a34a;
+            --long-bg: rgba(22, 163, 74, 0.14);
+            --short: #dc2626;
+            --short-bg: rgba(220, 38, 38, 0.14);
+            --radius: 14px;
+            --shadow: 0 14px 40px rgba(0, 0, 0, 0.38);
+        }
+
+        * { box-sizing: border-box; }
+
+        body {
+            background: var(--wolf-slate);
+            background-image: var(--page-bg-glow);
+            color: var(--wolf-text);
+            font-family: 'Inter', -apple-system, sans-serif;
+            -webkit-font-smoothing: antialiased;
+            min-height: 100vh;
+        }
+
+        .page-wrap { max-width: var(--page-max); margin: 0 auto; padding: 12px 16px 28px; }
+
+        /* ── Header ── */
+        .top-bar {
+            background: var(--wolf-card);
+            border: 1px solid var(--wolf-border);
+            border-radius: var(--radius);
+            box-shadow: var(--shadow);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            padding: 12px 18px;
+            margin-bottom: 14px;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            border-left: 4px solid var(--wolf-blue);
+        }
+        /* Row 1: brand on the left, status + meta + actions on the right */
+        .tb-main { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+
+        .brand { display: flex; align-items: center; gap: 12px; }
+        .brand-icon { font-size: 2rem; line-height: 1; filter: drop-shadow(0 0 6px rgba(0,210,255,.35)); }
+        .brand h1 { font-size: 1.15rem; font-weight: 800; margin: 0; letter-spacing: -0.4px; }
+        .brand h1 span { color: var(--wolf-blue); }
+        .brand-sub { font-size: 0.75rem; color: var(--wolf-muted); margin-top: 2px; }
+
+        .tb-right { display: flex; align-items: center; gap: 8px 14px; flex-wrap: wrap; justify-content: flex-end; }
+        .tb-status, .tb-meta { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+        #bot-status-badge { display: inline-flex; align-items: center; }
+        .scan-age { font-size: .68rem; color: var(--wolf-muted); font-weight: 600; }
+        .scan-age.stale { color: #f87171; font-weight: 800; }
+        .prot-banner { display:flex; align-items:center; gap:10px; text-decoration:none; border-radius:12px;
+            padding:9px 14px; margin-bottom:12px; font-size:.82rem; border:1px solid; }
+        .prot-banner .pb-go { margin-left:auto; font-weight:800; opacity:.85; font-size:.72rem; }
+        .prot-banner.ok { color:#34d399; background:rgba(16,185,129,.1); border-color:rgba(16,185,129,.4); }
+        .prot-banner.warn { color:#fca5a5; background:rgba(239,68,68,.12); border-color:rgba(239,68,68,.5); }
+        /* Normalise both status chips (Bootstrap .badge + custom .btc-badge) to
+           identical pills so they line up perfectly. !important beats Bootstrap
+           and the inline font-size the status JS injects. */
+        .tb-status .badge, .tb-status .btc-badge {
+            display: inline-flex !important; align-items: center; justify-content: center;
+            height: 22px; padding: 0 11px !important; line-height: 1;
+            border-radius: 999px !important; font-size: 0.62rem !important;
+            font-weight: 800; letter-spacing: 0.04em; vertical-align: middle;
+        }
+        .tb-meta-item { font-size: 0.72rem; color: var(--wolf-muted); display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; }
+        .tb-meta-item b { color: var(--wolf-text); font-weight: 700; }
+        .tb-sep { width: 1px; height: 22px; background: var(--wolf-border); }
+        .tb-buttons { display: flex; align-items: center; gap: 8px; }
+        .badge { margin: 0 !important; }
+
+        /* Row 2: dedicated navigation strip */
+        .tb-nav { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding-top: 10px; border-top: 1px solid var(--wolf-border); }
+
+        /* BTC regime badge — "don't fight Bitcoin" filter status */
+        .btc-badge { display: inline-block; font-size: 0.62rem; font-weight: 800; letter-spacing: 0.04em;
+            padding: 2px 8px; border-radius: 999px; border: 1px solid; }
+        .btc-badge.btc-bull { color: #34d399; background: rgba(16,185,129,0.14); border-color: rgba(16,185,129,0.4); }
+        .btc-badge.btc-bear { color: #f87171; background: rgba(239,68,68,0.14); border-color: rgba(239,68,68,0.4); }
+        .btc-badge.btc-neutral { color: var(--wolf-gold); background: rgba(255,207,75,0.12); border-color: rgba(255,207,75,0.35); }
+        .btc-badge.btc-off { color: var(--wolf-muted); background: rgba(255,255,255,0.05); border-color: var(--wolf-border); }
+
+        /* daily circuit-breaker banner (dashboard) */
+        .cb-banner {
+            display: flex; align-items: center; flex-wrap: wrap; gap: 8px 18px;
+            padding: 10px 16px; margin-bottom: 16px; border-radius: 12px;
+            border: 1px solid; text-decoration: none; color: var(--wolf-text);
+            font-size: 0.8rem; transition: transform .15s, box-shadow .2s;
+        }
+        .cb-banner:hover { transform: translateY(-1px); }
+        .cb-banner.cb-ok { background: rgba(22,163,74,0.08); border-color: rgba(22,163,74,0.3); }
+        .cb-banner.cb-halted { background: rgba(220,38,38,0.12); border-color: rgba(220,38,38,0.45);
+            animation: cbBlink 1.8s infinite; }
+        @keyframes cbBlink { 0%,100% { box-shadow: 0 0 0 rgba(220,38,38,0); } 50% { box-shadow: 0 0 16px rgba(220,38,38,0.4); } }
+        .cb-ico { font-size: 1.1rem; }
+        .cb-main { font-weight: 800; letter-spacing: 0.02em; }
+        .cb-reason { font-size: 0.7rem; color: var(--short); text-transform: uppercase; font-weight: 700; }
+        .cb-stat { font-size: 0.72rem; color: var(--wolf-muted); margin-left: auto; white-space: nowrap; }
+        .cb-stat + .cb-stat { margin-left: 0; }
+        .cb-stat b { color: var(--wolf-text); font-weight: 800; }
+        .cb-stat b.up { color: var(--long); }
+        .cb-stat b.down { color: var(--short); }
+
+        .btn-wolf {
+            background: var(--wolf-blue);
+            border: none;
+            color: #000;
+            font-weight: 700;
+            font-size: 0.8rem;
+            padding: 8px 16px;
+            border-radius: 10px;
+            transition: transform .15s, box-shadow .15s;
+        }
+        .btn-wolf:hover { background: #00b8e6; color: #000; transform: translateY(-1px); box-shadow: 0 4px 14px rgba(0,210,255,.3); }
+        .btn-wolf:disabled { opacity: .65; transform: none; }
+
+        .btn-ghost {
+            background: rgba(255, 255, 255, 0.03);
+            border: 1px solid var(--wolf-border);
+            color: var(--wolf-muted);
+            font-weight: 600;
+            font-size: 0.8rem;
+            padding: 8px 14px;
+            border-radius: 10px;
+        }
+        .btn-ghost:hover { border-color: rgba(0, 210, 255, 0.35); color: var(--wolf-text); background: rgba(255, 255, 255, 0.06); }
+
+        /* ── Stats strip ── */
+        .stats-strip {
+            display: grid;
+            grid-template-columns: repeat(5, minmax(0, 1fr));
+            gap: 10px;
+            margin-bottom: 14px;
+        }
+        .stat-card {
+            background: var(--wolf-card);
+            border: 1px solid var(--wolf-border);
+            border-radius: 12px;
+            padding: 12px 14px;
+            box-shadow: 0 8px 24px rgba(0,0,0,.18);
+            backdrop-filter: blur(10px);
+            -webkit-backdrop-filter: blur(10px);
+            transition: transform .15s ease, border-color .15s, box-shadow .15s;
+        }
+        .stat-card:hover { transform: translateY(-2px); border-color: rgba(0,210,255,0.22); box-shadow: 0 12px 30px rgba(0,0,0,.28); }
+        .analytics-panel { transition: border-color .15s; }
+        .analytics-panel:hover { border-color: rgba(255,255,255,0.14); }
+        .stat-label { font-size: 0.65rem; font-weight: 700; text-transform: uppercase; letter-spacing: .6px; color: var(--wolf-muted); }
+        .stat-value { font-size: 1.25rem; font-weight: 800; margin-top: 4px; line-height: 1; }
+        .stat-value.accent { color: var(--wolf-blue); }
+
+        /* ── Top entry candidates ── */
+        .entries-panel {
+            background: var(--wolf-card); border: 1px solid var(--wolf-border);
+            border-radius: 14px; padding: 14px 16px; margin-bottom: 14px;
+            box-shadow: 0 8px 24px rgba(0,0,0,.18);
+            backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+            border-left: 4px solid #34d399;
+        }
+        .entries-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 12px; flex-wrap: wrap; }
+        .entries-title { font-size: .98rem; font-weight: 800; display: flex; align-items: center; gap: 8px; }
+        .entries-sub { font-size: .72rem; color: var(--wolf-muted); margin-top: 2px; }
+        .entries-regime { font-size: .68rem; font-weight: 800; padding: 4px 10px; border-radius: 999px; letter-spacing: .4px; }
+        .entries-regime.bear { background: rgba(239,68,68,.16); color: #f87171; }
+        .entries-regime.bull { background: rgba(34,197,94,.16); color: #4ade80; }
+        .entries-regime.neutral, .entries-regime.unknown, .entries-regime.off { background: rgba(245,158,11,.16); color: #fbbf24; }
+        .entries-row { display: grid; grid-template-columns: repeat(5, minmax(0,1fr)); gap: 10px; }
+        .entry-card {
+            background: rgba(255,255,255,.025); border: 1px solid var(--wolf-border);
+            border-radius: 12px; padding: 12px 13px; text-decoration: none; color: inherit;
+            display: flex; flex-direction: column; gap: 9px; transition: transform .15s, border-color .15s, box-shadow .15s;
+        }
+        .entry-card:hover { transform: translateY(-2px); border-color: rgba(52,211,153,.35); box-shadow: 0 10px 24px rgba(0,0,0,.28); }
+        .entry-card.ready { border-color: rgba(255,207,75,.4); background: rgba(255,207,75,.05); }
+        .entry-top { display: flex; align-items: center; justify-content: space-between; gap: 6px; }
+        .entry-sym { font-size: .92rem; font-weight: 800; color: var(--wolf-blue); }
+        .entry-dir { font-size: .64rem; font-weight: 900; padding: 3px 8px; border-radius: 999px; letter-spacing: .5px; }
+        .entry-dir.LONG { background: rgba(34,197,94,.16); color: #4ade80; }
+        .entry-dir.SHORT { background: rgba(239,68,68,.16); color: #f87171; }
+        .entry-status { font-size: .6rem; font-weight: 900; letter-spacing: .6px; text-transform: uppercase; padding: 3px 8px; border-radius: 6px; align-self: flex-start; }
+        .entry-status.ready { background: rgba(255,207,75,.18); color: #ffcf4b; }
+        .entry-status.watch { background: rgba(255,255,255,.06); color: var(--wolf-muted); }
+        .entry-lights { display: flex; align-items: center; gap: 4px; font-size: .72rem; color: var(--wolf-muted); }
+        .entry-lights b { color: var(--wolf-text); font-size: .82rem; }
+        .entry-levels { display: grid; grid-template-columns: repeat(3,1fr); gap: 4px; font-size: .66rem; }
+        .entry-levels div { display: flex; flex-direction: column; }
+        .entry-levels .lk { color: var(--wolf-muted); text-transform: uppercase; letter-spacing: .4px; font-size: .58rem; }
+        .entry-levels .lv { font-weight: 700; font-variant-numeric: tabular-nums; }
+        .entry-levels .lv.tp { color: #4ade80; } .entry-levels .lv.sl { color: #f87171; }
+        .entry-needs { display: flex; flex-wrap: wrap; gap: 4px; }
+        .entry-need { font-size: .6rem; color: #e6c07a; background: rgba(245,158,11,.12); border: 1px solid rgba(245,158,11,.2); padding: 2px 6px; border-radius: 6px; }
+        .entries-empty { color: var(--wolf-muted); font-size: .82rem; padding: 6px 2px; }
+        @media (max-width: 991px) { .entries-row { grid-template-columns: repeat(2,1fr); } }
+        @media (max-width: 520px) { .entries-row { grid-template-columns: 1fr; } }
+
+        .analytics-grid {
+            display: grid;
+            grid-template-columns: 1.25fr 1fr;
+            gap: 12px;
+            margin-bottom: 14px;
+        }
+        .analytics-panel {
+            background: var(--wolf-card);
+            border: 1px solid var(--wolf-border);
+            border-radius: 14px;
+            box-shadow: 0 10px 28px rgba(0,0,0,.2);
+            padding: 14px;
+            backdrop-filter: blur(10px);
+            -webkit-backdrop-filter: blur(10px);
+        }
+        .analytics-head {
+            display: flex;
+            align-items: flex-start;
+            justify-content: space-between;
+            gap: 10px;
+            margin-bottom: 12px;
+        }
+        .analytics-title {
+            font-size: 0.78rem;
+            font-weight: 800;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+            color: var(--wolf-muted);
+        }
+        .analytics-subtitle {
+            font-size: 0.7rem;
+            color: var(--wolf-muted);
+            margin-top: 2px;
+        }
+        .analytics-link {
+            color: var(--wolf-blue);
+            font-size: 0.72rem;
+            font-weight: 700;
+            text-decoration: none;
+            white-space: nowrap;
+        }
+        .analytics-link:hover { color: #7ae7ff; }
+
+        .insight-grid {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 10px;
+        }
+        .insight-card {
+            border: 1px solid var(--wolf-border);
+            border-radius: 12px;
+            padding: 12px;
+            background: rgba(10, 14, 24, 0.66);
+        }
+        .insight-label {
+            font-size: 0.64rem;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            color: var(--wolf-muted);
+            font-weight: 700;
+        }
+        .insight-value {
+            margin-top: 6px;
+            font-size: 1.05rem;
+            font-weight: 800;
+            line-height: 1.1;
+        }
+        .insight-note {
+            margin-top: 4px;
+            font-size: 0.68rem;
+            color: var(--wolf-muted);
+            line-height: 1.35;
+        }
+        .insight-value.blue { color: var(--wolf-blue); }
+        .insight-value.green { color: var(--long); }
+        .insight-value.red { color: var(--short); }
+        .insight-value.gold { color: var(--wolf-gold); }
+
+        .flow-grid {
+            display: grid;
+            grid-template-columns: repeat(3, minmax(0, 1fr));
+            gap: 8px;
+            margin-bottom: 12px;
+        }
+        .flow-card {
+            border-radius: 12px;
+            padding: 10px 12px;
+            border: 1px solid var(--wolf-border);
+            background: rgba(255,255,255,0.03);
+        }
+        .flow-card.queued { background: rgba(37, 99, 235, 0.10); }
+        .flow-card.active { background: rgba(245, 158, 11, 0.10); }
+        .flow-card.closed { background: rgba(22, 163, 74, 0.08); }
+        .flow-label {
+            font-size: 0.62rem;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            color: var(--wolf-muted);
+            font-weight: 700;
+        }
+        .flow-value {
+            margin-top: 6px;
+            font-size: 1rem;
+            font-weight: 800;
+        }
+        .flow-note {
+            margin-top: 4px;
+            font-size: 0.68rem;
+            color: var(--wolf-muted);
+        }
+
+        .progress-stack {
+            display: grid;
+            gap: 10px;
+        }
+        .progress-row {
+            display: grid;
+            grid-template-columns: 94px 1fr auto;
+            gap: 10px;
+            align-items: center;
+        }
+        .progress-label {
+            font-size: 0.72rem;
+            font-weight: 700;
+            color: var(--wolf-text);
+        }
+        .progress-track {
+            position: relative;
+            height: 10px;
+            border-radius: 999px;
+            background: rgba(255,255,255,0.06);
+            overflow: hidden;
+        }
+        .progress-fill {
+            position: absolute;
+            top: 0;
+            left: 0;
+            bottom: 0;
+            width: 0%;
+            border-radius: 999px;
+            transition: width .3s ease;
+        }
+        .fill-blue { background: linear-gradient(90deg, #0ea5e9, #67e8f9); }
+        .fill-green { background: linear-gradient(90deg, #16a34a, #4ade80); }
+        .fill-red { background: linear-gradient(90deg, #dc2626, #fb7185); }
+        .fill-gold { background: linear-gradient(90deg, #d97706, #facc15); }
+        .progress-value {
+            font-size: 0.72rem;
+            color: var(--wolf-muted);
+            font-weight: 700;
+            min-width: 52px;
+            text-align: right;
+        }
+
+        .analysis-footer {
+            margin-top: 12px;
+            display: flex;
+            gap: 8px;
+            flex-wrap: wrap;
+        }
+        .mini-pill {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 5px 10px;
+            border-radius: 999px;
+            background: rgba(255,255,255,0.04);
+            border: 1px solid var(--wolf-border);
+            font-size: 0.68rem;
+            color: #cbd5e1;
+            font-weight: 700;
+        }
+
+        /* ── Legend ── */
+        .panel {
+            background: var(--wolf-card);
+            border: 1px solid var(--wolf-border);
+            border-radius: var(--radius);
+            box-shadow: var(--shadow);
+            overflow: hidden;
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+        }
+        .panel-head {
+            padding: 12px 16px;
+            border-bottom: 1px solid var(--wolf-border);
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            flex-wrap: wrap;
+            background: linear-gradient(180deg, rgba(255,255,255,0.05) 0%, rgba(255,255,255,0.02) 100%);
+        }
+        .panel-head h2 { font-size: 0.95rem; font-weight: 800; margin: 0; }
+        .legend-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-left: auto; }
+        .chip {
+            font-size: 0.62rem;
+            font-weight: 700;
+            padding: 4px 8px;
+            border-radius: 20px;
+            background: rgba(255, 255, 255, 0.04);
+            color: #cbd5e1;
+            border: 1px solid var(--wolf-border);
+            white-space: nowrap;
+        }
+
+        /* ── Shared badges ── */
+        .side-pill {
+            display: inline-flex; align-items: center; justify-content: center;
+            min-width: 54px; height: 26px;
+            font-size: 0.65rem; font-weight: 800;
+            padding: 0 8px; border-radius: 8px;
+            letter-spacing: .3px;
+        }
+        .side-long { background: var(--long-bg); color: var(--long); }
+        .side-short { background: var(--short-bg); color: var(--short); }
+
+        .score-badge {
+            display: inline-flex; align-items: center; justify-content: center;
+            min-width: 30px; height: 26px; padding: 0 8px;
+            font-size: 0.72rem; font-weight: 800; border-radius: 8px;
+        }
+        .score-high { background: rgba(255,77,77,.1); color: #ef4444; border: 1px solid rgba(255,77,77,.2); }
+        .score-strong { background: rgba(255,153,51,.1); color: #f59e0b; border: 1px solid rgba(255,153,51,.2); }
+        .score-watch { background: rgba(22,163,74,.1); color: #16a34a; border: 1px solid rgba(22,163,74,.2); }
+
+        .rsi-high { color: #ef4444; font-weight: 800; }
+        .rsi-low { color: #16a34a; font-weight: 800; }
+        .price-up { color: #16a34a; font-weight: 700; }
+        .price-down { color: #ef4444; font-weight: 700; }
+
+        .symbol-tag {
+            font-size: 0.8rem;
+            font-weight: 700;
+            color: var(--wolf-text);
+            letter-spacing: -0.2px;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            max-width: 100%;
+        }
+
+        /* ── Lights ── */
+        .lights {
+            display: flex; gap: 5px; align-items: center; justify-content: center;
+            flex-wrap: wrap; max-width: 100%; row-gap: 5px;
+        }
+        /* Filled = passed (glows) · hollow = missed (outline, recedes) · violet = SMC bonus. */
+        .light {
+            width: 9px; height: 9px; border-radius: 50%;
+            flex: 0 0 auto;
+            box-sizing: border-box;
+            transition: background .15s ease, box-shadow .15s ease, border-color .15s ease;
+        }
+        .light.on {
+            background: #10b981;
+            box-shadow: 0 0 7px rgba(16,185,129,.6);
+        }
+        .light.off {
+            background: transparent;
+            border: 1.5px solid rgba(148,163,184,.4);
+        }
+        .light.smc {
+            background: #a855f7;
+            box-shadow: 0 0 7px rgba(168,85,247,.6);
+        }
+        .lights .smc-divider {
+            width: 1px; height: 12px; margin: 0 3px;
+            background: linear-gradient(rgba(148,163,184,0), rgba(148,163,184,.5), rgba(148,163,184,0));
+            flex: 0 0 auto;
+        }
+
+        /* ── SMC ── */
+        .smc-support { color: #16a34a; font-weight: 700; }
+        .smc-resistance { color: #dc2626; font-weight: 700; }
+        .smc-equilibrium { color: #94a3b8; font-weight: 700; }
+        .smc-neutral { color: #94a3b8; font-weight: 600; }
+        .smc-zone-pill {
+            display: inline-block;
+            font-size: 0.65rem;
+            font-weight: 700;
+            padding: 3px 8px;
+            border-radius: 6px;
+            margin-bottom: 4px;
+        }
+        .smc-zone-pill.support { background: var(--long-bg); color: var(--long); }
+        .smc-zone-pill.resistance { background: var(--short-bg); color: var(--short); }
+        .smc-zone-pill.equilibrium { background: rgba(255,255,255,0.06); color: #cbd5e1; }
+        .smc-zone-pill.neutral { background: rgba(255,255,255,0.03); color: #94a3b8; }
+
+        .trade-plan {
+            display: grid;
+            gap: 8px;
+        }
+        .plan-row {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+            padding: 8px 10px;
+            border-radius: 10px;
+            border: 1px solid var(--wolf-border);
+            background: rgba(10, 14, 24, 0.72);
+            font-size: 0.76rem;
+        }
+        .plan-label {
+            font-weight: 700;
+            letter-spacing: 0.01em;
+        }
+        .plan-value {
+            font-weight: 800;
+            font-variant-numeric: tabular-nums;
+            color: var(--wolf-text);
+        }
+        .plan-entry .plan-label,
+        .plan-entry .plan-value { color: #2563eb; }
+        .plan-tp .plan-label,
+        .plan-tp .plan-value { color: #16a34a; }
+        .plan-sl .plan-label,
+        .plan-sl .plan-value { color: #dc2626; }
+        .plan-meta {
+            font-size: 0.65rem;
+            color: var(--wolf-blue);
+            font-weight: 700;
+            padding: 2px 2px 0;
+        }
+
+        .tv-btn {
+            display: inline-flex; align-items: center; justify-content: center;
+            height: 28px; min-width: 52px;
+            font-size: 0.68rem; font-weight: 700;
+            color: var(--wolf-blue); text-decoration: none;
+            padding: 0 10px;
+            border: 1px solid rgba(0, 210, 255, 0.25);
+            border-radius: 8px;
+            background: rgba(255, 255, 255, 0.03);
+            white-space: nowrap;
+            transition: all .15s;
+        }
+        .tv-btn:hover { background: var(--wolf-blue); color: #000; border-color: var(--wolf-blue); }
+
+        .live-val { font-weight: 700; font-size: 0.8rem; color: var(--wolf-text); font-variant-numeric: tabular-nums; }
+        .asset-meta {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            flex-wrap: wrap;
+            margin-top: 4px;
+        }
+        .trade-status-badge {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            min-height: 22px;
+            padding: 2px 8px;
+            border-radius: 999px;
+            font-size: 0.62rem;
+            font-weight: 800;
+            letter-spacing: 0.04em;
+            text-transform: uppercase;
+            border: 1px solid rgba(255, 255, 255, 0.12);
+            white-space: nowrap;
+        }
+        .trade-status-badge.status-queued { background: rgba(37, 99, 235, 0.16); color: #93c5fd; }
+        .trade-status-badge.status-rejected { background: rgba(239, 68, 68, 0.14); color: #fca5a5; }
+        .trade-status-badge.status-active { background: rgba(245, 158, 11, 0.16); color: #fcd34d; }
+        .trade-status-badge.status-pending { background: rgba(148, 163, 184, 0.14); color: #cbd5e1; }
+        .trade-status-badge.status-tp { background: rgba(22, 163, 74, 0.16); color: #86efac; }
+        .trade-status-badge.status-sl { background: rgba(220, 38, 38, 0.16); color: #fca5a5; }
+        .trade-status-badge.status-manual_close { background: rgba(245, 158, 11, 0.16); color: #fcd34d; }
+        .trade-status-badge.status-tp1_partial { background: rgba(34, 197, 94, 0.18); color: #bbf7d0; }
+        /* Watch-only: pairs scanned for breadth but ranked outside the tradeable top-N.
+           Distinct slate "WATCH ONLY" tag + a faded card so users never mistake them
+           for a tradeable signal. */
+        .watch-only-badge {
+            display: inline-block; font-size: 0.55rem; font-weight: 800; letter-spacing: 0.05em;
+            padding: 1px 6px; border-radius: 5px; margin-left: 6px; vertical-align: middle;
+            text-transform: uppercase; white-space: nowrap;
+            color: #cbd5e1; background: rgba(148, 163, 184, 0.14); border: 1px solid rgba(148, 163, 184, 0.35);
+        }
+        .signal-card.watch-only { opacity: 0.62; }
+        .signal-card.watch-only:hover { opacity: 0.85; }
+        /* watch-only never trades, so strip the conviction glow that implies a setup */
+        .signal-card.watch-only.max-conviction-card,
+        .signal-card.watch-only.high-conviction-card { box-shadow: none; background: transparent !important; }
+        .trade-status-reason {
+            font-size: 0.66rem;
+            color: var(--wolf-muted);
+            line-height: 1.35;
+        }
+        /* ── Aligned signal list (single shared grid) ── */
+        .signal-list-wrap {
+            overflow-x: auto;
+            -webkit-overflow-scrolling: touch;
+        }
+
+        .signal-row-grid {
+            display: grid;
+            grid-template-columns:
+                minmax(118px, 1.6fr)
+                56px
+                92px
+                46px
+                122px
+                88px
+                44px
+                34px
+                60px;
+            column-gap: 10px;
+            align-items: center;
+            min-height: 46px;
+            padding: 8px 14px;
+            min-width: 734px;
+        }
+
+        .signal-list-header .signal-row-grid {
+            min-height: 34px;
+            /* Data rows sit inside .signal-cards (padding 6px) + .signal-card
+               (border 1px), insetting them 7px each side. Match that here so the
+               header grid shares the exact same column box and the titles line
+               up with the cells below (14px row padding + 7px = 21px). */
+            padding: 10px 21px;
+            background: linear-gradient(180deg, rgba(255,255,255,0.04) 0%, rgba(255,255,255,0.02) 100%);
+            border-bottom: 1px solid var(--wolf-border);
+        }
+
+        .h-cell {
+            font-size: 0.58rem;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            color: #94a3b8;
+            text-align: center;
+        }
+        .h-cell:first-child { text-align: left; }
+
+        /* ── Dashboard filter bar ── */
+        .dash-filter-bar {
+            display: flex;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 8px 10px;
+            padding: 10px 14px;
+            background: rgba(255,255,255,0.02);
+            border-bottom: 1px solid var(--wolf-border);
+        }
+        .dash-filter-bar::-webkit-scrollbar { display: none; }
+        .dash-filter-group { display: flex; gap: 5px; flex-wrap: nowrap; flex-shrink: 0; }
+        .dash-filter-group + .dash-filter-group {
+            padding-left: 9px;
+            border-left: 1px solid rgba(255,255,255,0.06);
+        }
+        .dash-filter-btn {
+            background: transparent;
+            border: 1px solid rgba(255,255,255,0.1);
+            color: var(--wolf-muted);
+            font-weight: 600;
+            font-size: 0.72rem;
+            padding: 4px 9px;
+            border-radius: 7px;
+            cursor: pointer;
+            transition: all 0.13s;
+            white-space: nowrap;
+        }
+        .dash-filter-btn:hover { color: var(--wolf-text); border-color: rgba(255,255,255,0.22); background: rgba(255,255,255,0.04); }
+        .dash-filter-btn.active { background: var(--wolf-blue); color: #000; font-weight: 700; border-color: var(--wolf-blue); box-shadow: 0 0 8px rgba(0,210,255,.2); }
+        .dash-filter-btn.active-long { background: var(--long); color: #000; border-color: var(--long); box-shadow: 0 0 8px rgba(16,185,129,.25); }
+        .dash-filter-btn.active-short { background: var(--short); color: #fff; border-color: var(--short); box-shadow: 0 0 8px rgba(239,68,68,.25); }
+        .dash-search {
+            background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.12);
+            color: var(--wolf-text); font-size: 0.72rem; font-weight: 600;
+            padding: 5px 11px; border-radius: 7px; outline: none;
+            width: 150px; min-width: 110px; flex-shrink: 1;
+            transition: border-color .15s, box-shadow .15s;
+        }
+        .dash-search::placeholder { color: var(--wolf-muted); font-weight: 500; }
+        .dash-search:focus { border-color: var(--wolf-blue); box-shadow: 0 0 8px rgba(0,210,255,.2); }
+        /* Live signal counter — monospace "telemetry" pill next to the panel title. */
+        .signal-count-pill {
+            font-family: ui-monospace, 'SF Mono', 'Roboto Mono', Menlo, monospace;
+            font-size: 0.66rem;
+            font-weight: 700;
+            letter-spacing: 0.04em;
+            color: var(--wolf-blue);
+            background: rgba(0, 210, 255, 0.07);
+            border: 1px solid rgba(0, 210, 255, 0.28);
+            padding: 3px 9px;
+            border-radius: 6px;
+            white-space: nowrap;
+            flex-shrink: 0;
+            box-shadow: 0 0 10px rgba(0, 210, 255, 0.1);
+        }
+        .signal-count-pill:empty { display: none; }
+
+        .signal-cards { display: flex; flex-direction: column; gap: 2px; padding: 6px; }
+
+        .signal-card {
+            border: 1px solid rgba(255,255,255,0.05);
+            border-radius: 10px;
+            background: rgba(30, 36, 56, 0.42);
+            transition: all 0.18s;
+            position: relative;
+            overflow: hidden;
+        }
+        .signal-card:hover { border-color: rgba(255,255,255,0.1); }
+        /* Direction colour always wins — conviction adds glow on top */
+        .signal-card.long-card  { box-shadow: inset 4px 0 0 var(--long);  border-left-color: rgba(16,185,129,0.3); }
+        .signal-card.short-card { box-shadow: inset 4px 0 0 var(--short); border-left-color: rgba(239,68,68,0.3); }
+
+        /* 4-light: faint outer glow matching direction */
+        .signal-card.long-card.high-conviction-card  { box-shadow: inset 4px 0 0 var(--long),  0 0 10px 1px rgba(16,185,129,0.12); border-color: rgba(16,185,129,0.22); }
+        .signal-card.short-card.high-conviction-card { box-shadow: inset 4px 0 0 var(--short), 0 0 10px 1px rgba(239,68,68,0.12);  border-color: rgba(239,68,68,0.22); }
+
+        /* 5+ lights: strong outer glow matching direction */
+        .signal-card.long-card.max-conviction-card  { box-shadow: inset 4px 0 0 var(--long),  0 0 18px 3px rgba(16,185,129,0.28); border-color: rgba(16,185,129,0.4); background: rgba(16,185,129,0.05) !important; }
+        .signal-card.short-card.max-conviction-card { box-shadow: inset 4px 0 0 var(--short), 0 0 18px 3px rgba(239,68,68,0.28);  border-color: rgba(239,68,68,0.4);  background: rgba(239,68,68,0.05)  !important; }
+
+        .signal-card.expanded { background: rgba(22, 28, 46, 0.92) !important; }
+
+        .signal-row-hit {
+            cursor: pointer;
+            -webkit-tap-highlight-color: transparent;
+            transition: background .12s;
+        }
+        .signal-row-hit:hover { background: rgba(0, 210, 255, 0.04); }
+
+        .cell { display: flex; align-items: center; justify-content: center; min-width: 0; }
+        .cell-asset { justify-content: flex-start; }
+        .cell-live { justify-content: center; }
+        .cell-rsi {
+            font-weight: 800;
+            font-size: 0.82rem;
+            font-variant-numeric: tabular-nums;
+            justify-content: center;
+            text-align: center;
+        }
+        .cell-smc .smc-zone-pill {
+            font-size: 0.58rem;
+            padding: 3px 7px;
+            max-width: 100%;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+        .cell-dash { color: #94a3b8; font-size: 0.85rem; }
+
+        .chevron {
+            width: 24px; height: 24px;
+            border-radius: 8px;
+            background: rgba(255, 255, 255, 0.04);
+            border: 1px solid var(--wolf-border);
+            display: flex; align-items: center; justify-content: center;
+            font-size: 0.55rem;
+            color: var(--wolf-muted);
+            transition: transform .25s ease, background .2s, border-color .2s;
+        }
+        .signal-card.expanded .chevron {
+            transform: rotate(180deg);
+            background: var(--wolf-blue-dim);
+            color: var(--wolf-blue);
+            border-color: rgba(0, 210, 255, 0.3);
+        }
+
+        .card-expand {
+            display: grid;
+            grid-template-rows: 0fr;
+            transition: grid-template-rows .28s ease;
+        }
+        .signal-card.expanded .card-expand { grid-template-rows: 1fr; }
+        .card-expand-inner {
+            overflow: hidden;
+            padding: 0 14px;
+            min-width: 720px;
+        }
+        .signal-card.expanded .card-expand-inner {
+            padding-bottom: 14px;
+            border-top: 1px dashed var(--wolf-border);
+            background: linear-gradient(180deg, rgba(15,18,30,.96), rgba(10,14,24,.92));
+        }
+
+        .expand-metrics {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 8px;
+            margin: 12px 0 10px;
+        }
+        .metric-box {
+            background: rgba(255, 255, 255, 0.04);
+            border-radius: 10px;
+            padding: 10px;
+            border: 1px solid var(--wolf-border);
+        }
+        .metric-label { font-size: 0.62rem; font-weight: 700; text-transform: uppercase; color: var(--wolf-muted); letter-spacing: .4px; }
+        .metric-val { font-size: 0.9rem; font-weight: 800; margin-top: 4px; }
+        .conviction-max { color: var(--wolf-blue); }
+        .conviction-high { color: var(--long); }
+        .conviction-normal { color: var(--wolf-muted); }
+
+        .card-section {
+            background: rgba(255, 255, 255, 0.04);
+            border-radius: 10px;
+            padding: 10px 12px;
+            margin-bottom: 10px;
+            font-size: 0.78rem;
+            line-height: 1.45;
+            color: #cbd5e1;
+            border: 1px solid var(--wolf-border);
+        }
+        .card-section-title {
+            font-size: 0.62rem;
+            font-weight: 800;
+            text-transform: uppercase;
+            letter-spacing: .5px;
+            color: var(--wolf-muted);
+            margin-bottom: 6px;
+        }
+
+        .empty-state {
+            text-align: center;
+            padding: 48px 24px;
+            color: var(--wolf-muted);
+        }
+        .empty-state .icon { font-size: 2.5rem; margin-bottom: 12px; opacity: .5; }
+        .empty-state p { margin: 0; font-size: 0.9rem; }
+
+        .pulse-scanning { animation: pulse-anim 2s infinite; }
+        @keyframes pulse-anim { 0%,100%{opacity:1} 50%{opacity:.45} }
+        @keyframes row-flash { 0%{background:rgba(0,210,255,.12)} 100%{background:transparent} }
+        .updated { animation: row-flash 1s ease-out; }
+
+        /* ── Strategy Rules Modal ── */
+        .modal-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0, 0, 0, 0.85);
+            display: none;
+            justify-content: center;
+            align-items: center;
+            z-index: 1000;
+            padding: 20px;
+        }
+        .modal-overlay.active {
+            display: flex;
+        }
+        .modal-content {
+            background: var(--wolf-dark);
+            border: 1px solid var(--wolf-border);
+            border-radius: 16px;
+            max-width: 800px;
+            width: 100%;
+            max-height: 90vh;
+            overflow-y: auto;
+            padding: 24px;
+            counter-reset: strategy-section;
+        }
+        .modal-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+            padding-bottom: 16px;
+            border-bottom: 1px solid var(--wolf-border);
+        }
+        .modal-header h2 {
+            margin: 0;
+            font-size: 1.3rem;
+            font-weight: 800;
+        }
+        .modal-close {
+            background: rgba(255,255,255,0.05);
+            border: 1px solid var(--wolf-border);
+            color: var(--wolf-muted);
+            width: 36px;
+            height: 36px;
+            border-radius: 10px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1.2rem;
+        }
+        .modal-close:hover {
+            background: rgba(255,255,255,0.1);
+            color: var(--wolf-text);
+        }
+        .modal-section {
+            margin-bottom: 20px;
+            counter-increment: strategy-section;
+        }
+        .modal-section-title {
+            font-size: 0.9rem;
+            font-weight: 800;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            color: var(--wolf-blue);
+            margin-bottom: 10px;
+        }
+        .modal-section-title::before {
+            content: "Strategy " counter(strategy-section) " · ";
+            font-size: 0.72rem;
+            font-weight: 700;
+            color: var(--wolf-muted);
+            letter-spacing: 0.1em;
+            margin-right: 2px;
+        }
+        .modal-section-content {
+            color: var(--wolf-muted);
+            line-height: 1.7;
+            font-size: 0.9rem;
+        }
+        .modal-section-content ul {
+            padding-left: 20px;
+            margin: 10px 0;
+        }
+        .modal-section-content li {
+            margin-bottom: 8px;
+        }
+        .light-explanation {
+            display: grid;
+            grid-template-columns: 1fr;
+            gap: 12px;
+            margin-top: 10px;
+        }
+        .light-item {
+            background: rgba(255,255,255,0.04);
+            border: 1px solid var(--wolf-border);
+            border-radius: 10px;
+            padding: 12px;
+        }
+        .light-item-title {
+            font-weight: 700;
+            color: var(--wolf-text);
+            margin-bottom: 4px;
+        }
+        .light-item-desc {
+            color: var(--wolf-muted);
+            font-size: 0.85rem;
+        }
+
+        /* ── Responsive ── */
+        @media (max-width: 991px) {
+            .stats-strip { grid-template-columns: repeat(2, 1fr); }
+            /* odd card out (Funnel) spans full width instead of sitting alone */
+            .stats-strip .stat-card:last-child:nth-child(odd) { grid-column: 1 / -1; }
+            .analytics-grid { grid-template-columns: 1fr; }
+            .flow-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+            .legend-chips { margin-left: 0; width: 100%; }
+        }
+
+        @media (max-width: 767px) {
+            .page-wrap { padding: 8px 8px 24px; }
+
+            /* ── Header ── */
+            .top-bar {
+                padding: 10px 12px;
+                margin-bottom: 10px;
+                gap: 10px;
+            }
+            .tb-main { flex-direction: column; align-items: stretch; gap: 10px; }
+            .brand { justify-content: flex-start; }
+            .brand h1 { font-size: 0.95rem; }
+            .brand-icon { font-size: 1.5rem; }
+            .brand-sub { font-size: 0.62rem; }
+            .tb-right { justify-content: space-between; gap: 8px; }
+            .tb-status, .tb-meta { gap: 6px; }
+            .tb-meta-item { font-size: 0.66rem; }
+            .tb-sep { display: none; }
+            .tb-buttons { width: 100%; gap: 6px; }
+            .tb-buttons .btn { flex: 1 1 0; text-align: center; padding-left: 6px; padding-right: 6px; }
+            /* nav becomes a single horizontally-scrollable strip (no messy wrap) */
+            .tb-nav {
+                flex-wrap: nowrap;
+                overflow-x: auto;
+                -webkit-overflow-scrolling: touch;
+                padding-top: 8px;
+                scrollbar-width: none;
+            }
+            .tb-nav::-webkit-scrollbar { display: none; }
+            .tb-nav .nav-pill { flex: 0 0 auto; white-space: nowrap; }
+
+            /* ── Stats ── */
+            .stats-strip {
+                grid-template-columns: repeat(2, 1fr);
+                gap: 8px;
+                margin-bottom: 10px;
+            }
+            .stat-card { padding: 10px 12px; }
+            .stat-value { font-size: 1.05rem; }
+            .stat-label { font-size: 0.6rem; }
+
+            /* ── Analytics ── */
+            .analytics-panel { padding: 10px 12px; }
+            .analytics-subtitle { display: none; }
+            .insight-grid { grid-template-columns: repeat(2, 1fr); gap: 8px; }
+            .insight-value { font-size: 0.92rem; }
+            .insight-note { font-size: 0.62rem; }
+            .flow-grid { grid-template-columns: repeat(3, 1fr); gap: 6px; }
+            .flow-card { padding: 8px; }
+            .flow-value { font-size: 0.88rem; }
+            .flow-note { font-size: 0.6rem; }
+            .flow-label { font-size: 0.58rem; }
+            .progress-row { grid-template-columns: 70px 1fr 42px; gap: 6px; }
+            .progress-label, .progress-value { font-size: 0.64rem; }
+            .analysis-footer { gap: 5px; }
+            .mini-pill { font-size: 0.62rem; padding: 4px 8px; }
+
+            /* ── Filter bar — horizontal scroll ── */
+            .dash-filter-bar {
+                flex-wrap: nowrap;
+                overflow-x: auto;
+                -webkit-overflow-scrolling: touch;
+                padding: 8px 12px;
+                gap: 4px 8px;
+                scrollbar-width: none;
+            }
+            .dash-filter-bar::-webkit-scrollbar { display: none; }
+            .dash-filter-group {
+                flex-shrink: 0;
+                flex-wrap: nowrap;
+            }
+            .dash-filter-group + .dash-filter-group { padding-left: 8px; }
+            .dash-filter-btn {
+                font-size: 0.66rem;
+                padding: 5px 9px;
+                min-height: 30px;
+                white-space: nowrap;
+            }
+            .signal-count-pill { font-size: 0.6rem; padding: 2px 7px; }
+
+            /* ── Signal cards — named-grid layout ── */
+            .signal-list-header { display: none; }
+            .signal-cards { padding: 4px; gap: 6px; }
+
+            .signal-row-grid {
+                display: grid;
+                grid-template-columns: 1fr auto auto;
+                grid-template-areas:
+                    "asset   side    chart"
+                    "live    rsi     score"
+                    "lights  lights  lights"
+                    "smc     smc     chevron";
+                min-width: 0;
+                padding: 12px 14px;
+                column-gap: 8px;
+                row-gap: 7px;
+            }
+            .cell { display: flex; align-items: center; justify-content: flex-start; }
+            .cell-asset {
+                grid-area: asset;
+                align-items: flex-start;
+                flex-direction: column;
+            }
+            .cell-side {
+                grid-area: side;
+                justify-content: center;
+            }
+            .cell-chart {
+                grid-area: chart;
+                justify-content: center;
+            }
+            .cell-live {
+                grid-area: live;
+                justify-content: flex-start;
+            }
+            .cell-rsi {
+                grid-area: rsi;
+                justify-content: center;
+                background: rgba(255,255,255,0.05);
+                padding: 2px 8px;
+                border-radius: 6px;
+                font-size: 0.72rem;
+            }
+            .cell-score {
+                grid-area: score;
+                justify-content: center;
+            }
+            .cell-lights {
+                grid-area: lights;
+                justify-content: flex-start;
+            }
+            .cell-smc {
+                grid-area: smc;
+                justify-content: flex-start;
+            }
+            .cell-chevron {
+                grid-area: chevron;
+                display: flex;
+                justify-content: flex-end;
+                align-items: flex-end;
+            }
+            .symbol-tag { font-size: 0.9rem; }
+            .asset-meta { margin-top: 2px; }
+            .live-val { font-size: 0.78rem; }
+            .light { width: 11px; height: 11px; }
+            .side-pill { min-width: 46px; height: 24px; font-size: 0.6rem; }
+            .tv-btn { height: 28px; min-width: 46px; font-size: 0.63rem; }
+
+            /* ── Expanded section ── */
+            .card-expand-inner { min-width: 0; padding: 10px 12px 12px; }
+            .expand-metrics { grid-template-columns: repeat(2, 1fr); gap: 6px; }
+            .metric-box { padding: 8px; }
+            .metric-label { font-size: 0.58rem; }
+            .metric-val { font-size: 0.82rem; }
+
+            /* ── Panel header ── */
+            .panel-head h2 { font-size: 0.85rem; }
+            .legend-chips { display: none; }
+
+            /* ── Modal ── */
+            .modal-content {
+                padding: 16px;
+                max-height: 85vh;
+                border-radius: 12px;
+            }
+            .modal-header h2 { font-size: 1rem; }
+            .modal-section-title { font-size: 0.78rem; }
+            .modal-section-content { font-size: 0.82rem; }
+        }
+
+        @media (max-width: 400px) {
+            .flow-grid { grid-template-columns: repeat(2, 1fr); }
+            .brand h1 { font-size: 0.8rem; }
+        }
+
+        /* ── Unified navigation pills ── */
+        .nav-pill {
+            display: inline-flex; align-items: center; gap: 5px;
+            font-size: 0.64rem; font-weight: 800; letter-spacing: 0.04em;
+            padding: 5px 11px; border-radius: 999px; text-decoration: none;
+            border: 1px solid var(--wolf-border); color: var(--wolf-muted);
+            background: rgba(255,255,255,0.03); transition: transform .14s, background .14s, color .14s, border-color .14s;
+        }
+        .nav-pill:hover { transform: translateY(-1px); color: var(--wolf-text); }
+        .nav-pill.perf { border-color: rgba(0,210,255,0.4); color: var(--wolf-blue); }
+        .nav-pill.perf:hover { background: rgba(0,210,255,0.14); }
+        .nav-pill.funnel { border-color: rgba(251,113,133,0.45); color: #fb7185; }
+        .nav-pill.funnel:hover { background: rgba(251,113,133,0.14); }
+        .nav-pill.market { border-color: rgba(255,207,75,0.4); color: var(--wolf-gold); }
+        .nav-pill.market:hover { background: rgba(255,207,75,0.14); }
+        .nav-pill.backtest { border-color: rgba(192,132,252,0.45); color: #c084fc; }
+        .nav-pill.backtest:hover { background: rgba(192,132,252,0.14); }
+        .nav-pill.admin { border-color: rgba(129,140,248,0.45); color: #818cf8; }
+        .nav-pill.admin:hover { background: rgba(129,140,248,0.14); }
+        .nav-pill.paper { border-color: rgba(52,211,153,0.45); color: #34d399; }
+        .nav-pill.paper:hover { background: rgba(52,211,153,0.14); }
+        .nav-pill.account { border-color: rgba(255,207,75,0.55); color: var(--wolf-gold); }
+        .nav-pill.account:hover { background: rgba(255,207,75,0.16); }
+
+        /* ── Global polish (desktop + phone) ── */
+        html { scroll-behavior: smooth; }
+        ::-webkit-scrollbar { width: 9px; height: 9px; }
+        ::-webkit-scrollbar-track { background: rgba(255,255,255,0.02); }
+        ::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.14); border-radius: 999px; }
+        ::-webkit-scrollbar-thumb:hover { background: rgba(0,210,255,0.45); }
+        * { scrollbar-width: thin; scrollbar-color: rgba(255,255,255,0.18) transparent; }
+        a, button, input, select { -webkit-tap-highlight-color: transparent; }
+        :focus-visible { outline: 2px solid var(--wolf-blue); outline-offset: 2px; border-radius: 8px; }
+        ::selection { background: rgba(0,210,255,0.32); color: #fff; }
+        .btn, .btn-wolf, .btn-ghost, .nav-pill, .stat-card[data-href] { transition: transform .14s ease, box-shadow .14s ease, background .14s, border-color .14s, color .14s; }
+        .btn:active, .btn-wolf:active, .btn-ghost:active, .nav-pill:active { transform: translateY(1px) scale(0.98); }
+        /* Live account snapshot strip (admin) — real Binance ground truth */
+        .acct-strip { margin-bottom: 12px; }
+        .acct-link { display:flex; align-items:center; gap:18px; flex-wrap:wrap;
+            background: var(--wolf-card); border:1px solid var(--wolf-border);
+            border-left:4px solid var(--wolf-gold); border-radius:12px;
+            padding:10px 16px; text-decoration:none; color:var(--wolf-text);
+            transition: border-color .14s, transform .14s; }
+        .acct-link:hover { border-left-color: var(--wolf-blue); transform: translateY(-1px); }
+        .acct-title { font-size:.7rem; font-weight:800; letter-spacing:.05em; color:var(--wolf-gold); white-space:nowrap; }
+        .acct-net { font-size:.58rem; font-weight:800; letter-spacing:.05em; padding:2px 7px; border-radius:999px;
+            border:1px solid var(--wolf-border); color:var(--wolf-muted); }
+        .acct-cell { display:flex; flex-direction:column; line-height:1.2; }
+        .acct-k { font-size:.58rem; text-transform:uppercase; letter-spacing:.04em; color:var(--wolf-muted); }
+        .acct-cell b { font-size:.95rem; font-weight:800; }
+        .acct-arrow { margin-left:auto; color:var(--wolf-muted); font-weight:800; }
+        /* Cumulative realized-P&L sparkline (inline SVG, no chart lib) */
+        .acct-spark { display:inline-block; width:108px; height:28px; margin-top:1px; }
+        .acct-spark svg { display:block; }
+        /* Colorblind-safe P&L: colour PLUS a ▲/▼ glyph + sign, never colour alone */
+        .pnl-up { color: var(--long); } .pnl-down { color: var(--short); }
+        @media (max-width:720px){ .acct-link{ gap:12px; } .acct-arrow{ display:none; } }
+    </style>
+</head>
+<body>
+    <div class="page-wrap">
+        <!-- Header -->
+        <header class="top-bar">
+            <div class="tb-main">
+                <div class="brand">
+                    <div class="brand-icon">🐺</div>
+                    <div>
+                        <h1>WOLF <span>SCANNER</span></h1>
+                        <div class="brand-sub">Scan top {{ scan_limit }} · trade top {{ trade_limit }} · 1h</div>
+                    </div>
+                </div>
+                <div class="tb-right">
+                    <div class="tb-status">
+                        <span id="bot-status-badge">
+                            <span class="badge bg-success" style="font-size:.65rem;">BOT IDLE</span>
+                        </span>
+                        {% set _r = dashboard_summary.get('btc_regime', 'neutral') if dashboard_summary else 'neutral' %}
+                        <span class="tb-meta-item">BTC <span id="btc-regime-badge" class="btc-badge btc-{{ _r }}">{{ _r|upper }}</span></span>
+                    </div>
+                    <div class="tb-meta">
+                        <span class="tb-meta-item">👤 <b>{{ user.username|upper }}</b></span>
+                        <span class="tb-meta-item">🕐 <b id="last-update">{{ last_update }}</b> <span id="scan-age" class="scan-age"></span></span>
+                    </div>
+                    <span class="tb-sep"></span>
+                    <div class="tb-buttons">
+                        <button class="btn btn-ghost" onclick="openStrategyModal()">Rules</button>
+                        <button class="btn btn-wolf refresh-btn" onclick="fetchLivePrices()">↻ Refresh</button>
+                        <a href="{{ url_for('logout') }}" class="btn btn-ghost">Logout</a>
+                    </div>
+                </div>
+            </div>
+            {% include '_nav.html' %}
+        </header>
+
+        <!-- Daily Circuit-Breaker Banner -->
+        {% if circuit %}
+        <a href="{{ url_for('performance') }}" class="cb-banner {{ 'cb-halted' if circuit.halted else 'cb-ok' }}" title="Daily risk guardrail — click for full performance">
+            <span class="cb-ico">{{ '🛑' if circuit.halted else '✅' }}</span>
+            <span class="cb-main">{{ 'TRADING HALTED TODAY' if circuit.halted else 'Trading Allowed' }}</span>
+            {% if circuit.halted %}<span class="cb-reason">{{ circuit.halt_reason }}</span>{% endif %}
+            <span class="cb-stat">Net <b class="{{ 'up' if circuit.today_net_pnl > 0 else 'down' if circuit.today_net_pnl < 0 else '' }}">{{ "+" if circuit.today_net_pnl > 0 }}{{ circuit.today_net_pnl }}%</b></span>
+            <span class="cb-stat">Losses <b class="{{ 'down' if circuit.losses_today >= circuit.max_losses else '' }}">{{ circuit.losses_today }}/{{ circuit.max_losses }}</b></span>
+            <span class="cb-stat">Loss DD <b class="{{ 'down' if circuit.loss_drawdown <= circuit.max_drawdown_pct else '' }}">{{ circuit.loss_drawdown }}%/{{ circuit.max_drawdown_pct }}%</b></span>
+        </a>
+        {% endif %}
+
+        {% if user.is_admin %}
+        <!-- Live position protection banner (admin) — surfaces unprotected positions -->
+        <a href="{{ url_for('account') }}" id="protbanner" class="prot-banner" style="display:none;"></a>
+
+        <!-- Live strategy switcher (admin) — what the bot trades with REAL money -->
+        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;background:var(--wolf-card,#161a26);border:1px solid var(--wolf-border,#262c3d);border-left:4px solid var(--wolf-gold,#ffcf4b);border-radius:12px;padding:9px 14px;margin-bottom:12px;">
+            <span style="font-size:.7rem;font-weight:800;letter-spacing:.04em;text-transform:uppercase;color:var(--wolf-muted,#8a99ad);">⚙ Live strategy</span>
+            <span style="font-size:.8rem;color:var(--wolf-muted,#8a99ad);">Trading now: <b style="color:var(--wolf-text,#e6ecf5);" id="ds-ls-running">{{ live_strategy.running_name or '—' }}</b></span>
+            {% if live_strategy.diverged %}<span style="font-size:.68rem;color:var(--wolf-gold,#ffcf4b);font-weight:700;">⚠ saved “{{ live_strategy.saved_name }}” — restart bot to apply</span>{% endif %}
+            <select id="ds-ls-select" style="background:rgba(255,255,255,.04);border:1px solid var(--wolf-border,#262c3d);color:var(--wolf-text,#e6ecf5);font-size:.8rem;font-weight:600;padding:6px 9px;border-radius:8px;cursor:pointer;margin-left:auto;">
+                {% for s in live_strategy.strategies %}
+                <option value="{{ s.key }}" {% if s.key == live_strategy.saved %}selected{% endif %}>{{ s.name }}</option>
+                {% endfor %}
+            </select>
+            <button class="btn btn-wolf" id="ds-ls-save" onclick="dsSaveStrategy()">Save</button>
+        </div>
+
+        <!-- Live account snapshot (admin) — the REAL Binance account, so the
+             DB-based stats below can be sanity-checked against ground truth. -->
+        <div id="acct-strip" class="acct-strip" style="display:none;">
+            <a href="{{ url_for('account') }}" class="acct-link" title="Open the full account page">
+                <span class="acct-title">💰 LIVE ACCOUNT</span>
+                <span class="acct-net" id="acct-net">—</span>
+                <span class="acct-cell"><span class="acct-k">Equity</span><b id="acct-equity">—</b></span>
+                <span class="acct-cell"><span class="acct-k">Available</span><b id="acct-avail">—</b></span>
+                <span class="acct-cell"><span class="acct-k">Unrealized</span><b id="acct-upnl">—</b></span>
+                <span class="acct-cell"><span class="acct-k">Open positions</span><b id="acct-pos">—</b></span>
+                <span class="acct-cell acct-spark-cell" id="acct-spark-cell" title="Cumulative realized P&L (last trades)"><span class="acct-k">Realized trend</span><span class="acct-spark" id="acct-spark"></span></span>
+                <span class="acct-arrow">→</span>
+            </a>
+        </div>
+        {% endif %}
+
+        <!-- Stats -->
+        <div class="stats-strip">
+            <div class="stat-card">
+                <div class="stat-label">Hunting Signals</div>
+                <div class="stat-value accent" id="stat-total">{{ signals|length }}</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">Long / Short</div>
+                <div class="stat-value" style="font-size: 1.15rem; font-weight: 800;">
+                    <span style="color:var(--long)" id="stat-long">0</span> / <span style="color:var(--short)" id="stat-short">0</span>
+                </div>
+            </div>
+            <div class="stat-card" style="cursor: pointer;" data-href="{{ url_for('performance') }}" onclick="location.href=this.dataset.href">
+                <div class="stat-label">Win Rate (4+ Lights)</div>
+                <div class="stat-value" style="color: var(--long);">{{ perf_stats.win_rate }}%</div>
+            </div>
+            <div class="stat-card" style="cursor: pointer;" data-href="{{ url_for('performance') }}" onclick="location.href=this.dataset.href">
+                <div class="stat-label">Total Strategy PnL</div>
+                <div class="stat-value {% if perf_stats.total_pnl >= 0 %}accent{% else %}text-danger{% endif %}">
+                    {{ "+" if perf_stats.total_pnl > 0 }}{{ perf_stats.total_pnl }}%
+                </div>
+                {% if perf_stats.open_partials and perf_stats.open_partials > 0 %}
+                <div class="stat-label" style="margin-top:4px; font-size:11px; opacity:0.7;">
+                    incl. {{ perf_stats.open_partials }} open partial{{ "s" if perf_stats.open_partials > 1 }} (TP1 banked, still running)
+                </div>
+                {% endif %}
+            </div>
+            <div class="stat-card" style="cursor: pointer;" data-href="{{ url_for('funnel') }}" onclick="location.href=this.dataset.href" title="Why setups aren't queuing — full breakdown on the Funnel page">
+                <div class="stat-label">🔻 Funnel · Queued</div>
+                <div class="stat-value" id="funnel-queued" style="{% if funnel_summary.queued > 0 %}color: var(--wolf-gold, #ffcf4b);{% endif %}">{{ funnel_summary.queued }}</div>
+                {% if funnel_summary.top_blocker %}
+                <div class="stat-label" id="funnel-blocker" style="margin-top:4px; font-size:11px; opacity:0.75;">
+                    Top blocker: {{ funnel_summary.top_blocker.label }} ({{ funnel_summary.top_blocker.pct }}%)
+                </div>
+                {% endif %}
+            </div>
+        </div>
+
+        <!-- ── Top entry candidates ── -->
+        <section class="entries-panel">
+            <div class="entries-head">
+                <div>
+                    <div class="entries-title">🎯 Top Entry Candidates</div>
+                    <div class="entries-sub">Best setups from the latest scan — <b style="color:#ffcf4b">READY</b> = cleared every gate, resting at entry · <b>WATCH</b> = high confluence, still missing a gate</div>
+                </div>
+                <span class="entries-regime {{ top_entries.btc_regime }}" id="entries-regime">BTC {{ top_entries.btc_regime|upper }}</span>
+            </div>
+            <div class="entries-row" id="entries-row"></div>
+        </section>
+
+        <div class="analytics-grid">
+            <section class="analytics-panel">
+                <div class="analytics-head">
+                    <div>
+                        <div class="analytics-title">Signal Pulse</div>
+                        <div class="analytics-subtitle">Live scan health, queue pressure, and RSI extremes</div>
+                    </div>
+                    <a href="{{ url_for('performance') }}" class="analytics-link">Open Performance</a>
+                </div>
+                <div class="flow-grid">
+                    <div class="flow-card queued">
+                        <div class="flow-label">Queued Plans</div>
+                        <div class="flow-value" id="pulse-queued">{{ dashboard_summary.signals.queued }}</div>
+                        <div class="flow-note">Waiting for entry touch</div>
+                    </div>
+                    <div class="flow-card active">
+                        <div class="flow-label">Active Trades</div>
+                        <div class="flow-value" id="pulse-active">{{ dashboard_summary.trades.pending }}</div>
+                        <div class="flow-note">Live DB positions</div>
+                    </div>
+                    <div class="flow-card closed">
+                        <div class="flow-label">Recent Closed</div>
+                        <div class="flow-value" id="pulse-closed">{{ dashboard_summary.trades.recent_closed }}</div>
+                        <div class="flow-note">Last 20 closed max</div>
+                    </div>
+                </div>
+                <div class="insight-grid">
+                    <div class="insight-card">
+                        <div class="insight-label">Signal Bias</div>
+                        <div class="insight-value blue" id="signal-bias">{{ dashboard_summary.signals.bias }}</div>
+                        <div class="insight-note">
+                            <span id="signal-long-pct-note">{{ dashboard_summary.signals.long_pct }}</span>% long /
+                            <span id="signal-short-pct-note">{{ dashboard_summary.signals.short_pct }}</span>% short
+                        </div>
+                    </div>
+                    <div class="insight-card">
+                        <div class="insight-label">Average RSI</div>
+                        <div class="insight-value gold" id="avg-rsi">{{ dashboard_summary.signals.avg_rsi }}</div>
+                        <div class="insight-note">
+                            OB <span id="extreme-overbought">{{ dashboard_summary.signals.overbought }}</span> /
+                            OS <span id="extreme-oversold">{{ dashboard_summary.signals.oversold }}</span>
+                        </div>
+                    </div>
+                    <div class="insight-card">
+                        <div class="insight-label">Rejected Setups</div>
+                        <div class="insight-value red" id="signal-rejected">{{ dashboard_summary.signals.rejected }}</div>
+                        <div class="insight-note">Filtered out by trend, SMC, or direction edge</div>
+                    </div>
+                    <div class="insight-card">
+                        <div class="insight-label">High Conviction</div>
+                        <div class="insight-value green" id="signal-high-conviction">{{ dashboard_summary.signals.high_conviction }}</div>
+                        <div class="insight-note"><span id="signal-max-conviction">{{ dashboard_summary.signals.max_conviction }}</span> max-conviction cards</div>
+                    </div>
+                </div>
+                <div class="analysis-footer">
+                    <span class="mini-pill">Queued <span id="mini-queued">{{ dashboard_summary.signals.queued }}</span></span>
+                    <span class="mini-pill">Active <span id="mini-active">{{ dashboard_summary.signals.active }}</span></span>
+                    <span class="mini-pill">TP <span id="mini-tp">{{ dashboard_summary.signals.tp }}</span></span>
+                    <span class="mini-pill">SL <span id="mini-sl">{{ dashboard_summary.signals.sl }}</span></span>
+                </div>
+            </section>
+
+            <section class="analytics-panel">
+                <div class="analytics-head">
+                    <div>
+                        <div class="analytics-title">Trade Edge</div>
+                        <div class="analytics-subtitle">Compact analysis from your qualified trading history</div>
+                    </div>
+                    <a href="{{ url_for('performance') }}" class="analytics-link">Deep Dive</a>
+                </div>
+                <div class="insight-grid">
+                    <div class="insight-card">
+                        <div class="insight-label">Recent Win Rate</div>
+                        <div class="insight-value green" id="trade-recent-win-rate">{{ dashboard_summary.trades.recent_win_rate }}%</div>
+                        <div class="insight-note">
+                            <span id="trade-recent-wins">{{ dashboard_summary.trades.recent_wins }}</span>W /
+                            <span id="trade-recent-losses">{{ dashboard_summary.trades.recent_losses }}</span>L
+                        </div>
+                    </div>
+                    <div class="insight-card">
+                        <div class="insight-label">Best Edge</div>
+                        <div class="insight-value blue" id="best-edge-label">{{ dashboard_summary.trades.best_edge_label }}</div>
+                        <div class="insight-note" id="best-edge-note">{{ dashboard_summary.trades.best_edge_note }}</div>
+                    </div>
+                    <div class="insight-card">
+                        <div class="insight-label">Average Win</div>
+                        <div class="insight-value green" id="trade-avg-win">+{{ dashboard_summary.trades.avg_win }}%</div>
+                        <div class="insight-note">Closed winning trades only</div>
+                    </div>
+                    <div class="insight-card">
+                        <div class="insight-label">Average Loss</div>
+                        <div class="insight-value red" id="trade-avg-loss">{{ dashboard_summary.trades.avg_loss }}%</div>
+                        <div class="insight-note">Closed losing trades only</div>
+                    </div>
+                </div>
+                <div class="progress-stack" style="margin-top: 12px;">
+                    <div class="progress-row">
+                        <div class="progress-label">LONG WR</div>
+                        <div class="progress-track"><div class="progress-fill fill-green" id="dir-long-fill"></div></div>
+                        <div class="progress-value" id="dir-long-value">{{ dashboard_summary.direction.long.win_rate }}%</div>
+                    </div>
+                    <div class="progress-row">
+                        <div class="progress-label">SHORT WR</div>
+                        <div class="progress-track"><div class="progress-fill fill-red" id="dir-short-fill"></div></div>
+                        <div class="progress-value" id="dir-short-value">{{ dashboard_summary.direction.short.win_rate }}%</div>
+                    </div>
+                    <div class="progress-row">
+                        <div class="progress-label">4-Light WR</div>
+                        <div class="progress-track"><div class="progress-fill fill-blue" id="conviction-4-fill"></div></div>
+                        <div class="progress-value" id="conviction-4-value">{{ dashboard_summary.conviction.lights_4.win_rate }}%</div>
+                    </div>
+                    <div class="progress-row">
+                        <div class="progress-label">5-Light WR</div>
+                        <div class="progress-track"><div class="progress-fill fill-gold" id="conviction-5-fill"></div></div>
+                        <div class="progress-value" id="conviction-5-value">{{ dashboard_summary.conviction.lights_5.win_rate }}%</div>
+                    </div>
+                    <div class="progress-row">
+                        <div class="progress-label">6+ Light WR</div>
+                        <div class="progress-track"><div class="progress-fill" style="background: linear-gradient(90deg, #7c3aed, #c084fc);" id="conviction-6plus-fill"></div></div>
+                        <div class="progress-value" id="conviction-6plus-value">{{ dashboard_summary.conviction.lights_6plus.win_rate }}%</div>
+                    </div>
+                </div>
+            </section>
+        </div>
+
+        <!-- Main panel -->
+        <div class="panel">
+            <div class="panel-head">
+                <span>🔥</span>
+                <h2>Hunting Signals</h2>
+                <span class="signal-count-pill" id="dash-signal-count"></span>
+                <div class="legend-chips">
+                    <span class="chip">L1 StochRSI</span>
+                    <span class="chip">L2 Score</span>
+                    <span class="chip">L3 Trend</span>
+                    <span class="chip">L4 TSI</span>
+                    <span class="chip">L5 MACD</span>
+                    <span class="chip">SMC Confluence</span>
+                </div>
+            </div>
+
+            <!-- Filter bar -->
+            <div class="dash-filter-bar">
+                <div class="dash-filter-group dash-search-group">
+                    <input type="text" id="dash-search" class="dash-search" placeholder="🔍 Search symbol…" autocomplete="off">
+                </div>
+                <div class="dash-filter-group">
+                    <button class="dash-filter-btn active" data-dash-dir="ALL">All</button>
+                    <button class="dash-filter-btn" data-dash-dir="LONG">LONG</button>
+                    <button class="dash-filter-btn" data-dash-dir="SHORT">SHORT</button>
+                </div>
+                <div class="dash-filter-group">
+                    <button class="dash-filter-btn active" data-dash-status="ALL">All Status</button>
+                    <button class="dash-filter-btn" data-dash-status="queued">Queued</button>
+                    <button class="dash-filter-btn" data-dash-status="active">Active</button>
+                    <button class="dash-filter-btn" data-dash-status="closed">Closed</button>
+                </div>
+                <div class="dash-filter-group">
+                    <button class="dash-filter-btn active" data-dash-lights="ALL">All Lights</button>
+                    <button class="dash-filter-btn" data-dash-lights="4">4+</button>
+                    <button class="dash-filter-btn" data-dash-lights="5">5+</button>
+                    <button class="dash-filter-btn" data-dash-lights="6">6+</button>
+                </div>
+                <div class="dash-filter-group">
+                    <button class="dash-filter-btn active" data-dash-score="ALL">All Scores</button>
+                    <button class="dash-filter-btn" data-dash-score="7">7+</button>
+                    <button class="dash-filter-btn" data-dash-score="8">8+</button>
+                    <button class="dash-filter-btn" data-dash-score="10">10</button>
+                </div>
+                <div class="dash-filter-group">
+                    <button class="dash-filter-btn active" data-dash-rsi="ALL">All RSI</button>
+                    <button class="dash-filter-btn" data-dash-rsi="normal" title="Hide coins whose RSI is ≥ 90 or ≤ 10 (overextended / exhausted)">Hide ≥90/≤10</button>
+                    <button class="dash-filter-btn" data-dash-rsi="extreme" title="Show only coins whose RSI is ≥ 90 or ≤ 10">Only ≥90/≤10</button>
+                </div>
+            </div>
+
+            <!-- Unified aligned signal list -->
+            <div class="signal-list-wrap">
+                <div class="signal-list-header">
+                    <div class="signal-row-grid">
+                        <span class="h-cell">Asset</span>
+                        <span class="h-cell">Side</span>
+                        <span class="h-cell">Live</span>
+                        <span class="h-cell">RSI</span>
+                        <span class="h-cell">Lights</span>
+                        <span class="h-cell">SMC</span>
+                        <span class="h-cell">Score</span>
+                        <span class="h-cell"></span>
+                        <span class="h-cell">Chart</span>
+                    </div>
+                </div>
+                <div class="signal-cards" id="signal-cards-body">
+                    {% if signals %}
+                    {% for signal in signals %}
+                    <div class="signal-card {{ 'long-card' if signal.direction == 'LONG' else 'short-card' }} {{ 'max-conviction-card' if signal.get('effective_lights', 0) >= 5 else 'high-conviction-card' if signal.get('effective_lights', 0) >= 4 else '' }}{{ ' watch-only' if signal.get('tradeable') == False else '' }}" id="card-{{ signal.symbol|replace('/', '-')|replace(':', '-') }}" data-card-id="{{ signal.symbol|replace('/', '-')|replace(':', '-') }}" data-dir="{{ signal.direction }}" data-status="{{ signal.trade_status or '' }}" data-lights="{{ signal.get('effective_lights', 0) }}" data-score="{{ signal.score or 0 }}" data-rsi="{{ signal.rsi }}">
+                        <div class="signal-row-grid signal-row-hit" role="button" tabindex="0" aria-expanded="false">
+                            <div class="cell cell-asset">
+                                <div>
+                                    <a href="{{ signal.tv_url }}" target="_blank" class="symbol-tag" style="color: var(--wolf-blue); text-decoration: none;" onclick="event.stopPropagation()">{{ signal.symbol }}</a>{% if signal.get('tradeable') == False %}<span class="watch-only-badge" title="Scanned for market breadth — ranked outside the tradeable top pairs, so it never queues or trades.">Watch only</span>{% endif %}
+                                    {% if signal.trade_status %}
+                                    <div class="asset-meta">
+                                        <span class="trade-status-badge status-{{ signal.trade_status|lower }}">
+                                            {% if signal.trade_status == 'queued' %}QUEUED{% elif signal.trade_status == 'rejected' %}REJECTED{% elif signal.trade_status in ['active', 'pending'] %}PENDING{% elif signal.trade_status == 'tp1_partial' %}TP1 PARTIAL{% elif signal.trade_status == 'tp' %}TP ✓{% elif signal.trade_status == 'sl' %}SL ✗{% elif signal.trade_status == 'manual_close' %}MANUAL CLOSED{% else %}{{ signal.trade_status|upper }}{% endif %}
+                                        </span>
+                                        {% if signal.record_status_reason %}
+                                        <span class="trade-status-reason">{{ signal.record_status_reason }}</span>
+                                        {% endif %}
+                                    </div>
+                                    {% endif %}
+                                </div>
+                            </div>
+                            <div class="cell cell-side">
+                                <span class="side-pill {{ 'side-long' if signal.direction == 'LONG' else 'side-short' }}">{{ signal.direction }}</span>
+                            </div>
+                            <div class="cell cell-live live-price-cell">
+                                <span class="live-val">
+                                    {% if signal.current_price is not none %}
+                                        {% if signal.current_price < 0.0001 %}
+                                            {{ "%.8f"|format(signal.current_price) }}
+                                        {% elif signal.current_price < 0.01 %}
+                                            {{ "%.6f"|format(signal.current_price) }}
+                                        {% elif signal.current_price < 1 %}
+                                            {{ "%.4f"|format(signal.current_price) }}
+                                        {% else %}
+                                            {{ "%.2f"|format(signal.current_price) }}
+                                        {% endif %}
+                                    {% else %}
+                                        ...
+                                    {% endif %}
+                                </span>
+                            </div>
+                            <div class="cell cell-rsi {{ 'rsi-high' if signal.rsi >= rsi_upper else 'rsi-low' if signal.rsi <= rsi_lower else '' }}">{{ "%.1f"|format(signal.rsi) }}</div>
+                            <div class="cell cell-lights">
+                                <div class="lights" title="Filled = passed light · hollow = missed · violet = SMC bonus. Total dots = lights used by the 4+/5+/6+ filter.">
+                                    {% for light in signal.lights %}
+                                    <div class="light {{ 'on' if light else 'off' }}"></div>
+                                    {% endfor %}
+                                    {% set base_count = signal.lights|select|list|length %}
+                                    {% set smc_bonus = signal.get('effective_lights', 0) - base_count %}
+                                    {% if smc_bonus > 0 %}
+                                    <span class="smc-divider"></span>
+                                    {% for _ in range(smc_bonus) %}
+                                    <div class="light smc"></div>
+                                    {% endfor %}
+                                    {% endif %}
+                                </div>
+                            </div>
+                            <div class="cell cell-smc">
+                                {% if signal.smc %}
+                                <span class="smc-zone-pill {{ signal.smc.zone_type }}">{{ signal.smc.zone_label }}</span>
+                                {% else %}<span class="cell-dash">—</span>{% endif %}
+                            </div>
+                            <div class="cell cell-score">
+                                <span class="score-badge {{ 'score-high' if signal.score >= 10 else 'score-strong' if signal.score >= 7 else 'score-watch' }}">{{ signal.score }}</span>
+                            </div>
+                            <div class="cell cell-chevron"><span class="chevron">▼</span></div>
+                            <div class="cell cell-chart">
+                                <a href="{{ signal.tv_url }}" target="_blank" class="tv-btn" onclick="event.stopPropagation()">View</a>
+                            </div>
+                        </div>
+                        <div class="card-expand">
+                            <div class="card-expand-inner">
+                                <div class="expand-metrics">
+                                    <div class="metric-box">
+                                        <div class="metric-label">Live Price</div>
+                                        <div class="metric-val metric-live-price">
+                                            {% if signal.current_price is not none %}
+                                                {% if signal.current_price < 0.0001 %}{{ "%.8f"|format(signal.current_price) }}
+                                                {% elif signal.current_price < 0.01 %}{{ "%.6f"|format(signal.current_price) }}
+                                                {% elif signal.current_price < 1 %}{{ "%.4f"|format(signal.current_price) }}
+                                                {% else %}{{ "%.2f"|format(signal.current_price) }}{% endif %}
+                                            {% else %}...{% endif %}
+                                        </div>
+                                    </div>
+                                    <div class="metric-box">
+                                        <div class="metric-label">Conviction</div>
+                                        <div class="metric-val {% if signal.get('effective_lights', 0) >= 5 %}conviction-max{% elif signal.get('effective_lights', 0) >= 4 %}conviction-high{% else %}conviction-normal{% endif %}">
+                                            {{ signal.conviction }} ({{ signal.get('effective_lights', 0) }} lights)
+                                        </div>
+                                    </div>
+                                    <div class="metric-box">
+                                        <div class="metric-label">EMA50 Trend</div>
+                                        <div class="metric-val">
+                                            {% if signal.get('trend_aligned') is not none %}
+                                                <span class="side-pill {{ 'side-long' if signal.get('trend_aligned') else 'side-short' }}" style="font-size: 0.7rem; min-width: auto; height: auto; padding: 2px 8px;">
+                                                    {{ "ALIGNED ✓" if signal.get('trend_aligned') else "CONTRARY ✗" }}
+                                                </span>
+                                            {% else %}
+                                                <span class="text-muted">-</span>
+                                            {% endif %}
+                                        </div>
+                                    </div>
+                                    <div class="metric-box">
+                                        <div class="metric-label">SMC Zone</div>
+                                        <div class="metric-val">
+                                            {% if signal.smc %}
+                                                <span class="smc-zone-pill {{ signal.smc.zone_type }}" style="font-size: 0.7rem; padding: 2px 8px; margin: 0;">
+                                                    {{ signal.smc.zone_label|upper }}
+                                                </span>
+                                            {% else %}
+                                                <span class="text-muted">-</span>
+                                            {% endif %}
+                                        </div>
+                                    </div>
+                                </div>
+                                {% if signal.smc %}
+                                <div class="card-section">
+                                    <div class="card-section-title">SMC 1h</div>
+                                    <span class="smc-zone-pill {{ signal.smc.zone_type }}">{{ signal.smc.zone_label }}</span>
+                                    {{ signal.smc.summary }}
+                                    {% if signal.smc.swing_low and signal.smc.swing_high %}
+                                    <br><small>Swing L {{ signal.smc.swing_low }} · H {{ signal.smc.swing_high }}</small>
+                                    {% endif %}
+                                    {% if signal.smc.details %}<br><small>{{ signal.smc.details|join(' · ') }}</small>{% endif %}
+                                </div>
+                                {% endif %}
+                                {% if signal.sl %}
+                                <div class="card-section">
+                                    <div class="card-section-title">Trade Plan</div>
+                                    <div class="trade-plan">
+                                        {% if signal.entry %}
+                                        <div class="plan-row plan-entry">
+                                            <span class="plan-label">Entry</span>
+                                            <span class="plan-value">{{ signal.entry }}</span>
+                                        </div>
+                                        {% endif %}
+                                        {% if signal.tp %}
+                                        <div class="plan-row plan-tp">
+                                            <span class="plan-label">TP1 (+3%)</span>
+                                            <span class="plan-value">{{ signal.tp }}</span>
+                                        </div>
+                                        {% endif %}
+                                        {% if signal.tp2 %}
+                                        <div class="plan-row plan-tp">
+                                            <span class="plan-label">TP2 (+6%)</span>
+                                            <span class="plan-value">{{ signal.tp2 }}</span>
+                                        </div>
+                                        {% endif %}
+                                        <div class="plan-row plan-sl">
+                                            <span class="plan-label">SL</span>
+                                            <span class="plan-value">{{ signal.sl }}</span>
+                                        </div>
+                                        {% if signal.exit_price %}
+                                        <div class="plan-row" style="background: rgba(245,158,11,0.08); border-color: rgba(245,158,11,0.2);">
+                                            <span class="plan-label" style="color:#f59e0b;">Exit Price</span>
+                                            <span class="plan-value" style="color:#f59e0b;">{{ signal.exit_price }}</span>
+                                        </div>
+                                        {% endif %}
+                                        {% if signal.trade_status == 'queued' %}
+                                        <div class="plan-meta">Waiting for price to reach entry — activates on touch.</div>
+                                        {% elif signal.trade_status in ['active', 'pending', 'tp1_partial'] %}
+                                        <div class="plan-meta">Trade is live. Monitoring every 1 minute.</div>
+                                        {% elif signal.trade_status in ['tp', 'sl', 'manual_close'] %}
+                                        <div class="plan-meta">Trade closed.</div>
+                                        {% else %}
+                                        <div class="plan-meta">Plan calculated at last scan.</div>
+                                        {% endif %}
+                                    </div>
+                                </div>
+                                {% endif %}
+                                {% if signal.details %}
+                                <div class="card-section">
+                                    <div class="card-section-title">Strategy Signals</div>
+                                    {{ signal.details|join(' · ') }}
+                                </div>
+                                {% endif %}
+                            </div>
+                        </div>
+                    </div>
+                    {% endfor %}
+                    {% else %}
+                    <div class="empty-state"><div class="icon">🌙</div><p>The pack is quiet. No signals yet.</p></div>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Strategy Rules Modal -->
+    <div class="modal-overlay" id="strategyModal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>🐺 Wolf Scanner Strategy Rules</h2>
+                <button class="modal-close" onclick="closeStrategyModal()">&times;</button>
+            </div>
+
+            <div class="modal-section">
+                <div class="modal-section-title">Overview — How a Trade Happens</div>
+                <div class="modal-section-content">
+                    Wolf Scanner <strong>scans the top {{ scan_limit }}</strong> Binance Futures pairs on the <strong>1-hour</strong> chart for market breadth, but only <strong>trades the most liquid top {{ trade_limit }}</strong> — the rest are shown with a <span class="watch-only-badge">Watch only</span> tag and never generate a trade. The flow is:
+                    <ol style="margin: 8px 0 0; padding-left: 20px; line-height: 1.9;">
+                        <li><strong>Scan</strong> every hour → score each coin with 5 base "lights" + SMC bonus lights.</li>
+                        <li><strong>Qualify</strong> only the strongest setups (5+ lights) that also pass every filter below.</li>
+                        <li><strong>Queue</strong> a resting entry at a planned price — the trade waits until price actually touches that entry (no chasing).</li>
+                        <li><strong>Fill & manage</strong> — once touched, the position opens with a fixed Stop-Loss and a two-stage Take-Profit (50% / 50%).</li>
+                    </ol>
+                    <div style="margin-top:10px; font-size:0.8rem; color:var(--wolf-muted);">Every trade risks a defined amount (R = entry → stop distance) so reward is always measured in multiples of risk.</div>
+                </div>
+            </div>
+
+            <div class="modal-section">
+                <div class="modal-section-title">Conviction System — 5 Base Lights + SMC Bonus</div>
+                <div class="modal-section-content">
+                    <div class="light-explanation">
+                        <div class="light-item">
+                            <div class="light-item-title">L1: Stochastic RSI (StochRSI)</div>
+                            <div class="light-item-desc">
+                                Applies a stochastic formula to RSI-14 values, producing K and D lines that oscillate 0–100.
+                                Parameters: RSI(14) → Stoch(14) → K smooth(3) → D smooth(3).
+                                <br><br>
+                                <span style="color:var(--long); font-weight:700;">LONG signal</span>: K &lt; 20 (oversold zone) or K crosses above D while K &lt; 35.
+                                <br>
+                                <span style="color:var(--short); font-weight:700;">SHORT signal</span>: K &gt; 80 (overbought zone) or K crosses below D while K &gt; 65.
+                                <br><br>
+                                Unlike raw RSI which rarely hits 90/10 on altcoin charts, StochRSI oscillates the full 0–100 range frequently — detecting <em>momentum reversals within RSI</em> rather than absolute extremes. Replaces the old RSI ≤10 / ≥90 threshold.
+                            </div>
+                        </div>
+                        <div class="light-item">
+                            <div class="light-item-title">L2: Strategy Score (≥8 / 10)</div>
+                            <div class="light-item-desc">
+                                A 0–10 bull/bear score built from RSI recovery/rejection, volume surges, OBV trend, Bollinger-band breakouts and support/resistance breaks. A breakout only scores if volume ≥ 1.5× its 20-bar average. The light fires only when the score reaches <strong>8 or higher</strong>.
+                            </div>
+                        </div>
+                        <div class="light-item">
+                            <div class="light-item-title">L3: EMA Momentum / Trend</div>
+                            <div class="light-item-desc">
+                                Price must be above (LONG) or below (SHORT) the EMA50, confirming the short-term trend agrees with the trade direction.
+                            </div>
+                        </div>
+                        <div class="light-item">
+                            <div class="light-item-title">L4: TSI Signal</div>
+                            <div class="light-item-desc">
+                                True Strength Index (TSI) must show bullish (LONG) or bearish (SHORT) momentum confirmation.
+                            </div>
+                        </div>
+                        <div class="light-item">
+                            <div class="light-item-title">L5: MACD Signal</div>
+                            <div class="light-item-desc">
+                                MACD must show bullish (LONG) or bearish (SHORT) crossover or momentum confirmation.
+                            </div>
+                        </div>
+                    </div>
+                    <div style="margin-top: 14px; padding: 12px 14px; background: rgba(124,58,237,0.08); border: 1px solid rgba(124,58,237,0.25); border-radius: 10px;">
+                        <div style="font-size: 0.78rem; font-weight: 800; color: #c084fc; text-transform: uppercase; letter-spacing: 0.8px; margin-bottom: 8px;">SMC Bonus Lights (can push total above 5)</div>
+                        <ul style="margin: 0; padding-left: 18px; font-size: 0.82rem; color: var(--wolf-muted); line-height: 1.8;">
+                            <li><strong style="color: var(--wolf-text);">+2 Liquidity Sweep:</strong> Price swept a prior swing high/low (stop-hunt) before reversing — highest-conviction SMC signal.</li>
+                            <li><strong style="color: var(--wolf-text);">+1 CHoCH (Change of Character):</strong> Market structure broke in favor of the trade direction, confirming a trend shift.</li>
+                            <li><strong style="color: var(--wolf-text);">+1 or +2 Order Block Grade:</strong> +1 for a standard OB in confluence, +2 for a premium-grade OB (strong reaction history, clean impulse).</li>
+                        </ul>
+                        <div style="margin-top: 8px; font-size: 0.78rem; color: var(--wolf-muted);">
+                            The SMC bonus is <strong style="color:#c084fc;">capped at +3</strong>, so maximum effective lights = <strong style="color: #c084fc;">8</strong> (5 base + 3 SMC). A <strong style="color: #c084fc;">6+ light</strong> setup means every base condition is met plus strong SMC confirmation.
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="modal-section">
+                <div class="modal-section-title">Trade Plan — Risk-Based 1 : 2</div>
+                <div class="modal-section-content">
+                    <div style="margin-bottom:10px; padding:10px 12px; background:rgba(0,210,255,0.06); border:1px solid rgba(0,210,255,0.25); border-radius:10px; font-size:0.82rem;">
+                        <strong style="color:var(--wolf-blue);">R = the risk</strong> = distance from entry to stop-loss. Targets are set as multiples of R, so the reward-to-risk is a true <strong>1 : 2</strong> on every coin, no matter its volatility.
+                    </div>
+                    <ul>
+                        <li><strong>Entry:</strong> A planned price set an ATR-based offset below (LONG) / above (SHORT) the current price. The setup is <strong>queued</strong> and only fills when price actually touches that level (a resting limit, not a market chase).</li>
+                        <li><strong>Stop-Loss (SL):</strong> ATR × 1.5 beyond the nearest swing high/low (structure), <strong>capped at 4% max</strong>. This distance defines 1R.</li>
+                        <li><strong>TP1 = 1R</strong> (1× the stop distance): close <strong>50%</strong> of the position to lock in profit.</li>
+                        <li><strong>Runner (remaining 50%):</strong> closes at <strong>TP2 = 2R</strong>, with the stop moved to <strong>breakeven</strong> after TP1 (so the runner can't turn into a loss). <em>A trailing-runner variant was backtested and dropped — it added no edge and only made the live exchange behave differently from the dashboard. This exact bracket (TP1 1R, TP2 2R, breakeven stop) is what runs live, so the simulation and a real account match.</em></li>
+                        <li><strong>Minimum conviction: ≥ 5 effective lights</strong> (both directions).
+                            <ul>
+                                <li>Backtesting (90-trade sample) proved 4-light setups have a <strong>negative edge</strong> (34.6% win, −0.27R) while 5+ lights are clearly profitable (+0.24R). Raising the floor to 5 roughly <strong>tripled the strategy's expectancy</strong>.</li>
+                                <li>At least <strong>2 of the 5 base lights</strong> must be real — SMC bonus lights alone can never qualify a trade.</li>
+                            </ul>
+                        </li>
+                    </ul>
+                </div>
+            </div>
+
+            <div class="modal-section">
+                <div class="modal-section-title">Entry Conditions — Symmetric (LONG = SHORT)</div>
+                <div class="modal-section-content">
+                    <div style="margin-bottom:10px; padding:10px 12px; background:rgba(124,58,237,0.08); border:1px solid rgba(124,58,237,0.25); border-radius:10px; font-size:0.82rem;">
+                        Every rule below is a <strong>mirror image</strong> for both directions, so the bot takes <strong>longs and shorts with equal opportunity</strong> — no more all-long bias when the market turns down.
+                    </div>
+                    <ul>
+                        <li><strong>🟠 BTC regime ("don't fight Bitcoin"):</strong> alts amplify BTC's move, so the bot blocks <span style="color:var(--long);">LONGs while BTC is in a bear regime</span> and <span style="color:var(--short);">SHORTs while BTC is bullish</span> (BTC vs a rising/falling 1H EMA50). This is the biggest win-rate lever — it stops you fighting the whole market.</li>
+                        <li><strong>Conviction lights:</strong> <strong>≥ 5 effective lights for both</strong> LONG and SHORT, with ≥ 2 real base lights (SMC bonus alone can't qualify). <em>Raised from 4 — backtests proved the 4-light tier had a negative edge.</em></li>
+                        <li><strong>RSI guard (avoid exhausted extremes):</strong>
+                            <ul>
+                                <li><span style="color:var(--long); font-weight:700;">LONG:</span> blocked when RSI ≥ 80 (don't buy the blow-off top).</li>
+                                <li><span style="color:var(--short); font-weight:700;">SHORT:</span> blocked when RSI ≤ 20 (don't short the capitulation bottom).</li>
+                            </ul>
+                        </li>
+                        <li><strong>4H trend bias:</strong> LONG only when price &gt; 4H EMA50; SHORT only when price &lt; 4H EMA50.</li>
+                        <li><strong>EMA50 / EMA200 alignment</strong> in the trade direction (1h).</li>
+                        <li><strong>Momentum aligned:</strong> RSI rising for LONG, falling for SHORT.</li>
+                        <li><strong>Volume gate:</strong> signal candle volume ≥ 1.5× the recent average.</li>
+                        <li><strong>SMC zone (symmetric):</strong> the swing range is split <strong>discount (lower 40%) · equilibrium (middle 20%) · premium (upper 40%)</strong>. LONG is <em>blocked in premium</em>, SHORT is <em>blocked in discount</em>. Entering at the <strong>ideal</strong> zone (LONG in discount, SHORT in premium) earns a <strong>+1 bonus light</strong> — rewarded, not required.</li>
+                        <li><strong>Not over-extended:</strong> price must still be below TP1 (LONG) / above TP1 (SHORT).</li>
+                        <li><strong>Data quality:</strong> ≥ 60 closed candles + a fresh latest candle.</li>
+                        <li><strong>No active same-direction trade</strong> already open on that symbol.</li>
+                    </ul>
+                </div>
+            </div>
+
+            <div class="modal-section">
+                <div class="modal-section-title">Risk Protection &amp; Cooldowns</div>
+                <div class="modal-section-content">
+                    <ul>
+                        <li><strong>Partial take-profit:</strong> 50% closed at TP1 (1R), 50% rides to TP2 (2R) — same in dry-run and live.</li>
+                        <li><strong>After a stop-loss (SL):</strong> that symbol + direction is on a <strong>3-hour cooldown</strong> — no re-entry, because freshly-invalidated setups tend to chop. (The opposite direction is still allowed.)</li>
+                        <li><strong>After a take-profit (TP):</strong> <strong>no cooldown</strong> — the coin can re-qualify on the very next scan (the "not over-extended" rule still stops you chasing the same move).</li>
+                        <li><strong>Queue hygiene:</strong> if a queued setup's <em>target</em> prints before the entry fills, the queue is auto-cancelled (the move already happened — chasing it loses). A duplicate pending entry won't be re-recorded within 2 hours.</li>
+                    </ul>
+                </div>
+            </div>
+
+            <div class="modal-section">
+                <div class="modal-section-title">Daily Circuit Breaker</div>
+                <div class="modal-section-content">
+                    The bot <strong>halts all new trades for the rest of the day</strong> (Taiwan time, resets at midnight) when either limit is hit:
+                    <ul style="margin-top:8px;">
+                        <li><strong>{{ circuit.max_losses if circuit else 5 }} losing trades</strong> in one day, <em>or</em></li>
+                        <li><strong>{{ circuit.max_drawdown_pct if circuit else -5.0 }}% cumulative loss</strong> in one day (sum of losing trades only — wins don't offset it).</li>
+                    </ul>
+                    <div style="margin-top:8px; font-size:0.8rem; color:var(--wolf-muted);">Only <em>new</em> entries are blocked — trades already open keep running their TP/SL. The banner at the top of the dashboard shows today's live status.</div>
+                </div>
+            </div>
+
+            <div class="modal-section">
+                <div class="modal-section-title">Cadence &amp; Controls</div>
+                <div class="modal-section-content">
+                    <ul>
+                        <li>Scans the <strong>top {{ scan_limit }}</strong> pairs by volume on Binance Futures for a diverse market view; only the most liquid <strong>top {{ trade_limit }}</strong> are tradeable (others carry a <span class="watch-only-badge">Watch only</span> tag).</li>
+                        <li>New-signal scan every <strong>hour</strong> (on the 1h candle close); queued + open trades are re-checked every <strong>1 minute</strong> (with 1-minute candle wicks) for fast, accurate TP/SL fills.</li>
+                        <li><strong>Manual close:</strong> close an open trade from the Performance page — it won't count as a win or loss.</li>
+                        <li><strong>Remove queued:</strong> drop a waiting setup from the Performance page before it fills.</li>
+                    </ul>
+                </div>
+            </div>
+
+            <div class="modal-section">
+                <div class="modal-section-title">Live vs Simulation — Know the Difference</div>
+                <div class="modal-section-content">
+                    The dashboard always runs the <strong>simulation</strong> tracker. A live Binance account (when enabled) follows the same plan with two intentional differences in how the stop is managed:
+                    <div style="overflow-x:auto; margin-top:10px;">
+                    <table style="width:100%; border-collapse:collapse; font-size:0.8rem;">
+                        <thead>
+                            <tr style="text-align:left; color:var(--wolf-muted); border-bottom:1px solid var(--wolf-border);">
+                                <th style="padding:6px 8px; font-weight:700;">Behaviour</th>
+                                <th style="padding:6px 8px; font-weight:700; color:var(--wolf-blue);">Simulation (dashboard)</th>
+                                <th style="padding:6px 8px; font-weight:700; color:var(--wolf-gold);">Live account</th>
+                            </tr>
+                        </thead>
+                        <tbody style="color:var(--wolf-text);">
+                            <tr style="border-bottom:1px solid rgba(255,255,255,0.05);">
+                                <td style="padding:7px 8px; color:var(--wolf-muted);">Entry / TP1 / TP2</td>
+                                <td style="padding:7px 8px;">Queued entry, 50% at 1R, 50% at 2R</td>
+                                <td style="padding:7px 8px;">Resting LIMIT + two reduce-only TP orders (50% / 50%) — <strong>identical</strong></td>
+                            </tr>
+                            <tr style="border-bottom:1px solid rgba(255,255,255,0.05);">
+                                <td style="padding:7px 8px; color:var(--wolf-muted);">Stop-loss before TP1</td>
+                                <td style="padding:7px 8px;">Full position at ATR/structure stop</td>
+                                <td style="padding:7px 8px;">Full position <strong>STOP_MARKET on the exchange</strong> — identical (protects you even if the bot is offline)</td>
+                            </tr>
+                            <tr style="border-bottom:1px solid rgba(255,255,255,0.05);">
+                                <td style="padding:7px 8px; color:var(--wolf-muted);">Runner after TP1</td>
+                                <td style="padding:7px 8px; color:#4ade80;">TP2 at <strong>2R</strong>, stop moved to <strong>breakeven</strong></td>
+                                <td style="padding:7px 8px; color:#4ade80;">Identical — reduce-only TP2 order + breakeven STOP_MARKET — <strong>matches</strong></td>
+                            </tr>
+                            <tr>
+                                <td style="padding:7px 8px; color:var(--wolf-muted);">Sizing</td>
+                                <td style="padding:7px 8px;">Tracks % return only</td>
+                                <td style="padding:7px 8px;">Real margin = fixed USDT × leverage × conviction scale</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                    </div>
+                    <div style="margin-top:10px; padding:10px 12px; background:rgba(22,163,74,0.08); border:1px solid rgba(22,163,74,0.25); border-radius:10px; font-size:0.8rem;">
+                        <strong style="color:#4ade80;">Bottom line:</strong> the live account mirrors the dashboard <strong>end-to-end</strong> — same entries, same 50/50 partial TPs (TP1 1R, TP2 2R), exchange-side full stop, and breakeven after TP1. The <strong>only</strong> difference is real position sizing (margin × leverage). So whatever PnL you see on the web is what a connected account would have done. Live trading is <strong>OFF by default</strong> (dry-run) until you add API keys and flip <code>LIVE_TRADING=true</code>.
+                    </div>
+                </div>
+            </div>
+
+            <div class="modal-section">
+                <div class="modal-section-title">SMC (Smart Money Concepts)</div>
+                <div class="modal-section-content">
+                    <ul>
+                        <li>Identifies support/resistance zones</li>
+                        <li>Checks swing highs and lows</li>
+                        <li>Looks for price reaction at key liquidity zones</li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script id="initial-signals" type="application/json">{{ signals|tojson }}</script>
+    <script id="initial-dashboard-summary" type="application/json">{{ dashboard_summary|tojson }}</script>
+    <script>
+        // Live strategy switcher (admin) — saves to .env; takes effect on bot restart.
+        function dsSaveStrategy() {
+            const sel = document.getElementById('ds-ls-select');
+            if (!sel) return;
+            const name = sel.options[sel.selectedIndex].textContent;
+            if (!confirm('Set the LIVE bot strategy to "' + name + '"?\n\n' +
+                'This controls what trades REAL money and takes effect only after you ' +
+                'restart the bot (./run_all.sh) — a running bot is not hot-reloaded.')) return;
+            const tok = "{{ csrf_token() }}";
+            const btn = document.getElementById('ds-ls-save'); btn.disabled = true;
+            const body = new URLSearchParams(); body.set('csrf_token', tok); body.set('strategy', sel.value);
+            fetch('/api/account/live_strategy', { method: 'POST', headers: { 'X-CSRFToken': tok }, body })
+                .then(r => r.json()).then(d => {
+                    btn.disabled = false;
+                    alert(d.ok ? 'Saved. Restart the bot (./run_all.sh) to apply.' : (d.error || 'Save failed'));
+                }).catch(() => { btn.disabled = false; alert('Save failed'); });
+        }
+
+        // Strategy Modal Functions
+        function openStrategyModal() {
+            document.getElementById('strategyModal').classList.add('active');
+        }
+        function closeStrategyModal() {
+            document.getElementById('strategyModal').classList.remove('active');
+        }
+        // Close modal when clicking outside
+        document.addEventListener('click', function(e) {
+            const modal = document.getElementById('strategyModal');
+            if (e.target === modal) {
+                closeStrategyModal();
+            }
+        });
+        // Close modal with Escape key
+        document.addEventListener('keydown', function(e) {
+            if (e.key === 'Escape') {
+                closeStrategyModal();
+            }
+        });
+
+        let lastScanTime = "{{ last_update }}";
+        const rsiUpper = Number("{{ rsi_upper }}");
+        const rsiLower = Number("{{ rsi_lower }}");
+        const expandedCards = new Set();
+
+        function rowId(symbol) {
+            return symbol.replace(/\//g, '-').replace(/:/g, '-');
+        }
+
+        function scoreClass(score) {
+            if (score >= 10) return 'score-high';
+            if (score >= 7) return 'score-strong';
+            return 'score-watch';
+        }
+
+        function rsiClass(rsi) {
+            if (rsi >= rsiUpper) return 'rsi-high';
+            if (rsi <= rsiLower) return 'rsi-low';
+            return '';
+        }
+
+        function smcPillClass(zoneType) {
+            if (zoneType === 'support') return 'support';
+            if (zoneType === 'resistance') return 'resistance';
+            if (zoneType === 'equilibrium') return 'equilibrium';
+            return 'neutral';
+        }
+
+        function renderLights(lights, effectiveLights) {
+            if (!lights || !lights.length) {
+                return '<div class="light off"></div>'.repeat(5);
+            }
+            const dots = lights.map(on => `<div class="light ${on ? 'on' : 'off'}"></div>`).join('');
+            const baseCount = lights.filter(Boolean).length;
+            const bonus = (Number(effectiveLights) || 0) - baseCount;
+            let smc = '';
+            if (bonus > 0) {
+                smc = '<span class="smc-divider"></span>' + '<div class="light smc"></div>'.repeat(bonus);
+            }
+            return dots + smc;
+        }
+
+        function statusInfo(signal) {
+            const status = (signal.trade_status || '').toLowerCase();
+            if (status === 'queued') return { label: 'QUEUED', cls: 'status-queued' };
+            if (status === 'rejected') return { label: 'REJECTED', cls: 'status-rejected' };
+            if (status === 'active') return { label: 'PENDING', cls: 'status-active' };
+            if (status === 'pending') return { label: 'PENDING', cls: 'status-active' };
+            if (status === 'tp') return { label: 'TP ✓', cls: 'status-tp' };
+            if (status === 'sl') return { label: 'SL ✗', cls: 'status-sl' };
+            if (status === 'manual_close') return { label: 'MANUAL CLOSED', cls: 'status-manual_close' };
+            if (status === 'tp1_partial') return { label: 'TP1 PARTIAL', cls: 'status-tp1_partial' };
+            return null;
+        }
+
+        function formatLiveValue(value) {
+            const numeric = Number(value);
+            if (!Number.isFinite(numeric)) return '...';
+            if (numeric < 0.0001) return numeric.toFixed(8);
+            if (numeric < 0.01) return numeric.toFixed(6);
+            if (numeric < 1) return numeric.toFixed(4);
+            return numeric.toFixed(2);
+        }
+
+        function renderExpandMetrics(signal) {
+            const effLights = signal.effective_lights || 0;
+            const convClass = effLights >= 5 ? 'conviction-max' : (effLights >= 4 ? 'conviction-high' : 'conviction-normal');
+            const trendText = signal.trend_aligned === true ? 'ALIGNED ✓' : (signal.trend_aligned === false ? 'CONTRARY ✗' : '-');
+            const trendClass = signal.trend_aligned === true ? 'side-long' : (signal.trend_aligned === false ? 'side-short' : 'text-muted');
+            const smcText = signal.smc ? signal.smc.zone_label.toUpperCase() : '-';
+            const smcClass = signal.smc ? smcPillClass(signal.smc.zone_type) : 'text-muted';
+            const liveValue = formatLiveValue(signal.current_price);
+
+            return `
+                <div class="expand-metrics">
+                    <div class="metric-box">
+                        <div class="metric-label">Live Price</div>
+                        <div class="metric-val metric-live-price">${liveValue}</div>
+                    </div>
+                    <div class="metric-box">
+                        <div class="metric-label">Conviction</div>
+                        <div class="metric-val ${convClass}">
+                            ${signal.conviction} (${effLights} lights)
+                        </div>
+                    </div>
+                    <div class="metric-box">
+                        <div class="metric-label">EMA50 Trend</div>
+                        <div class="metric-val">
+                            <span class="side-pill ${trendClass}" style="font-size: 0.7rem; min-width: auto; height: auto; padding: 2px 8px;">
+                                ${trendText}
+                            </span>
+                        </div>
+                    </div>
+                    <div class="metric-box">
+                        <div class="metric-label">SMC Zone</div>
+                        <div class="metric-val">
+                            <span class="smc-zone-pill ${smcClass}" style="font-size: 0.7rem; padding: 2px 8px; margin: 0;">
+                                ${smcText}
+                            </span>
+                        </div>
+                    </div>
+                </div>`;
+        }
+
+        function renderTpslCard(signal) {
+            if (!signal.sl) return '';
+            const status = (signal.trade_status || '').toLowerCase();
+            let metaText = 'Plan calculated at last scan.';
+            if (status === 'queued') metaText = 'Waiting for price to reach entry — activates on touch.';
+            else if (['active','pending','tp1_partial'].includes(status)) metaText = 'Trade is live. Monitoring every 1 minute.';
+            else if (['tp','sl','manual_close'].includes(status)) metaText = 'Trade closed.';
+
+            const exitRow = signal.exit_price
+                ? `<div class="plan-row" style="background:rgba(245,158,11,0.08);border-color:rgba(245,158,11,0.2);">
+                       <span class="plan-label" style="color:#f59e0b;">Exit Price</span>
+                       <span class="plan-value" style="color:#f59e0b;">${signal.exit_price}</span>
+                   </div>` : '';
+
+            return `
+                <div class="card-section">
+                    <div class="card-section-title">Trade Plan</div>
+                    <div class="trade-plan">
+                        ${signal.entry ? `<div class="plan-row plan-entry"><span class="plan-label">Entry</span><span class="plan-value">${signal.entry}</span></div>` : ''}
+                        ${signal.tp ? `<div class="plan-row plan-tp"><span class="plan-label">TP1 (+3%)</span><span class="plan-value">${signal.tp}</span></div>` : ''}
+                        ${signal.tp2 ? `<div class="plan-row plan-tp"><span class="plan-label">TP2 (+6%)</span><span class="plan-value">${signal.tp2}</span></div>` : ''}
+                        <div class="plan-row plan-sl"><span class="plan-label">SL</span><span class="plan-value">${signal.sl}</span></div>
+                        ${exitRow}
+                        <div class="plan-meta">${metaText}</div>
+                    </div>
+                </div>`;
+        }
+
+        function renderSmcCard(smc) {
+            if (!smc) return '';
+            const swings = (smc.swing_low && smc.swing_high)
+                ? `<br><small>Swing L ${smc.swing_low} · H ${smc.swing_high}</small>` : '';
+            const extra = (smc.details && smc.details.length)
+                ? `<br><small>${smc.details.join(' · ')}</small>` : '';
+            return `
+                <div class="card-section">
+                    <div class="card-section-title">SMC 1h</div>
+                    <span class="smc-zone-pill ${smcPillClass(smc.zone_type)}">${smc.zone_label}</span>
+                    ${smc.summary}${swings}${extra}
+                </div>`;
+        }
+
+        function renderSignalCard(signal) {
+            const id = rowId(signal.symbol);
+            const sideCls = signal.direction === 'LONG' ? 'side-long' : 'side-short';
+            
+            // Conviction classes
+            const effLights = signal.effective_lights || 0;
+            const convictionCls = effLights >= 5 ? ' max-conviction-card' : (effLights >= 4 ? ' high-conviction-card' : '');
+            
+            const watchOnly = signal.tradeable === false;
+            const cardCls = (signal.direction === 'LONG' ? 'long-card' : 'short-card') + convictionCls + (watchOnly ? ' watch-only' : '');
+            const watchBadge = watchOnly ? `<span class="watch-only-badge" title="Scanned for market breadth — ranked outside the tradeable top pairs, so it never queues or trades.">Watch only</span>` : '';
+            const isExpanded = expandedCards.has(id);
+            const smcCell = signal.smc
+                ? `<span class="smc-zone-pill ${smcPillClass(signal.smc.zone_type)}">${signal.smc.zone_label}</span>`
+                : '<span class="cell-dash">—</span>';
+            const details = (signal.details && signal.details.length)
+                ? `<div class="card-section"><div class="card-section-title">Strategy Signals</div>${signal.details.join(' · ')}</div>` : '';
+            const status = statusInfo(signal);
+            const statusHtml = status
+                ? `<div class="asset-meta">
+                        <span class="trade-status-badge ${status.cls}">${status.label}</span>
+                        ${signal.record_status_reason ? `<span class="trade-status-reason">${signal.record_status_reason}</span>` : ''}
+                   </div>`
+                : '';
+            const liveValue = formatLiveValue(signal.current_price);
+
+            return `
+                <div class="signal-card ${cardCls}${isExpanded ? ' expanded' : ''}" id="card-${id}" data-card-id="${id}" data-dir="${signal.direction}" data-status="${signal.trade_status || ''}" data-lights="${effLights}" data-score="${signal.score || 0}" data-rsi="${signal.rsi}">
+                    <div class="signal-row-grid signal-row-hit" role="button" tabindex="0" aria-expanded="${isExpanded}">
+                        <div class="cell cell-asset">
+                            <div>
+                                <a href="${signal.tv_url}" target="_blank" class="symbol-tag" style="color: var(--wolf-blue); text-decoration: none;" onclick="event.stopPropagation()">${signal.symbol}</a>${watchBadge}
+                                ${statusHtml}
+                            </div>
+                        </div>
+                        <div class="cell cell-side"><span class="side-pill ${sideCls}">${signal.direction}</span></div>
+                        <div class="cell cell-live live-price-cell">
+                            <span class="live-val">${liveValue}</span>
+                        </div>
+                        <div class="cell cell-rsi ${rsiClass(signal.rsi)}">${signal.rsi.toFixed(1)}</div>
+                        <div class="cell cell-lights"><div class="lights" title="Filled = passed light · hollow = missed · violet = SMC bonus. Total dots = lights used by the 4+/5+/6+ filter.">${renderLights(signal.lights, effLights)}</div></div>
+                        <div class="cell cell-smc">${smcCell}</div>
+                        <div class="cell cell-score"><span class="score-badge ${scoreClass(signal.score)}">${signal.score}</span></div>
+                        <div class="cell cell-chevron"><span class="chevron">▼</span></div>
+                        <div class="cell cell-chart">
+                            <a href="${signal.tv_url}" target="_blank" class="tv-btn" onclick="event.stopPropagation()">View</a>
+                        </div>
+                    </div>
+                    <div class="card-expand">
+                        <div class="card-expand-inner">
+                            ${renderExpandMetrics(signal)}
+                            ${renderSmcCard(signal.smc)}
+                            ${renderTpslCard(signal)}
+                            ${details}
+                        </div>
+                    </div>
+                </div>`;
+        }
+
+        function toggleCard(card) {
+            const id = card.dataset.cardId;
+            const row = card.querySelector('.signal-row-hit');
+            if (expandedCards.has(id)) {
+                expandedCards.delete(id);
+                card.classList.remove('expanded');
+                if (row) row.setAttribute('aria-expanded', 'false');
+            } else {
+                expandedCards.add(id);
+                card.classList.add('expanded');
+                if (row) row.setAttribute('aria-expanded', 'true');
+            }
+        }
+
+        function bindCardToggles() {
+            document.querySelectorAll('.signal-card .signal-row-hit').forEach(row => {
+                row.onclick = (e) => {
+                    if (e.target.closest('.cell-chart')) return;
+                    toggleCard(row.closest('.signal-card'));
+                };
+                row.onkeydown = (e) => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault();
+                        toggleCard(row.closest('.signal-card'));
+                    }
+                };
+            });
+        }
+
+        function updateStats(signals) {
+            const longs = signals.filter(s => s.direction === 'LONG').length;
+            const shorts = signals.filter(s => s.direction === 'SHORT').length;
+            document.getElementById('stat-total').innerText = signals.length;
+            document.getElementById('stat-long').innerText = longs;
+            document.getElementById('stat-short').innerText = shorts;
+        }
+
+        function setText(id, value) {
+            const el = document.getElementById(id);
+            if (el) el.innerText = value;
+        }
+
+        function setWidth(id, value) {
+            const el = document.getElementById(id);
+            if (el) el.style.width = `${Math.max(0, Math.min(100, Number(value) || 0))}%`;
+        }
+
+        function formatSignedPct(value) {
+            const numeric = Number(value);
+            if (!Number.isFinite(numeric)) return '0.0%';
+            return `${numeric > 0 ? '+' : ''}${numeric.toFixed(1)}%`;
+        }
+
+        function applyDashboardSummary(summary) {
+            if (!summary) return;
+
+            // BTC regime badge ("don't fight Bitcoin" filter status)
+            const regime = (summary.btc_regime || 'neutral');
+            const rb = document.getElementById('btc-regime-badge');
+            if (rb) {
+                rb.textContent = regime.toUpperCase();
+                rb.className = 'btc-badge btc-' + regime;
+                rb.title = ({
+                    bull: 'BTC bullish → longs allowed, shorts blocked',
+                    bear: 'BTC bearish → shorts allowed, longs blocked',
+                    neutral: 'BTC chopping → both directions allowed',
+                    off: 'BTC regime filter is disabled'
+                })[regime] || '';
+            }
+
+            setText('stat-total', summary.signals?.total ?? 0);
+            setText('stat-long', summary.signals?.long ?? 0);
+            setText('stat-short', summary.signals?.short ?? 0);
+
+            setText('pulse-queued', summary.signals?.queued ?? 0);
+            setText('pulse-active', summary.trades?.pending ?? 0);
+            setText('pulse-closed', summary.trades?.recent_closed ?? 0);
+            setText('signal-bias', summary.signals?.bias ?? 'Balanced');
+            setText('signal-long-pct-note', summary.signals?.long_pct ?? 0);
+            setText('signal-short-pct-note', summary.signals?.short_pct ?? 0);
+            setText('avg-rsi', summary.signals?.avg_rsi ?? 0);
+            setText('extreme-overbought', summary.signals?.overbought ?? 0);
+            setText('extreme-oversold', summary.signals?.oversold ?? 0);
+            setText('signal-rejected', summary.signals?.rejected ?? 0);
+            setText('signal-high-conviction', summary.signals?.high_conviction ?? 0);
+            setText('signal-max-conviction', summary.signals?.max_conviction ?? 0);
+            setText('mini-queued', summary.signals?.queued ?? 0);
+            setText('mini-active', summary.signals?.active ?? 0);
+            setText('mini-tp', summary.signals?.tp ?? 0);
+            setText('mini-sl', summary.signals?.sl ?? 0);
+
+            setText('trade-recent-win-rate', `${Number(summary.trades?.recent_win_rate || 0).toFixed(1)}%`);
+            setText('trade-recent-wins', summary.trades?.recent_wins ?? 0);
+            setText('trade-recent-losses', summary.trades?.recent_losses ?? 0);
+            setText('best-edge-label', summary.trades?.best_edge_label ?? 'No closed trades yet');
+            setText('best-edge-note', summary.trades?.best_edge_note ?? 'Need more history');
+            setText('trade-avg-win', formatSignedPct(summary.trades?.avg_win || 0));
+            setText('trade-avg-loss', formatSignedPct(summary.trades?.avg_loss || 0));
+
+            setWidth('dir-long-fill', summary.direction?.long?.win_rate ?? 0);
+            setWidth('dir-short-fill', summary.direction?.short?.win_rate ?? 0);
+            setWidth('conviction-4-fill', summary.conviction?.lights_4?.win_rate ?? 0);
+            setWidth('conviction-5-fill', summary.conviction?.lights_5?.win_rate ?? 0);
+            setWidth('conviction-6plus-fill', summary.conviction?.lights_6plus?.win_rate ?? 0);
+            setText('dir-long-value', `${Number(summary.direction?.long?.win_rate || 0).toFixed(1)}%`);
+            setText('dir-short-value', `${Number(summary.direction?.short?.win_rate || 0).toFixed(1)}%`);
+            setText('conviction-4-value', `${Number(summary.conviction?.lights_4?.win_rate || 0).toFixed(1)}%`);
+            setText('conviction-5-value', `${Number(summary.conviction?.lights_5?.win_rate || 0).toFixed(1)}%`);
+            setText('conviction-6plus-value', `${Number(summary.conviction?.lights_6plus?.win_rate || 0).toFixed(1)}%`);
+        }
+
+        async function fetchDashboardSummary() {
+            try {
+                const response = await fetch('/api/dashboard_summary');
+                const data = await response.json();
+                applyDashboardSummary(data);
+            } catch (error) {
+                console.error('Error fetching dashboard summary:', error);
+            }
+        }
+
+        // ── Dashboard signal filters ──
+        let dashDirFilter = 'ALL';
+        let dashStatusFilter = 'ALL';
+        let dashLightsFilter = 'ALL';
+        let dashScoreFilter = 'ALL';
+        let dashRsiFilter = 'ALL';
+        let dashSearch = '';
+
+        function applySignalFilters() {
+            const cards = document.querySelectorAll('#signal-cards-body .signal-card');
+            let visible = 0;
+            cards.forEach(card => {
+                const dir = card.dataset.dir || '';
+                const status = (card.dataset.status || '').toLowerCase();
+                const lights = parseInt(card.dataset.lights || '0', 10);
+                const score = parseFloat(card.dataset.score || '0');
+                const rsi = parseFloat(card.dataset.rsi);
+                const symEl = card.querySelector('.symbol-tag');
+                const symbol = (symEl ? symEl.textContent : (card.dataset.cardId || '')).toUpperCase();
+
+                const dirOk = dashDirFilter === 'ALL' || dir === dashDirFilter;
+                const lightsOk = dashLightsFilter === 'ALL' || lights >= parseInt(dashLightsFilter, 10);
+                const scoreOk = dashScoreFilter === 'ALL' || score >= parseInt(dashScoreFilter, 10);
+                const rsiExtreme = !isNaN(rsi) && (rsi >= 90 || rsi <= 10);
+                const rsiOk = dashRsiFilter === 'ALL'
+                    || (dashRsiFilter === 'extreme' && rsiExtreme)
+                    || (dashRsiFilter === 'normal' && !rsiExtreme);
+                const searchOk = !dashSearch || symbol.includes(dashSearch);
+                let statusOk = true;
+                if (dashStatusFilter === 'queued') {
+                    statusOk = status === 'queued';
+                } else if (dashStatusFilter === 'active') {
+                    statusOk = ['active', 'pending', 'tp1_partial'].includes(status);
+                } else if (dashStatusFilter === 'closed') {
+                    statusOk = ['tp', 'sl', 'manual_close'].includes(status);
+                }
+
+                const show = dirOk && lightsOk && scoreOk && statusOk && searchOk && rsiOk;
+                card.style.display = show ? '' : 'none';
+                if (show) visible++;
+            });
+
+            const total = cards.length;
+            const label = document.getElementById('dash-signal-count');
+            if (label) {
+                label.textContent = total === 0 ? '' : total === visible
+                    ? `${total} signal${total !== 1 ? 's' : ''}`
+                    : `${visible} / ${total} signals`;
+            }
+        }
+
+        function bindDashFilters() {
+            document.querySelectorAll('[data-dash-dir]').forEach(btn => {
+                btn.addEventListener('click', () => {
+                    document.querySelectorAll('[data-dash-dir]').forEach(b => {
+                        b.classList.remove('active', 'active-long', 'active-short');
+                    });
+                    dashDirFilter = btn.dataset.dashDir;
+                    if (dashDirFilter === 'LONG') btn.classList.add('active-long');
+                    else if (dashDirFilter === 'SHORT') btn.classList.add('active-short');
+                    else btn.classList.add('active');
+                    applySignalFilters();
+                });
+            });
+            document.querySelectorAll('[data-dash-status]').forEach(btn => {
+                btn.addEventListener('click', () => {
+                    document.querySelectorAll('[data-dash-status]').forEach(b => b.classList.remove('active'));
+                    btn.classList.add('active');
+                    dashStatusFilter = btn.dataset.dashStatus;
+                    applySignalFilters();
+                });
+            });
+            document.querySelectorAll('[data-dash-lights]').forEach(btn => {
+                btn.addEventListener('click', () => {
+                    document.querySelectorAll('[data-dash-lights]').forEach(b => b.classList.remove('active'));
+                    btn.classList.add('active');
+                    dashLightsFilter = btn.dataset.dashLights;
+                    applySignalFilters();
+                });
+            });
+            document.querySelectorAll('[data-dash-score]').forEach(btn => {
+                btn.addEventListener('click', () => {
+                    document.querySelectorAll('[data-dash-score]').forEach(b => b.classList.remove('active'));
+                    btn.classList.add('active');
+                    dashScoreFilter = btn.dataset.dashScore;
+                    applySignalFilters();
+                });
+            });
+            document.querySelectorAll('[data-dash-rsi]').forEach(btn => {
+                btn.addEventListener('click', () => {
+                    document.querySelectorAll('[data-dash-rsi]').forEach(b => b.classList.remove('active'));
+                    btn.classList.add('active');
+                    dashRsiFilter = btn.dataset.dashRsi;
+                    applySignalFilters();
+                });
+            });
+            const dsearch = document.getElementById('dash-search');
+            if (dsearch) {
+                dsearch.addEventListener('input', () => {
+                    dashSearch = dsearch.value.trim().toUpperCase();
+                    applySignalFilters();
+                });
+            }
+        }
+
+        function renderAllSignals(signals) {
+            const empty = '<div class="empty-state"><div class="icon">🌙</div><p>The pack is quiet. No signals yet.</p></div>';
+            const cards = document.getElementById('signal-cards-body');
+
+            cards.innerHTML = signals.length
+                ? signals.map(renderSignalCard).join('')
+                : empty;
+
+            if (signals.length) bindCardToggles();
+            updateStats(signals);
+            applySignalFilters();
+        }
+
+        // Freshness pill: shows how long since the last scan and turns red if the
+        // bot has gone quiet for too long (a dead bot otherwise looks normal).
+        function renderScanAge(ageSec, intervalMin) {
+            const el = document.getElementById('scan-age');
+            if (el == null) return;
+            if (ageSec == null) { el.textContent = ''; el.className = 'scan-age'; return; }
+            const m = Math.floor(ageSec / 60), s = ageSec % 60;
+            const txt = m > 0 ? `${m}m ago` : `${s}s ago`;
+            const staleAfter = Math.max(120, (intervalMin || 5) * 60 * 2.5);
+            el.textContent = `· ${txt}`;
+            el.className = 'scan-age' + (ageSec > staleAfter ? ' stale' : '');
+            el.title = ageSec > staleAfter ? 'Scan is overdue — is the bot running?' : 'Time since last scan';
+        }
+
+        async function checkForUpdates() {
+            try {
+                const response = await fetch('/api/scan_data');
+                const data = await response.json();
+
+                const badgeEl = document.getElementById('bot-status-badge');
+                if (data.status === 'scanning') {
+                    badgeEl.innerHTML = '<span class="badge bg-warning text-dark pulse-scanning" style="font-size:.65rem;">HUNTING...</span>';
+                } else {
+                    badgeEl.innerHTML = '<span class="badge bg-success" style="font-size:.65rem;">BOT IDLE</span>';
+                }
+                renderScanAge(data.age_sec, data.interval_min);
+
+                if (data.last_update !== lastScanTime) {
+                    lastScanTime = data.last_update;
+                    document.getElementById('last-update').innerText = lastScanTime;
+                    renderAllSignals(data.signals || []);
+                    fetchLivePrices();
+                    fetchDashboardSummary();
+                    refreshTopEntries();
+                }
+            } catch (error) {
+                console.error('Error checking for scan updates:', error);
+            }
+        }
+
+        function applyLivePrice(item) {
+            const card = document.getElementById(`card-${rowId(item.symbol)}`);
+            if (!card) return;
+
+            card.classList.add('updated');
+            setTimeout(() => card.classList.remove('updated'), 1000);
+
+            const valSpan = card.querySelector('.live-val');
+            if (valSpan) valSpan.innerText = item.live_price;
+            const metricLivePrice = card.querySelector('.metric-live-price');
+            if (metricLivePrice) metricLivePrice.innerText = item.live_price;
+        }
+
+        async function fetchLivePrices() {
+            const btn = document.querySelector('.refresh-btn');
+            btn.disabled = true;
+            btn.innerText = 'Updating...';
+
+            try {
+                const response = await fetch('/api/live_prices');
+                const data = await response.json();
+                data.forEach(applyLivePrice);
+            } catch (error) {
+                console.error('Error fetching live prices:', error);
+            } finally {
+                btn.disabled = false;
+                btn.innerText = 'Refresh';
+            }
+        }
+
+        const initialSignals = JSON.parse(document.getElementById('initial-signals').textContent);
+        const initialDashboardSummary = JSON.parse(document.getElementById('initial-dashboard-summary').textContent);
+        updateStats(initialSignals);
+        applyDashboardSummary(initialDashboardSummary);
+        bindCardToggles();
+        bindDashFilters();
+        applySignalFilters();
+
+        // ── Top entry candidates ──────────────────────────────────────────
+        const INITIAL_TOP = {{ top_entries|tojson }};
+        const escTop = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+        function renderTopEntries(t) {
+            const reg = (t.btc_regime || 'unknown');
+            const regEl = document.getElementById('entries-regime');
+            if (regEl) { regEl.textContent = 'BTC ' + reg.toUpperCase(); regEl.className = 'entries-regime ' + reg; }
+            const row = document.getElementById('entries-row');
+            if (!row) return;
+            const entries = t.entries || [];
+            if (!entries.length) {
+                row.innerHTML = `<div class="entries-empty">No strong entry candidates in the latest scan — nothing fits the strategy well enough right now. Check the <a href="{{ url_for('funnel') }}" style="color:var(--wolf-blue)">Funnel</a> to see what's blocking.</div>`;
+                return;
+            }
+            row.innerHTML = entries.map(e => {
+                const dir = (e.direction || '').toUpperCase();
+                const ready = e.queued;
+                const status = ready ? `<span class="entry-status ready">✓ Ready</span>` : `<span class="entry-status watch">Watch</span>`;
+                const levels = (e.entry || e.tp || e.sl) ? `<div class="entry-levels">
+                        <div><span class="lk">Entry</span><span class="lv">${escTop(e.entry ?? '—')}</span></div>
+                        <div><span class="lk">TP</span><span class="lv tp">${escTop(e.tp ?? '—')}</span></div>
+                        <div><span class="lk">SL</span><span class="lv sl">${escTop(e.sl ?? '—')}</span></div>
+                    </div>` : '';
+                const needs = (!ready && e.blockers && e.blockers.length)
+                    ? `<div class="entry-needs">${e.blockers.map(b => `<span class="entry-need">${escTop(b)}</span>`).join('')}</div>` : '';
+                const rsi = (e.rsi !== null && e.rsi !== undefined) ? ` · RSI ${escTop(Number(e.rsi).toFixed ? Number(e.rsi).toFixed(0) : e.rsi)}` : '';
+                const href = e.tv_url ? `href="${escTop(e.tv_url)}" target="_blank" rel="noopener"` : '';
+                return `<a class="entry-card ${ready ? 'ready' : ''}" ${href}>
+                    <div class="entry-top"><span class="entry-sym">${escTop(e.symbol)}</span><span class="entry-dir ${dir}">${dir || '—'}</span></div>
+                    ${status}
+                    <div class="entry-lights"><b>${e.lights ?? '—'}</b> lights${rsi}</div>
+                    ${levels}
+                    ${needs}
+                </a>`;
+            }).join('');
+        }
+        async function refreshTopEntries() {
+            try {
+                const r = await fetch('/api/top_entries', { headers: { 'Accept': 'application/json' } });
+                if (r.ok) renderTopEntries(await r.json());
+            } catch (e) { /* keep last render */ }
+        }
+        renderTopEntries(INITIAL_TOP);
+
+        // Admin-only: poll the live account and warn if any open position has no
+        // stop-loss (or the bot thinks a live position is closed). Links to Account.
+        {% if user.is_admin %}
+        async function checkProtection() {
+            const el = document.getElementById('protbanner');
+            if (!el) return;
+            try {
+                const d = await (await fetch('/api/account')).json();
+                const pos = (d && d.positions) || [];
+                if (!d.ok || !pos.length) { el.style.display = 'none'; return; }
+                const hasSL = (sym) => (d.orders || []).some(o =>
+                    o.symbol === sym && (o.type || '').toUpperCase().includes('STOP'));
+                const naked = pos.filter(p => !hasSL(p.symbol)).map(p => (p.symbol || '').replace(':USDT', ''));
+                const diverged = pos.filter(p => p.db_diverged).map(p => (p.symbol || '').replace(':USDT', ''));
+                if (!naked.length && !diverged.length) {
+                    el.className = 'prot-banner ok'; el.style.display = 'flex';
+                    el.innerHTML = `🛡 <b>All ${pos.length} live position${pos.length>1?'s':''} have a stop-loss.</b> <span class="pb-go">Account →</span>`;
+                } else {
+                    let msg = [];
+                    if (naked.length) msg.push(`${naked.length} with NO stop-loss: ${naked.join(', ')}`);
+                    if (diverged.length) msg.push(`${diverged.length} the bot thinks is closed: ${diverged.join(', ')}`);
+                    el.className = 'prot-banner warn'; el.style.display = 'flex';
+                    el.innerHTML = `⚠ <b>${msg.join(' · ')}</b> <span class="pb-go">Fix on Account →</span>`;
+                }
+            } catch (e) { el.style.display = 'none'; }
+        }
+        checkProtection();
+        setInterval(checkProtection, 15000);
+        {% endif %}
+
+        fetchLivePrices();
+        fetchDashboardSummary();
+        checkForUpdates();            // populate freshness pill immediately on load
+        setInterval(checkForUpdates, 5000);
+        setInterval(fetchLivePrices, 15000);
+        setInterval(fetchDashboardSummary, 30000);
+        setInterval(refreshTopEntries, 15000);
+
+        // Live account snapshot strip (admin only). Mirrors the Account page so
+        // the home dashboard shows REAL Binance equity/positions right next to
+        // the DB-derived stats. /api/account is admin-gated + cached ~5s server
+        // side, so this poll is cheap. Stays hidden for non-admins / on error.
+        async function loadAccountStrip() {
+            const strip = document.getElementById('acct-strip');
+            if (!strip) return;
+            try {
+                const r = await fetch('/api/account');
+                if (!r.ok) return;
+                const a = await r.json();
+                if (!a.ok || !a.balance) return;
+                const fmt = (v) => (v == null ? '—' : Number(v).toFixed(2) + ' USDT');
+                document.getElementById('acct-equity').textContent = fmt(a.balance.margin_balance);
+                document.getElementById('acct-avail').textContent = fmt(a.balance.available);
+                const up = Number(a.balance.unrealized_pnl || 0);
+                const upEl = document.getElementById('acct-upnl');
+                const glyph = up > 0 ? '▲ ' : (up < 0 ? '▼ ' : '');
+                upEl.textContent = glyph + (up >= 0 ? '+' : '') + up.toFixed(2) + ' USDT';
+                upEl.className = up > 0 ? 'pnl-up' : (up < 0 ? 'pnl-down' : '');
+                document.getElementById('acct-pos').textContent = (a.positions || []).length;
+                document.getElementById('acct-net').textContent = a.net || (a.live ? 'LIVE' : 'DRY');
+                strip.style.display = 'block';
+            } catch (e) { /* leave hidden on error */ }
+        }
+        loadAccountStrip();
+        setInterval(loadAccountStrip, 15000);
+
+        // Cumulative realized-P&L sparkline in the account strip (admin-only; the
+        // element only exists for admins, so the guard hides it for everyone else).
+        // Realized history changes slowly → poll once a minute. Inline SVG, no lib.
+        async function loadAccountSpark() {
+            const el = document.getElementById('acct-spark');
+            if (!el) return;
+            try {
+                const r = await fetch('/api/account/history');
+                if (!r.ok) return;
+                const d = await r.json();
+                if (!d.ok || !Array.isArray(d.trades) || d.trades.length < 2) { el.innerHTML = ''; return; }
+                const trades = d.trades.slice().sort((a, b) => (a.time || 0) - (b.time || 0));
+                let cum = 0; const pts = trades.map(t => (cum += Number(t.pnl) || 0));
+                const W = 108, H = 28, pad = 3;
+                const lo = Math.min(0, ...pts), hi = Math.max(0, ...pts), range = (hi - lo) || 1;
+                const X = i => pad + i * (W - 2 * pad) / (pts.length - 1);
+                const Y = v => H - pad - (v - lo) * (H - 2 * pad) / range;
+                const line = pts.map((v, i) => `${X(i).toFixed(1)},${Y(v).toFixed(1)}`).join(' ');
+                const last = pts[pts.length - 1];
+                const col = last >= 0 ? '#4ade80' : '#f87171';
+                const z = Y(0).toFixed(1), lx = X(pts.length - 1).toFixed(1), ly = Y(last).toFixed(1);
+                el.innerHTML =
+                    `<svg viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" preserveAspectRatio="none">` +
+                    `<line x1="${pad}" y1="${z}" x2="${W - pad}" y2="${z}" stroke="rgba(255,255,255,.14)" stroke-width="1" stroke-dasharray="2 2"/>` +
+                    `<polyline points="${line}" fill="none" stroke="${col}" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round"/>` +
+                    `<circle cx="${lx}" cy="${ly}" r="2.2" fill="${col}"/></svg>`;
+                const cell = document.getElementById('acct-spark-cell');
+                if (cell) cell.title = `Cumulative realized P&L: ${last >= 0 ? '+' : ''}${last.toFixed(2)} USDT over last ${pts.length} trades (bot + manual)`;
+            } catch (e) { /* leave as-is on error */ }
+        }
+        loadAccountSpark();
+        setInterval(loadAccountSpark, 60000);
+
+        // PWA: register service worker so the dashboard is installable on phone.
+        if ('serviceWorker' in navigator) {
+            window.addEventListener('load', () => {
+                navigator.serviceWorker.register('/sw.js', { scope: '/' }).catch(() => {});
+            });
+        }
+    </script>
+</body>
+</html>
