@@ -118,6 +118,23 @@
         .news-meta { font-size: 0.66rem; color: var(--wolf-muted); margin-top: 4px; }
         .news-src { color: var(--wolf-gold); font-weight: 700; }
 
+        /* ── Whale vs Crowd positioning ── */
+        .pos-row { display: grid; grid-template-columns: 78px 1fr 1fr 78px; gap: 16px; align-items: center; padding: 12px 0; border-top: 1px solid rgba(255,255,255,0.045); }
+        .pos-row:first-child { border-top: none; }
+        .pos-coin { display: flex; align-items: center; gap: 8px; font-weight: 800; font-size: 0.82rem; }
+        .pos-coin .coin { width: 24px; height: 24px; flex: 0 0 24px; }
+        .pos-cap { display: flex; justify-content: space-between; align-items: baseline; font-size: 0.6rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--wolf-muted); margin-bottom: 5px; }
+        .pos-cap .lng { color: var(--long); font-weight: 800; }
+        .pos-cap .sht { color: var(--short); font-weight: 800; }
+        .lsbar { display: flex; height: 12px; border-radius: 7px; overflow: hidden; background: rgba(255,255,255,0.06); }
+        .lsbar i { display: block; height: 100%; transition: width .5s; }
+        .lsbar .l { background: var(--long); }
+        .lsbar .s { background: var(--short); }
+        .pos-taker { text-align: right; font-size: 0.78rem; }
+        .pos-taker small { display: block; font-size: 0.56rem; text-transform: uppercase; letter-spacing: .04em; color: var(--wolf-muted); margin-bottom: 2px; }
+        .div-chip { font-size: 0.54rem; font-weight: 800; text-transform: uppercase; letter-spacing: 0.04em; padding: 2px 7px; border-radius: 999px; background: rgba(255,207,75,0.16); color: var(--wolf-gold); }
+        @media (max-width: 760px) { .pos-row { grid-template-columns: 1fr; gap: 9px; } .pos-taker { text-align: left; } }
+
         /* daily circuit-breaker banner (matches dashboard) */
         .cb-banner {
             display: flex; align-items: center; flex-wrap: wrap; gap: 8px 18px;
@@ -221,6 +238,15 @@
             </div>
         </div>
 
+        <!-- Whale vs Crowd positioning -->
+        <div class="analytics-panel">
+            <div class="analytics-head">
+                <div class="analytics-title">🐋 Whale vs Crowd Positioning</div>
+                <div class="analytics-note">Binance top traders vs all accounts · taker flow · 1h</div>
+            </div>
+            <div id="positioning"><div class="skeleton">Loading…</div></div>
+        </div>
+
         <div class="analytics-grid">
             <!-- LEFT: futures -->
             <div>
@@ -280,6 +306,33 @@
             return '$' + n.toFixed(5);
         }
         const esc = s => (s || '').replace(/</g, '&lt;');
+        const pctTxt = x => (x === null || x === undefined) ? '—' : Math.round(x * 100) + '%';
+
+        // 🐋 Whales (top traders by position) vs 👤 Retail (all accounts) + taker flow.
+        function renderPositioning(rows) {
+            const el = document.getElementById('positioning');
+            if (!el) return;
+            if (!rows || !rows.length) { el.innerHTML = '<div class="skeleton">No positioning data.</div>'; return; }
+            function block(cap, lng) {
+                const lp = (lng == null ? 50 : lng * 100), sp = 100 - lp;
+                return '<div><div class="pos-cap"><span>' + cap + '</span><span>' +
+                    '<span class="lng">' + pctTxt(lng) + '</span> / <span class="sht">' + pctTxt(lng == null ? null : 1 - lng) + '</span>' +
+                    '</span></div><div class="lsbar"><i class="l" style="width:' + lp.toFixed(0) + '%"></i>' +
+                    '<i class="s" style="width:' + sp.toFixed(0) + '%"></i></div></div>';
+            }
+            el.innerHTML = rows.map(r => {
+                const div = r.divergence ? ' <span class="div-chip" title="Whales and the crowd are leaning opposite ways">⚠ Diverge</span>' : '';
+                const tr = r.taker_ratio;
+                const taker = (tr == null) ? '<span class="muted">—</span>'
+                    : '<b class="' + (tr >= 1 ? 'up' : 'down') + '">' + tr.toFixed(2) + '</b>';
+                return '<div class="pos-row">' +
+                    '<div class="pos-coin"><div class="coin">' + esc(r.base.slice(0, 3)) + '</div>' + esc(r.base) + div + '</div>' +
+                    block('🐋 Whales', r.whale_long) +
+                    block('👤 Retail', r.retail_long) +
+                    '<div class="pos-taker"><small>Taker B/S</small>' + taker + '</div>' +
+                    '</div>';
+            }).join('');
+        }
 
         function render(d) {
             const eb = document.getElementById('errbar');
@@ -324,6 +377,8 @@
                     '<td>' + frHtml + '</td>' +
                 '</tr>';
             }).join('') || '<tr><td colspan="6" class="skeleton">No futures data.</td></tr>';
+
+            renderPositioning(d.positioning);
 
             document.getElementById('tvl-total').textContent = fmtUsd(oc.total_tvl || 0);
             const chains = oc.chains || [];

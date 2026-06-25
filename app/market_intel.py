@@ -39,7 +39,10 @@ def _cached(key: str, ttl: float, producer):
 
 
 # ── low-level HTTP helpers ──────────────────────────────────────────────────
-_UA = "WolfScanner-MarketIntel/1.0 (+https://localhost)"
+# A real browser UA — Binance's /futures/data endpoints 403 unusual UAs
+# (e.g. one mentioning "localhost"); the news/TVL feeds accept it fine too.
+_UA = ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
+       "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36")
 
 
 def _get_json(url: str, timeout: float = 8.0):
@@ -194,15 +197,93 @@ def news(per_feed: int = 6, ttl: float = 300.0) -> dict:
     return _cached(f"news:{per_feed}", ttl, lambda: _news(per_feed))
 
 
+# ── Long/Short positioning (Binance free futures-data API, no keys) ──────────
+# The same numbers Coinglass surfaces, straight from the source:
+#   • "whales" = top traders ranked by position size  (smart-money lean)
+#   • "retail" = every account weighted equally        (the crowd)
+#   • "taker"  = aggressive market buy vs sell volume   (who's hitting the book)
+DATA_API = "https://fapi.binance.com/futures/data"
+
+
+def _ls_latest(endpoint: str, symbol: str, period: str):
+    """Newest single data point for a Binance futures-data endpoint (or None)."""
+    arr = _get_json(f"{DATA_API}/{endpoint}?symbol={symbol}&period={period}&limit=1")
+    return arr[0] if arr else None
+
+
+def _ls_one(symbol: str, period: str = "1h") -> dict:
+    row = {"symbol": symbol,
+           "base": symbol[:-4] if symbol.endswith("USDT") else symbol,
+           "errors": []}
+
+    # Whales — top traders by position size.
+    try:
+        d = _ls_latest("topLongShortPositionRatio", symbol, period)
+        if d:
+            row["whale_long"] = float(d["longAccount"])
+            row["whale_short"] = float(d["shortAccount"])
+            row["whale_ratio"] = float(d["longShortRatio"])
+    except Exception as e:  # noqa: BLE001
+        row["errors"].append(f"whale {symbol}: {e}")
+
+    # Retail crowd — every account weighted equally.
+    try:
+        d = _ls_latest("globalLongShortAccountRatio", symbol, period)
+        if d:
+            row["retail_long"] = float(d["longAccount"])
+            row["retail_short"] = float(d["shortAccount"])
+            row["retail_ratio"] = float(d["longShortRatio"])
+    except Exception as e:  # noqa: BLE001
+        row["errors"].append(f"retail {symbol}: {e}")
+
+    # Taker flow — aggressive market buys vs sells over the period.
+    try:
+        d = _ls_latest("takerlongshortRatio", symbol, period)
+        if d:
+            bv, sv = float(d["buyVol"]), float(d["sellVol"])
+            tot = bv + sv
+            row["taker_buy"] = (bv / tot) if tot else None
+            row["taker_sell"] = (sv / tot) if tot else None
+            row["taker_ratio"] = float(d["buySellRatio"])
+    except Exception as e:  # noqa: BLE001
+        row["errors"].append(f"taker {symbol}: {e}")
+
+    # Smart-money divergence: whales and the crowd on opposite sides of neutral.
+    wl, rl = row.get("whale_long"), row.get("retail_long")
+    if wl is not None and rl is not None:
+        row["divergence"] = (wl >= 0.5) != (rl >= 0.5)
+    return row
+
+
+def _long_short(symbols: tuple) -> dict:
+    out = {"rows": [], "errors": []}
+    for s in symbols:
+        r = _ls_one(s)
+        out["errors"].extend(r.pop("errors", []))
+        if "whale_long" in r or "retail_long" in r:   # keep rows with real data
+            out["rows"].append(r)
+    return out
+
+
+def long_short(symbols: tuple, ttl: float = 180.0) -> dict:
+    return _cached("ls:" + ",".join(symbols), ttl, lambda: _long_short(symbols))
+
+
 # ── top-level aggregator used by the web route ──────────────────────────────
-def market_intel(top_n: int = 15) -> dict:
+def market_intel(top_n: int = 15, pos_n: int = 6) -> dict:
     bf = binance_futures(top_n=top_n)
+    rows = bf.get("rows", [])
+    # Reuse the top futures coins (by volume) for the positioning panel.
+    pos_symbols = tuple(f"{r['base']}USDT" for r in rows[:pos_n] if r.get("base"))
+    ls = long_short(pos_symbols) if pos_symbols else {"rows": [], "errors": []}
     dl = defillama()
     nw = news()
-    errors = bf.get("errors", []) + dl.get("errors", []) + nw.get("errors", [])
+    errors = (bf.get("errors", []) + dl.get("errors", [])
+              + nw.get("errors", []) + ls.get("errors", []))
     return {
         "generated_at": int(time.time()),
         "futures": bf.get("rows", []),
+        "positioning": ls.get("rows", []),
         "onchain": dl,
         "news": nw.get("items", []),
         "errors": errors,
