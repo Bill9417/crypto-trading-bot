@@ -2110,6 +2110,123 @@ def api_news():
     except Exception as e:  # noqa: BLE001
         return jsonify({"items": [], "errors": [str(e)]}), 200
 
+
+def build_briefing():
+    """Computed 'today' briefing — BTC + US indices + altcoin breadth, with a
+    short rule-based read. Reuses cached market_intel fetches and the existing
+    dashboard summary. Read-only and fully fail-soft."""
+    import time as _time
+    out = {"generated_at": int(_time.time()), "btc": {}, "stocks": [],
+           "alts": {}, "fng": {}, "verdict": "", "errors": []}
+
+    # Crypto regime + altcoin breadth (local DB / scan — cheap).
+    regime, sig = "neutral", {}
+    try:
+        ds = build_dashboard_summary()
+        regime = (ds.get("btc_regime") or "neutral").lower()
+        sig = ds.get("signals", {})
+    except Exception as e:  # noqa: BLE001
+        out["errors"].append(f"summary: {e}")
+
+    # BTC price / 24h / funding (cached ~45s).
+    btc = {"regime": regime}
+    try:
+        snap = market_intel.btc_snapshot()
+        btc["price"], btc["change_pct"], btc["funding"] = (
+            snap.get("price"), snap.get("change_pct"), snap.get("funding_rate"))
+        out["errors"].extend(snap.get("errors", []))
+    except Exception as e:  # noqa: BLE001
+        out["errors"].append(f"btc: {e}")
+
+    # Whale vs retail positioning for BTC.
+    try:
+        ls = market_intel.long_short(("BTCUSDT",))
+        if ls.get("rows"):
+            r0 = ls["rows"][0]
+            btc["whale_long"], btc["retail_long"] = r0.get("whale_long"), r0.get("retail_long")
+    except Exception as e:  # noqa: BLE001
+        out["errors"].append(f"positioning: {e}")
+
+    wl, rl = btc.get("whale_long"), btc.get("retail_long")
+    if wl is not None and rl is not None:
+        if rl - wl >= 0.12:
+            btc["note"] = f"crowd {rl*100:.0f}% long vs whales {wl*100:.0f}% — crowd over-eager"
+        elif wl - rl >= 0.12:
+            btc["note"] = f"whales {wl*100:.0f}% long vs crowd {rl*100:.0f}% — smart money leads"
+        else:
+            btc["note"] = f"whales {wl*100:.0f}% / crowd {rl*100:.0f}% long — aligned"
+    out["btc"] = btc
+
+    # Crypto Fear & Greed sentiment (cached 10 min).
+    try:
+        fg = market_intel.fear_greed()
+        if fg.get("value") is not None:
+            out["fng"] = {"value": fg["value"], "label": fg.get("label"),
+                          "week_ago": fg.get("week_ago"), "history": fg.get("history", [])}
+        out["errors"].extend(fg.get("errors", []))
+    except Exception as e:  # noqa: BLE001
+        out["errors"].append(f"fng: {e}")
+
+    # US indices (cached 10 min).
+    stock_rows = []
+    try:
+        st = market_intel.stocks()
+        stock_rows = st.get("rows", [])
+        out["errors"].extend(st.get("errors", []))
+    except Exception as e:  # noqa: BLE001
+        out["errors"].append(f"stocks: {e}")
+    out["stocks"] = stock_rows
+
+    # Altcoin breadth read.
+    longs, shorts = sig.get("long", 0), sig.get("short", 0)
+    if shorts > max(1, longs) * 1.5:
+        alt_tone = "shorts dominate — weak breadth"
+    elif longs > max(1, shorts) * 1.5:
+        alt_tone = "longs dominate — strong breadth"
+    else:
+        alt_tone = "mixed breadth"
+    out["alts"] = {"longs": longs, "shorts": shorts, "avg_rsi": sig.get("avg_rsi", 0),
+                   "bias": sig.get("bias", "Balanced"), "tone": alt_tone}
+
+    # Overall verdict from regime + equity tone.
+    chgs = [s.get("change_pct") for s in stock_rows if s.get("change_pct") is not None]
+    stock_avg = (sum(chgs) / len(chgs)) if chgs else None
+    if regime == "bear":
+        verdict = "Risk-off crypto — trade with the bear, shorts favored"
+        if stock_avg is not None and stock_avg > 0.2:
+            verdict += " (equities green but crypto lagging — stay cautious)"
+    elif regime == "bull":
+        verdict = "Risk-on — longs favored with BTC"
+        if stock_avg is not None and stock_avg < -0.2:
+            verdict += " (crypto strong despite soft equities)"
+    else:
+        verdict = "Choppy / neutral — both sides allowed, stay selective"
+
+    # Fear & Greed adds a contrarian nuance — the extremes are the actionable read.
+    fng_val = out.get("fng", {}).get("value")
+    if fng_val is not None:
+        if fng_val < 25:
+            verdict += " · extreme fear — capitulation risk, watch for a relief bounce"
+        elif fng_val > 75:
+            verdict += " · extreme greed — froth, watch for a pullback"
+        elif regime == "neutral" and fng_val < 45:
+            verdict += " · fearful tape leans defensive"
+        elif regime == "neutral" and fng_val > 55:
+            verdict += " · greedy tape leans risk-on"
+
+    out["verdict"] = verdict
+    return out
+
+
+@app.route("/api/briefing")
+@login_required
+def api_briefing():
+    try:
+        return jsonify(build_briefing())
+    except Exception as e:  # noqa: BLE001
+        return jsonify({"generated_at": 0, "btc": {}, "stocks": [], "alts": {},
+                        "verdict": "", "errors": [str(e)]}), 200
+
 @app.route("/api/live_prices")
 @login_required
 def get_live_prices():
