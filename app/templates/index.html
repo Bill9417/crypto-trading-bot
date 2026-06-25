@@ -264,6 +264,14 @@
         }
         .analytics-link:hover { color: #7ae7ff; }
 
+        /* ── Dashboard headlines strip ── */
+        .news-strip { display: flex; gap: 10px; overflow-x: auto; padding-bottom: 4px; scrollbar-width: thin; }
+        .news-chip { flex: 0 0 auto; width: 240px; background: rgba(255,255,255,0.03); border: 1px solid var(--wolf-border); border-left: 3px solid var(--wolf-gold); border-radius: 10px; padding: 9px 12px; transition: border-color .15s, transform .15s; }
+        .news-chip:hover { transform: translateY(-2px); border-left-color: var(--wolf-blue); }
+        .news-chip .news-src { font-size: 0.58rem; font-weight: 800; text-transform: uppercase; letter-spacing: .05em; color: var(--wolf-gold); }
+        .news-chip a { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; margin-top: 4px; color: var(--wolf-text); text-decoration: none; font-size: 0.76rem; font-weight: 600; line-height: 1.35; }
+        .news-chip a:hover { color: var(--wolf-blue); }
+
         .insight-grid {
             display: grid;
             grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -1334,6 +1342,18 @@
                 <span class="entries-regime {{ top_entries.btc_regime }}" id="entries-regime">BTC {{ top_entries.btc_regime|upper }}</span>
             </div>
             <div class="entries-row" id="entries-row"></div>
+        </section>
+
+        <!-- Market headlines — same feeds as the Market page (cached server-side) -->
+        <section class="analytics-panel">
+            <div class="analytics-head">
+                <div>
+                    <div class="analytics-title">📰 Market Headlines</div>
+                    <div class="analytics-subtitle">Latest crypto news — CoinDesk · Cointelegraph · CryptoSlate</div>
+                </div>
+                <a href="{{ url_for('market') }}" class="analytics-link">Open Market</a>
+            </div>
+            <div class="news-strip" id="dash-news"><div class="analytics-subtitle">Loading headlines…</div></div>
         </section>
 
         <div class="analytics-grid">
@@ -2577,6 +2597,26 @@
         setInterval(fetchLivePrices, 15000);
         setInterval(fetchDashboardSummary, 30000);
         setInterval(refreshTopEntries, 15000);
+
+        // 📰 Market headlines — same feeds as the Market page, via the lightweight
+        // /api/news (RSS only, cached ~5 min server-side). Shown for all users.
+        async function loadHeadlines() {
+            const el = document.getElementById('dash-news');
+            if (!el) return;
+            try {
+                const r = await fetch('/api/news', { headers: { 'Accept': 'application/json' } });
+                if (!r.ok) return;
+                const d = await r.json();
+                const items = (d.items || []).slice(0, 12);
+                const escNews = s => (s || '').replace(/</g, '&lt;');
+                el.innerHTML = items.length ? items.map(n =>
+                    '<div class="news-chip"><div class="news-src">' + escNews(n.source) + '</div>' +
+                    '<a href="' + n.link + '" target="_blank" rel="noopener">' + escNews(n.title) + '</a></div>'
+                ).join('') : '<div class="analytics-subtitle">No headlines right now.</div>';
+            } catch (e) { /* fail-soft — leave whatever is shown */ }
+        }
+        loadHeadlines();
+        setInterval(loadHeadlines, 300000);
 
         // Live account snapshot strip (admin only). Mirrors the Account page so
         // the home dashboard shows REAL Binance equity/positions right next to

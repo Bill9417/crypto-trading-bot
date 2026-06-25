@@ -2098,6 +2098,18 @@ def api_market_intel():
         return jsonify({"generated_at": 0, "futures": [], "onchain": {"chains": [], "total_tvl": 0.0},
                         "news": [], "errors": [str(e)]}), 200
 
+@app.route("/api/news")
+@login_required
+def api_news():
+    """Lightweight headlines for the dashboard. Only the cached RSS feeds —
+    skips the heavier futures / positioning / TVL fetches that
+    /api/market_intel does — so the home page poll stays cheap."""
+    try:
+        nw = market_intel.news()
+        return jsonify({"items": nw.get("items", []), "errors": nw.get("errors", [])})
+    except Exception as e:  # noqa: BLE001
+        return jsonify({"items": [], "errors": [str(e)]}), 200
+
 @app.route("/api/live_prices")
 @login_required
 def get_live_prices():
