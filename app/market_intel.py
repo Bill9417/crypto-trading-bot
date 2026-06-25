@@ -269,6 +269,89 @@ def long_short(symbols: tuple, ttl: float = 180.0) -> dict:
     return _cached("ls:" + ",".join(symbols), ttl, lambda: _long_short(symbols))
 
 
+# ── Lightweight BTC snapshot (price / 24h / funding) for the briefing ────────
+def _btc_snapshot() -> dict:
+    out = {"price": None, "change_pct": None, "funding_rate": None, "errors": []}
+    ex = _exchange()
+    try:
+        t = ex.fetch_ticker("BTC/USDT:USDT")
+        out["price"] = float(t.get("last") or t.get("close") or 0)
+        out["change_pct"] = float(t.get("percentage") or 0)
+    except Exception as e:  # noqa: BLE001
+        out["errors"].append(f"btc price: {e}")
+    try:
+        out["funding_rate"] = ex.fetch_funding_rate("BTC/USDT:USDT").get("fundingRate")
+    except Exception as e:  # noqa: BLE001
+        out["errors"].append(f"btc funding: {e}")
+    return out
+
+
+def btc_snapshot(ttl: float = 45.0) -> dict:
+    return _cached("btc_snap", ttl, _btc_snapshot)
+
+
+# ── US equity indices (CNBC quote service — free, no keys) ───────────────────
+# Yahoo/Stooq throttle & anti-bot aggressively; CNBC's public quote endpoint is
+# stable. One call per index, cached 10 min (indices move slowly).
+CNBC_QUOTE = ("https://quote.cnbc.com/quote-html-webservice/restQuote/symbolType/symbol"
+              "?requestMethod=itv&noform=1&fund=1&exthrs=0&output=json&symbols=")
+STOCK_INDICES = [("S&P 500", ".SPX"), ("Nasdaq", ".IXIC"), ("Dow", ".DJI")]
+
+
+def _num(s):
+    """Parse CNBC's display strings like '7,358.22' or '-0.10%' to float."""
+    if s is None:
+        return None
+    try:
+        return float(str(s).replace(",", "").replace("%", "").strip())
+    except ValueError:
+        return None
+
+
+def _stock_one(name: str, symbol: str) -> dict:
+    data = _get_json(f"{CNBC_QUOTE}{symbol}")
+    q = data["FormattedQuoteResult"]["FormattedQuote"][0]
+    return {"name": name, "symbol": symbol,
+            "price": _num(q.get("last")), "change_pct": _num(q.get("change_pct"))}
+
+
+def _stocks() -> dict:
+    out = {"rows": [], "errors": []}
+    for name, sym in STOCK_INDICES:
+        try:
+            out["rows"].append(_stock_one(name, sym))
+        except Exception as e:  # noqa: BLE001
+            out["errors"].append(f"{name}: {e}")
+    return out
+
+
+def stocks(ttl: float = 600.0) -> dict:
+    return _cached("stocks", ttl, _stocks)
+
+
+# ── Crypto Fear & Greed index (alternative.me — free, no keys) ───────────────
+def _fear_greed() -> dict:
+    out = {"value": None, "label": None, "week_ago": None, "history": [], "errors": []}
+    try:
+        # 8 points = today + 7 days back, for a "vs a week ago" read + sparkline.
+        d = _get_json("https://api.alternative.me/fng/?limit=8")
+        data = d.get("data") or []
+        if data:
+            out["value"] = int(data[0].get("value"))
+            out["label"] = data[0].get("value_classification")
+            vals = [int(x["value"]) for x in data if x.get("value") is not None]
+            out["history"] = list(reversed(vals))           # oldest → newest
+            out["week_ago"] = vals[7] if len(vals) >= 8 else (vals[-1] if vals else None)
+    except Exception as e:  # noqa: BLE001
+        out["errors"].append(f"fng: {e}")
+    return out
+
+
+def fear_greed(ttl: float = 600.0) -> dict:
+    # The index only updates once a day, so a long cache is plenty.
+    return _cached("fng", ttl, _fear_greed)
+
+
 # ── top-level aggregator used by the web route ──────────────────────────────
 def market_intel(top_n: int = 15, pos_n: int = 6) -> dict:
     bf = binance_futures(top_n=top_n)

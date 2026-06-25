@@ -272,6 +272,22 @@
         .news-chip a { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; margin-top: 4px; color: var(--wolf-text); text-decoration: none; font-size: 0.76rem; font-weight: 600; line-height: 1.35; }
         .news-chip a:hover { color: var(--wolf-blue); }
 
+        /* ── Today's briefing ── */
+        .brief-row { display: flex; gap: 12px; align-items: baseline; padding: 7px 0; font-size: 0.83rem; line-height: 1.4; }
+        .brief-row + .brief-row { border-top: 1px solid rgba(255,255,255,0.04); }
+        .brief-tag { flex: 0 0 36px; font-weight: 800; font-size: 0.62rem; letter-spacing: 0.06em; color: var(--wolf-muted); padding-top: 3px; }
+        .brief-main { color: var(--wolf-text); }
+        .brief-sub { color: var(--wolf-muted); font-size: 0.73rem; margin-top: 2px; }
+        .brief-up { color: var(--long); font-weight: 700; }
+        .brief-down { color: var(--short); font-weight: 700; }
+        .brief-regime { font-weight: 800; text-transform: uppercase; }
+        .brief-regime.brief-bull { color: var(--long); }
+        .brief-regime.brief-bear { color: var(--short); }
+        .brief-regime.brief-neutral { color: var(--wolf-gold); }
+        .stock-chip { display: inline-block; margin-right: 14px; }
+        .stock-chip b { color: var(--wolf-text); font-weight: 700; }
+        .brief-verdict { margin-top: 10px; padding-top: 9px; border-top: 1px solid var(--wolf-border); color: var(--wolf-gold); font-weight: 700; font-size: 0.84rem; }
+
         .insight-grid {
             display: grid;
             grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -1293,6 +1309,18 @@
             </a>
         </div>
         {% endif %}
+
+        <!-- 📊 Today's briefing — computed from live BTC, US indices & alt breadth -->
+        <section class="analytics-panel" id="briefing">
+            <div class="analytics-head">
+                <div>
+                    <div class="analytics-title">📊 Today's Briefing</div>
+                    <div class="analytics-subtitle" id="brief-updated">Loading market briefing…</div>
+                </div>
+                <a href="{{ url_for('market') }}" class="analytics-link">Market →</a>
+            </div>
+            <div id="briefing-body"></div>
+        </section>
 
         <!-- Stats -->
         <div class="stats-strip">
@@ -2617,6 +2645,84 @@
         }
         loadHeadlines();
         setInterval(loadHeadlines, 300000);
+
+        // 📊 Today's Briefing — computed read of BTC, US indices & alt breadth.
+        async function loadBriefing() {
+            const el = document.getElementById('briefing-body');
+            if (!el) return;
+            const escB = s => (s || '').replace(/</g, '&lt;');
+            const sign = v => (v >= 0 ? '+' : '');
+            const arr = v => (v >= 0 ? '▲' : '▼');
+            const cls = v => (v >= 0 ? 'brief-up' : 'brief-down');
+            try {
+                const r = await fetch('/api/briefing', { headers: { 'Accept': 'application/json' } });
+                if (!r.ok) return;
+                const d = await r.json();
+                const rows = [];
+
+                const b = d.btc || {};
+                if (b.price != null) {
+                    const reg = (b.regime || 'neutral');
+                    const rArr = reg === 'bull' ? '▲' : reg === 'bear' ? '▼' : '◆';
+                    const chg = b.change_pct || 0;
+                    const fund = (b.funding != null) ? ' · funding ' + sign(b.funding) + (b.funding * 100).toFixed(3) + '%' : '';
+                    const subParts = [];
+                    if (d.fng && d.fng.value != null) {
+                        const f = d.fng.value;
+                        const fc = f < 25 ? '#f87171' : f < 45 ? '#fbbf24' : f < 55 ? '#8a99ad' : f < 75 ? '#4ade80' : '#34d399';
+                        let trend = '';
+                        if (d.fng.week_ago != null) {
+                            const wa = d.fng.week_ago;
+                            const ar = f > wa ? '↑' : f < wa ? '↓' : '→';
+                            const tc = f > wa ? '#4ade80' : f < wa ? '#f87171' : '#8a99ad';
+                            trend = ' <span style="color:' + tc + ';font-weight:700">' + ar + ' from ' + wa + '</span>' +
+                                ' <span style="color:var(--wolf-muted)">7d ago</span>';
+                        }
+                        let spark = '';
+                        const h = d.fng.history || [];
+                        if (h.length) {
+                            const blocks = '▁▂▃▄▅▆▇█';
+                            spark = ' <span style="letter-spacing:1px;color:' + fc + '" title="last 7 days, oldest→newest">' +
+                                h.map(v => blocks[Math.min(7, Math.max(0, Math.floor(v / 12.5)))]).join('') + '</span>';
+                        }
+                        subParts.push('<span style="color:' + fc + ';font-weight:700">Fear &amp; Greed ' + f +
+                            (d.fng.label ? ' · ' + escB(d.fng.label) : '') + '</span>' + trend + spark);
+                    }
+                    if (b.note) subParts.push(escB(b.note));
+                    const sub = subParts.length ? '<div class="brief-sub">' + subParts.join(' · ') + '</div>' : '';
+                    rows.push('<div class="brief-row"><div class="brief-tag">BTC</div><div>' +
+                        '<div class="brief-main"><span class="brief-regime brief-' + reg + '">' + rArr + ' ' + reg.toUpperCase() + '</span>' +
+                        ' · $' + Math.round(b.price).toLocaleString() +
+                        ' <span class="' + cls(chg) + '">(' + sign(chg) + chg.toFixed(1) + '%)</span>' + escB(fund) +
+                        '</div>' + sub + '</div></div>');
+                }
+
+                const st = d.stocks || [];
+                if (st.length) {
+                    const chips = st.map(s => {
+                        const c = s.change_pct || 0;
+                        return '<span class="stock-chip"><b>' + escB(s.name) + '</b> <span class="' + cls(c) + '">' +
+                            arr(c) + ' ' + sign(c) + c.toFixed(2) + '%</span></span>';
+                    }).join('');
+                    rows.push('<div class="brief-row"><div class="brief-tag">US</div><div class="brief-main">' + chips + '</div></div>');
+                }
+
+                const a = d.alts || {};
+                rows.push('<div class="brief-row"><div class="brief-tag">ALT</div><div class="brief-main">' +
+                    escB(a.tone || '') + ' · <span class="brief-up">' + (a.longs || 0) + ' long</span> / ' +
+                    '<span class="brief-down">' + (a.shorts || 0) + ' short</span> · RSI ' + (a.avg_rsi || 0) +
+                    '</div></div>');
+
+                let html = rows.join('');
+                if (d.verdict) html += '<div class="brief-verdict">→ ' + escB(d.verdict) + '</div>';
+                el.innerHTML = html || '<div class="analytics-subtitle">Briefing unavailable.</div>';
+
+                const up = document.getElementById('brief-updated');
+                if (up && d.generated_at) up.textContent = 'Computed from live data · updated ' + new Date(d.generated_at * 1000).toLocaleTimeString();
+            } catch (e) { /* fail-soft */ }
+        }
+        loadBriefing();
+        setInterval(loadBriefing, 120000);
 
         // Live account snapshot strip (admin only). Mirrors the Account page so
         // the home dashboard shows REAL Binance equity/positions right next to
