@@ -728,6 +728,12 @@
                 <div class="rp-cell"><div class="rp-k">Funding</div><div class="rp-v" id="rp-funding">—</div></div>
                 <div class="rp-cell"><div class="rp-k">Win rate</div><div class="rp-v" id="rp-winrate">—</div></div>
                 <div class="rp-cell"><div class="rp-k">Trades</div><div class="rp-v" id="rp-ntrades">—</div></div>
+                <div class="rp-cell"><div class="rp-k">Profit factor</div><div class="rp-v" id="rp-pf">—</div></div>
+                <div class="rp-cell"><div class="rp-k">Expectancy/trade</div><div class="rp-v" id="rp-exp">—</div></div>
+                <div class="rp-cell"><div class="rp-k">Avg win</div><div class="rp-v" id="rp-avgwin">—</div></div>
+                <div class="rp-cell"><div class="rp-k">Avg loss</div><div class="rp-v" id="rp-avgloss">—</div></div>
+                <div class="rp-cell"><div class="rp-k">Max drawdown</div><div class="rp-v" id="rp-mdd">—</div></div>
+                <div class="rp-cell"><div class="rp-k">Streak</div><div class="rp-v" id="rp-streak">—</div></div>
             </div>
             <div id="rp-rows" style="margin-top:12px;font-size:.74rem;"></div>
             <p style="margin:10px 0 0;font-size:.68rem;color:var(--wolf-muted,#8a99ad);line-height:1.5;">Straight from Binance income records (incl. fees + funding) — <b>this is your real account</b>. The cards below are the bot's <b>tracked/simulated</b> signals; they differ on purpose (the sim models partial-TP, and any DRY-RUN period logs signals that never hit the exchange).</p>
@@ -746,6 +752,17 @@
                         setV('rp-funding', money(d.funding), d.funding);
                         document.getElementById('rp-winrate').textContent = d.win_rate+'%';
                         document.getElementById('rp-ntrades').textContent = d.n_trades+' ('+d.wins+'W/'+d.losses+'L)';
+                        var pfv=document.getElementById('rp-pf');
+                        if(d.profit_factor===null){ pfv.textContent='—'; pfv.className='rp-v'; }
+                        else if(!isFinite(d.profit_factor)){ pfv.textContent='∞'; pfv.className='rp-v win'; }
+                        else { pfv.textContent=Number(d.profit_factor).toFixed(2); pfv.className='rp-v '+(d.profit_factor>=1?'win':'loss'); }
+                        setV('rp-exp', money(d.expectancy), d.expectancy);
+                        setV('rp-avgwin', money(d.avg_win), d.avg_win);
+                        setV('rp-avgloss', money(d.avg_loss), d.avg_loss);
+                        setV('rp-mdd', money(d.max_drawdown), d.max_drawdown);
+                        var stk=document.getElementById('rp-streak');
+                        stk.textContent=(d.streak&&d.streak_type)?(d.streak+d.streak_type):'—';
+                        stk.className='rp-v '+(d.streak_type==='W'?'win':(d.streak_type==='L'?'loss':''));
                         meta.textContent = 'real account · '+d.n_trades+' closed trades';
                         var rows=(d.trades||[]).slice(0,12).map(function(t){
                             var dt=new Date(t.time); var sym=(t.symbol||'').replace('USDT','');

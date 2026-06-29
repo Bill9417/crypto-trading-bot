@@ -1334,10 +1334,29 @@ def realized_pnl_summary(limit: int = 1000) -> dict:
                 commission += amt          # Binance reports fees as negative income
             elif typ == "FUNDING_FEE":
                 funding += amt             # can be + or -
-        trades.sort(key=lambda x: x["time"], reverse=True)
-        wins = sum(1 for t in trades if t["pnl"] > 0)
-        losses = sum(1 for t in trades if t["pnl"] < 0)
+        trades.sort(key=lambda x: x["time"], reverse=True)   # newest first
+        pnls = [t["pnl"] for t in trades]
+        wins = sum(1 for p in pnls if p > 0)
+        losses = sum(1 for p in pnls if p < 0)
         n = wins + losses
+        gross_win = sum(p for p in pnls if p > 0)
+        gross_loss = -sum(p for p in pnls if p < 0)          # positive magnitude
+        # Max drawdown over the realized-P&L curve (chronological), in USDT.
+        cum = peak = mdd = 0.0
+        for t in sorted(trades, key=lambda x: x["time"]):
+            cum += t["pnl"]; peak = max(peak, cum); mdd = min(mdd, cum - peak)
+        # Current streak: consecutive same-result trades from the most recent.
+        streak = 0; streak_type = None
+        for p in pnls:
+            res = "W" if p > 0 else ("L" if p < 0 else None)
+            if res is None:
+                continue
+            if streak_type is None:
+                streak_type, streak = res, 1
+            elif res == streak_type:
+                streak += 1
+            else:
+                break
         return {
             "ok": True,
             "realized": round(realized, 4),
@@ -1346,6 +1365,17 @@ def realized_pnl_summary(limit: int = 1000) -> dict:
             "net": round(realized + commission + funding, 4),
             "n_trades": n, "wins": wins, "losses": losses,
             "win_rate": round(wins / n * 100, 1) if n else 0.0,
+            "gross_win": round(gross_win, 4),
+            "gross_loss": round(gross_loss, 4),
+            "profit_factor": (round(gross_win / gross_loss, 2) if gross_loss > 0
+                              else (None if gross_win == 0 else float("inf"))),
+            "avg_win": round(gross_win / wins, 4) if wins else 0.0,
+            "avg_loss": round(-gross_loss / losses, 4) if losses else 0.0,
+            "expectancy": round(realized / n, 4) if n else 0.0,
+            "max_drawdown": round(mdd, 4),
+            "streak": streak, "streak_type": streak_type,
+            "best": round(max(pnls), 4) if pnls else 0.0,
+            "worst": round(min(pnls), 4) if pnls else 0.0,
             "trades": trades[:80],
         }
     except Exception as exc:  # noqa: BLE001
