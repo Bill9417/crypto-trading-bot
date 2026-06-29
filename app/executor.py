@@ -1302,3 +1302,51 @@ def realized_pnl_history(limit: int = 80) -> dict:
         return {"ok": True, "trades": trades}
     except Exception as exc:  # noqa: BLE001
         return {"ok": False, "error": str(exc), "trades": []}
+
+
+def realized_pnl_summary(limit: int = 1000) -> dict:
+    """Ground-truth account P&L straight from Binance income records — what the
+    /performance page reconciles its (simulated) stats against.
+
+    Sums ALL income types in one call and reports the true wallet change:
+        net = realized P&L + commission (negative) + funding (±)
+    plus the per-trade realized rows and win/loss tally. This is what Binance
+    actually shows (fees included), so the page can match the exchange exactly."""
+    if not _keys_present():
+        return {"ok": False, "error": "No Binance API keys configured."}
+    try:
+        ex = _get_exchange()
+        rows = ex.fapiPrivateGetIncome({"limit": limit})
+        realized = commission = funding = 0.0
+        trades = []
+        for it in rows:
+            typ = it.get("incomeType")
+            try:
+                amt = float(it.get("income") or 0.0)
+            except (TypeError, ValueError):
+                amt = 0.0
+            if typ == "REALIZED_PNL":
+                realized += amt
+                if amt != 0.0:
+                    trades.append({"symbol": it.get("symbol"), "pnl": amt,
+                                   "time": int(it.get("time") or 0)})
+            elif typ == "COMMISSION":
+                commission += amt          # Binance reports fees as negative income
+            elif typ == "FUNDING_FEE":
+                funding += amt             # can be + or -
+        trades.sort(key=lambda x: x["time"], reverse=True)
+        wins = sum(1 for t in trades if t["pnl"] > 0)
+        losses = sum(1 for t in trades if t["pnl"] < 0)
+        n = wins + losses
+        return {
+            "ok": True,
+            "realized": round(realized, 4),
+            "commission": round(commission, 4),
+            "funding": round(funding, 4),
+            "net": round(realized + commission + funding, 4),
+            "n_trades": n, "wins": wins, "losses": losses,
+            "win_rate": round(wins / n * 100, 1) if n else 0.0,
+            "trades": trades[:80],
+        }
+    except Exception as exc:  # noqa: BLE001
+        return {"ok": False, "error": str(exc)}

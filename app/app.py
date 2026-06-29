@@ -1846,6 +1846,15 @@ def api_account_history():
     return jsonify(executor.realized_pnl_history(limit=80))
 
 
+@app.route("/api/performance/real")
+@admin_required
+def api_performance_real():
+    """Real Binance account P&L (realized + fees + funding) for the performance
+    page's 'Live Binance' panel — the ground truth the simulated stats reconcile
+    against. Distinct from the DB-record analytics on the same page."""
+    return jsonify(executor.realized_pnl_summary())
+
+
 def _parse_price(raw):
     try:
         return float(raw) if raw not in (None, "", "null") else None
