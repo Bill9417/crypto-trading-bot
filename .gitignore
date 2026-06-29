@@ -27,6 +27,7 @@ bot_strategy.json
 paper_active.json
 paper_state_*.json
 scan_results.json
+strategy2_signals.json
 
 # ── Large generated caches / data dumps ──
 ohlcv_cache.json

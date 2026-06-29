@@ -1,0 +1,499 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <title>Wolf Scanner — Strategy 2 · Confidence Meter</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
+    <link rel="manifest" href="/manifest.webmanifest">
+    <meta name="theme-color" content="#0e1018">
+    <link rel="apple-touch-icon" href="/static/apple-touch-icon.png">
+    <link rel="stylesheet" href="/static/app.css?v=20260628">
+    <style>
+        * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+        html { -webkit-text-size-adjust: 100%; }
+        body {
+            margin: 0; background: var(--wolf-slate);
+            background-image: var(--page-bg-glow);
+            color: var(--wolf-text);
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+            -webkit-font-smoothing: antialiased; min-height: 100vh;
+        }
+        .wrap { max-width: var(--page-max); margin: 0 auto; padding: 10px clamp(12px,4vw,20px) calc(34px + env(safe-area-inset-bottom)); }
+        .bar {
+            position: sticky; top: 0; z-index: 20;
+            background: rgba(10,12,20,.82); backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
+            border: 1px solid var(--wolf-border); border-left: 4px solid var(--wolf-blue);
+            border-radius: var(--radius); box-shadow: var(--shadow);
+            padding: 12px 16px; margin: 4px 0 16px;
+            display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap;
+        }
+        .brand { display: flex; align-items: center; gap: 11px; min-width: 0; }
+        .brand-icon { font-size: 1.6rem; line-height: 1; filter: drop-shadow(0 0 7px rgba(0,210,255,.4)); }
+        .brand h1 { font-size: clamp(1rem,3.4vw,1.18rem); font-weight: 900; margin: 0; letter-spacing: -.4px; white-space: nowrap; }
+        .brand h1 span { color: var(--wolf-blue); }
+        .brand-sub { font-size: .68rem; color: var(--wolf-muted); font-weight: 600; }
+        .sym-pick { display: flex; align-items: center; gap: 8px; }
+        .sym-pick label { font-size: .68rem; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--wolf-muted); }
+        .sym-pick select {
+            background: rgba(255,255,255,.04); border: 1px solid var(--wolf-border);
+            color: var(--wolf-text); font-size: .82rem; font-weight: 700; padding: 7px 10px;
+            border-radius: 9px; cursor: pointer; font-family: inherit;
+        }
+        .grid { display: grid; grid-template-columns: minmax(0, 1fr); gap: 14px; align-items: start; }
+        /* wide screens: a slim meter rail + a dominant, large chart */
+        @media (min-width: 1024px) { .grid { grid-template-columns: 336px minmax(0, 1fr); } }
+        .panel {
+            background: var(--wolf-card); border: 1px solid var(--wolf-border);
+            border-radius: var(--radius); box-shadow: var(--shadow); padding: 16px;
+            backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+        }
+        .panel-title { font-size: .72rem; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; color: var(--wolf-muted); margin: 0 0 12px; }
+        .price-line { font-size: .8rem; color: var(--wolf-muted); }
+        .price-line b { color: var(--wolf-text); font-variant-numeric: tabular-nums; }
+        .insuff {
+            display: none; margin-top: 8px; font-size: .68rem; font-weight: 700;
+            color: var(--wolf-gold); background: rgba(255,207,75,.10);
+            border: 1px solid rgba(255,207,75,.35); border-radius: 8px; padding: 6px 10px;
+        }
+        .note { font-size: .66rem; color: var(--wolf-muted); line-height: 1.5; margin-top: 12px; }
+        .chart-panel { display: flex; flex-direction: column; }
+        .chart-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; margin-bottom: 12px; }
+        .chart-head .panel-title { margin: 0; }
+        .chart-tools { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+        .chart-btn {
+            display: inline-flex; align-items: center; gap: 6px;
+            background: rgba(255,255,255,.04); border: 1px solid var(--wolf-border);
+            color: var(--wolf-text); font-family: inherit; font-size: .72rem; font-weight: 700;
+            padding: 7px 11px; border-radius: 9px; cursor: pointer; text-decoration: none;
+            transition: background .12s, border-color .12s;
+        }
+        .chart-btn:hover { background: rgba(255,255,255,.08); border-color: var(--wolf-blue); }
+        .chart-btn.primary { color: var(--wolf-blue); border-color: rgba(0,210,255,.4); }
+        /* the chart — much larger than before, and it grows with the viewport */
+        .tv-wrap { height: clamp(560px, 80vh, 1080px); border-radius: 12px; overflow: hidden; position: relative; }
+        #s2-lwc { width: 100%; height: 100%; }
+        .lwc-fallback { position: absolute; inset: 0; display: grid; place-items: center; padding: 20px;
+                        text-align: center; font-size: .78rem; color: var(--wolf-muted); }
+        /* per-EMA colour legend (the stack is readable because each line owns a colour) */
+        .ema-legend { display: flex; flex-wrap: wrap; gap: 7px 14px; margin-top: 12px; }
+        .ema-legend .lg { display: inline-flex; align-items: center; gap: 6px; font-size: .64rem; font-weight: 700; color: var(--wolf-muted); }
+        .ema-legend .sw { width: 16px; height: 3px; border-radius: 2px; display: inline-block; flex: 0 0 auto; }
+        .chart-overlays { font-size: .64rem; color: var(--wolf-muted); line-height: 1.55; margin-top: 10px; }
+        .chart-overlays b { color: var(--wolf-text); font-weight: 700; }
+        /* fullscreen chart — fills the whole viewport (chart resizes to fit via ResizeObserver) */
+        body.s2-fs { overflow: hidden; }
+        .chart-panel.fs {
+            position: fixed; inset: 0; z-index: 1000; margin: 0; border-radius: 0;
+            background: var(--wolf-slate); padding: 12px;
+        }
+        .chart-panel.fs .tv-wrap { height: calc(100vh - 64px); border-radius: 0; }
+        .chart-panel.fs .chart-overlays, .chart-panel.fs .ema-legend { display: none; }
+        .spark-label { font-size: .62rem; color: var(--wolf-muted); text-transform: uppercase; letter-spacing: .08em; margin: 14px 0 4px; }
+        .sig-meta { font-size: .66rem; color: var(--wolf-muted); }
+        .sig-list { display: flex; flex-direction: column; gap: 4px; margin-top: 10px; }
+        .sig-empty { font-size: .76rem; color: var(--wolf-muted); padding: 10px 4px; }
+        .sig-row { display: grid; grid-template-columns: 84px 1fr auto auto auto; align-items: center; gap: 10px;
+                   padding: 9px 12px; border-radius: 10px; background: rgba(255,255,255,.02);
+                   border-left: 3px solid var(--wolf-border); cursor: pointer; transition: background .12s; }
+        .sig-row:hover { background: rgba(255,255,255,.05); }
+        .sig-row.long  { border-left-color: var(--long); }
+        .sig-row.short { border-left-color: var(--short); }
+        .sig-dir { font-size: .66rem; font-weight: 800; letter-spacing: .04em; }
+        .sig-dir.long  { color: var(--long); }
+        .sig-dir.short { color: var(--short); }
+        .sig-sym { font-weight: 800; font-size: .9rem; }
+        .sig-score { font-variant-numeric: tabular-nums; font-weight: 700; color: var(--wolf-text); }
+        .sig-age { font-size: .68rem; color: var(--wolf-muted); }
+        .sig-tv { font-size: .66rem; font-weight: 700; color: var(--wolf-blue); text-decoration: none; }
+    </style>
+</head>
+<body>
+    <div class="wrap">
+        <div class="bar">
+            <div class="brand">
+                <span class="brand-icon">📈</span>
+                <div>
+                    <h1>STRATEGY <span>2</span> · Confidence Meter</h1>
+                    <div class="brand-sub">Live mirror of the TradingView indicator</div>
+                </div>
+            </div>
+            <div class="sym-pick">
+                <label for="s2-symbol">Symbol</label>
+                <select id="s2-symbol">
+                    {% for s in symbols %}
+                    <option value="{{ s }}" {% if s == default_symbol %}selected{% endif %}>{{ s.split('/')[0] }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+        </div>
+
+        <div class="nav-standalone">{% include "_nav.html" %}</div>
+
+        <div class="grid">
+            <!-- ── Scorecard ── -->
+            <div class="scorecard" id="s2-card">
+                <div class="scorecard-head">
+                    <div class="gauge" id="s2-gauge">
+                        <div class="gauge-inner">
+                            <div class="gauge-score" id="s2-score">—</div>
+                            <div class="gauge-cap">Score (0–100)</div>
+                        </div>
+                    </div>
+                    <div class="scorecard-meta">
+                        <span class="bias-chip neutral" id="s2-bias">Neutral</span>
+                        <div class="price-line">Last: <b id="s2-price">—</b></div>
+                    </div>
+                </div>
+
+                <div>
+                    <p class="panel-title" style="margin-bottom:8px;">Factors</p>
+                    <div class="factor-list" id="s2-factors">
+                        <div class="factor-row"><span><span class="fac-label">EMA Stack</span><span class="fac-weight">(25)</span></span><span class="fac-state neutral" data-key="ema_stack">—</span></div>
+                        <div class="factor-row"><span><span class="fac-label">Price vs EMA200</span><span class="fac-weight">(20)</span></span><span class="fac-state neutral" data-key="price_ema200">—</span></div>
+                        <div class="factor-row"><span><span class="fac-label">SMC Structure</span><span class="fac-weight">(25)</span></span><span class="fac-state neutral" data-key="smc">—</span></div>
+                        <div class="factor-row"><span><span class="fac-label">Vegas Slope</span><span class="fac-weight">(15)</span></span><span class="fac-state neutral" data-key="vegas">—</span></div>
+                        <div class="factor-row"><span><span class="fac-label">Tunnel Position</span><span class="fac-weight">(10)</span></span><span class="fac-state neutral" data-key="tunnel">—</span></div>
+                        <div class="factor-row"><span><span class="fac-label">Trendline Break</span><span class="fac-weight">(5)</span></span><span class="fac-state neutral" data-key="trendline">—</span></div>
+                    </div>
+                    <div class="insuff" id="s2-insuff">⚠ Insufficient history — fewer than ~345 candles; some factors are neutral.</div>
+                </div>
+
+                <div>
+                    <div class="spark-label">Recent score</div>
+                    <svg class="sparkline" id="s2-spark" viewBox="0 0 100 46" preserveAspectRatio="none"><polyline points=""></polyline></svg>
+                </div>
+
+                <p class="note">A confluence METER, not a prediction or a trade command — it mirrors the on-chart
+                   indicator: 0–100 directional agreement across EMA stack, price vs EMA200, SMC structure, Vegas
+                   slope, the Double Tunnel and (chart-only) trendline breaks. The trendline factor is held neutral
+                   server-side, so the range is ≈3–98.</p>
+            </div>
+
+            <!-- ── Lightweight-Charts TV.pine mirror (candles + colour-coded EMA stack) ── -->
+            <div class="panel chart-panel" id="s2-chart-panel">
+                <div class="chart-head">
+                    <p class="panel-title">Live chart · TV.pine mirror</p>
+                    <div class="chart-tools">
+                        <a class="chart-btn primary" id="s2-tv-open" href="https://www.tradingview.com/chart/" target="_blank" rel="noopener">Open in TradingView ↗</a>
+                        <button class="chart-btn" id="s2-tv-fs" type="button">⛶ Fullscreen</button>
+                    </div>
+                </div>
+                <div class="tv-wrap"><div id="s2-lwc"></div></div>
+                <div class="ema-legend" id="s2-legend"></div>
+                <p class="chart-overlays">1h candles + TV.pine's full moving-average layer, each line its own colour — the
+                   <b>EMA 20/50/100/200</b> stack, the <b>Double Tunnel</b> (144/169 inner · 288/338 outer) and the slope-coloured
+                   <b>Vegas EMA200</b> (green rising / red falling). EMAs are computed on the same 1h window as the meter, so the
+                   lines agree with the factors on the left. SMC structure, trend-line breaks and MSB order-blocks aren't drawn here —
+                   hit <b>Open in TradingView</b> to see the full indicator on your account.</p>
+            </div>
+        </div>
+
+        <div class="panel" style="margin-top:14px;">
+            <div style="display:flex;align-items:baseline;justify-content:space-between;gap:10px;flex-wrap:wrap;">
+                <p class="panel-title" style="margin:0;">Live 15m Signals</p>
+                <span class="sig-meta" id="s2-sig-meta">loading…</span>
+            </div>
+            <div class="sig-list" id="s2-sig-list"><div class="sig-empty">No signals yet.</div></div>
+            <p class="note">Fired by the stand-alone 15m scanner (alert-only — no orders are placed). Click a row to load it
+               above. Each is a green/red-triangle arm-and-fire: a bullish/bearish MSB structure flip, then price reclaims
+               EMA200 with the meter ≥70 (long) / ≤30 (short).</p>
+        </div>
+    </div>
+
+    <!-- TradingView Lightweight Charts (pinned) — drives the per-colour TV.pine mirror -->
+    <script src="https://unpkg.com/lightweight-charts@4.2.3/dist/lightweight-charts.standalone.production.js"></script>
+    <script>
+    (function () {
+        var sel = document.getElementById('s2-symbol');
+        var gauge = document.getElementById('s2-gauge');
+        var scoreEl = document.getElementById('s2-score');
+        var biasEl = document.getElementById('s2-bias');
+        var priceEl = document.getElementById('s2-price');
+        var insuffEl = document.getElementById('s2-insuff');
+        var sparkPoly = document.querySelector('#s2-spark polyline');
+        var history = [];   // recent scores for the sparkline
+        var pollTimer = null;
+        var currentSymbol = sel.value;
+
+        function biasText(b) { return b === 'long' ? 'LONG bias' : b === 'short' ? 'SHORT bias' : 'Neutral'; }
+        function ringColor(b) { return b === 'long' ? 'var(--long)' : b === 'short' ? 'var(--short)' : 'var(--wolf-gold)'; }
+        function stateText(t) { return t === 'bull' ? 'Bull' : t === 'bear' ? 'Bear' : '—'; }
+
+        function fmtPrice(p) {
+            if (!p) return '—';
+            return p >= 100 ? p.toLocaleString(undefined, { maximumFractionDigits: 2 })
+                            : p.toPrecision(5);
+        }
+
+        function drawSpark() {
+            if (history.length < 2) { sparkPoly.setAttribute('points', ''); return; }
+            var n = history.length;
+            var pts = history.map(function (s, i) {
+                var x = (i / (n - 1)) * 100;
+                var y = 45 - (Math.max(0, Math.min(100, s)) / 100) * 44;
+                return x.toFixed(2) + ',' + y.toFixed(2);
+            });
+            sparkPoly.setAttribute('points', pts.join(' '));
+        }
+
+        function paint(d) {
+            if (d.error) { biasEl.textContent = 'unavailable'; return; }
+            var score = d.score == null ? 0 : d.score;
+            scoreEl.textContent = score;
+            gauge.style.setProperty('--score', score);
+            gauge.style.setProperty('--ring', ringColor(d.bias));
+            biasEl.textContent = biasText(d.bias);
+            biasEl.className = 'bias-chip ' + (d.bias || 'neutral');
+            priceEl.textContent = fmtPrice(d.price);
+            insuffEl.style.display = d.insufficient ? 'block' : 'none';
+            (d.factors || []).forEach(function (f) {
+                var el = document.querySelector('.fac-state[data-key="' + f.key + '"]');
+                if (el) { el.textContent = stateText(f.text); el.className = 'fac-state ' + f.text; }
+            });
+            history.push(score);
+            if (history.length > 40) history.shift();
+            drawSpark();
+            if (window.wolfApplyLang) window.wolfApplyLang();   // re-translate fresh text
+        }
+
+        function load() {
+            var sym = currentSymbol;
+            fetch('/api/strategy2/' + sym)         // symbol has '/' → matches <path:>
+                .then(function (r) { return r.ok ? r.json() : null; })
+                .then(function (d) { if (d) paint(d); })
+                .catch(function () {});
+        }
+
+        function tvSymbolOf(sym) { return 'BINANCE:' + sym.split('/')[0] + 'USDT.P'; }
+
+        // ── TV.pine mirror via Lightweight Charts — each EMA owns a colour ──
+        // Colours follow the TV.pine palette: fast=yellow, med=orange, slow=fuchsia,
+        // trend=blue; the inner Double Tunnel (144/169) is orange-family, the outer
+        // (288/338) lime-family; Vegas EMA200 is slope-coloured separately below.
+        var EMA_DEFS = [
+            { key: 'e20',  len: 20,  color: '#FFEB3B', width: 1, label: 'EMA 20' },
+            { key: 'e50',  len: 50,  color: '#FF9800', width: 1, label: 'EMA 50' },
+            { key: 'e100', len: 100, color: '#E040FB', width: 1, label: 'EMA 100' },
+            { key: 'e200', len: 200, color: '#2962FF', width: 2, label: 'EMA 200' },
+            { key: 't144', len: 144, color: '#FFB74D', width: 1, label: 'Tunnel 144' },
+            { key: 't169', len: 169, color: '#FB8C00', width: 1, label: 'Tunnel 169' },
+            { key: 't288', len: 288, color: '#9CCC65', width: 1, label: 'Tunnel 288' },
+            { key: 't338', len: 338, color: '#66BB6A', width: 1, label: 'Tunnel 338' }
+        ];
+        var VEGAS_UP = '#16a34a', VEGAS_DN = '#dc2626';
+
+        // EMA seeded at the first value (α = 2/(n+1)) — matches the server's
+        // pandas ewm(adjust=False), so the on-chart lines equal the meter's factors.
+        function emaSeries(values, period) {
+            var k = 2 / (period + 1), out = new Array(values.length), prev = values[0];
+            out[0] = prev;
+            for (var i = 1; i < values.length; i++) { prev = values[i] * k + prev * (1 - k); out[i] = prev; }
+            return out;
+        }
+        function smaSeries(values, period) {
+            var out = new Array(values.length), sum = 0;
+            for (var i = 0; i < values.length; i++) {
+                sum += values[i];
+                if (i >= period) sum -= values[i - period];
+                out[i] = i >= period - 1 ? sum / period : null;
+            }
+            return out;
+        }
+
+        // v4 uses addCandlestickSeries/addLineSeries; v5 swaps to addSeries(Type,…).
+        function addCandles(chart, opts) {
+            return chart.addCandlestickSeries ? chart.addCandlestickSeries(opts)
+                                              : chart.addSeries(LightweightCharts.CandlestickSeries, opts);
+        }
+        function addLine(chart, opts) {
+            return chart.addLineSeries ? chart.addLineSeries(opts)
+                                       : chart.addSeries(LightweightCharts.LineSeries, opts);
+        }
+
+        var lwc = null;            // { chart, candle, lines:{}, vegas }
+        var LINE_BASE = { priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false };
+
+        function ensureChart() {
+            if (lwc || !window.LightweightCharts) return lwc;
+            var el = document.getElementById('s2-lwc');
+            var chart = LightweightCharts.createChart(el, {
+                width: el.clientWidth, height: el.clientHeight,
+                layout: { background: { type: 'solid', color: 'rgba(0,0,0,0)' }, textColor: '#8a99ad',
+                          fontFamily: "'Inter', sans-serif" },
+                grid: { vertLines: { color: 'rgba(255,255,255,.04)' }, horzLines: { color: 'rgba(255,255,255,.04)' } },
+                rightPriceScale: { borderColor: 'rgba(255,255,255,.08)' },
+                timeScale: { borderColor: 'rgba(255,255,255,.08)', timeVisible: true, secondsVisible: false },
+                crosshair: { mode: 0 }
+            });
+            var candle = addCandles(chart, {
+                upColor: '#16a34a', downColor: '#dc2626', borderUpColor: '#16a34a',
+                borderDownColor: '#dc2626', wickUpColor: '#16a34a', wickDownColor: '#dc2626'
+            });
+            var lines = {};
+            EMA_DEFS.forEach(function (d) {
+                lines[d.key] = addLine(chart, Object.assign({ color: d.color, lineWidth: d.width }, LINE_BASE));
+            });
+            var vegas = addLine(chart, Object.assign({ color: VEGAS_UP, lineWidth: 2 }, LINE_BASE));
+            try {
+                new ResizeObserver(function () {
+                    if (el.clientWidth) chart.applyOptions({ width: el.clientWidth, height: el.clientHeight });
+                }).observe(el);
+            } catch (e) { /* no ResizeObserver → static size, still fine */ }
+            lwc = { chart: chart, candle: candle, lines: lines, vegas: vegas };
+            return lwc;
+        }
+
+        function priceFmt(p) {
+            var prec = p >= 100 ? 2 : p >= 1 ? 4 : p >= 0.01 ? 5 : 8;
+            return { type: 'price', precision: prec, minMove: Math.pow(10, -prec) };
+        }
+
+        function drawChart(rows) {
+            var c = ensureChart();
+            if (!c) return;
+            var times = rows.map(function (r) { return Math.floor(r[0] / 1000); });
+            var closes = rows.map(function (r) { return r[4]; });
+            c.candle.setData(rows.map(function (r) {
+                return { time: Math.floor(r[0] / 1000), open: r[1], high: r[2], low: r[3], close: r[4] };
+            }));
+            c.candle.applyOptions({ priceFormat: priceFmt(closes[closes.length - 1] || 0) });
+            EMA_DEFS.forEach(function (d) {
+                var s = emaSeries(closes, d.len);
+                c.lines[d.key].setData(times.map(function (t, i) { return { time: t, value: s[i] }; }));
+            });
+            // Vegas EMA200 = SMA5 of EMA200, each segment coloured by its slope.
+            var vg = smaSeries(emaSeries(closes, 200), 5), vdata = [];
+            for (var i = 0; i < vg.length; i++) {
+                if (vg[i] == null) continue;
+                var col = (i > 0 && vg[i - 1] != null && vg[i] < vg[i - 1]) ? VEGAS_DN : VEGAS_UP;
+                vdata.push({ time: times[i], value: vg[i], color: col });
+            }
+            c.vegas.setData(vdata);
+            c.chart.timeScale().fitContent();
+        }
+
+        function loadChart(sym) {
+            var el = document.getElementById('s2-lwc');
+            if (!window.LightweightCharts) {
+                if (el) el.innerHTML = '<div class="lwc-fallback">Chart library didn’t load — use “Open in TradingView ↗”.</div>';
+                return;
+            }
+            fetch('/api/strategy2_ohlcv/' + sym)        // distinct path; symbol has '/'
+                .then(function (r) { return r.ok ? r.json() : null; })
+                .then(function (d) { if (d && d.candles && d.candles.length) drawChart(d.candles); })
+                .catch(function () {});
+        }
+
+        function buildLegend() {
+            var box = document.getElementById('s2-legend');
+            if (!box) return;
+            var html = EMA_DEFS.map(function (d) {
+                return '<span class="lg"><span class="sw" style="background:' + d.color + '"></span>' + d.label + '</span>';
+            }).join('');
+            html += '<span class="lg"><span class="sw" style="background:linear-gradient(90deg,' +
+                    VEGAS_UP + ',' + VEGAS_DN + ')"></span>Vegas EMA200</span>';
+            box.innerHTML = html;
+        }
+
+        function updateTVLink(sym) {
+            var a = document.getElementById('s2-tv-open');
+            if (a) a.href = 'https://www.tradingview.com/chart/?symbol=' +
+                encodeURIComponent(tvSymbolOf(sym)) + '&interval=15';
+        }
+
+        // ── Fullscreen chart (true "larger screen") ──
+        var fsBtn = document.getElementById('s2-tv-fs');
+        var chartPanel = document.getElementById('s2-chart-panel');
+        function setFs(on) {
+            chartPanel.classList.toggle('fs', on);
+            document.body.classList.toggle('s2-fs', on);
+            fsBtn.textContent = on ? '✕ Exit' : '⛶ Fullscreen';
+            // the container size changes with the .fs class → the chart's ResizeObserver refits it
+        }
+        fsBtn.addEventListener('click', function () { setFs(!chartPanel.classList.contains('fs')); });
+        document.addEventListener('keydown', function (e) {
+            if (e.key === 'Escape' && chartPanel.classList.contains('fs')) setFs(false);
+        });
+
+        function setSymbol(sym) {
+            currentSymbol = sym;
+            // signals may be for symbols not in the dropdown — add on the fly
+            var has = Array.prototype.some.call(sel.options, function (o) { return o.value === sym; });
+            if (!has) {
+                var o = document.createElement('option');
+                o.value = sym; o.textContent = sym.split('/')[0];
+                sel.insertBefore(o, sel.firstChild);
+            }
+            sel.value = sym;
+            history = [];
+            loadChart(sym);
+            updateTVLink(sym);
+            load();
+            if (pollTimer) clearInterval(pollTimer);
+            pollTimer = setInterval(load, 30000);
+        }
+
+        sel.addEventListener('change', function () { setSymbol(sel.value); });
+
+        // ── Live 15m signals (from the stand-alone scanner) ──
+        var sigList = document.getElementById('s2-sig-list');
+        var sigMeta = document.getElementById('s2-sig-meta');
+        function ago(ts) {
+            var s = Math.max(0, Math.floor(Date.now() / 1000 - ts));
+            if (s < 90) return s + 's ago';
+            if (s < 5400) return Math.round(s / 60) + 'm ago';
+            return Math.round(s / 3600) + 'h ago';
+        }
+        function renderSignals(d) {
+            var sigs = d.signals || [];
+            if (!d.generated_at) {
+                sigMeta.textContent = 'Scanner not running — start it with ./run_strategy2.sh';
+            } else {
+                var fresh = Math.max(0, Math.floor(Date.now() / 1000 - d.generated_at));
+                sigMeta.textContent = (d.scanning || 0) + ' perps · ' + (d.timeframe || '15m') +
+                    ' · last scan ' + (fresh < 90 ? fresh + 's' : Math.round(fresh / 60) + 'm') + ' ago';
+            }
+            if (!sigs.length) {
+                sigList.innerHTML = '<div class="sig-empty">No signals yet — they appear here when one fires.</div>';
+                return;
+            }
+            sigList.innerHTML = sigs.map(function (s) {
+                return '<div class="sig-row ' + s.direction + '" data-sym="' + s.symbol + '">' +
+                    '<span class="sig-dir ' + s.direction + '">' + (s.direction === 'long' ? '▲ LONG' : '▼ SHORT') + '</span>' +
+                    '<span class="sig-sym">' + s.base + '</span>' +
+                    '<span class="sig-score">' + s.score + '</span>' +
+                    '<span class="sig-age">' + ago(s.ts) + '</span>' +
+                    '<a class="sig-tv" href="' + s.tv_url + '" target="_blank" rel="noopener">TV ↗</a>' +
+                    '</div>';
+            }).join('');
+            Array.prototype.forEach.call(sigList.querySelectorAll('.sig-row'), function (row) {
+                row.addEventListener('click', function (e) {
+                    if (e.target.classList.contains('sig-tv')) return;   // let the TV link work
+                    setSymbol(row.getAttribute('data-sym'));
+                    window.scrollTo({ top: 0, behavior: 'smooth' });
+                });
+            });
+            if (window.wolfApplyLang) window.wolfApplyLang();
+        }
+        function loadSignals() {
+            fetch('/api/strategy2_signals').then(function (r) { return r.ok ? r.json() : null; })
+                .then(function (d) { if (d) renderSignals(d); }).catch(function () {});
+        }
+
+        buildLegend();             // EMA colour key (static)
+        load();                    // gauge + factors first
+        loadSignals();             // live-signals panel
+        loadChart(currentSymbol);  // chart last (guarded; can't block the data above)
+        updateTVLink(currentSymbol);
+        pollTimer = setInterval(load, 30000);
+        setInterval(loadSignals, 30000);
+        // refresh the 1h chart on a slow cadence (and only when visible) so we don't
+        // tax the shared REST client the live bot also uses.
+        setInterval(function () { if (!document.hidden) loadChart(currentSymbol); }, 120000);
+    })();
+    </script>
+</body>
+</html>

@@ -21,10 +21,26 @@
     "📊 PERFORMANCE": "📊 績效",
     "🔻 FUNNEL": "🔻 漏斗",
     "🌐 MARKET": "🌐 市場",
-    "🔬 BACKTESTER": "🔬 回測",
-    "🧪 DRY-RUN": "🧪 模擬",
+    "📈 STRATEGY 2": "📈 策略二",
     "⚙ ADMIN": "⚙ 管理",
     "🚪 LOGOUT": "🚪 登出",
+
+    // ── Strategy 2 — confidence meter ─────────────────────────
+    "Live mirror of the TradingView indicator": "TradingView 指標的即時鏡像",
+    "Symbol": "交易對",
+    "Score (0–100)": "分數 (0–100)",
+    "Neutral": "中性",
+    "LONG bias": "偏多",
+    "SHORT bias": "偏空",
+    "Factors": "因子",
+    "EMA Stack": "EMA 排列",
+    "Price vs EMA200": "價格 vs EMA200",
+    "SMC Structure": "SMC 結構",
+    "Vegas Slope": "Vegas 斜率",
+    "Tunnel Position": "通道位置",
+    "Trendline Break": "趨勢線突破",
+    "Live chart": "即時圖表",
+    "Recent score": "近期分數",
 
     // ── Top bar / header ───────────────────────────────────────
     "BOT IDLE": "機器人閒置",
