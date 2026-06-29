@@ -1687,14 +1687,13 @@ def _live_strategy_state():
                 running = (json.load(f) or {}).get("strategy")
     except Exception:  # noqa: BLE001
         running = None
-    _manage = lambda v: "trailing" if v.get("sim") is BT.simulate_trade_trailing else "bracket"
     return {
         "saved": saved,
         "saved_name": BT.STRATEGIES[saved]["name"],
         "running": running,
         "running_name": (BT.STRATEGIES.get(running) or {}).get("name") if running else None,
         "diverged": bool(running and running != saved),
-        "strategies": [{"key": k, "name": v["name"], "desc": v["desc"], "manage": _manage(v)}
+        "strategies": [{"key": k, "name": v["name"], "desc": v["desc"], "manage": "bracket"}
                        for k, v in BT.STRATEGIES.items()],
     }
 
@@ -1834,236 +1833,74 @@ def web_manifest():
                                mimetype="application/manifest+json")
 
 
-# ── Backtester (runs the strategy over history in a background thread) ───────
-import threading as _threading
-_bt_jobs = {}        # job_id -> {status, done, total, message, result, error}
-_bt_lock = _threading.Lock()
+@app.route("/strategy2")
+@login_required
+def strategy2():
+    """Strategy 2 — live confidence meter that mirrors the TradingView indicator
+    (TV.pine). The page renders the gauge + an embedded TradingView chart and polls
+    /api/strategy2 for the live 0–100 score. The symbol list reuses the scanner's
+    universe so it matches what the dashboard is watching."""
+    data = load_data()
+    syms = sorted({s.get("symbol") for s in data.get("signals", []) if s.get("symbol")})
+    default_symbol = "BTC/USDT:USDT"
+    if default_symbol not in syms:
+        syms = [default_symbol] + syms
+    return render_template("strategy2.html", user=current_user,
+                           symbols=syms, default_symbol=default_symbol)
 
 
-def _run_backtest_job(job_id, days, symbols, timeframe, strategy="default", realism=True, adx="default"):
+@app.route("/api/strategy2")
+@app.route("/api/strategy2/<path:symbol>")
+@login_required
+def api_strategy2(symbol="BTC/USDT:USDT"):
+    """Live confidence-meter JSON for one symbol. Reuses the shared rest_client
+    (same throttle/cooldown as the rest of the app) and the pure-compute meter in
+    strategy2_meter.py. 450 1h candles cover the outer tunnel EMA338 + Vegas SMA5."""
+    import strategy2_meter
     try:
-        import backtest  # lazy import avoids app<->bot circular import at load
-        def progress(done, total, message):
-            with _bt_lock:
-                j = _bt_jobs.get(job_id)
-                if j:
-                    j.update(done=done, total=total, message=message)
-        result = backtest.run_backtest(days, symbols, timeframe=timeframe,
-                                       strategy=strategy, progress=progress, realism=realism, adx=adx)
-        with _bt_lock:
-            _bt_jobs[job_id].update(status="done", result=result)
-    except Exception as e:  # noqa: BLE001
-        with _bt_lock:
-            _bt_jobs[job_id].update(status="error", error=str(e))
+        ohlcv = rest_client.call("fetch_ohlcv", symbol, "1h", None, 450)
+    except RateLimitCooldownError as exc:
+        return jsonify({"symbol": symbol, "error": str(exc)}), 200
+    except Exception as exc:  # noqa: BLE001 — never 500 the dashboard
+        return jsonify({"symbol": symbol, "error": f"fetch failed: {exc}"}), 200
+    meter = strategy2_meter.compute_meter(ohlcv)
+    meter["symbol"] = symbol
+    return jsonify(meter)
 
 
-@app.route("/backtester")
+@app.route("/api/strategy2_ohlcv")
+@app.route("/api/strategy2_ohlcv/<path:symbol>")
 @login_required
-def backtester():
-    return render_template("backtester.html", user=current_user)
-
-
-@app.route("/api/backtest/start", methods=["POST"])
-@login_required
-def backtest_start():
-    validate_csrf()
-    days = max(3, min(120, int(request.form.get("days", 21))))
-    nsym = max(1, min(200, int(request.form.get("symbols", 20))))
-    timeframe = request.form.get("timeframe", "1h")
-    if timeframe not in ("15m", "1h", "4h"):
-        timeframe = "1h"
-    raw = (request.form.get("tickers", "") or "").strip()
-    import backtest
-    strategy = request.form.get("strategy", "default")
-    if strategy not in backtest.STRATEGIES:
-        strategy = "default"
-    realism = request.form.get("realism", "1") not in ("0", "false", "False", "off", "")
-    adx = (request.form.get("adx", "default") or "default").lower()
-    if adx not in ("default", "on", "off"):
-        adx = "default"
-    if raw:
-        syms = [f"{s.strip().upper()}/USDT:USDT" for s in raw.split(",") if s.strip()]
-    else:
-        try:
-            syms = backtest.top_symbols(nsym)
-        except Exception as e:  # noqa: BLE001
-            return jsonify({"error": f"symbol fetch failed: {e}"}), 200
-    job_id = secrets.token_hex(8)
-    with _bt_lock:
-        _bt_jobs[job_id] = {"status": "running", "done": 0, "total": len(syms),
-                            "message": "starting…", "result": None, "error": None}
-    t = _threading.Thread(target=_run_backtest_job, args=(job_id, days, syms, timeframe, strategy, realism, adx), daemon=True)
-    t.start()
-    return jsonify({"job_id": job_id, "symbols": len(syms), "days": days, "timeframe": timeframe,
-                    "strategy": strategy, "strategy_name": backtest.STRATEGIES[strategy]["name"],
-                    "realism": realism, "adx": adx})
-
-
-@app.route("/api/backtest/strategies")
-@login_required
-def backtest_strategies():
-    """List the selectable strategies for the backtester UI (data-driven)."""
-    import backtest
-    return jsonify([
-        {"id": k, "name": v["name"], "desc": v.get("desc", "")}
-        for k, v in backtest.STRATEGIES.items()
-    ])
-
-
-@app.route("/api/backtest/status/<job_id>")
-@login_required
-def backtest_status(job_id):
-    with _bt_lock:
-        j = _bt_jobs.get(job_id)
-        if not j:
-            return jsonify({"status": "unknown"}), 200
-        return jsonify(dict(j))
-
-
-# ── Saved backtest runs (persistent, for before/after comparison) ───────────
-_BT_RUNS_FILE = os.path.join(os.path.dirname(__file__), "backtest_runs.json")
-
-
-def _load_bt_runs():
+def api_strategy2_ohlcv(symbol="BTC/USDT:USDT"):
+    """Raw 1h OHLC for the Strategy-2 chart. The Lightweight-Charts mirror draws the
+    candles + the full TV.pine EMA stack client-side (each EMA its own colour), so it
+    uses the SAME 1h/450 window the meter does — the on-chart EMAs line up exactly with
+    the confidence factors. Distinct path so it never collides with the <path:symbol>
+    meter route. Volume is dropped to keep the payload small."""
     try:
-        if os.path.exists(_BT_RUNS_FILE):
-            with open(_BT_RUNS_FILE, "r", encoding="utf-8") as f:
-                return json.load(f)
-    except Exception as e:  # noqa: BLE001
-        print(f"backtest runs load error: {e}")
-    return []
+        ohlcv = rest_client.call("fetch_ohlcv", symbol, "1h", None, 450)
+    except RateLimitCooldownError as exc:
+        return jsonify({"symbol": symbol, "error": str(exc), "candles": []}), 200
+    except Exception as exc:  # noqa: BLE001 — never 500 the dashboard
+        return jsonify({"symbol": symbol, "error": f"fetch failed: {exc}", "candles": []}), 200
+    candles = [[int(c[0]), float(c[1]), float(c[2]), float(c[3]), float(c[4])]
+               for c in (ohlcv or [])]
+    return jsonify({"symbol": symbol, "timeframe": "1h", "candles": candles})
 
 
-def _save_bt_runs(runs):
-    tmp = _BT_RUNS_FILE + ".tmp"
-    with open(tmp, "w", encoding="utf-8") as f:
-        json.dump(runs, f, default=_default_json_encoder)
-    os.replace(tmp, _BT_RUNS_FILE)
-
-
-@app.route("/api/backtest/save", methods=["POST"])
+@app.route("/api/strategy2_signals")
 @login_required
-def backtest_save():
-    validate_csrf()
-    job_id = request.form.get("job_id", "")
-    label = (request.form.get("label", "") or "").strip()[:60] or "Untitled run"
-    with _bt_lock:
-        j = _bt_jobs.get(job_id)
-        result = j.get("result") if j else None
-    if not result:
-        return jsonify({"error": "no result to save (run a backtest first)"}), 200
-    runs = _load_bt_runs()
-    runs.insert(0, {
-        "id": secrets.token_hex(6),
-        "label": label,
-        "saved_at": datetime.now(timezone(timedelta(hours=8))).strftime("%Y-%m-%d %H:%M"),
-        "summary": result,
-    })
-    runs = runs[:50]  # keep the 50 most recent
-    _save_bt_runs(runs)
-    return jsonify({"ok": True, "count": len(runs)})
-
-
-@app.route("/api/backtest/saved")
-@login_required
-def backtest_saved():
-    return jsonify(_load_bt_runs())
-
-
-@app.route("/api/backtest/delete/<run_id>", methods=["POST"])
-@login_required
-def backtest_delete(run_id):
-    validate_csrf()
-    runs = [r for r in _load_bt_runs() if r.get("id") != run_id]
-    _save_bt_runs(runs)
-    return jsonify({"ok": True, "count": len(runs)})
-
-
-# ── Strategy 4 dry-run (live forward paper-trade) ───────────────────────────
-# A background thread ticks paper_s4 on a timer so S4 builds a real forward track
-# record without placing any orders. Fully isolated from the live S1 bot and its DB.
-_paper_thread = None
-_paper_stop = _threading.Event()
-
-
-def _paper_loop():
-    import paper_s4
-    interval = int(os.getenv("PAPER_S4_INTERVAL", "300"))
-    while not _paper_stop.is_set():
-        try:
-            paper_s4.tick()
-        except Exception as e:  # noqa: BLE001 — keep the loop alive
-            try:
-                paper_s4.record_error(str(e))
-            except Exception:
-                pass
-            print(f"[paper_s4] tick error: {e}")
-        _paper_stop.wait(interval)
-
-
-def start_paper_thread():
-    global _paper_thread
-    if os.getenv("PAPER_S4_ENABLED", "true").lower() != "true":
-        return
-    if _paper_thread and _paper_thread.is_alive():
-        return
-    _paper_thread = _threading.Thread(target=_paper_loop, daemon=True)
-    _paper_thread.start()
-    print("[paper_s4] forward paper-trade thread started")
-
-
-@app.route("/paper")
-@login_required
-def paper():
-    return render_template("paper.html", user=current_user)
-
-
-@app.route("/api/paper/state")
-@login_required
-def paper_state():
-    import paper_s4
-    return jsonify(paper_s4.get_state())
-
-
-@app.route("/api/paper/tick", methods=["POST"])
-@login_required
-def paper_tick():
-    """Trigger an immediate scan in the background; the page polls /state for results."""
-    validate_csrf()
-    import paper_s4
-
-    def _bg():
-        try:
-            paper_s4.tick()
-        except Exception as e:  # noqa: BLE001
-            paper_s4.record_error(str(e))
-
-    _threading.Thread(target=_bg, daemon=True).start()
-    return jsonify({"ok": True})
-
-
-@app.route("/api/paper/strategy", methods=["POST"])
-@login_required
-def paper_strategy():
-    """Switch which strategy the dry-run engine forward-tests. Each strategy keeps
-    its own track record, so switching is reversible and never mixes histories."""
-    validate_csrf()
-    import paper_s4
-    key = (request.form.get("strategy") or "").strip()
+def api_strategy2_signals():
+    """Recent fired 15m signals from the stand-alone scanner (strategy2_scanner.py).
+    Read-only: returns an idle payload if the scanner isn't running yet. Distinct
+    path (not /api/strategy2/...) so it never collides with the <path:symbol> route."""
+    path = os.path.join(os.path.dirname(__file__), "strategy2_signals.json")
     try:
-        paper_s4.set_active(key)
-    except ValueError:
-        return jsonify({"ok": False, "error": f"unknown strategy {key!r}"}), 400
-    return jsonify({"ok": True, "strategy": key})
-
-
-@app.route("/api/paper/reset", methods=["POST"])
-@admin_required
-def paper_reset():
-    validate_csrf()
-    import paper_s4
-    paper_s4.reset()
-    return jsonify({"ok": True})
+        with open(path, "r", encoding="utf-8") as f:
+            return jsonify(json.load(f))
+    except Exception:  # noqa: BLE001
+        return jsonify({"generated_at": 0, "scanning": 0, "done": 0,
+                        "timeframe": "15m", "signals": []})
 
 
 @app.route("/market")
@@ -2352,9 +2189,4 @@ if __name__ == "__main__":
     # FLASK_RELOAD=true OR full debug. Reload works WITHOUT the debugger so you
     # don't expose the interactive console just to get hot-reload.
     app_reload = app_debug or os.getenv("FLASK_RELOAD", "false").lower() == "true"
-    # Start the S4 paper-trade loop ONCE. With the reloader active the script runs
-    # in two processes (a file-watcher + the worker); only the worker has
-    # WERKZEUG_RUN_MAIN set, so this avoids a duplicate paper thread.
-    if not app_reload or os.environ.get("WERKZEUG_RUN_MAIN") == "true":
-        start_paper_thread()
     app.run(host=app_host, port=app_port, debug=app_debug, use_reloader=app_reload)
