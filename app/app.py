@@ -1670,31 +1670,96 @@ def get_top_entries():
     return jsonify(build_top_entries(load_data()))
 
 
+# The stand-alone Strategy-2 scanner is a SECOND live engine, selectable in the
+# same admin switcher. It is not a backtest.STRATEGIES entry (it's a separate
+# process armed by STRATEGY2_LIVE), so it gets a synthetic key here.
+S2_ENGINE_KEY = "strategy2_live"
+S2_ENGINE_NAME = "Strategy 2 — TV.pine Confluence (15m live)"
+S2_ENGINE_DESC = ("Stand-alone 15m TV.pine confluence scanner. Trades only the "
+                  "highest-conviction signals (long ≥85 / short ≤15) on the 25 USDT "
+                  "account. Runs INSTEAD of S1 — one engine at a time (./run_all.sh).")
+
+
+def _scanner_live_engine(max_age_sec=900):
+    """True only if the S2 scanner is running AS THE LIVE ENGINE — it rewrote its
+    signals file within max_age_sec (every sweep, ~5 min) AND that file reports
+    live execution armed. An alert-only scanner (live=false, running alongside S1)
+    does NOT count as the live engine."""
+    import time
+    try:
+        path = os.path.join(os.path.dirname(__file__), "strategy2_signals.json")
+        with open(path) as f:
+            data = json.load(f) or {}
+        fresh = (time.time() - float(data.get("generated_at", 0))) <= max_age_sec
+        return bool(fresh and data.get("live"))
+    except Exception:  # noqa: BLE001
+        return False
+
+
 def _live_strategy_state():
-    """Saved (.env) vs running (bot marker file) live strategy, for the admin panel.
-    The bot reads LIVE_STRATEGY only at startup, so 'saved' can lead 'running' until
-    the bot is restarted — the UI surfaces that as a divergence banner."""
+    """Saved (.env) vs running live ENGINE for the admin switcher.
+
+    Two engines can be the live one, and only ONE runs at a time (see run_all.sh):
+      • a backtest.STRATEGIES entry (currently just 'default' = S1 Wolf bot),
+        selected via LIVE_STRATEGY; the S1 bot reads it at startup.
+      • the stand-alone Strategy-2 scanner ('strategy2_live'), armed via
+        STRATEGY2_LIVE. Picking it makes S2 the live engine instead of S1.
+    'saved' can lead 'running' until a restart (./run_all.sh) — shown as a
+    divergence banner."""
     import backtest as BT
     import config as _config
-    saved = _config.read_env_var("LIVE_STRATEGY", "default")
-    if saved not in BT.STRATEGIES:
-        saved = "default"
-    running = None
+    import strategy2_live as S2L
+
+    s2_armed = (_config.read_env_var("STRATEGY2_LIVE", "false") or "false").strip().lower() \
+        in ("1", "true", "yes", "on")
+
+    # Saved (configured) engine.
+    if s2_armed:
+        saved, saved_name = S2_ENGINE_KEY, S2_ENGINE_NAME
+    else:
+        saved = _config.read_env_var("LIVE_STRATEGY", "default")
+        if saved not in BT.STRATEGIES:
+            saved = "default"
+        saved_name = BT.STRATEGIES[saved]["name"]
+
+    # Running engine — the one ACTUALLY placing trades right now, by process
+    # ground-truth (not the saved .env), so a pending switch shows as divergence:
+    #   • S1 = the bot holds its PID lock.
+    #   • S2 = the scanner is alive AND reports itself as the live engine.
+    try:
+        s1_running = S2L.s1_bot_running()
+    except Exception:  # noqa: BLE001
+        s1_running = False
+
+    bot_marker = None
     try:
         marker = os.path.join(os.path.dirname(__file__), "bot_strategy.json")
         if os.path.exists(marker):
             with open(marker) as f:
-                running = (json.load(f) or {}).get("strategy")
+                bot_marker = (json.load(f) or {}).get("strategy")
     except Exception:  # noqa: BLE001
-        running = None
+        bot_marker = None
+
+    if s1_running:
+        running = bot_marker if bot_marker in BT.STRATEGIES else "default"
+        running_name = (BT.STRATEGIES.get(running) or {}).get("name")
+    elif _scanner_live_engine():
+        running, running_name = S2_ENGINE_KEY, S2_ENGINE_NAME
+    else:
+        running, running_name = None, None
+
+    strategies = [{"key": k, "name": v["name"], "desc": v["desc"], "manage": "bracket"}
+                  for k, v in BT.STRATEGIES.items()]
+    strategies.append({"key": S2_ENGINE_KEY, "name": S2_ENGINE_NAME,
+                       "desc": S2_ENGINE_DESC, "manage": "bracket"})
+
     return {
         "saved": saved,
-        "saved_name": BT.STRATEGIES[saved]["name"],
+        "saved_name": saved_name,
         "running": running,
-        "running_name": (BT.STRATEGIES.get(running) or {}).get("name") if running else None,
+        "running_name": running_name,
         "diverged": bool(running and running != saved),
-        "strategies": [{"key": k, "name": v["name"], "desc": v["desc"], "manage": "bracket"}
-                       for k, v in BT.STRATEGIES.items()],
+        "strategies": strategies,
     }
 
 
@@ -1730,14 +1795,21 @@ def api_account_live_strategy():
         return jsonify(_live_strategy_state())
     validate_csrf()
     key = (request.form.get("strategy") or "").strip()
-    if key not in BT.STRATEGIES:
-        return jsonify({"ok": False, "error": f"unknown strategy {key!r}"}), 400
     try:
-        _config.set_env_var("LIVE_STRATEGY", key)
+        if key == S2_ENGINE_KEY:
+            # Make Strategy 2 the live engine. run_all.sh sees STRATEGY2_LIVE=true
+            # and starts the S2 scanner INSTEAD of the S1 bot — one at a time.
+            _config.set_env_var("STRATEGY2_LIVE", "true")
+        elif key in BT.STRATEGIES:
+            # An S1-bot strategy: disarm S2 and select it for the bot.
+            _config.set_env_var("STRATEGY2_LIVE", "false")
+            _config.set_env_var("LIVE_STRATEGY", key)
+        else:
+            return jsonify({"ok": False, "error": f"unknown strategy {key!r}"}), 400
     except Exception as exc:  # noqa: BLE001
         return jsonify({"ok": False, "error": str(exc)}), 500
     state = _live_strategy_state()
-    return jsonify({"ok": True, "saved": key, "restart_required": True, "state": state})
+    return jsonify({"ok": True, "saved": state["saved"], "restart_required": True, "state": state})
 
 
 @app.route("/api/account")

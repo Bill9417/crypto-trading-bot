@@ -73,6 +73,9 @@ def _write(recent: list, scanning: int, done: int) -> None:
         "generated_at": time.time(),
         "last_scan_human": time.strftime("%Y-%m-%d %H:%M:%S"),
         "timeframe": TIMEFRAME,
+        # Whether THIS scanner is the live engine — lets the dashboard tell an
+        # alert-only scanner (running alongside S1) from one armed to trade.
+        "live": bool(config.STRATEGY2_LIVE),
         "scanning": scanning,
         "done": done,
         "signals": recent,
