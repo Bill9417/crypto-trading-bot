@@ -1249,6 +1249,32 @@ def performance():
         
         analytics = build_performance_analytics(records)
 
+        # Which engine is the live account actually trading? Frames the page +
+        # the risk-model card around Strategy 2 when it's the armed live engine.
+        import config as _config
+        s2_live = (_config.read_env_var("STRATEGY2_LIVE", "false") or "false").strip().lower() \
+            in ("1", "true", "yes", "on")
+        if s2_live:
+            try:
+                _ms = int(_config.read_env_var("STRATEGY2_LIVE_MIN_SCORE", "85") or 85)
+            except (TypeError, ValueError):
+                _ms = 85
+            live_engine = {
+                "key": "strategy2_live",
+                "name": "Strategy 2 — TV.pine Confluence (15m)",
+                "tp": "Single TP 2R (100%)",
+                "sl": "SL: ATR (≤4%)",
+                "note": f"Live only on high conviction · long ≥{_ms} / short ≤{100 - _ms}",
+            }
+        else:
+            live_engine = {
+                "key": "default",
+                "name": "Strategy 1 — Wolf Confluence (1h)",
+                "tp": "TP1 1R · TP2 2R",
+                "sl": "SL: ATR (≤4%)",
+                "note": "5+ light confluence + BTC regime",
+            }
+
         return render_template(
             "performance.html",
             records=records,
@@ -1258,6 +1284,7 @@ def performance():
             analytics=analytics,
             user=current_user,
             perf_strategy=_perf_strategy_context(strategy),
+            live_engine=live_engine,
         )
     except Exception as e:
         print(f"Error in performance route: {e}")

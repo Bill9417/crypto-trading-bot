@@ -709,6 +709,13 @@
             </div>
         </div>
 
+        <!-- ▶ Active live engine (frames the whole page around the trading strategy) -->
+        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;background:rgba(124,58,237,.10);border:1px solid rgba(124,58,237,.35);border-radius:12px;padding:9px 14px;margin-bottom:14px;">
+            <span style="font-size:.7rem;font-weight:800;letter-spacing:.04em;text-transform:uppercase;color:#a78bfa;">▶ Live engine</span>
+            <span style="font-size:.88rem;font-weight:800;color:var(--wolf-text,#e6ecf5);">{{ live_engine.name }}</span>
+            <span style="font-size:.72rem;color:var(--wolf-muted,#8a99ad);margin-left:auto;">{{ live_engine.tp }} · {{ live_engine.sl }}</span>
+        </div>
+
         <!-- 💰 LIVE BINANCE — real account P&L (ground truth; matches the exchange) -->
         <style>
             .rp-cell{background:rgba(255,255,255,.03);border:1px solid var(--wolf-border,#262c3d);border-radius:9px;padding:9px 10px;}
@@ -870,9 +877,9 @@
 
             <div class="stat-card">
                 <div class="stat-label">Risk Model</div>
-                <div class="stat-value accent" style="font-size: 1.05rem; margin-bottom: 2px;">TP1 1R · TP2 2R</div>
-                <div class="stat-value" style="font-size: 1.05rem; color: var(--wolf-muted);">SL: ATR (≤4%)</div>
-                <div style="font-size:0.72rem; color: var(--wolf-muted); margin-top: 4px;">Avg RR realised: <b style="color:var(--wolf-blue);">{{ stats.avg_rr }}x</b></div>
+                <div class="stat-value accent" style="font-size: 1.05rem; margin-bottom: 2px;">{{ live_engine.tp }}</div>
+                <div class="stat-value" style="font-size: 1.05rem; color: var(--wolf-muted);">{{ live_engine.sl }}</div>
+                <div style="font-size:0.72rem; color: var(--wolf-muted); margin-top: 4px;">{{ live_engine.note }}</div>
             </div>
 
             <div class="stat-card">
