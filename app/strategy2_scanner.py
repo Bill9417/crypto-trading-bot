@@ -23,6 +23,7 @@ import os
 import time
 
 import config
+import executor
 import strategy2_live as S2L
 import strategy2_meter as S2
 import telegram_utils
@@ -166,8 +167,23 @@ def main() -> None:
     )
     recent = _load_recent()
     last_alert = {}
+
+    def _guard():
+        """Never let a live position sit without a stop-loss. When S2 is the live
+        engine it manages the account, so each cycle it auto-sets a stop on any
+        naked position (orphaned S1 positions, manual entries, or a bracket that
+        failed to place). No-op in dry-run / alert-only."""
+        if not config.STRATEGY2_LIVE:
+            return
+        try:
+            executor.ensure_stop_losses()
+        except Exception as exc:  # noqa: BLE001 — protection must never kill the loop
+            print(f"[strategy2] guardian error: {exc}")
+
+    _guard()                                   # protect immediately on startup
     while True:
         start = time.time()
+        _guard()                               # …and at the top of every sweep
         try:
             recent = scan_once(client, recent, last_alert)
         except Exception as exc:  # noqa: BLE001 — keep the loop alive

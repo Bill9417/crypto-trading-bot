@@ -242,8 +242,11 @@
             (orders||[]).forEach(o=>{
                 if(o.symbol!==symbol) return;
                 const t=(o.type||'').toUpperCase();
-                if(t.includes('STOP')) sl = o.trigger;
-                else if(t.includes('TAKE_PROFIT')) tp = o.trigger;
+                // Prefer the server-computed role (trigger-vs-mark); these orders
+                // come back as type 'market', so the type check alone misses them.
+                const role = o.role || (t.includes('STOP') ? 'sl' : (t.includes('TAKE_PROFIT') ? 'tp' : null));
+                if(role==='sl') sl = o.trigger;
+                else if(role==='tp') tp = o.trigger;
             });
             return {sl, tp};
         }

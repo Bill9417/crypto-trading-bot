@@ -1011,15 +1011,23 @@ def account_snapshot(*, force: bool = False) -> dict:
                         seen_ids.add(o.get("id"))
             except Exception as exc:  # noqa: BLE001
                 print(f"[executor] conditional-orders fetch note {psym}: {exc}")
+        sym_mark = {p["symbol"]: p.get("mark") for p in positions}
         orders = []
         for o in raw_orders:
             oinfo = o.get("info", {}) or {}
+            trigger = o.get("triggerPrice") or oinfo.get("stopPrice")
+            # 'sl' / 'tp' inferred from trigger vs the position's mark (type strings
+            # are unreliable here — see _trigger_role). Lets the dashboard tell a
+            # protected position from a naked one even though Binance reports the
+            # conditional order's type as plain 'market'.
+            role = _trigger_role(o.get("side"), trigger, sym_mark.get(o.get("symbol")))
             orders.append({
                 "symbol": o.get("symbol"),
                 "side": (o.get("side") or "").upper(),
                 "type": o.get("type") or oinfo.get("type"),
+                "role": role,
                 "price": o.get("price"),
-                "trigger": o.get("triggerPrice") or oinfo.get("stopPrice"),
+                "trigger": trigger,
                 "amount": o.get("amount"),
                 "reduce_only": o.get("reduceOnly", oinfo.get("reduceOnly")),
                 "close_position": str(oinfo.get("closePosition")).lower() == "true",
@@ -1096,6 +1104,26 @@ def _open_position(ex, symbol):
                 return p
         except (TypeError, ValueError):
             pass
+    return None
+
+
+def _trigger_role(order_side, trigger, mark):
+    """Classify a reduceOnly trigger order as 'sl' / 'tp' from its trigger vs mark.
+    Binance returns strategy-book SL/TP with ccxt type 'market' and no origType —
+    only a triggerPrice — so type strings can't tell them apart. Instead: a SELL
+    trigger BELOW mark (closing a long) or a BUY trigger ABOVE mark (closing a
+    short) is a STOP-LOSS; the mirror is a take-profit. Returns None if unknown."""
+    try:
+        trigger = float(trigger); mark = float(mark)
+    except (TypeError, ValueError):
+        return None
+    if not trigger or not mark:
+        return None
+    s = (order_side or "").lower()
+    if s == "sell":                     # closing a long
+        return "sl" if trigger < mark else "tp"
+    if s == "buy":                      # closing a short
+        return "sl" if trigger > mark else "tp"
     return None
 
 
@@ -1251,6 +1279,69 @@ def set_protection(symbol: str, *, sl=None, tp=None) -> dict:
                         else "set — SL/TP replaced"}
     except Exception as exc:  # noqa: BLE001
         return {"ok": False, "error": str(exc)}
+
+
+def ensure_stop_losses(*, notify=True) -> dict:
+    """Guardian: every open position MUST have a stop-loss. Scans live positions
+    and, for any with NO stop-loss order, places one (reduceOnly STOP_MARKET) at
+    the strategy's max distance — entry ∓ MAX_SL_PCT — clamped to stay on the
+    correct side of the mark so an already-underwater position is stopped right
+    away. Idempotent: never touches a position that already has a stop, so it is
+    safe to call repeatedly / automatically. Returns {ok, protected, skipped}."""
+    import config as _cfg
+    if not is_live():
+        return {"ok": False, "error": "dry-run / no keys — not protecting", "protected": []}
+    try:
+        ex = _get_exchange()
+        positions = [p for p in ex.fetch_positions() if float(p.get("contracts") or 0.0)]
+    except Exception as exc:  # noqa: BLE001
+        return {"ok": False, "error": str(exc), "protected": []}
+
+    max_sl = float(getattr(_cfg, "MAX_SL_PCT", 0.04))
+    protected, skipped = [], []
+    for p in positions:
+        symbol = p.get("symbol")
+        side = (p.get("side") or "").lower()
+        mark = float(p.get("markPrice") or 0.0)
+        entry = float(p.get("entryPrice") or 0.0) or mark
+        if not symbol or side not in ("long", "short") or not mark:
+            continue
+        # Already has a stop-loss? Classify each reduceOnly trigger by trigger vs
+        # mark (Binance reports these with ccxt type 'market', so type strings
+        # can't be trusted — see _trigger_role).
+        has_sl = False
+        for o in _fetch_protective_orders(ex, symbol):
+            trig = o.get("triggerPrice") or (o.get("info") or {}).get("stopPrice")
+            if _trigger_role(o.get("side"), trig, mark) == "sl":
+                has_sl = True
+                break
+        if has_sl:
+            skipped.append({"symbol": symbol, "reason": "already protected"})
+            continue
+        # Strategy stop = entry ∓ MAX_SL_PCT, clamped to the right side of mark so
+        # an underwater position is stopped immediately rather than rejected.
+        if side == "long":
+            sl = entry * (1 - max_sl)
+            if sl >= mark:
+                sl = mark * (1 - 0.005)
+        else:
+            sl = entry * (1 + max_sl)
+            if sl <= mark:
+                sl = mark * (1 + 0.005)
+        res = set_protection(symbol, sl=sl)
+        if res.get("ok"):
+            protected.append({"symbol": symbol, "side": side, "sl": round(sl, 8)})
+        else:
+            skipped.append({"symbol": symbol, "reason": res.get("error")})
+
+    if protected and notify:
+        lines = "\n".join(f"  {x['side'].upper()} {x['symbol']} → SL {x['sl']:.6g}"
+                          for x in protected)
+        send_message(f"🛡️ Auto-protected {len(protected)} naked position(s):\n{lines}")
+    if protected:
+        print(f"[executor][GUARDIAN] auto-set SL on {len(protected)} naked position(s): "
+              f"{[x['symbol'] for x in protected]}")
+    return {"ok": True, "protected": protected, "skipped": skipped}
 
 
 def cancel_protection(symbol: str) -> dict:

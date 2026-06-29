@@ -2599,7 +2599,7 @@
                 const pos = (d && d.positions) || [];
                 if (!d.ok || !pos.length) { el.style.display = 'none'; return; }
                 const hasSL = (sym) => (d.orders || []).some(o =>
-                    o.symbol === sym && (o.type || '').toUpperCase().includes('STOP'));
+                    o.symbol === sym && (o.role === 'sl' || (o.type || '').toUpperCase().includes('STOP')));
                 const naked = pos.filter(p => !hasSL(p.symbol)).map(p => (p.symbol || '').replace(':USDT', ''));
                 const diverged = pos.filter(p => p.db_diverged).map(p => (p.symbol || '').replace(':USDT', ''));
                 if (!naked.length && !diverged.length) {
