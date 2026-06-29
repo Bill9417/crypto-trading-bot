@@ -1903,6 +1903,18 @@ def api_strategy2_signals():
                         "timeframe": "15m", "signals": []})
 
 
+@app.route("/api/strategy2_live_status")
+@login_required
+def api_strategy2_live_status():
+    """Live-execution status for the /strategy2 'Live Trading Rules' panel. Reads
+    the .env fresh so the toggle reflects what the scanner will do on next start."""
+    import strategy2_live
+    try:
+        return jsonify(strategy2_live.status())
+    except Exception as exc:  # noqa: BLE001 — never 500 the dashboard
+        return jsonify({"error": str(exc), "enabled": False})
+
+
 @app.route("/market")
 @login_required
 def market():

@@ -403,11 +403,8 @@ def open_trade(symbol, direction, entry, sl, tp1, tp2, lights_count, aligned, *,
         plan["live"] = True
 
         if PLACE_BRACKET_ORDERS:
-            half = _round_amount(symbol, amount / 2.0)
             sl_p = _round_price(symbol, sl)
-            tp1_p = _round_price(symbol, tp1)
-            tp2_p = _round_price(symbol, tp2)
-            # Stop loss — close the whole position
+            # Stop loss — always protects the WHOLE position.
             sl_order = ex.create_order(
                 symbol, "STOP_MARKET", close_side, amount, None,
                 {"stopPrice": sl_p, "reduceOnly": True},
@@ -417,20 +414,33 @@ def open_trade(symbol, direction, entry, sl, tp1, tp2, lights_count, aligned, *,
             if manage == "trailing":
                 # S3/S4: no take-profit — the bot ratchets the stop each candle.
                 plan["tp_rest"] = amount
-            else:
-                # TP1 — 50% partial
+            elif LIVE_PARTIAL_TP:
+                # 50% at TP1 + 50% at TP2 (matches the resting path). NOTE: on a
+                # tiny account each half can fall under Binance's ~5 USDT floor —
+                # that's why LIVE_PARTIAL_TP defaults OFF for the 25 USDT account.
+                half = _round_amount(symbol, amount / 2.0)
                 tp1_order = ex.create_order(
                     symbol, "TAKE_PROFIT_MARKET", close_side, half, None,
-                    {"stopPrice": tp1_p, "reduceOnly": True},
+                    {"stopPrice": _round_price(symbol, tp1), "reduceOnly": True},
                 )
                 plan["orders"].append({"role": "tp1", "id": tp1_order.get("id")})
-                # TP2 — remaining 50%
                 tp2_order = ex.create_order(
                     symbol, "TAKE_PROFIT_MARKET", close_side, amount - half, None,
-                    {"stopPrice": tp2_p, "reduceOnly": True},
+                    {"stopPrice": _round_price(symbol, tp2), "reduceOnly": True},
                 )
                 plan["orders"].append({"role": "tp2", "id": tp2_order.get("id")})
                 plan["tp_rest"] = amount - half
+            else:
+                # Single 100% target — the tiny-account default, identical to the
+                # resting path's single-TP mode so the whole position closes at one
+                # take-profit (LIVE_TP_TARGET: tp2=2R runner, tp1=1R de-risk).
+                tp_target = tp1 if LIVE_TP_TARGET == "tp1" else tp2
+                tp_order = ex.create_order(
+                    symbol, "TAKE_PROFIT_MARKET", close_side, amount, None,
+                    {"stopPrice": _round_price(symbol, tp_target), "reduceOnly": True},
+                )
+                plan["orders"].append({"role": "tp", "id": tp_order.get("id")})
+                plan["tp_rest"] = amount
 
         net = "TESTNET" if USE_TESTNET else "MAINNET"
         msg = (

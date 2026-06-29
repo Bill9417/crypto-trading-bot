@@ -9,7 +9,11 @@ that mirrors TV.pine), and on a NEW signal it:
   • appends it to strategy2_signals.json  → the /strategy2 page "Live 15m Signals"
   • sends a Telegram alert (deduped per symbol+direction with a cooldown)
 
-It NEVER touches the executor or the live account. You read the signal and decide.
+By DEFAULT it is alert-only — it never touches the executor or the live account,
+you read the signal and decide. If you opt in with STRATEGY2_LIVE=true it ALSO
+hands each new high-conviction signal to strategy2_live.maybe_trade, which places
+a real bracketed order (see that module for the full safety model). With the
+default config STRATEGY2_LIVE is False, so nothing is ever ordered.
 
 Run detached (like the bot/web):
     nohup ./run_strategy2.sh >/dev/null 2>&1 & disown
@@ -19,6 +23,7 @@ import os
 import time
 
 import config
+import strategy2_live as S2L
 import strategy2_meter as S2
 import telegram_utils
 from market_data import SafeBinanceClient, RateLimitCooldownError
@@ -125,6 +130,13 @@ def scan_once(client, recent: list, last_alert: dict) -> list:
                 print(f"[strategy2] SIGNAL {direction.upper()} {sig['base']} score {sig['score']}")
                 _alert(sig)
                 _write(recent, total, i + 1)        # surface immediately
+                # Opt-in LIVE execution — a no-op unless STRATEGY2_LIVE is on. The
+                # best-plan filter + all safety gates live inside maybe_trade; `i`
+                # is the volume rank (universe is sorted most-liquid first).
+                try:
+                    S2L.maybe_trade(sig, ohlcv, rank=i)
+                except Exception as exc:  # noqa: BLE001 — live exec must never kill the sweep
+                    print(f"[strategy2] live exec error {sym}: {exc}")
 
         if (i + 1) % 25 == 0:
             _write(recent, total, i + 1)            # progress for the page
@@ -134,8 +146,17 @@ def scan_once(client, recent: list, last_alert: dict) -> list:
 
 
 def main() -> None:
+    if config.STRATEGY2_LIVE:
+        net = "DRY-RUN" if not config.LIVE_TRADING else (
+            "TESTNET" if config.USE_TESTNET else "LIVE MAINNET")
+        mode = (f"LIVE EXECUTION ON ({net}) — high-conviction signals "
+                f"(long ≥{config.STRATEGY2_LIVE_MIN_SCORE} / short ≤"
+                f"{100 - config.STRATEGY2_LIVE_MIN_SCORE}) will place bracketed orders. "
+                f"STOP THE S1 BOT FIRST — one engine at a time.")
+    else:
+        mode = "ALERT-ONLY: no orders are ever placed (set STRATEGY2_LIVE=true to trade)."
     print(f"[strategy2] 15m signal scanner starting — interval {INTERVAL_SEC}s, "
-          f"cooldown {ALERT_COOLDOWN_SEC}s. ALERT-ONLY: no orders are ever placed.")
+          f"cooldown {ALERT_COOLDOWN_SEC}s. {mode}")
     client = SafeBinanceClient(
         min_rest_interval=float(os.getenv("STRATEGY2_REST_INTERVAL", "0.25")),
         max_retries=3,

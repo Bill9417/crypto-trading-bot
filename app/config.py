@@ -374,3 +374,31 @@ QUOTE_ASSET = "USDT"
 # names, so trading stays in that liquid range while scanning shows more.
 SCAN_SYMBOL_LIMIT = 300   # universe we scan + display
 TOP_SYMBOL_LIMIT = 150    # of those, only the top-N (by volume) are tradeable
+
+# ── Strategy 2 LIVE execution (opt-in, OFF by default) ───────────────────────
+# Strategy 2 is the stand-alone 15m TV.pine confluence scanner. By DEFAULT it is
+# alert-only (sends a Telegram note + shows the signal on /strategy2, never an
+# order). Flip STRATEGY2_LIVE=true to let a NEW high-conviction signal place a
+# REAL bracketed market order through the shared executor.
+#
+# SAFETY MODEL for the ~25 USDT account — run ONE engine at a time:
+#   • S2 live REFUSES to place orders while the S1 bot (bot.lock) is running, so
+#     the tiny account is only ever driven by one strategy. Stop S1 to run S2.
+#   • It shares the executor's MAX_CONCURRENT_POSITIONS + MAX_MARGIN ceilings.
+#   • Only the most liquid pairs (STRATEGY2_LIVE_TOP_N by volume) are eligible.
+#   • The global LIVE_TRADING gate still applies — with LIVE_TRADING=false the
+#     S2 order is logged as a dry-run, exactly like S1.
+STRATEGY2_LIVE = _env_bool("STRATEGY2_LIVE", False)
+# "Best plan" conviction gate — only the strongest meter reads fire a live order.
+# A LONG needs score ≥ this; a SHORT needs score ≤ (100 − this). 85 ⇒ long ≥85 /
+# short ≤15 (stricter than the meter's own 70/30 signal threshold). No BTC-regime
+# filter is applied here by design — a strong signal trades even against Bitcoin.
+STRATEGY2_LIVE_MIN_SCORE = int(os.getenv("STRATEGY2_LIVE_MIN_SCORE", "85"))
+# Conviction → size: (lights, aligned) handed to executor.position_scale. 5 ⇒ 1.0×
+# the FIXED_MARGIN_USDT base (1.5 USDT margin → 6 USDT notional at 4× — clears the
+# ~5 USDT Binance min-order floor). 6 ⇒ 1.5× (2.25 USDT margin, the MAX ceiling).
+STRATEGY2_LIVE_LIGHTS = int(os.getenv("STRATEGY2_LIVE_LIGHTS", "5"))
+# Only the top-N most-liquid USDT perps (by 24h volume rank) may place a live S2
+# order. Defaults to the same tradeable tier S1 uses; pairs outside it stay
+# alert-only no matter how strong the signal.
+STRATEGY2_LIVE_TOP_N = int(os.getenv("STRATEGY2_LIVE_TOP_N", str(TOP_SYMBOL_LIMIT)))
