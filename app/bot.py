@@ -2595,7 +2595,19 @@ def shutdown_message() -> None:
     print("Bot stopped.")
 
 def main() -> None:
-    acquire_bot_lock()
+    # SCAN_ONLY: a dashboard-refresh companion. It runs the full 1h scan (so the
+    # main dashboard's scan_results.json keeps updating hourly) but NEVER holds the
+    # bot lock — so it doesn't block the Strategy-2 live engine (which refuses to
+    # trade while an S1 bot lock is held) — and force-halts live trading so it can
+    # never place a real order, even if LIVE_TRADING=true. Used by run_all.sh when
+    # S2 is the live engine but you still want the S1-based dashboard.
+    scan_only = os.getenv("SCAN_ONLY", "").strip().lower() in ("1", "true", "yes", "on")
+    if scan_only:
+        executor.halt_live_trading("SCAN_ONLY — dashboard refresh companion; no orders placed")
+        print("[bot] SCAN_ONLY mode: scanning to refresh the dashboard only — "
+              "no bot lock, no orders. (S2 remains the live engine.)")
+    else:
+        acquire_bot_lock()
     ensure_database_ready()
     price_stream.start()
     kline_cache.start()

@@ -65,11 +65,14 @@ if read_env_bool STRATEGY2_LIVE; then
     ENGINE_CMD="strategy2_scanner.py"
     ENGINE_LOG="$LOG_DIR/strategy2.log"
     START_ALERT_SCANNER=0           # the scanner IS the engine; don't start a 2nd one
+    START_SCANONLY_S1=1            # S1 scan-only companion → keeps the main dashboard
+                                    # refreshing hourly WITHOUT trading (no lock, no orders)
 else
     ENGINE_NAME="S1 bot (LIVE)"
     ENGINE_CMD="bot.py"
     ENGINE_LOG="$LOG_DIR/bot.log"
     START_ALERT_SCANNER=1           # run the S2 scanner alongside S1, alert-only
+    START_SCANONLY_S1=0            # S1 is already the live engine here
 fi
 
 # --- subcommands -----------------------------------------------------------
@@ -115,6 +118,10 @@ if [ "$MODE" = "bg" ]; then
     if [ "$START_ALERT_SCANNER" = "1" ]; then
         nohup "$PYTHON" -u strategy2_scanner.py >> "$LOG_DIR/strategy2.log" 2>&1 & disown
     fi
+    if [ "$START_SCANONLY_S1" = "1" ]; then
+        echo "  + S1 scan-only companion (refreshes the dashboard hourly; no orders)"
+        SCAN_ONLY=true nohup "$PYTHON" -u bot.py >> "$LOG_DIR/bot.log" 2>&1 & disown
+    fi
     sleep 3
     echo ""
     echo "──────────────────────────────────────────────"
@@ -148,12 +155,23 @@ if [ "$START_ALERT_SCANNER" = "1" ]; then
     SCANNER_PID=$!
 fi
 
+# --- optionally start the S1 scan-only companion (S2-engine mode) ----------
+# Scans + refreshes the main dashboard hourly, but holds no lock and places no
+# orders, so S2 stays the sole live engine.
+SCANONLY_PID=""
+if [ "$START_SCANONLY_S1" = "1" ]; then
+    echo "Starting S1 scan-only companion (refreshes the dashboard; no orders)..."
+    SCAN_ONLY=true "$PYTHON" -u bot.py >> "$LOG_DIR/bot.log" 2>&1 &
+    SCANONLY_PID=$!
+fi
+
 # --- clean shutdown on Ctrl+C / kill --------------------------------------
 cleanup() {
     echo ""
     echo "Shutting down..."
     kill "$APP_PID" "$ENGINE_PID" 2>/dev/null
     [ -n "$SCANNER_PID" ] && kill "$SCANNER_PID" 2>/dev/null
+    [ -n "$SCANONLY_PID" ] && kill "$SCANONLY_PID" 2>/dev/null
     # give the bot a moment to release its lock, then force if needed
     sleep 2
     pkill -f "[p]ython.*app.py" 2>/dev/null
