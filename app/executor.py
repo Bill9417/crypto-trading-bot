@@ -1034,6 +1034,12 @@ def account_snapshot(*, force: bool = False) -> dict:
             "available": _num("availableBalance"),
         }
 
+        # Bot-tracked open times are exact; for manual/orphaned positions fall
+        # back to the exchange's position updateTime (approximate — it moves on
+        # any position change, so treat it as "at least this old is unknown").
+        with _active_lock:
+            tracked_opened = {k: float(v.get("opened_at") or 0.0) or None
+                              for k, v in _active_brackets.items()}
         positions = []
         for p in ex.fetch_positions():
             try:
@@ -1042,9 +1048,18 @@ def account_snapshot(*, force: bool = False) -> dict:
                 amt = 0.0
             if not amt:
                 continue
+            side = (p.get("side") or "").upper()
+            opened_at = tracked_opened.get((p.get("symbol"), side))
+            exact_age = opened_at is not None
+            if opened_at is None:
+                try:
+                    ut = (p.get("info") or {}).get("updateTime")
+                    opened_at = float(ut) / 1000.0 if ut else None
+                except (TypeError, ValueError):
+                    opened_at = None
             positions.append({
                 "symbol": p.get("symbol"),
-                "side": (p.get("side") or "").upper(),
+                "side": side,
                 "contracts": amt,
                 "notional": p.get("notional"),
                 "entry": p.get("entryPrice"),
@@ -1053,6 +1068,8 @@ def account_snapshot(*, force: bool = False) -> dict:
                 "leverage": p.get("leverage"),
                 "unrealized_pnl": p.get("unrealizedPnl"),
                 "pnl_pct": p.get("percentage"),
+                "opened_at": opened_at,
+                "age_exact": exact_age,
             })
 
         # Acknowledge ccxt's stricter-rate-limit warning for the all-symbols
@@ -1563,6 +1580,31 @@ def realized_pnl_summary(limit: int = 1000) -> dict:
             d = (today - timedelta(days=i)).strftime("%Y-%m-%d")
             daily.append({"date": d, "net": round(day_net.get(d, 0.0), 4)})
         trades.sort(key=lambda x: x["time"], reverse=True)   # newest first
+        # Per-symbol leaderboard (realized P&L only — fees are account-level).
+        # Worst bleeders first: the actionable end is "which coins to blacklist".
+        sym_agg: dict[str, dict] = {}
+        for t in trades:
+            s = sym_agg.setdefault(t["symbol"] or "?", {"net": 0.0, "n": 0, "wins": 0, "losses": 0})
+            s["net"] += t["pnl"]; s["n"] += 1
+            if t["pnl"] > 0: s["wins"] += 1
+            elif t["pnl"] < 0: s["losses"] += 1
+        by_symbol = [{"symbol": k, "net": round(v["net"], 4), "n": v["n"],
+                      "wins": v["wins"], "losses": v["losses"]}
+                     for k, v in sym_agg.items()]
+        by_symbol.sort(key=lambda x: x["net"])
+        # Hour-of-day buckets (local trading day) over ALL realized trades — the
+        # raw material for a "which sessions bleed" heatmap.
+        hour_agg = [{"hour": h, "net": 0.0, "wins": 0, "losses": 0} for h in range(24)]
+        for t in trades:
+            if not t["time"]:
+                continue
+            h = datetime.fromtimestamp(t["time"] / 1000, tz).hour
+            b = hour_agg[h]
+            b["net"] += t["pnl"]
+            if t["pnl"] > 0: b["wins"] += 1
+            elif t["pnl"] < 0: b["losses"] += 1
+        for b in hour_agg:
+            b["net"] = round(b["net"], 4)
         pnls = [t["pnl"] for t in trades]
         wins = sum(1 for p in pnls if p > 0)
         losses = sum(1 for p in pnls if p < 0)
@@ -1605,6 +1647,8 @@ def realized_pnl_summary(limit: int = 1000) -> dict:
             "best": round(max(pnls), 4) if pnls else 0.0,
             "worst": round(min(pnls), 4) if pnls else 0.0,
             "daily": daily,
+            "by_symbol": by_symbol,
+            "hourly": hour_agg,
             "trades": trades[:80],
         }
     except Exception as exc:  # noqa: BLE001

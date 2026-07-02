@@ -37,8 +37,18 @@ CANDLES = int(os.getenv("STRATEGY2_CANDLES", "400"))               # ≥ SIGNAL_
 RETAIN_HOURS = float(os.getenv("STRATEGY2_RETAIN_HOURS", "24"))    # how long signals stay on the page
 MAX_KEEP = int(os.getenv("STRATEGY2_MAX_KEEP", "60"))
 DIGEST_SEC = int(os.getenv("STRATEGY2_DIGEST_SEC", "1800"))        # Telegram: one grouped digest every 30 min
+# Meter scores for the N most-liquid symbols are persisted every sweep → the
+# /strategy2 heatmap. Universe is volume-sorted, so these finish early in a sweep.
+HEATMAP_TOP = int(os.getenv("STRATEGY2_HEATMAP_TOP", "40"))
+# High-conviction fired signals (the same score bar live execution uses) send an
+# IMMEDIATE Telegram alert that bypasses quiet mode — these are the "I would take
+# this trade myself" moments. The 30-min digest still covers everything else.
+HC_ALERT = os.getenv("STRATEGY2_HC_ALERT", "true").strip().lower() in ("1", "true", "yes", "on")
 
 SIGNALS_FILE = os.path.join(os.path.dirname(__file__), "strategy2_signals.json")
+
+# Latest meter score per top symbol, refreshed in place during each sweep.
+LATEST_SCORES: dict = {}
 
 
 def _tv_url(symbol: str) -> str:
@@ -81,6 +91,8 @@ def _write(recent: list, scanning: int, done: int) -> None:
         "scanning": scanning,
         "done": done,
         "signals": recent,
+        # Volume-ranked meter scores for the heatmap (rank preserved via list order).
+        "scores": list(LATEST_SCORES.values()),
     }
     tmp = SIGNALS_FILE + ".tmp"
     with open(tmp, "w", encoding="utf-8") as f:
@@ -138,6 +150,13 @@ def scan_once(client, recent: list, last_alert: dict, pending: list) -> list:
             print(f"[strategy2] compute error {sym}: {exc}")
             continue
 
+        if i < HEATMAP_TOP:
+            LATEST_SCORES[sym] = {
+                "symbol": sym, "base": sym.split("/")[0],
+                "score": res.get("score"), "price": res.get("price"),
+                "ts": time.time(), "tv_url": _tv_url(sym),
+            }
+
         if res.get("signal"):
             direction = res["signal"]
             key = (sym, direction)
@@ -156,6 +175,19 @@ def scan_once(client, recent: list, last_alert: dict, pending: list) -> list:
                 recent.insert(0, sig)
                 pending.append(sig)                  # buffered → next 30-min digest
                 print(f"[strategy2] SIGNAL {direction.upper()} {sig['base']} score {sig['score']}")
+                # High-conviction (live-entry-grade) signals alert IMMEDIATELY and
+                # punch through quiet mode. Deduped by the same 4h cooldown above.
+                hc = (direction == "long" and sig["score"] >= config.STRATEGY2_LIVE_MIN_SCORE) or \
+                     (direction == "short" and sig["score"] <= 100 - config.STRATEGY2_LIVE_MIN_SCORE)
+                if HC_ALERT and hc:
+                    try:
+                        telegram_utils.send_message(
+                            f"🎯 S2 HIGH CONVICTION · {direction.upper()} {sig['base']}\n"
+                            f"score {sig['score']}/100 @ {_fmt_price(sig['price'])} ({TIMEFRAME})\n"
+                            f"{sig['tv_url']}",
+                            force=True)
+                    except Exception as exc:  # noqa: BLE001 — alert must never kill the sweep
+                        print(f"[strategy2] HC alert failed {sym}: {exc}")
                 _write(recent, total, i + 1)        # surface on the page immediately
                 # Opt-in LIVE execution — a no-op unless STRATEGY2_LIVE is on. The
                 # best-plan filter + all safety gates live inside maybe_trade; `i`

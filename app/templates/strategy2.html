@@ -218,6 +218,16 @@
             <p class="note" id="s2-live-howto">Currently alert-only. To go live: stop the S1 bot, set <code>STRATEGY2_LIVE=true</code> in <code>app/.env</code>, then start the scanner with <code>./run_strategy2.sh</code>.</p>
         </div>
 
+        <div class="panel" id="s2-heat-panel" style="margin-top:14px;display:none;">
+            <div style="display:flex;align-items:baseline;justify-content:space-between;gap:10px;flex-wrap:wrap;">
+                <p class="panel-title" style="margin:0;">Market Confidence Heatmap</p>
+                <span class="sig-meta" id="s2-heat-meta"></span>
+            </div>
+            <div id="s2-heatmap" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(86px,1fr));gap:6px;margin-top:10px;"></div>
+            <p class="note">The meter score for the most-traded USDT perps, refreshed by the 15m scanner every sweep.
+               <b style="color:#4ade80;">Green ≥ 85</b> / <b style="color:#f87171;">red ≤ 15</b> are live-entry-grade conviction; click a tile to load it in the chart above.</p>
+        </div>
+
         <div class="panel" style="margin-top:14px;">
             <div style="display:flex;align-items:baseline;justify-content:space-between;gap:10px;flex-wrap:wrap;">
                 <p class="panel-title" style="margin:0;">Live 15m Signals</p>
@@ -365,12 +375,25 @@
                 lines[d.key] = addLine(chart, Object.assign({ color: d.color, lineWidth: d.width }, LINE_BASE));
             });
             var vegas = addLine(chart, Object.assign({ color: VEGAS_UP, lineWidth: 2 }, LINE_BASE));
+            // Meter-score history: its own overlay scale pinned to the bottom ~20%
+            // of the chart, time-synced with the candles for free. The 85/15 price
+            // lines mark live-entry-grade conviction.
+            var score = addLine(chart, Object.assign({
+                color: '#22d3ee', lineWidth: 2, priceScaleId: 's2score'
+            }, LINE_BASE));
+            chart.priceScale('s2score').applyOptions({
+                scaleMargins: { top: 0.80, bottom: 0.02 }, visible: false
+            });
+            [{ v: 85, c: 'rgba(74,222,128,.55)' }, { v: 15, c: 'rgba(248,113,113,.55)' }].forEach(function (t) {
+                score.createPriceLine({ price: t.v, color: t.c, lineWidth: 1, lineStyle: 2,
+                                        axisLabelVisible: false, title: '' });
+            });
             try {
                 new ResizeObserver(function () {
                     if (el.clientWidth) chart.applyOptions({ width: el.clientWidth, height: el.clientHeight });
                 }).observe(el);
             } catch (e) { /* no ResizeObserver → static size, still fine */ }
-            lwc = { chart: chart, candle: candle, lines: lines, vegas: vegas };
+            lwc = { chart: chart, candle: candle, lines: lines, vegas: vegas, score: score };
             return lwc;
         }
 
@@ -413,6 +436,21 @@
                 .then(function (r) { return r.ok ? r.json() : null; })
                 .then(function (d) { if (d && d.candles && d.candles.length) drawChart(d.candles); })
                 .catch(function () {});
+            // Score history arrives separately (first call recomputes ~100 bars
+            // server-side) — candles never wait for it.
+            var c = ensureChart();
+            if (c && c.score) c.score.setData([]);
+            fetch('/api/strategy2_score_history/' + sym)
+                .then(function (r) { return r.ok ? r.json() : null; })
+                .then(function (d) {
+                    if (!d || !d.points || !d.points.length) return;
+                    var cc = ensureChart();
+                    if (!cc || !cc.score) return;
+                    cc.score.setData(d.points.map(function (p) {
+                        return { time: Math.floor(p[0] / 1000), value: p[1] };
+                    }));
+                })
+                .catch(function () {});
         }
 
         function buildLegend() {
@@ -423,6 +461,7 @@
             }).join('');
             html += '<span class="lg"><span class="sw" style="background:linear-gradient(90deg,' +
                     VEGAS_UP + ',' + VEGAS_DN + ')"></span>Vegas EMA200</span>';
+            html += '<span class="lg"><span class="sw" style="background:#22d3ee"></span>Meter score (bottom pane, 0–100)</span>';
             box.innerHTML = html;
         }
 
@@ -506,9 +545,41 @@
             });
             if (window.wolfApplyLang) window.wolfApplyLang();
         }
+        // ── Multi-symbol confidence heatmap (top perps, scanner-fed) ──────────
+        function heatColor(score) {
+            // 0 → red, 50 → slate, 100 → green; alpha rises toward the extremes.
+            var t = (score - 50) / 50;                        // -1 .. +1
+            var a = 0.12 + Math.abs(t) * 0.55;
+            return t >= 0 ? 'rgba(16,185,129,' + a.toFixed(2) + ')'
+                          : 'rgba(239,68,68,' + a.toFixed(2) + ')';
+        }
+        function renderHeatmap(scores) {
+            var panel = document.getElementById('s2-heat-panel');
+            var grid = document.getElementById('s2-heatmap');
+            if (!panel || !grid || !scores || !scores.length) return;
+            panel.style.display = '';
+            document.getElementById('s2-heat-meta').textContent = scores.length + ' symbols · by volume';
+            grid.innerHTML = scores.map(function (s) {
+                if (s.score == null) return '';
+                var hot = s.score >= 85 || s.score <= 15;
+                return '<div data-sym="' + s.symbol + '" title="' + s.base + ' · score ' + s.score + '/100" ' +
+                    'style="cursor:pointer;border-radius:8px;padding:7px 4px;text-align:center;background:' + heatColor(s.score) + ';' +
+                    'border:1px solid ' + (hot ? (s.score >= 85 ? 'rgba(74,222,128,.8)' : 'rgba(248,113,113,.8)') : 'rgba(255,255,255,.07)') + ';' +
+                    (hot ? 'box-shadow:0 0 10px ' + (s.score >= 85 ? 'rgba(16,185,129,.35)' : 'rgba(239,68,68,.35)') + ';' : '') + '">' +
+                    '<div style="font-size:.62rem;font-weight:800;letter-spacing:.02em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + s.base + '</div>' +
+                    '<div style="font-size:.86rem;font-weight:900;font-variant-numeric:tabular-nums;">' + s.score + '</div>' +
+                    '</div>';
+            }).join('');
+            Array.prototype.forEach.call(grid.children, function (tile) {
+                tile.addEventListener('click', function () {
+                    setSymbol(tile.getAttribute('data-sym'));
+                    window.scrollTo({ top: 0, behavior: 'smooth' });
+                });
+            });
+        }
         function loadSignals() {
             fetch('/api/strategy2_signals').then(function (r) { return r.ok ? r.json() : null; })
-                .then(function (d) { if (d) renderSignals(d); }).catch(function () {});
+                .then(function (d) { if (d) { renderSignals(d); renderHeatmap(d.scores); } }).catch(function () {});
         }
 
         // ── Live Trading Rules panel — reflects STRATEGY2_LIVE / LIVE_TRADING ──

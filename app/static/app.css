@@ -152,6 +152,22 @@ html { scrollbar-width: thin; scrollbar-color: rgba(255, 255, 255, 0.18) transpa
 /* OFF — filter disabled, muted */
 .nav-regime.off { color: var(--wolf-muted); border-color: var(--wolf-border); background: rgba(255,255,255,.03); }
 .nav-regime.off .nr-dot { box-shadow: none; opacity: .5; }
+/* Volatility regime variants (same chip component, VOL semantics):
+   HIGH = lit cyan (big moves), NORMAL = calm, DEAD = greyed red (chop warning). */
+.nav-regime.vol-high {
+    color: var(--wolf-blue); border-color: rgba(0,210,255,.5);
+    background: linear-gradient(180deg, rgba(0,210,255,.20), rgba(0,210,255,.06));
+    box-shadow: 0 0 14px rgba(0,210,255,.25), inset 0 1px 0 rgba(255,255,255,.06);
+}
+.nav-regime.vol-normal {
+    color: #b9c6d8; border-color: rgba(255,255,255,.16);
+    background: rgba(255,255,255,.04);
+}
+.nav-regime.vol-dead {
+    color: #fca5a5; border-color: rgba(239,68,68,.4);
+    background: rgba(239,68,68,.08);
+}
+.nav-regime.vol-dead .nr-dot { box-shadow: none; opacity: .6; }
 @keyframes nr-pulse-green {
     0% { box-shadow: 0 0 0 0 rgba(34,197,94,.6), 0 0 6px #4ade80; }
     70% { box-shadow: 0 0 0 7px rgba(34,197,94,0), 0 0 6px #4ade80; }

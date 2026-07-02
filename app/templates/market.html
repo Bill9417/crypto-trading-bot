@@ -243,6 +243,13 @@
             </div>
         </div>
 
+        <!-- 🗓 High-impact USD macro events (FOMC/CPI/NFP) — crypto trades straight
+             through these; don't hold a 4x position into one blind. -->
+        <div id="econ-strip" style="display:none;align-items:center;gap:10px;flex-wrap:wrap;background:rgba(255,207,75,.06);border:1px solid rgba(255,207,75,.30);border-radius:12px;padding:9px 14px;margin-bottom:14px;">
+            <span style="font-size:.68rem;font-weight:800;letter-spacing:.05em;text-transform:uppercase;color:var(--wolf-gold);">🗓 US macro this week</span>
+            <span id="econ-events" style="display:inline-flex;gap:8px;flex-wrap:wrap;font-size:.72rem;"></span>
+        </div>
+
         <!-- Whale vs Crowd positioning -->
         <div class="analytics-panel">
             <div class="analytics-head">
@@ -262,9 +269,9 @@
                     </div>
                     <table>
                         <thead>
-                            <tr><th>Asset</th><th>Price</th><th>24h</th><th>Volume</th><th>Open Interest</th><th>Funding</th></tr>
+                            <tr><th>Asset</th><th>Price</th><th>24h</th><th>Volume</th><th>Open Interest</th><th title="Open-interest change over 24h vs price direction — the crowding read">OI Δ24h</th><th>Funding</th></tr>
                         </thead>
-                        <tbody id="futures-body"><tr><td colspan="6" class="skeleton">Loading…</td></tr></tbody>
+                        <tbody id="futures-body"><tr><td colspan="7" class="skeleton">Loading…</td></tr></tbody>
                     </table>
                 </div>
             </div>
@@ -379,6 +386,26 @@
                 document.getElementById('s-dom-note').textContent = bits.join(' · ') || 'global market cap';
             }
 
+            // High-impact USD events: upcoming first, imminent (<12h) highlighted.
+            const cal = (d.calendar || []).map(e => ({ ...e, t: Date.parse(e.date) }))
+                .filter(e => !isNaN(e.t) && e.t > Date.now() - 2 * 3600e3)
+                .sort((a, b) => a.t - b.t).slice(0, 6);
+            if (cal.length) {
+                document.getElementById('econ-strip').style.display = 'flex';
+                document.getElementById('econ-events').innerHTML = cal.map(e => {
+                    const dt = new Date(e.t);
+                    const hrs = (e.t - Date.now()) / 3600e3;
+                    const when = dt.toLocaleDateString(undefined, { weekday: 'short' }) + ' ' +
+                        dt.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+                    const soon = hrs > 0 && hrs < 12;
+                    const eta = hrs < 0 ? 'now' : hrs < 1 ? Math.round(hrs * 60) + 'm' : hrs < 48 ? Math.round(hrs) + 'h' : Math.round(hrs / 24) + 'd';
+                    return '<span title="' + esc(e.title) + (e.forecast ? ' · forecast ' + esc(e.forecast) : '') + (e.previous ? ' · prev ' + esc(e.previous) : '') + '" ' +
+                        'style="padding:3px 10px;border-radius:999px;border:1px solid ' + (soon ? 'rgba(248,113,113,.6)' : 'rgba(255,255,255,.12)') + ';' +
+                        (soon ? 'background:rgba(239,68,68,.12);color:#fca5a5;font-weight:700;' : 'background:rgba(255,255,255,.03);color:var(--wolf-text);') + '">' +
+                        esc(e.title) + ' · ' + when + ' <span class="muted">(' + eta + ')</span></span>';
+                }).join('');
+            }
+
             document.getElementById('futures-body').innerHTML = fut.map(r => {
                 const chg = r.change_pct || 0;
                 const chgCls = chg >= 0 ? 'up' : 'down';
@@ -387,15 +414,27 @@
                 if (fr !== null && fr !== undefined) {
                     frHtml = '<span class="pill ' + (fr >= 0 ? 'up' : 'down') + '">' + (fr >= 0 ? '+' : '') + (fr * 100).toFixed(4) + '%</span>';
                 }
+                // OI Δ24h + the price×OI quadrant read (who is entering/leaving).
+                let oiHtml = '<span class="muted">n/a</span>';
+                const oid = r.oi_change_24h_pct;
+                if (oid !== null && oid !== undefined) {
+                    const read = oid >= 0
+                        ? (chg >= 0 ? 'longs building' : 'shorts piling in')
+                        : (chg >= 0 ? 'short covering' : 'longs bailing');
+                    oiHtml = '<span class="num ' + (oid >= 0 ? 'up' : 'down') + '" title="' + read + '">' +
+                             (oid >= 0 ? '+' : '') + oid.toFixed(1) + '%' +
+                             '<br><span class="muted" style="font-size:.58rem;">' + read + '</span></span>';
+                }
                 return '<tr>' +
                     '<td><div class="asset"><div class="coin">' + esc(r.base.slice(0, 3)) + '</div><span class="nm">' + esc(r.base) + '</span></div></td>' +
                     '<td class="num">' + fmtPrice(r.price) + '</td>' +
                     '<td class="num ' + chgCls + '">' + (chg >= 0 ? '+' : '') + chg.toFixed(2) + '%</td>' +
                     '<td class="num">' + fmtUsd(r.volume_usdt) + '</td>' +
                     '<td class="num">' + fmtUsd(r.open_interest_usdt) + '</td>' +
+                    '<td>' + oiHtml + '</td>' +
                     '<td>' + frHtml + '</td>' +
                 '</tr>';
-            }).join('') || '<tr><td colspan="6" class="skeleton">No futures data.</td></tr>';
+            }).join('') || '<tr><td colspan="7" class="skeleton">No futures data.</td></tr>';
 
             renderPositioning(d.positioning);
 

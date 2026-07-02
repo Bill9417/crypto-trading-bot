@@ -298,8 +298,19 @@
                 const pr = protFor(p.symbol, orders);
                 const ri = riskInfo(p, pr);
                 const d = (v,suffix='%')=> v==null?'':' <span class="dim">('+(v>=0?'':'')+v.toFixed(1)+suffix+')</span>';
+                // Position age — average trade lasts ~6h; anything 2× that gets an
+                // amber flag (usually the ones drifting toward the stop).
+                let ageHtml = '';
+                if (p.opened_at) {
+                    const ageH = (Date.now()/1000 - p.opened_at) / 3600;
+                    const label = ageH >= 48 ? (ageH/24).toFixed(1)+'d' : ageH >= 1 ? ageH.toFixed(1)+'h' : Math.max(1,Math.round(ageH*60))+'m';
+                    const stale = ageH > 12;
+                    ageHtml = '<br><span class="dim" style="font-size:.58rem;'+(stale?'color:var(--wolf-gold);font-weight:700;':'')+'" '+
+                        'title="'+(p.age_exact?'Opened by the bot':'Approximate — from the exchange position updateTime')+(stale?' · much longer than the ~6h average trade':'')+'">'+
+                        (stale?'⏳ ':'')+'open '+label+(p.age_exact?'':' ~')+'</span>';
+                }
                 return `<tr>
-                <td><b>${(p.symbol||'').replace(':USDT','')}</b><br>${protBadge(pr)}${p.db_diverged?'<br><span class="prot-badge prot-partial" title="The bot recorded this trade as '+(p.db_status||'closed')+', but it is still open here. The bot is not managing it.">⚠ bot: '+(p.db_status||'closed')+'</span>':''}</td>
+                <td><b>${(p.symbol||'').replace(':USDT','')}</b><br>${protBadge(pr)}${p.db_diverged?'<br><span class="prot-badge prot-partial" title="The bot recorded this trade as '+(p.db_status||'closed')+', but it is still open here. The bot is not managing it.">⚠ bot: '+(p.db_status||'closed')+'</span>':''}${ageHtml}</td>
                 <td>${sidePill(p.side)}</td>
                 <td class="num">${fmt(p.contracts,6)}</td>
                 <td class="num dim">${fmt(p.notional)} </td>

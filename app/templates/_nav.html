@@ -14,6 +14,7 @@
     <a href="{{ url_for('admin_users') }}" class="nav-pill admin{% if request.endpoint == 'admin_users' %} active{% endif %}">⚙ ADMIN</a>
     {% endif %}
     <span class="nav-regime neutral" id="nav-regime" title="BTC trend regime — gates every trade (LONGs blocked in BEAR, SHORTs in BULL)"><span class="nr-dot" aria-hidden="true"></span><span class="nr-tag">BTC</span><span class="nr-state" id="nav-regime-state">—</span></span>
+    <span class="nav-regime off" id="nav-vol" style="margin-left:6px;" title="BTC daily volatility vs its 30-day norm. DEAD = confluence signals fire into chop and are less reliable; HIGH = bigger moves both ways — mind position size."><span class="nr-dot" aria-hidden="true"></span><span class="nr-tag">VOL</span><span class="nr-state" id="nav-vol-state">—</span></span>
     <button type="button" class="nav-pill lang-toggle" id="wolf-lang-toggle" onclick="wolfToggleLang()" title="切換語言 / Switch language" style="appearance:none;-webkit-appearance:none;font-family:inherit;line-height:inherit;margin:0;cursor:pointer;">🌐&nbsp;<span id="wolf-lang-label">中文</span></button>
     <a href="{{ url_for('logout') }}" class="nav-pill logout">🚪 LOGOUT</a>
 </nav>
@@ -31,10 +32,24 @@
         el.className = 'nav-regime ' + reg;
         st.textContent = arrow + ' ' + reg.toUpperCase();
     }
+    function paintVol(d) {
+        var el = document.getElementById('nav-vol');
+        var st = document.getElementById('nav-vol-state');
+        if (!el || !st) return;
+        var v = (d.vol_regime || 'unknown').toString().toLowerCase();
+        var cls = v === 'high' ? 'vol-high' : v === 'dead' ? 'vol-dead' : v === 'normal' ? 'vol-normal' : 'off';
+        var glyph = v === 'high' ? '⚡' : v === 'dead' ? '≋' : v === 'normal' ? '◆' : '○';
+        el.className = 'nav-regime ' + cls;
+        st.textContent = glyph + ' ' + (v === 'unknown' ? '—' : v.toUpperCase());
+        if (d.vol_atr_pct != null && d.vol_ratio != null) {
+            el.title = 'BTC daily ATR ' + d.vol_atr_pct + '% = ' + Math.round(d.vol_ratio * 100) +
+                '% of its 30-day norm. DEAD = signals fire into chop; HIGH = bigger moves both ways — mind position size.';
+        }
+    }
     function load() {
         fetch('/api/dashboard_summary')
             .then(function (r) { return r.ok ? r.json() : null; })
-            .then(function (d) { if (d) paint(d.btc_regime); })
+            .then(function (d) { if (d) { paint(d.btc_regime); paintVol(d); } })
             .catch(function () {});
     }
     load();

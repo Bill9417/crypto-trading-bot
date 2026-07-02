@@ -1207,6 +1207,44 @@
         ::selection { background: rgba(0,210,255,0.32); color: #fff; }
         .btn, .btn-wolf, .btn-ghost, .nav-pill, .stat-card[data-href] { transition: transform .14s ease, box-shadow .14s ease, background .14s, border-color .14s, color .14s; }
         .btn:active, .btn-wolf:active, .btn-ghost:active, .nav-pill:active { transform: translateY(1px) scale(0.98); }
+        /* ── Hero: main-coin heatmap tiles + admin account/strategy column ──
+           One grid so the top of the page reads as a single clean band instead
+           of four stacked full-width strips. Coins panel is for everyone; the
+           side column only renders for admins (grid collapses via :only-child). */
+        .hero-grid { display: grid; grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); gap: 12px; margin-bottom: 12px; align-items: stretch; }
+        .hero-grid > :only-child { grid-column: 1 / -1; }
+        .hero-side { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+        .hero-side .acct-strip { margin-bottom: 0; flex: 1; }
+        .hero-side .acct-link { height: 100%; gap: 8px 16px; align-content: flex-start; padding: 12px 16px; }
+        .hero-side .acct-cell b { font-size: .88rem; }
+        .ls-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+            background: var(--wolf-card, #161a26); border: 1px solid var(--wolf-border, #262c3d);
+            border-left: 4px solid var(--wolf-gold, #ffcf4b); border-radius: 12px; padding: 9px 14px; }
+        .coins-panel { background: var(--wolf-card); border: 1px solid var(--wolf-border);
+            border-radius: 14px; padding: 14px 16px; box-shadow: var(--shadow);
+            backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); }
+        .cp-head { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; margin-bottom: 10px; }
+        .cp-title { font-size: .7rem; font-weight: 800; letter-spacing: .06em; color: var(--wolf-muted); text-transform: uppercase; }
+        .cp-meta { font-size: .6rem; color: var(--wolf-muted); }
+        .cp-tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 12px; }
+        .coin-tile { position: relative; display: block; border-radius: 12px; border: 1px solid var(--wolf-border);
+            padding: 12px 14px; text-decoration: none; color: var(--wolf-text);
+            background: rgba(255,255,255,.02); overflow: hidden; transition: transform .15s, border-color .15s, box-shadow .15s; }
+        .coin-tile:hover { transform: translateY(-2px); border-color: rgba(0,210,255,.4); box-shadow: 0 6px 20px rgba(0,0,0,.3); }
+        .ct-row1 { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+        .ct-sym { font-size: .92rem; font-weight: 900; letter-spacing: .02em; }
+        .ct-score { font-size: .6rem; font-weight: 800; letter-spacing: .04em; padding: 3px 9px; border-radius: 999px;
+            border: 1px solid var(--wolf-border); color: var(--wolf-muted); white-space: nowrap; }
+        .ct-score.long { color: #4ade80; border-color: rgba(34,197,94,.5); background: rgba(34,197,94,.12); }
+        .ct-score.short { color: #f87171; border-color: rgba(239,68,68,.5); background: rgba(239,68,68,.12); }
+        .ct-price { font-size: 1.55rem; font-weight: 900; margin-top: 7px; line-height: 1.1; font-variant-numeric: tabular-nums; }
+        .ct-chg { font-size: .8rem; font-weight: 800; margin-top: 1px; font-variant-numeric: tabular-nums; }
+        .ct-spark { width: 100%; height: 36px; margin-top: 7px; display: block; }
+        .ct-info { display: flex; gap: 6px 16px; flex-wrap: wrap; margin-top: 9px;
+            font-size: .56rem; color: var(--wolf-muted); text-transform: uppercase; letter-spacing: .04em; }
+        .ct-info b { display: block; color: var(--wolf-text); font-size: .74rem; letter-spacing: 0; text-transform: none; font-variant-numeric: tabular-nums; }
+        @media (max-width: 1080px) { .hero-grid { grid-template-columns: 1fr; } }
+
         /* Live account snapshot strip (admin) — real Binance ground truth */
         .acct-strip { margin-bottom: 12px; }
         .acct-link { display:flex; align-items:center; gap:18px; flex-wrap:wrap;
@@ -1280,36 +1318,67 @@
         {% if user.is_admin %}
         <!-- Live position protection banner (admin) — surfaces unprotected positions -->
         <a href="{{ url_for('account') }}" id="protbanner" class="prot-banner" style="display:none;"></a>
-
-        <!-- Live strategy switcher (admin) — what the bot trades with REAL money -->
-        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;background:var(--wolf-card,#161a26);border:1px solid var(--wolf-border,#262c3d);border-left:4px solid var(--wolf-gold,#ffcf4b);border-radius:12px;padding:9px 14px;margin-bottom:12px;">
-            <span style="font-size:.7rem;font-weight:800;letter-spacing:.04em;text-transform:uppercase;color:var(--wolf-muted,#8a99ad);">⚙ Live strategy</span>
-            <span style="font-size:.8rem;color:var(--wolf-muted,#8a99ad);">Trading now: <b style="color:var(--wolf-text,#e6ecf5);" id="ds-ls-running">{{ live_strategy.running_name or '—' }}</b></span>
-            {% if live_strategy.diverged %}<span style="font-size:.68rem;color:var(--wolf-gold,#ffcf4b);font-weight:700;">⚠ saved “{{ live_strategy.saved_name }}” — restart bot to apply</span>{% endif %}
-            <select id="ds-ls-select" style="background:rgba(255,255,255,.04);border:1px solid var(--wolf-border,#262c3d);color:var(--wolf-text,#e6ecf5);font-size:.8rem;font-weight:600;padding:6px 9px;border-radius:8px;cursor:pointer;margin-left:auto;">
-                {% for s in live_strategy.strategies %}
-                <option value="{{ s.key }}" {% if s.key == live_strategy.saved %}selected{% endif %}>{{ s.name }}</option>
-                {% endfor %}
-            </select>
-            <button class="btn btn-wolf" id="ds-ls-save" onclick="dsSaveStrategy()">Save</button>
-        </div>
-
-        <!-- Live account snapshot (admin) — the REAL Binance account, so the
-             DB-based stats below can be sanity-checked against ground truth. -->
-        <div id="acct-strip" class="acct-strip" style="display:none;">
-            <a href="{{ url_for('account') }}" class="acct-link" title="Open the full account page">
-                <span class="acct-title">💰 LIVE ACCOUNT</span>
-                <span class="acct-net" id="acct-net">—</span>
-                <span class="acct-cell"><span class="acct-k">Equity</span><b id="acct-equity">—</b></span>
-                <span class="acct-cell"><span class="acct-k">Available</span><b id="acct-avail">—</b></span>
-                <span class="acct-cell"><span class="acct-k">Unrealized</span><b id="acct-upnl">—</b></span>
-                <span class="acct-cell" title="Realized P&L closed today (bot + manual, excl. fees)"><span class="acct-k">Realized today</span><b id="acct-today">—</b></span>
-                <span class="acct-cell"><span class="acct-k">Open positions</span><b id="acct-pos">—</b></span>
-                <span class="acct-cell acct-spark-cell" id="acct-spark-cell" title="Cumulative realized P&L (last trades)"><span class="acct-k">Realized trend</span><span class="acct-spark" id="acct-spark"></span></span>
-                <span class="acct-arrow">→</span>
-            </a>
-        </div>
         {% endif %}
+
+        <!-- ◈ Hero — main-coin heatmap tiles (everyone) + live account/strategy (admin) -->
+        <div class="hero-grid">
+            <section class="coins-panel">
+                <div class="cp-head">
+                    <span class="cp-title">◈ Main Coins · 1h chart · 24h heat</span>
+                    <span class="cp-meta" id="cp-meta">loading…</span>
+                </div>
+                <div class="cp-tiles">
+                    {% for c in ['btc', 'eth'] %}
+                    <a class="coin-tile" id="ct-{{ c }}" href="{{ url_for('strategy2') }}" title="Open in Strategy 2">
+                        <div class="ct-row1">
+                            <span class="ct-sym">{{ '₿ BTC' if c == 'btc' else 'Ξ ETH' }}</span>
+                            <span class="ct-score" id="ct-{{ c }}-score">meter —</span>
+                        </div>
+                        <div class="ct-price" id="ct-{{ c }}-price">—</div>
+                        <div class="ct-chg" id="ct-{{ c }}-chg"></div>
+                        <svg class="ct-spark" id="ct-{{ c }}-spark" viewBox="0 0 200 36" preserveAspectRatio="none"></svg>
+                        <div class="ct-info">
+                            <span>24h range<b id="ct-{{ c }}-range">—</b></span>
+                            <span>Funding<b id="ct-{{ c }}-fund">—</b></span>
+                            <span>OI Δ24h<b id="ct-{{ c }}-oi">—</b></span>
+                            <span>Volume<b id="ct-{{ c }}-vol">—</b></span>
+                        </div>
+                    </a>
+                    {% endfor %}
+                </div>
+            </section>
+            {% if user.is_admin %}
+            <div class="hero-side">
+                <!-- Live account snapshot — the REAL Binance account, so the
+                     DB-based stats below can be sanity-checked against ground truth. -->
+                <div id="acct-strip" class="acct-strip" style="display:none;">
+                    <a href="{{ url_for('account') }}" class="acct-link" title="Open the full account page">
+                        <span class="acct-title">💰 LIVE ACCOUNT</span>
+                        <span class="acct-net" id="acct-net">—</span>
+                        <span class="acct-cell"><span class="acct-k">Equity</span><b id="acct-equity">—</b></span>
+                        <span class="acct-cell"><span class="acct-k">Available</span><b id="acct-avail">—</b></span>
+                        <span class="acct-cell"><span class="acct-k">Unrealized</span><b id="acct-upnl">—</b></span>
+                        <span class="acct-cell" title="Realized P&L closed today (bot + manual, excl. fees)"><span class="acct-k">Realized today</span><b id="acct-today">—</b></span>
+                        <span class="acct-cell"><span class="acct-k">Open positions</span><b id="acct-pos">—</b></span>
+                        <span class="acct-cell acct-spark-cell" id="acct-spark-cell" title="Cumulative realized P&L (last trades)"><span class="acct-k">Realized trend</span><span class="acct-spark" id="acct-spark"></span></span>
+                        <span class="acct-arrow">→</span>
+                    </a>
+                </div>
+                <!-- Live strategy switcher — what the bot trades with REAL money -->
+                <div class="ls-row">
+                    <span style="font-size:.7rem;font-weight:800;letter-spacing:.04em;text-transform:uppercase;color:var(--wolf-muted,#8a99ad);">⚙ Live strategy</span>
+                    <span style="font-size:.78rem;color:var(--wolf-muted,#8a99ad);">Now: <b style="color:var(--wolf-text,#e6ecf5);" id="ds-ls-running">{{ live_strategy.running_name or '—' }}</b></span>
+                    {% if live_strategy.diverged %}<span style="font-size:.66rem;color:var(--wolf-gold,#ffcf4b);font-weight:700;">⚠ saved “{{ live_strategy.saved_name }}” — restart bot to apply</span>{% endif %}
+                    <select id="ds-ls-select" style="background:rgba(255,255,255,.04);border:1px solid var(--wolf-border,#262c3d);color:var(--wolf-text,#e6ecf5);font-size:.76rem;font-weight:600;padding:6px 9px;border-radius:8px;cursor:pointer;margin-left:auto;min-width:0;max-width:60%;">
+                        {% for s in live_strategy.strategies %}
+                        <option value="{{ s.key }}" {% if s.key == live_strategy.saved %}selected{% endif %}>{{ s.name }}</option>
+                        {% endfor %}
+                    </select>
+                    <button class="btn btn-wolf" id="ds-ls-save" onclick="dsSaveStrategy()">Save</button>
+                </div>
+            </div>
+            {% endif %}
+        </div>
 
         <!-- 📊 Today's briefing — computed from live BTC, US indices & alt breadth -->
         <section class="analytics-panel" id="briefing">
@@ -2794,6 +2863,72 @@
         }
         loadAccountSpark();
         setInterval(loadAccountSpark, 60000);
+
+        // ── Main-coin hero tiles (BTC/ETH) — 24h heat tint + 1h sparkline ──
+        function ctFmtUsd(v) {
+            if (v == null) return '—';
+            if (v >= 1e9) return '$' + (v / 1e9).toFixed(2) + 'B';
+            if (v >= 1e6) return '$' + (v / 1e6).toFixed(1) + 'M';
+            return '$' + Math.round(v).toLocaleString();
+        }
+        function ctTint(chg) {
+            // Heatmap tint: intensity scales with |24h change|, saturating at ±5%.
+            const m = Math.min(Math.abs(chg || 0) / 5, 1);
+            const a = (0.06 + m * 0.30).toFixed(3);
+            return chg >= 0
+                ? 'linear-gradient(160deg, rgba(16,185,129,' + a + '), rgba(16,185,129,0.02) 72%)'
+                : 'linear-gradient(160deg, rgba(239,68,68,' + a + '), rgba(239,68,68,0.02) 72%)';
+        }
+        function ctSpark(el, pts, up) {
+            if (!el || !pts || pts.length < 2) return;
+            const W = 200, H = 36, pad = 2;
+            const lo = Math.min(...pts), hi = Math.max(...pts), rng = (hi - lo) || 1;
+            const X = i => pad + i * (W - 2 * pad) / (pts.length - 1);
+            const Y = v => H - pad - (v - lo) * (H - 2 * pad) / rng;
+            const line = pts.map((v, i) => X(i).toFixed(1) + ',' + Y(v).toFixed(1)).join(' ');
+            const col = up ? '#34d399' : '#f87171';
+            el.innerHTML =
+                '<polyline points="' + line + ' ' + X(pts.length - 1).toFixed(1) + ',' + H + ' ' + pad + ',' + H + '" ' +
+                    'fill="' + (up ? 'rgba(16,185,129,.12)' : 'rgba(239,68,68,.12)') + '" stroke="none"/>' +
+                '<polyline points="' + line + '" fill="none" stroke="' + col + '" stroke-width="1.8" ' +
+                    'stroke-linejoin="round" stroke-linecap="round" vector-effect="non-scaling-stroke"/>';
+        }
+        async function loadMainCoins() {
+            try {
+                const r = await fetch('/api/main_coins');
+                if (!r.ok) return;
+                const d = await r.json();
+                (d.coins || []).forEach(c => {
+                    const k = (c.base || '').toLowerCase();
+                    const tile = document.getElementById('ct-' + k);
+                    if (!tile) return;
+                    const chg = Number(c.change_pct || 0);
+                    tile.style.background = ctTint(chg);
+                    const set = (id, v) => { const el = document.getElementById('ct-' + k + '-' + id); if (el) el.textContent = v; };
+                    set('price', c.price != null ? '$' + Number(c.price).toLocaleString(undefined, { maximumFractionDigits: c.price >= 100 ? 0 : 2 }) : '—');
+                    const chgEl = document.getElementById('ct-' + k + '-chg');
+                    if (chgEl) {
+                        chgEl.textContent = (chg >= 0 ? '▲ +' : '▼ ') + chg.toFixed(2) + '% · 24h';
+                        chgEl.className = 'ct-chg ' + (chg >= 0 ? 'pnl-up' : 'pnl-down');
+                    }
+                    const sc = document.getElementById('ct-' + k + '-score');
+                    if (sc && c.score != null) {
+                        sc.textContent = 'meter ' + c.score + ' · ' + (c.bias || 'neutral').toUpperCase();
+                        sc.className = 'ct-score ' + (c.bias === 'long' ? 'long' : c.bias === 'short' ? 'short' : '');
+                    }
+                    set('range', (c.low != null && c.high != null)
+                        ? Number(c.low).toLocaleString() + '–' + Number(c.high).toLocaleString() : '—');
+                    set('fund', c.funding != null ? (c.funding >= 0 ? '+' : '') + (c.funding * 100).toFixed(4) + '%' : '—');
+                    set('oi', c.oi_change_24h_pct != null ? (c.oi_change_24h_pct >= 0 ? '+' : '') + c.oi_change_24h_pct.toFixed(1) + '%' : '—');
+                    set('vol', ctFmtUsd(c.volume_usdt));
+                    ctSpark(document.getElementById('ct-' + k + '-spark'), c.spark, chg >= 0);
+                });
+                const meta = document.getElementById('cp-meta');
+                if (meta) meta.textContent = 'updated ' + new Date().toLocaleTimeString();
+            } catch (e) { /* tiles keep last values on error */ }
+        }
+        loadMainCoins();
+        setInterval(loadMainCoins, 60000);
 
         // PWA: register service worker so the dashboard is installable on phone.
         if ('serviceWorker' in navigator) {

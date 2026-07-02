@@ -743,6 +743,7 @@
                 <div class="rp-cell"><div class="rp-k">Streak</div><div class="rp-v" id="rp-streak">—</div></div>
                 <div class="rp-cell"><div class="rp-k">Today</div><div class="rp-v" id="rp-today">—</div></div>
                 <div class="rp-cell"><div class="rp-k">Last 7 days</div><div class="rp-v" id="rp-7d">—</div></div>
+                <div class="rp-cell" title="How much of your gross winnings commissions eat. Above ~15% usually means the position sizes are too small for taker fees — consider post-only limit entries."><div class="rp-k">Fee drag</div><div class="rp-v" id="rp-feedrag">—</div></div>
             </div>
             <!-- Daily net P&L (realized + fees + funding, same basis as "Net") — the
                  at-a-glance "which days made or lost money" view, like the exchange's own. -->
@@ -753,8 +754,37 @@
                 </div>
                 <div id="rp-daily" style="display:flex;align-items:stretch;gap:4px;height:76px;"></div>
             </div>
+            <!-- Symbol leaderboard + hour-of-day heatmap: WHERE and WHEN the account
+                 makes/loses money. Both from the same income records as the cards. -->
+            <div id="rp-diag-wrap" style="display:none;margin-top:14px;grid-template-columns:minmax(240px,5fr) minmax(280px,7fr);gap:14px;">
+                <div>
+                    <div style="font-size:.66rem;font-weight:800;letter-spacing:.05em;text-transform:uppercase;color:var(--wolf-muted,#8a99ad);margin-bottom:6px;">Symbol P&amp;L · worst first</div>
+                    <div id="rp-symbols" style="max-height:190px;overflow-y:auto;font-size:.72rem;border:1px solid var(--wolf-border,#262c3d);border-radius:9px;padding:4px 8px;background:rgba(255,255,255,.02);"></div>
+                </div>
+                <div>
+                    <div style="font-size:.66rem;font-weight:800;letter-spacing:.05em;text-transform:uppercase;color:var(--wolf-muted,#8a99ad);margin-bottom:6px;">Trading hours · net P&amp;L by hour <span style="text-transform:none;font-weight:600;">(local time)</span></div>
+                    <div id="rp-hours" style="display:flex;gap:3px;align-items:stretch;height:64px;"></div>
+                    <div id="rp-hours-note" style="font-size:.62rem;color:var(--wolf-muted,#8a99ad);margin-top:5px;line-height:1.5;"></div>
+                </div>
+            </div>
             <div id="rp-rows" style="margin-top:12px;font-size:.74rem;"></div>
             <p style="margin:10px 0 0;font-size:.68rem;color:var(--wolf-muted,#8a99ad);line-height:1.5;">Straight from Binance income records (incl. fees + funding) — <b>this is your real account</b>. The cards below are the bot's <b>tracked/simulated</b> signals; they differ on purpose (the sim models partial-TP, and any DRY-RUN period logs signals that never hit the exchange).</p>
+        </div>
+
+        <!-- 🔬 Trade autopsy — MAE vs MFE scatter. Answers: do losers die instantly
+             (bad entries) or nearly win first (stop/target placement problem)? -->
+        <div id="autopsy-panel" style="display:none;background:var(--wolf-card,#161a26);border:1px solid var(--wolf-border,#262c3d);border-left:4px solid #22d3ee;border-radius:14px;padding:16px 18px;margin-bottom:16px;">
+            <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:4px;">
+                <div style="font-size:.8rem;font-weight:800;letter-spacing:.05em;text-transform:uppercase;color:#22d3ee;">🔬 Trade Autopsy — how far trades went before they ended</div>
+                <span id="autopsy-meta" style="font-size:.7rem;color:var(--wolf-muted,#8a99ad);">analyzing…</span>
+            </div>
+            <p style="margin:0 0 10px;font-size:.68rem;color:var(--wolf-muted,#8a99ad);line-height:1.5;">
+                Each dot is one closed bot-tracked trade. <b>Right</b> = went far against you (MAE); <b>up</b> = was well in profit at some point (MFE).
+                <span style="color:#f87171;">Red dots high above the line = almost-winners that gave it back</span> (take-profit too far / stop too loose) ·
+                <span style="color:#f87171;">red dots hugging the bottom = straight losers</span> (entry quality).
+            </p>
+            <svg id="autopsy-svg" viewBox="0 0 560 280" style="width:100%;max-width:860px;height:auto;display:block;"></svg>
+            <div id="autopsy-note" style="font-size:.68rem;color:var(--wolf-text,#e6ecf5);margin-top:8px;line-height:1.6;"></div>
         </div>
         <script>
             (function(){
@@ -810,6 +840,58 @@
                             }).join('');
                             wrap.style.display='block';
                         }
+                        // Fee drag: commissions as a share of gross winnings + per-trade cost.
+                        if(d.gross_win!=null && d.commission!=null){
+                            var feeAbs=Math.abs(d.commission);
+                            var drag=d.gross_win>0 ? feeAbs/d.gross_win*100 : null;
+                            var per=d.n_trades>0 ? feeAbs/d.n_trades : null;
+                            var fd=document.getElementById('rp-feedrag');
+                            fd.textContent=(drag!=null?drag.toFixed(1)+'% of wins':'—')+(per!=null?' · '+per.toFixed(4)+'/trade':'');
+                            fd.className='rp-v '+(drag==null?'':(drag>15?'loss':(drag>8?'':'win')));
+                        }
+                        // Symbol leaderboard — worst bleeders first (server pre-sorted).
+                        var syms=d.by_symbol||[];
+                        var diag=document.getElementById('rp-diag-wrap');
+                        if(syms.length){
+                            var maxN=Math.max.apply(null, syms.map(function(s){return Math.abs(s.net);}).concat([1e-9]));
+                            document.getElementById('rp-symbols').innerHTML=syms.map(function(s){
+                                var c=s.net>0?'win':(s.net<0?'loss':'');
+                                var w=Math.abs(s.net)/maxN*100;
+                                return '<div style="display:flex;align-items:center;gap:8px;padding:3px 0;border-bottom:1px solid rgba(255,255,255,.04);">'+
+                                    '<span style="font-weight:700;min-width:64px;">'+(s.symbol||'').replace('USDT','')+'</span>'+
+                                    '<span style="color:var(--wolf-muted,#8a99ad);min-width:56px;">'+s.n+' ('+s.wins+'W/'+s.losses+'L)</span>'+
+                                    '<span style="flex:1;height:5px;border-radius:3px;background:rgba(255,255,255,.05);position:relative;overflow:hidden;">'+
+                                    '<span style="position:absolute;top:0;bottom:0;left:0;width:'+w.toFixed(0)+'%;border-radius:3px;background:'+(s.net>=0?'#10b981':'#ef4444')+';opacity:.75;"></span></span>'+
+                                    '<span class="'+c+'" style="min-width:58px;text-align:right;font-variant-numeric:tabular-nums;">'+(s.net>=0?'+':'')+s.net.toFixed(3)+'</span>'+
+                                    '</div>';
+                            }).join('');
+                        }
+                        // Hour-of-day heatmap — 24 columns, mid-baseline like the daily bars.
+                        var hours=d.hourly||[];
+                        if(hours.length===24){
+                            var hMax=Math.max.apply(null, hours.map(function(h){return Math.abs(h.net);}).concat([1e-9]));
+                            document.getElementById('rp-hours').innerHTML=hours.map(function(h){
+                                var n=h.wins+h.losses;
+                                var hh=Math.abs(h.net)/hMax*50, up=h.net>=0, quiet=n===0;
+                                var bar=quiet
+                                    ? '<div style="position:absolute;top:50%;left:20%;right:20%;height:2px;margin-top:-1px;background:rgba(255,255,255,.08);border-radius:2px;"></div>'
+                                    : '<div style="position:absolute;left:12%;right:12%;border-radius:2px;'+
+                                      (up?('bottom:50%;height:'+Math.max(hh,4)+'%;background:#10b981;')
+                                         :('top:50%;height:'+Math.max(hh,4)+'%;background:#ef4444;'))+'"></div>';
+                                return '<div title="'+String(h.hour).padStart(2,'0')+':00 · '+(h.net>=0?'+':'')+h.net.toFixed(4)+' USDT · '+h.wins+'W/'+h.losses+'L" '+
+                                    'style="position:relative;flex:1;min-width:0;background:rgba(255,255,255,.02);border-radius:3px;">'+bar+
+                                    ((h.hour%6===0)?'<div style="position:absolute;bottom:-1px;left:0;right:0;text-align:center;font-size:.5rem;color:var(--wolf-muted,#8a99ad);">'+h.hour+'</div>':'')+
+                                    '</div>';
+                            }).join('');
+                            var worst=hours.slice().sort(function(a,b){return a.net-b.net;})[0];
+                            var best=hours.slice().sort(function(a,b){return b.net-a.net;})[0];
+                            if(worst.net<0||best.net>0){
+                                document.getElementById('rp-hours-note').textContent =
+                                    (worst.net<0?('Worst hour: '+String(worst.hour).padStart(2,'0')+':00 ('+worst.net.toFixed(3)+' USDT, '+worst.wins+'W/'+worst.losses+'L)'):'')+
+                                    (best.net>0?((worst.net<0?' · ':'')+'Best hour: '+String(best.hour).padStart(2,'0')+':00 (+'+best.net.toFixed(3)+' USDT)'):'');
+                            }
+                        }
+                        if(syms.length||hours.length===24){ diag.style.display='grid'; }
                         var rows=(d.trades||[]).slice(0,12).map(function(t){
                             var dt=new Date(t.time); var sym=(t.symbol||'').replace('USDT','');
                             var c=t.pnl>=0?'win':'loss';
@@ -819,6 +901,65 @@
                     }).catch(function(){ var m=document.getElementById('real-pnl-meta'); if(m) m.textContent='error loading'; });
                 }
                 loadRealPnl();
+
+                // ── Trade autopsy scatter (MAE vs MFE) ─────────────────────────
+                // One shared axis scale so the y=x diagonal means "gave back exactly
+                // what it had". First call may be slow (server replays klines once).
+                function loadAutopsy(){
+                    var panel=document.getElementById('autopsy-panel');
+                    if(!panel) return;
+                    panel.style.display='block';
+                    fetch('/api/performance/excursions').then(function(r){return r.ok?r.json():null;}).then(function(d){
+                        var meta=document.getElementById('autopsy-meta');
+                        if(!d||!d.ok||!(d.points||[]).length){ meta.textContent='no closed tracked trades yet'; return; }
+                        var pts=d.points;
+                        meta.textContent=pts.length+' trades'+(d.partial?' (partial — refreshing soon)':'')+(d.skipped?' · '+d.skipped+' skipped':'');
+                        var W=560,H=280,padL=44,padB=32,padT=10,padR=12;
+                        var M=Math.max.apply(null,pts.map(function(p){return Math.max(p.mae,p.mfe);}).concat([0.5]))*1.08;
+                        function X(v){return padL+v/M*(W-padL-padR);}
+                        function Y(v){return H-padB-v/M*(H-padT-padB);}
+                        var s='';
+                        // gridlines + axis ticks
+                        var step=M>8?2:(M>4?1:0.5);
+                        for(var g=0;g<=M;g+=step){
+                            s+='<line x1="'+X(g)+'" y1="'+Y(0)+'" x2="'+X(g)+'" y2="'+Y(M)+'" stroke="rgba(255,255,255,.05)"/>';
+                            s+='<line x1="'+X(0)+'" y1="'+Y(g)+'" x2="'+X(M)+'" y2="'+Y(g)+'" stroke="rgba(255,255,255,.05)"/>';
+                            s+='<text x="'+X(g)+'" y="'+(H-padB+14)+'" fill="#8a99ad" font-size="9" text-anchor="middle">'+g+'%</text>';
+                            s+='<text x="'+(padL-6)+'" y="'+(Y(g)+3)+'" fill="#8a99ad" font-size="9" text-anchor="end">'+g+'%</text>';
+                        }
+                        // y=x diagonal
+                        s+='<line x1="'+X(0)+'" y1="'+Y(0)+'" x2="'+X(M)+'" y2="'+Y(M)+'" stroke="rgba(255,255,255,.22)" stroke-dasharray="4 4"/>';
+                        s+='<text x="'+(X(M)-4)+'" y="'+(Y(M)+12)+'" fill="#8a99ad" font-size="9" text-anchor="end">gain = pain line</text>';
+                        // axis labels
+                        s+='<text x="'+((padL+W-padR)/2)+'" y="'+(H-4)+'" fill="#8a99ad" font-size="10" text-anchor="middle">worst move AGAINST entry — MAE %</text>';
+                        s+='<text x="12" y="'+((padT+H-padB)/2)+'" fill="#8a99ad" font-size="10" text-anchor="middle" transform="rotate(-90 12 '+((padT+H-padB)/2)+')">best unrealized profit — MFE %</text>';
+                        pts.forEach(function(p){
+                            var win=(p.pnl_pct!=null?p.pnl_pct>0:String(p.status||'').indexOf('TP')===0);
+                            var col=win?'#10b981':'#ef4444';
+                            s+='<circle cx="'+X(p.mae)+'" cy="'+Y(p.mfe)+'" r="4" fill="'+col+'" fill-opacity=".75" stroke="'+col+'" stroke-width="1">'+
+                               '<title>'+(p.symbol||'').replace(':USDT','')+' '+(p.direction||'')+' · '+(p.status||'')+
+                               '\nMAE '+p.mae+'% · MFE '+p.mfe+'%'+
+                               (p.sl_pct!=null?'\nplanned SL '+p.sl_pct+'% · TP '+(p.tp_pct!=null?p.tp_pct+'%':'—'):'')+
+                               (p.pnl_pct!=null?'\nP&L '+(p.pnl_pct>=0?'+':'')+Number(p.pnl_pct).toFixed(2)+'%':'')+
+                               '\nheld '+(p.held_min>=90?(p.held_min/60).toFixed(1)+'h':p.held_min+'m')+'</title></circle>';
+                        });
+                        document.getElementById('autopsy-svg').innerHTML=s;
+                        // Headline diagnosis
+                        var losers=pts.filter(function(p){return !(p.pnl_pct!=null?p.pnl_pct>0:String(p.status||'').indexOf('TP')===0);});
+                        var winners=pts.length-losers.length;
+                        var almost=losers.filter(function(p){return p.tp_pct!=null?p.mfe>=p.tp_pct*0.6:p.mfe>=1.0;}).length;
+                        var straight=losers.filter(function(p){return p.mfe<0.3;}).length;
+                        var note='';
+                        if(losers.length){
+                            note='Of '+losers.length+' losers: <b style="color:#f87171;">'+almost+'</b> got ≥60% of the way to take-profit before losing (stop/target tuning), '+
+                                 '<b style="color:#f87171;">'+straight+'</b> never got more than 0.3% in profit (entry quality). ';
+                        }
+                        if(winners) note+=winners+' winners.';
+                        document.getElementById('autopsy-note').innerHTML=note;
+                        if(d.partial) setTimeout(loadAutopsy, 45000);   // finish the uncached tail
+                    }).catch(function(){ var m=document.getElementById('autopsy-meta'); if(m) m.textContent='error loading'; });
+                }
+                loadAutopsy();
             })();
         </script>
 

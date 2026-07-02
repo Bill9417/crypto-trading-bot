@@ -130,6 +130,31 @@ def binance_futures(top_n: int = 15, ttl: float = 45.0) -> dict:
     return _cached(f"binance:{top_n}", ttl, lambda: _binance_futures(top_n))
 
 
+def _oi_change(symbols: tuple) -> dict:
+    """24h open-interest change per symbol from Binance's public futures-data API
+    (hourly openInterestHist, no key needed). OI direction vs price direction is
+    the crowding read: price↓+OI↑ = shorts piling in, price↑+OI↓ = short covering.
+    One HTTP call per symbol → cached much longer than the ticker sweep."""
+    out = {"rows": {}, "errors": []}
+    for sym in symbols:
+        raw = sym.split("/")[0] + "USDT"
+        try:
+            rows = _get_json("https://fapi.binance.com/futures/data/openInterestHist"
+                             f"?symbol={raw}&period=1h&limit=24")
+            if isinstance(rows, list) and len(rows) >= 2:
+                first = float(rows[0]["sumOpenInterest"])
+                last = float(rows[-1]["sumOpenInterest"])
+                if first > 0:
+                    out["rows"][sym] = round((last - first) / first * 100, 2)
+        except Exception as e:  # noqa: BLE001 — one symbol must not kill the panel
+            out["errors"].append(f"OIΔ {raw}: {e}")
+    return out
+
+
+def oi_change(symbols: tuple, ttl: float = 600.0) -> dict:
+    return _cached("oi_change:" + ",".join(symbols), ttl, lambda: _oi_change(symbols))
+
+
 # ── DefiLlama on-chain (public, no keys) ────────────────────────────────────
 LLAMA = "https://api.llama.fi"
 
@@ -376,6 +401,34 @@ def global_market(ttl: float = 300.0) -> dict:
     return _cached("global_mkt", ttl, _global_market)
 
 
+def _econ_calendar() -> dict:
+    """High-impact USD macro events this week (FOMC, CPI, NFP…) from
+    ForexFactory's public weekly JSON. Crypto trades straight through these
+    prints; the strip exists so nobody holds a 4x position into CPI blind."""
+    out = {"events": [], "errors": []}
+    try:
+        rows = _get_json("https://nfs.faireconomy.media/ff_calendar_thisweek.json", timeout=10.0)
+        for r in rows or []:
+            if (r.get("impact") or "").lower() != "high":
+                continue
+            if (r.get("country") or "").upper() != "USD":
+                continue
+            out["events"].append({
+                "title": r.get("title"),
+                "date": r.get("date"),          # ISO 8601 with offset
+                "forecast": r.get("forecast") or None,
+                "previous": r.get("previous") or None,
+            })
+    except Exception as e:  # noqa: BLE001
+        out["errors"].append(f"calendar: {e}")
+    return out
+
+
+def econ_calendar(ttl: float = 21600.0) -> dict:
+    # The weekly file barely changes — 6h cache is plenty.
+    return _cached("econ_cal", ttl, _econ_calendar)
+
+
 # ── top-level aggregator used by the web route ──────────────────────────────
 def market_intel(top_n: int = 15, pos_n: int = 6) -> dict:
     bf = binance_futures(top_n=top_n)
@@ -386,14 +439,21 @@ def market_intel(top_n: int = 15, pos_n: int = 6) -> dict:
     dl = defillama()
     nw = news()
     gm = global_market()
+    oc_delta = oi_change(tuple(r["symbol"] for r in rows))
+    for r in rows:
+        r["oi_change_24h_pct"] = oc_delta["rows"].get(r["symbol"])
     errors = (bf.get("errors", []) + dl.get("errors", [])
-              + nw.get("errors", []) + ls.get("errors", []) + gm.get("errors", []))
+              + nw.get("errors", []) + ls.get("errors", []) + gm.get("errors", [])
+              + oc_delta.get("errors", [])[:2])   # cap: 15 symbols could spam the bar
     return {
         "generated_at": int(time.time()),
         "futures": bf.get("rows", []),
         "positioning": ls.get("rows", []),
         "onchain": dl,
         "global_mkt": gm,
+        # Calendar failures stay silent (events just don't render) — a dead feed
+        # shouldn't paint the page's error bar red.
+        "calendar": econ_calendar().get("events", []),
         "news": nw.get("items", []),
         "errors": errors,
     }

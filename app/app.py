@@ -1,6 +1,7 @@
 import json
 import os
 import secrets
+import time
 from datetime import datetime, timezone, timedelta
 from functools import wraps
 
@@ -565,7 +566,7 @@ def sync_record_states_in_scan_data() -> None:
 # this ONE value whenever app.css / i18n.js change and every template busts its
 # cache — no more hunting down 10 hardcoded copies (which once shipped an
 # unstyled page to users). Templates reference it as ?v={{ asset_ver }}.
-ASSET_VER = "20260702"
+ASSET_VER = "20260702b"
 
 
 @app.context_processor
@@ -1697,10 +1698,100 @@ def get_scan_data():
     return jsonify(data)
 
 
+# BTC daily-ATR volatility regime, cached 30 min (daily bars barely move).
+# DEAD vol is the confluence killer — the chip warns when signals fire into chop.
+_vol_regime_cache = {"ts": 0.0, "data": None}
+
+
+def _btc_vol_regime():
+    now = time.time()
+    if _vol_regime_cache["data"] is not None and now - _vol_regime_cache["ts"] < 1800:
+        return _vol_regime_cache["data"]
+    data = {"vol_regime": "unknown", "vol_atr_pct": None, "vol_ratio": None}
+    try:
+        ohlcv = rest_client.call("fetch_ohlcv", "BTC/USDT:USDT", "1d", None, 46)
+        if ohlcv and len(ohlcv) >= 30:
+            trs = []
+            for i in range(1, len(ohlcv)):
+                h, l = float(ohlcv[i][2]), float(ohlcv[i][3])
+                pc = float(ohlcv[i - 1][4])
+                trs.append(max(h - l, abs(h - pc), abs(l - pc)))
+            closes = [float(c[4]) for c in ohlcv[1:]]
+            # ATR% series (14-bar simple rolling mean of TR, as % of close)
+            atr_pct = [sum(trs[i - 13:i + 1]) / 14 / closes[i] * 100
+                       for i in range(13, len(trs))]
+            cur = atr_pct[-1]
+            base = sum(atr_pct[:-1]) / len(atr_pct[:-1])
+            ratio = cur / base if base > 0 else 1.0
+            data = {
+                "vol_regime": "high" if ratio > 1.25 else ("dead" if ratio < 0.75 else "normal"),
+                "vol_atr_pct": round(cur, 2),
+                "vol_ratio": round(ratio, 2),
+            }
+    except Exception as exc:  # noqa: BLE001 — the chip just shows unknown
+        print(f"[web] vol regime note: {exc}")
+    _vol_regime_cache["ts"] = now
+    _vol_regime_cache["data"] = data
+    return data
+
+
 @app.route("/api/dashboard_summary")
 @login_required
 def get_dashboard_summary():
-    return jsonify(build_dashboard_summary(load_data()))
+    summary = build_dashboard_summary(load_data())
+    summary.update(_btc_vol_regime())
+    return jsonify(summary)
+
+
+# Main-coin hero tiles (BTC + ETH): price/24h + funding + OI Δ + meter score +
+# a 24h sparkline in ONE payload, cached 60s so the tile refresh stays cheap.
+_main_coins_cache = {"ts": 0.0, "data": None}
+
+
+@app.route("/api/main_coins")
+@login_required
+def api_main_coins():
+    import strategy2_meter
+    now = time.time()
+    if _main_coins_cache["data"] is not None and now - _main_coins_cache["ts"] < 60:
+        return jsonify(_main_coins_cache["data"])
+    coins = []
+    for sym in ("BTC/USDT:USDT", "ETH/USDT:USDT"):
+        try:
+            ohlcv = rest_client.call("fetch_ohlcv", sym, "1h", None, 450)
+            t = rest_client.call("fetch_ticker", sym)
+            meter = strategy2_meter.compute_meter(ohlcv)
+            funding = None
+            try:
+                fr = rest_client.call("fetch_funding_rate", sym)
+                funding = (fr or {}).get("fundingRate")
+            except Exception:  # noqa: BLE001 — funding is decoration here
+                pass
+            coins.append({
+                "base": sym.split("/")[0],
+                "symbol": sym,
+                "price": t.get("last"),
+                "change_pct": t.get("percentage"),
+                "high": t.get("high"),
+                "low": t.get("low"),
+                "volume_usdt": t.get("quoteVolume"),
+                "funding": funding,
+                "score": meter.get("score"),
+                "bias": meter.get("bias"),
+                "spark": [float(c[4]) for c in (ohlcv or [])[-25:]],   # last 24h of 1h closes
+            })
+        except Exception as exc:  # noqa: BLE001 — a dead tile beats a dead page
+            print(f"[web] main_coins note {sym}: {exc}")
+    try:
+        oi = market_intel.oi_change(("BTC/USDT:USDT", "ETH/USDT:USDT"))
+        for c in coins:
+            c["oi_change_24h_pct"] = oi["rows"].get(c["symbol"])
+    except Exception:  # noqa: BLE001
+        pass
+    payload = _json_safe({"generated_at": int(now), "coins": coins})
+    _main_coins_cache["ts"] = now
+    _main_coins_cache["data"] = payload
+    return jsonify(payload)
 
 
 @app.route("/funnel")
@@ -1910,6 +2001,74 @@ def api_performance_real():
     return jsonify(_json_safe(executor.realized_pnl_summary()))
 
 
+# MAE/MFE excursions are immutable once a trade closes, so each record is
+# computed once and kept for the process lifetime. First load walks the klines
+# for every uncached trade (~0.3s each); later loads are instant.
+_excursion_cache: dict = {}
+
+
+@app.route("/api/performance/excursions")
+@admin_required
+def api_performance_excursions():
+    """Trade autopsy: for each closed bot-tracked trade, replay the 15m candles
+    between entry and exit and measure the Max Adverse / Max Favorable Excursion
+    (worst drawdown vs best unrealized profit, % from entry). Answers THE tuning
+    question — do losers die instantly (bad entries) or nearly win first (stop
+    and target placement)? DB-tracked trades, not the exchange income records."""
+    tz8 = timezone(timedelta(hours=8))      # SignalRecord times are naive GMT+8
+    rows = (SignalRecord.query
+            .filter(SignalRecord.exit_timestamp.isnot(None),
+                    SignalRecord.entry_price.isnot(None))
+            .order_by(SignalRecord.exit_timestamp.desc())
+            .limit(80).all())
+    points, skipped = [], 0
+    for r in rows:
+        cached = _excursion_cache.get(r.id)
+        if cached is not None:
+            points.append(cached)
+            continue
+        try:
+            t0 = int(r.timestamp.replace(tzinfo=tz8).timestamp() * 1000)
+            t1 = int(r.exit_timestamp.replace(tzinfo=tz8).timestamp() * 1000)
+            entry = float(r.entry_price)
+            if t1 <= t0 or entry <= 0:
+                skipped += 1
+                continue
+            bars = min(int((t1 - t0) / 900_000) + 3, 500)
+            ohlcv = rest_client.call("fetch_ohlcv", r.symbol, "15m", t0, bars)
+            window = [c for c in (ohlcv or []) if t0 <= c[0] <= t1]
+            if not window:
+                skipped += 1
+                continue
+            hi = max(float(c[2]) for c in window)
+            lo = min(float(c[3]) for c in window)
+            if (r.direction or "").upper() == "LONG":
+                mae = max(0.0, (entry - lo) / entry * 100)
+                mfe = max(0.0, (hi - entry) / entry * 100)
+            else:
+                mae = max(0.0, (hi - entry) / entry * 100)
+                mfe = max(0.0, (entry - lo) / entry * 100)
+            sl_pct = abs(entry - float(r.sl_price)) / entry * 100 if r.sl_price else None
+            tp_ref = r.tp2_price or r.tp1_price
+            tp_pct = abs(float(tp_ref) - entry) / entry * 100 if tp_ref else None
+            p = {"symbol": r.symbol, "direction": r.direction, "status": r.status,
+                 "pnl_pct": r.pnl_pct, "mae": round(mae, 2), "mfe": round(mfe, 2),
+                 "sl_pct": round(sl_pct, 2) if sl_pct is not None else None,
+                 "tp_pct": round(tp_pct, 2) if tp_pct is not None else None,
+                 "held_min": int(round((t1 - t0) / 60_000))}
+            _excursion_cache[r.id] = p
+            points.append(p)
+        except RateLimitCooldownError:
+            # Return what we have — the page shows a partial set and the next
+            # auto-refresh finishes the rest from cache.
+            return jsonify(_json_safe({"ok": True, "partial": True,
+                                       "points": points, "skipped": skipped}))
+        except Exception:  # noqa: BLE001 — one bad record must not kill the panel
+            skipped += 1
+    return jsonify(_json_safe({"ok": True, "partial": False,
+                               "points": points, "skipped": skipped}))
+
+
 def _json_safe(obj):
     """Recursively replace non-finite floats (inf/-inf/nan) with None. jsonify
     otherwise emits the bare tokens `Infinity`/`NaN`, which are invalid JSON and
@@ -2037,6 +2196,42 @@ def api_strategy2_ohlcv(symbol="BTC/USDT:USDT"):
     candles = [[int(c[0]), float(c[1]), float(c[2]), float(c[3]), float(c[4])]
                for c in (ohlcv or [])]
     return jsonify({"symbol": symbol, "timeframe": "1h", "candles": candles})
+
+
+# Historical meter scores are pure recompute over the same candles → cache the
+# ~100-point series per symbol for 5 min (one 1h bar can't close faster anyway).
+_score_hist_cache: dict = {}
+
+
+@app.route("/api/strategy2_score_history")
+@app.route("/api/strategy2_score_history/<path:symbol>")
+@login_required
+def api_strategy2_score_history(symbol="BTC/USDT:USDT"):
+    """Confidence-meter score per closed 1h bar — the same math as the live
+    gauge, replayed over history so the chart can show whether high scores
+    actually preceded moves (a visual backtest of the meter)."""
+    import strategy2_meter
+    now = time.time()
+    hit = _score_hist_cache.get(symbol)
+    if hit and now - hit[0] < 300:
+        return jsonify(hit[1])
+    try:
+        ohlcv = rest_client.call("fetch_ohlcv", symbol, "1h", None, 450)
+    except RateLimitCooldownError as exc:
+        return jsonify({"symbol": symbol, "error": str(exc), "points": []}), 200
+    except Exception as exc:  # noqa: BLE001 — never 500 the dashboard
+        return jsonify({"symbol": symbol, "error": f"fetch failed: {exc}", "points": []}), 200
+    points = []
+    min_n = strategy2_meter.MIN_CANDLES
+    for i in range(min_n, len(ohlcv or []) + 1):
+        try:
+            m = strategy2_meter.compute_meter(ohlcv[:i])
+            points.append([int(ohlcv[i - 1][0]), m["score"]])
+        except Exception:  # noqa: BLE001 — skip a bad bar, keep the series
+            continue
+    payload = {"symbol": symbol, "points": points}
+    _score_hist_cache[symbol] = (now, payload)
+    return jsonify(payload)
 
 
 @app.route("/api/strategy2_signals")
