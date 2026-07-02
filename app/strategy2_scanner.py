@@ -27,7 +27,7 @@ import executor
 import strategy2_live as S2L
 import strategy2_meter as S2
 import telegram_utils
-from market_data import SafeBinanceClient, RateLimitCooldownError
+from market_data import SafeBinanceClient, RateLimitCooldownError, is_tradfi_market
 
 # ── tunables (env-overridable, sensible defaults) ────────────────────────────
 TIMEFRAME = os.getenv("STRATEGY2_TIMEFRAME", "15m")
@@ -57,11 +57,14 @@ def _tv_url(symbol: str) -> str:
 
 
 def universe(client) -> list:
-    """All active USDT-margined perps, most-liquid first (so hot coins scan first)."""
+    """All active USDT-margined perps, most-liquid first (so hot coins scan first).
+    TradFi stock perps are dropped (EXCLUDE_TRADFI_PERPS) — the account can't
+    trade them, so a signal there is a guaranteed -4411 at entry."""
     markets = client.call("load_markets")
     syms = [s for s, m in markets.items()
             if m.get("swap") and m.get("quote") == config.QUOTE_ASSET and m.get("active", True)
-            and s.endswith(":" + config.QUOTE_ASSET)]
+            and s.endswith(":" + config.QUOTE_ASSET)
+            and not (config.EXCLUDE_TRADFI_PERPS and is_tradfi_market(m))]
     try:
         tickers = client.call("fetch_tickers")
         syms.sort(key=lambda s: (tickers.get(s, {}) or {}).get("quoteVolume") or 0, reverse=True)

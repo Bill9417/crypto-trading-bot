@@ -397,6 +397,12 @@ QUOTE_ASSET = "USDT"
 # names, so trading stays in that liquid range while scanning shows more.
 SCAN_SYMBOL_LIMIT = 300   # universe we scan + display
 TOP_SYMBOL_LIMIT = 150    # of those, only the top-N (by volume) are tradeable
+# Binance's TradFi stock/ETF perps (AAPL, NVDA, QQQ, SPY, …) require a separately
+# signed agreement; without it EVERY order is rejected with -4411, so by default
+# they are dropped from both scanners' universes and refused by the executor.
+# Sign the agreement on Binance first, then set EXCLUDE_TRADFI_PERPS=false to
+# let them scan/trade like any other perp.
+EXCLUDE_TRADFI_PERPS = _env_bool("EXCLUDE_TRADFI_PERPS", True)
 
 # ── Strategy 2 LIVE execution (opt-in, OFF by default) ───────────────────────
 # Strategy 2 is the stand-alone 15m TV.pine confluence scanner. By DEFAULT it is

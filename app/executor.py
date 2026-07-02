@@ -47,7 +47,9 @@ from config import (
     POSITION_SIZE_COUNTER_TREND,
     ENABLE_RISK_SIZING,
     RISK_PCT_PER_TRADE,
+    EXCLUDE_TRADFI_PERPS,
 )
+from market_data import is_tradfi_market
 from telegram_utils import send_message
 
 _exchange = None
@@ -321,6 +323,43 @@ def below_min_order_size(symbol: str, amount: float, price: float) -> tuple[bool
     return False, ""
 
 
+def untradeable_market(symbol: str) -> tuple[bool, str]:
+    """True for markets this account cannot trade — Binance TradFi stock perps
+    (AAPL, QQQ, …) reject every order with -4411 until the separate agreement is
+    signed. Checked up front so the entry is skipped cleanly instead of failing
+    at the exchange. Backstop behind the scanners' universe filters; no-op in
+    dry-run or when EXCLUDE_TRADFI_PERPS is off."""
+    if not (is_live() and _markets_loaded and EXCLUDE_TRADFI_PERPS):
+        return False, ""
+    try:
+        market = _get_exchange().market(symbol)
+    except Exception:  # noqa: BLE001 — unknown symbol resolves at order time
+        return False, ""
+    if is_tradfi_market(market):
+        return True, ("TradFi stock perp — agreement not signed "
+                      "(set EXCLUDE_TRADFI_PERPS=false after signing it on Binance)")
+    return False, ""
+
+
+def insufficient_free_margin(margin_usdt: float) -> tuple[bool, str]:
+    """True when the account's available balance can't cover a new order's
+    margin (+5% headroom for fees/entry drift), so the entry is skipped cleanly
+    instead of eating a -2019 'Margin is insufficient' rejection. Fails OPEN on
+    an unreadable snapshot — the exchange stays the final arbiter."""
+    if not is_live():
+        return False, ""
+    snap = account_snapshot()
+    if not snap.get("ok"):
+        return False, ""
+    avail = (snap.get("balance") or {}).get("available")
+    if avail is None:
+        return False, ""
+    needed = margin_usdt * 1.05
+    if avail < needed:
+        return True, f"free {avail:.2f} USDT < needed ~{needed:.2f} USDT"
+    return False, ""
+
+
 def _place_stop_with_retry(ex, symbol, close_side, amount, stop_price, *, attempts=4):
     """Place the reduceOnly STOP_MARKET that protects the whole position, retrying
     a few times with a short backoff. A stop can be transiently rejected right
@@ -390,6 +429,18 @@ def open_trade(symbol, direction, entry, sl, tp1, tp2, lights_count, aligned, *,
     if too_small:
         plan["error"] = f"below min order size ({why})"
         print(f"[executor] Skip {symbol}: {plan['error']} — too small for this account.")
+        return plan
+
+    blocked, why = untradeable_market(symbol)
+    if blocked:
+        plan["error"] = f"untradeable market ({why})"
+        print(f"[executor] Skip {symbol}: {plan['error']}")
+        return plan
+
+    lacking, why = insufficient_free_margin(margin)
+    if lacking:
+        plan["error"] = f"insufficient free margin ({why})"
+        print(f"[executor] Skip {symbol}: {plan['error']}")
         return plan
 
     if not is_live():
@@ -701,10 +752,25 @@ def place_resting_order(symbol, direction, entry, sl, tp1, tp2, lights_count, al
         print(f"[executor] Skip resting {direction} {symbol}: below min order size ({why}) — too small for this account.")
         return None
 
+    blocked, why = untradeable_market(symbol)
+    if blocked:
+        print(f"[executor] Skip resting {direction} {symbol}: untradeable market ({why})")
+        return None
+
     with _resting_lock:
         existing = _resting.get(key)
     if _same_resting(existing, plan):
         return existing  # nothing changed — leave the resting order in place
+
+    # A resting LIMIT order reserves its margin the moment it is placed. Gate
+    # only BRAND-NEW commitments on free balance — a refresh of an existing
+    # bracket reuses the margin its own live order already holds (which the
+    # available-balance figure has already subtracted).
+    if existing is None:
+        lacking, why = insufficient_free_margin(plan["margin_usdt"])
+        if lacking:
+            print(f"[executor] Skip resting {direction} {symbol}: insufficient free margin ({why})")
+            return None
 
     # Plan changed or new — clear any previous resting orders for this setup first.
     if existing is not None:

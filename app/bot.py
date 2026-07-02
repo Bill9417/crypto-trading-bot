@@ -91,6 +91,7 @@ from config import (
     FUNDING_MIN_SHORT,
     ENABLE_DIRECTION_CAP,
     MAX_SAME_DIRECTION,
+    EXCLUDE_TRADFI_PERPS,
 )
 from indicators import (
     check_tsi_signal,
@@ -110,6 +111,7 @@ from market_data import (
     BinanceFuturesPriceStream,
     RateLimitCooldownError,
     SafeBinanceClient,
+    is_tradfi_market,
     timeframe_to_seconds,
 )
 from smc import analyze_smc
@@ -370,6 +372,16 @@ def get_target_symbols() -> list[str]:
         if len(fallback_symbols) >= TOP_SYMBOL_LIMIT:
             print(f"Recovered full symbol universe from last scan cache ({len(fallback_symbols)} pairs).")
             top_symbols = fallback_symbols
+
+    # Drop Binance TradFi stock perps (AAPL, QQQ, …) — trading them needs a
+    # separately signed agreement this account doesn't have, so any order there
+    # is a guaranteed -4411 rejection. Ticker payloads don't carry the market
+    # type, so consult whichever ccxt client has already loaded markets.
+    if EXCLUDE_TRADFI_PERPS:
+        markets = (getattr(exchange, "markets", None)
+                   or getattr(price_stream.exchange, "markets", None) or {})
+        if markets:
+            top_symbols = [s for s in top_symbols if not is_tradfi_market(markets.get(s))]
 
     # Update cache (keep the full scan universe; tradeable subset is the top slice).
     SYMBOL_CACHE["symbols"] = top_symbols[:SCAN_SYMBOL_LIMIT]

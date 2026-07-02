@@ -11,6 +11,7 @@ Covers the two 2026-06-22 fixes:
 import types
 
 import executor as E
+from market_data import is_tradfi_market
 
 
 # ── Fix 2: live-position re-entry gate input ─────────────────────────────────
@@ -206,3 +207,102 @@ def test_strategy2_digest_silent_when_empty(monkeypatch):
     monkeypatch.setattr(SC.telegram_utils, "send_message", lambda m, *a, **k: sent.append(m))
     SC._send_digest([])
     assert sent == []                          # nothing new → no message
+
+
+# ── TradFi stock perps (2026-07-03): the account has not signed Binance's
+#    TradFi agreement, so AAPL/QQQ/… reject every order with -4411. They must be
+#    dropped from the universe AND refused by the executor as a backstop. ──────
+def test_is_tradfi_market_classification():
+    equity = {"info": {"underlyingType": "EQUITY", "contractType": "TRADIFI_PERPETUAL"}}
+    coin = {"info": {"underlyingType": "COIN", "contractType": "PERPETUAL"}}
+    assert is_tradfi_market(equity) is True
+    assert is_tradfi_market(coin) is False
+    assert is_tradfi_market({}) is False       # missing info → not TradFi
+    assert is_tradfi_market(None) is False
+
+
+def test_scanner_universe_drops_tradfi_perps():
+    import strategy2_scanner as SC
+    fake_markets = {
+        "BTC/USDT:USDT": {"swap": True, "quote": "USDT", "active": True,
+                          "info": {"underlyingType": "COIN"}},
+        "AAPL/USDT:USDT": {"swap": True, "quote": "USDT", "active": True,
+                           "info": {"underlyingType": "EQUITY"}},
+    }
+    client = types.SimpleNamespace(
+        call=lambda m, *a, **k: fake_markets if m == "load_markets" else {})
+    syms = SC.universe(client)
+    assert "BTC/USDT:USDT" in syms
+    assert "AAPL/USDT:USDT" not in syms
+
+
+def _fake_exchange_with(market_info):
+    return types.SimpleNamespace(market=lambda s: {"info": market_info})
+
+
+def test_untradeable_market_blocks_tradfi(monkeypatch):
+    monkeypatch.setattr(E, "is_live", lambda: True)
+    monkeypatch.setattr(E, "_markets_loaded", True)
+    monkeypatch.setattr(E, "EXCLUDE_TRADFI_PERPS", True)
+    monkeypatch.setattr(E, "_get_exchange",
+                        lambda: _fake_exchange_with({"underlyingType": "EQUITY"}))
+    blocked, why = E.untradeable_market("AAPL/USDT:USDT")
+    assert blocked is True and "TradFi" in why
+
+
+def test_untradeable_market_allows_coin_perp(monkeypatch):
+    monkeypatch.setattr(E, "is_live", lambda: True)
+    monkeypatch.setattr(E, "_markets_loaded", True)
+    monkeypatch.setattr(E, "EXCLUDE_TRADFI_PERPS", True)
+    monkeypatch.setattr(E, "_get_exchange",
+                        lambda: _fake_exchange_with({"underlyingType": "COIN"}))
+    assert E.untradeable_market("BTC/USDT:USDT") == (False, "")
+
+
+def test_untradeable_market_noop_when_flag_off(monkeypatch):
+    # After the user signs the agreement, EXCLUDE_TRADFI_PERPS=false must let
+    # stock perps trade like any other market.
+    monkeypatch.setattr(E, "is_live", lambda: True)
+    monkeypatch.setattr(E, "_markets_loaded", True)
+    monkeypatch.setattr(E, "EXCLUDE_TRADFI_PERPS", False)
+    monkeypatch.setattr(E, "_get_exchange",
+                        lambda: _fake_exchange_with({"underlyingType": "EQUITY"}))
+    assert E.untradeable_market("AAPL/USDT:USDT") == (False, "")
+
+
+def test_open_trade_skips_untradeable_before_any_order(monkeypatch):
+    monkeypatch.setattr(E, "untradeable_market", lambda s: (True, "TradFi stock perp"))
+    sent = []
+    monkeypatch.setattr(E, "send_message", lambda *a, **k: sent.append(a))
+    plan = E.open_trade("AAPL/USDT:USDT", "LONG", 100.0, 99.0, 101.0, 102.0, 5, True, notify=False)
+    assert plan["error"] and "untradeable" in plan["error"]
+    assert plan["orders"] == [] and plan["live"] is False
+    assert sent == []                          # skipped silently, no alert spam
+
+
+# ── Free-margin pre-check (2026-07-03): skip cleanly instead of eating a
+#    -2019 'Margin is insufficient' rejection on every over-committed signal. ──
+def test_insufficient_free_margin_blocks_when_broke(monkeypatch):
+    monkeypatch.setattr(E, "is_live", lambda: True)
+    monkeypatch.setattr(E, "account_snapshot",
+                        lambda *a, **k: {"ok": True, "balance": {"available": 1.0}})
+    lacking, why = E.insufficient_free_margin(1.5)
+    assert lacking is True and "free 1.00" in why
+
+
+def test_insufficient_free_margin_allows_when_funded(monkeypatch):
+    monkeypatch.setattr(E, "is_live", lambda: True)
+    monkeypatch.setattr(E, "account_snapshot",
+                        lambda *a, **k: {"ok": True, "balance": {"available": 10.0}})
+    assert E.insufficient_free_margin(1.5) == (False, "")
+
+
+def test_insufficient_free_margin_fails_open(monkeypatch):
+    # Unreadable snapshot / missing field must NOT block trading — the exchange
+    # remains the final arbiter for those cases.
+    monkeypatch.setattr(E, "is_live", lambda: True)
+    monkeypatch.setattr(E, "account_snapshot", lambda *a, **k: {"ok": False})
+    assert E.insufficient_free_margin(1.5) == (False, "")
+    monkeypatch.setattr(E, "account_snapshot",
+                        lambda *a, **k: {"ok": True, "balance": {"available": None}})
+    assert E.insufficient_free_margin(1.5) == (False, "")

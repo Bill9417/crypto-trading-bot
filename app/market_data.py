@@ -10,6 +10,18 @@ class RateLimitCooldownError(RuntimeError):
     pass
 
 
+def is_tradfi_market(market: dict | None) -> bool:
+    """True for Binance's TradFi stock/ETF perps (AAPL, NVDA, QQQ, SPY, …),
+    identified by underlyingType EQUITY / contractType TRADIFI_PERPETUAL in the
+    exchange info. Trading them needs a separately signed agreement — without it
+    every order is rejected with -4411 — so the scanners and executor use this
+    to keep them out of the tradeable universe (config.EXCLUDE_TRADFI_PERPS)."""
+    info = (market or {}).get("info") or {}
+    if str(info.get("underlyingType", "")).upper() == "EQUITY":
+        return True
+    return "TRADIFI" in str(info.get("contractType", "")).upper()
+
+
 def timeframe_to_seconds(timeframe: str) -> int:
     units = {
         "m": 60,
