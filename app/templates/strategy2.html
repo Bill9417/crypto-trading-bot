@@ -10,7 +10,7 @@
     <link rel="manifest" href="/manifest.webmanifest">
     <meta name="theme-color" content="#0e1018">
     <link rel="apple-touch-icon" href="/static/apple-touch-icon.png">
-    <link rel="stylesheet" href="/static/app.css?v=20260628">
+    <link rel="stylesheet" href="/static/app.css?v={{ asset_ver }}">
     <style>
         * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
         html { -webkit-text-size-adjust: 100%; }
@@ -283,7 +283,8 @@
             history.push(score);
             if (history.length > 40) history.shift();
             drawSpark();
-            if (window.wolfApplyLang) window.wolfApplyLang();   // re-translate fresh text
+            // (freshly-painted factor text is re-translated automatically by the
+            // i18n MutationObserver; there is no wolfApplyLang hook to call.)
         }
 
         function load() {

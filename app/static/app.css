@@ -20,12 +20,42 @@
     --short: #dc2626;
     --short-bg: rgba(220, 38, 38, 0.14);
     --radius: 14px;
-    --shadow: 0 14px 40px rgba(0, 0, 0, 0.38);
+    /* Card shadow + a 1px inner top highlight — the highlight is what makes dark
+       glass cards read as "lit from above" instead of flat rectangles. */
+    --shadow: 0 14px 40px rgba(0, 0, 0, 0.38), inset 0 1px 0 rgba(255, 255, 255, 0.05);
     --page-max: 1440px;        /* ONE shared content width for every page + the nav */
-    --page-bg-glow:            /* ONE shared background glow so every page matches */
-        radial-gradient(circle at 0% 0%, rgba(0, 210, 255, 0.08) 0%, transparent 42%),
-        radial-gradient(circle at 100% 100%, rgba(255, 207, 75, 0.04) 0%, transparent 34%);
+    --page-bg-glow:            /* ONE shared background so every page matches:
+                                  brand glows + a faint terminal grid (repeating-
+                                  gradients so it works with background-image alone —
+                                  pages never set background-size). */
+        radial-gradient(circle at 0% 0%, rgba(0, 210, 255, 0.09) 0%, transparent 44%),
+        radial-gradient(circle at 100% 100%, rgba(255, 207, 75, 0.05) 0%, transparent 36%),
+        radial-gradient(ellipse 80% 40% at 50% -10%, rgba(0, 210, 255, 0.05), transparent 70%),
+        repeating-linear-gradient(0deg, rgba(255, 255, 255, 0.016) 0 1px, transparent 1px 48px),
+        repeating-linear-gradient(90deg, rgba(255, 255, 255, 0.016) 0 1px, transparent 1px 48px);
 }
+
+/* ── Global polish — one copy here instead of per-page duplicates ─────────── */
+* { -webkit-tap-highlight-color: transparent; }
+body {
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
+    font-variant-numeric: tabular-nums;   /* every metric column lines up */
+}
+/* Brand signature: a hairline beam across the very top of every page. */
+body::before {
+    content: ""; position: fixed; top: 0; left: 0; right: 0; height: 2px;
+    background: linear-gradient(90deg, transparent 2%, var(--wolf-blue) 30%, var(--wolf-gold) 70%, transparent 98%);
+    opacity: .55; z-index: 2147483000; pointer-events: none;
+}
+::selection { background: rgba(0, 210, 255, 0.32); color: #fff; }
+:focus-visible { outline: 2px solid var(--wolf-blue); outline-offset: 2px; }
+html { scrollbar-width: thin; scrollbar-color: rgba(255, 255, 255, 0.18) transparent; }
+::-webkit-scrollbar { width: 9px; height: 9px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.14); border-radius: 999px; }
+::-webkit-scrollbar-thumb:hover { background: rgba(0, 210, 255, 0.35); }
 
 /* ── Global navigation bar (shared partial _nav.html) ───────────────────── */
 .tb-nav { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding-top: 10px; border-top: 1px solid var(--wolf-border); }
@@ -58,7 +88,7 @@
 .nav-pill.logout { border-color: rgba(239,68,68,0.4); color: #f87171; }
 .nav-pill.logout:hover { background: rgba(239,68,68,0.14); }
 /* Active page — filled so you always know where you are. */
-.nav-pill.active { color: #0b0e14; background: var(--wolf-text); border-color: var(--wolf-text); }
+.nav-pill.active { color: #0b0e14; background: var(--wolf-text); border-color: var(--wolf-text); box-shadow: 0 0 14px rgba(241, 245, 249, 0.22); }
 .nav-pill.active:hover { transform: none; background: var(--wolf-text); color: #0b0e14; }
 .nav-pill:active { transform: translateY(1px) scale(0.98); }
 
@@ -73,9 +103,10 @@
    translucency over heavy blur.) */
 .nav-standalone {
     max-width: var(--page-max); margin: 0 auto 14px; padding: 10px 14px;
-    background: var(--wolf-card); border: 1px solid var(--wolf-border);
+    background: rgba(23, 26, 38, 0.82); border: 1px solid var(--wolf-border);
     border-radius: var(--radius); box-shadow: var(--shadow);
     backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+    position: sticky; top: 8px; z-index: 200;   /* glass nav stays reachable while scrolling */
 }
 .nav-standalone .tb-nav { border-top: none; padding-top: 0; }
 
@@ -155,7 +186,9 @@
     border-radius: var(--radius); box-shadow: var(--shadow);
     padding: 18px; display: flex; flex-direction: column; gap: 14px;
     backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+    transition: border-color .2s, box-shadow .2s;
 }
+.scorecard:hover { border-color: rgba(0, 210, 255, 0.22); }
 .scorecard-head { display: flex; align-items: center; gap: 18px; flex-wrap: wrap; }
 .gauge {
     --score: 50; --ring: var(--wolf-gold);
@@ -199,3 +232,23 @@
 /* tiny inline-SVG sparkline of recent scores (no chart library) */
 .sparkline { width: 100%; height: 46px; display: block; }
 .sparkline polyline { fill: none; stroke: var(--wolf-blue); stroke-width: 2; vector-effect: non-scaling-stroke; }
+
+/* Primary action button. Defined once here (shared) so pages that link app.css —
+   e.g. the Account page's live-strategy Save — get the branded button instead of
+   an unstyled default. Pages with their own inline .btn-wolf still override. */
+.btn-wolf {
+    background: linear-gradient(180deg, #2be0ff, #00b8e6);
+    border: none;
+    color: #001018;
+    font-weight: 800;
+    font-size: 0.8rem;
+    letter-spacing: .02em;
+    padding: 8px 16px;
+    border-radius: 10px;
+    cursor: pointer;
+    box-shadow: 0 2px 10px rgba(0, 210, 255, 0.22), inset 0 1px 0 rgba(255, 255, 255, 0.35);
+    transition: transform .15s, box-shadow .15s, filter .15s;
+}
+.btn-wolf:hover { filter: brightness(1.08); color: #001018; transform: translateY(-1px); box-shadow: 0 5px 18px rgba(0,210,255,.35), inset 0 1px 0 rgba(255,255,255,.35); }
+.btn-wolf:active { transform: translateY(1px) scale(.99); }
+.btn-wolf:disabled { opacity: .65; transform: none; cursor: default; filter: none; }

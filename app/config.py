@@ -68,6 +68,12 @@ def set_env_var(name, value):
 
 BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
 CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
+# Quiet mode: mute ALL Telegram messages EXCEPT ones explicitly forced (the RSI
+# extreme alert + the naked-position safety alarm). Default ON — the user only
+# wants the RSI ≥90 / ≤10 alert; signal digests, order fills, startup notices,
+# etc. are all silenced. Set TELEGRAM_QUIET=false in .env to get everything back.
+# (Parsed inline — _env_bool is defined further down this file.)
+TELEGRAM_QUIET = os.getenv("TELEGRAM_QUIET", "true").strip().lower() in ("1", "true", "yes", "on")
 
 # ── Live trading (Binance Futures USD-M) ──────────────────────────────────
 # SAFETY: LIVE_TRADING defaults to False. While False the bot is in DRY-RUN —
@@ -151,6 +157,11 @@ LIVE_TP_TARGET = os.getenv("LIVE_TP_TARGET", "tp2").lower()
 # remaining 50% — exactly what the dashboard simulation does, so the live
 # testnet result matches the dry-run. Set False to keep the original stop.
 LIVE_TRAIL_TO_BREAKEVEN = _env_bool("LIVE_TRAIL_TO_BREAKEVEN", True)
+# Telegram: send a message for each live order fill/failure? Default OFF — the
+# routine "order filled" / "entry failed" notifications are noise (e.g. -4411
+# TradFi-Perps rejects on stock perps the account can't trade). Safety alarms
+# (a position left with NO stop-loss → manual action) ALWAYS send, regardless.
+LIVE_ORDER_NOTIFY = _env_bool("LIVE_ORDER_NOTIFY", False)
 # Binance deprecated ccxt's set_sandbox_mode for futures, so we point the USD-M
 # endpoints at the demo/testnet host directly. Options seen in the wild:
 #   demo-fapi.binance.com        → new "Demo Trading" (keys from demo.binance.com)
@@ -167,6 +178,18 @@ RSI_UPPER_THRESHOLD = 90.0
 RSI_LOWER_THRESHOLD = 10.0
 RSI_TARGET_HIGH = 98.0
 RSI_TARGET_LOW = 2.0
+
+# ── Hourly RSI-extreme Telegram digest (alert-only; NEVER affects trading) ────
+# Each scan the bot collects coins whose RSI on RSI_ALERT_TIMEFRAME is at a
+# blow-off extreme (≥ HIGH overbought / ≤ LOW oversold) and sends ONE Telegram
+# digest. Dedicated knobs so tuning the alert can't change the strategy's own
+# RSI thresholds. Silent when nothing is extreme unless RSI_ALERT_ALWAYS is on.
+RSI_ALERT_ENABLED = _env_bool("RSI_ALERT_ENABLED", True)
+RSI_ALERT_HIGH = float(os.getenv("RSI_ALERT_HIGH", "90"))
+RSI_ALERT_LOW = float(os.getenv("RSI_ALERT_LOW", "10"))
+RSI_ALERT_TIMEFRAME = os.getenv("RSI_ALERT_TIMEFRAME", "1h")
+RSI_ALERT_ALWAYS = _env_bool("RSI_ALERT_ALWAYS", False)
+
 CHECK_INTERVAL_MINUTES = 60   # match the 1h entry timeframe (scan once per closed candle)
 TIMEZONE = "Asia/Taiwan"  # GMT+8
 

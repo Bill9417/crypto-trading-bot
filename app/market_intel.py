@@ -352,6 +352,30 @@ def fear_greed(ttl: float = 600.0) -> dict:
     return _cached("fng", ttl, _fear_greed)
 
 
+def _global_market() -> dict:
+    """Global crypto market snapshot from CoinGecko /global (free, no key):
+    total market cap + 24h change, and BTC/ETH dominance. Dominance is the
+    classic 'is money rotating into alts or hiding in BTC' regime read."""
+    out = {"total_mcap_usd": None, "mcap_change_24h_pct": None,
+           "btc_dominance": None, "eth_dominance": None, "errors": []}
+    try:
+        d = (_get_json("https://api.coingecko.com/api/v3/global") or {}).get("data") or {}
+        mcap = (d.get("total_market_cap") or {}).get("usd")
+        dom = d.get("market_cap_percentage") or {}
+        out["total_mcap_usd"] = float(mcap) if mcap is not None else None
+        chg = d.get("market_cap_change_percentage_24h_usd")
+        out["mcap_change_24h_pct"] = float(chg) if chg is not None else None
+        out["btc_dominance"] = float(dom["btc"]) if dom.get("btc") is not None else None
+        out["eth_dominance"] = float(dom["eth"]) if dom.get("eth") is not None else None
+    except Exception as e:  # noqa: BLE001
+        out["errors"].append(f"coingecko global: {e}")
+    return out
+
+
+def global_market(ttl: float = 300.0) -> dict:
+    return _cached("global_mkt", ttl, _global_market)
+
+
 # ── top-level aggregator used by the web route ──────────────────────────────
 def market_intel(top_n: int = 15, pos_n: int = 6) -> dict:
     bf = binance_futures(top_n=top_n)
@@ -361,13 +385,15 @@ def market_intel(top_n: int = 15, pos_n: int = 6) -> dict:
     ls = long_short(pos_symbols) if pos_symbols else {"rows": [], "errors": []}
     dl = defillama()
     nw = news()
+    gm = global_market()
     errors = (bf.get("errors", []) + dl.get("errors", [])
-              + nw.get("errors", []) + ls.get("errors", []))
+              + nw.get("errors", []) + ls.get("errors", []) + gm.get("errors", []))
     return {
         "generated_at": int(time.time()),
         "futures": bf.get("rows", []),
         "positioning": ls.get("rows", []),
         "onchain": dl,
+        "global_mkt": gm,
         "news": nw.get("items", []),
         "errors": errors,
     }

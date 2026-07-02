@@ -7,8 +7,11 @@
     <link rel="manifest" href="/manifest.webmanifest">
     <meta name="theme-color" content="#0e1018">
     <link rel="apple-touch-icon" href="/static/apple-touch-icon.png">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
-    <link rel="stylesheet" href="/static/app.css?v=20260628">
+    <link rel="stylesheet" href="/static/app.css?v={{ asset_ver }}">
     <style>
         :root {
             --wolf-blue: #00d2ff;
@@ -28,8 +31,7 @@
             min-height: 100vh;
             padding: 20px;
             font-family: 'Inter', -apple-system, sans-serif;
-            background-image: radial-gradient(circle at 10% 20%, rgba(0, 210, 255, 0.08) 0%, transparent 38%),
-                              radial-gradient(circle at 90% 80%, rgba(255, 207, 75, 0.04) 0%, transparent 32%);
+            background-image: var(--page-bg-glow);
         }
         .login-card { 
             background: var(--wolf-card); 

@@ -96,3 +96,113 @@ def test_real_fill_is_recorded(monkeypatch):
     _arm_one_long(bot, has_resting=True)
     bot.activate_queued_signals()
     assert len(calls) == 1             # record_signal was called for the real fill
+
+
+# ── Cap reconcile: S2 has no per-fill callback, so each sweep must release
+#    brackets whose position has closed (else the cap wedges shut). ────────────
+def test_reconcile_releases_closed_keeps_open(monkeypatch):
+    monkeypatch.setattr(E, "is_live", lambda: True)
+    monkeypatch.setattr(E, "account_snapshot", lambda *a, **k: {
+        "ok": True,
+        "positions": [{"symbol": "AAA/USDT:USDT", "side": "LONG", "contracts": 5.0}],
+    })
+    closed = []
+    monkeypatch.setattr(E, "on_trade_closed", lambda s, d: closed.append((s, d)))
+    # AAA still open on the exchange; BBB has closed. Both old enough to be eligible.
+    monkeypatch.setattr(E, "_active_brackets", {
+        ("AAA/USDT:USDT", "LONG"): {"opened_at": 0.0},
+        ("BBB/USDT:USDT", "SHORT"): {"opened_at": 0.0},
+    })
+    res = E.reconcile_open_positions()
+    assert res["ok"] is True
+    assert closed == [("BBB/USDT:USDT", "SHORT")]        # only the closed one released
+    assert res["released"] == [("BBB/USDT:USDT", "SHORT")]
+
+
+def test_reconcile_skips_recently_opened(monkeypatch):
+    import time as _t
+    monkeypatch.setattr(E, "is_live", lambda: True)
+    monkeypatch.setattr(E, "account_snapshot", lambda *a, **k: {"ok": True, "positions": []})
+    closed = []
+    monkeypatch.setattr(E, "on_trade_closed", lambda s, d: closed.append((s, d)))
+    # Just-opened: the fill may not have propagated into the snapshot yet → keep it.
+    monkeypatch.setattr(E, "_active_brackets", {("CCC/USDT:USDT", "LONG"): {"opened_at": _t.time()}})
+    res = E.reconcile_open_positions()
+    assert closed == [] and res["released"] == []
+
+
+def test_reconcile_no_prune_on_snapshot_failure(monkeypatch):
+    monkeypatch.setattr(E, "is_live", lambda: True)
+    monkeypatch.setattr(E, "account_snapshot", lambda *a, **k: {"ok": False, "positions": []})
+    closed = []
+    monkeypatch.setattr(E, "on_trade_closed", lambda s, d: closed.append((s, d)))
+    monkeypatch.setattr(E, "_active_brackets", {("DDD/USDT:USDT", "LONG"): {"opened_at": 0.0}})
+    res = E.reconcile_open_positions()
+    assert res["ok"] is False and closed == []           # fail-safe: prune nothing
+
+
+# ── Hourly RSI-extreme Telegram digest (alert-only) ──────────────────────────
+def test_rsi_digest_lists_extremes(monkeypatch):
+    import bot
+    sent = []
+    monkeypatch.setattr(bot, "send_message", lambda m, *a, **k: sent.append(m))
+    monkeypatch.setattr(bot, "RSI_ALERT_ENABLED", True)
+    monkeypatch.setattr(bot, "RSI_ALERT_ALWAYS", False)
+    monkeypatch.setattr(bot, "RSI_ALERT_HIGH", 90.0)
+    monkeypatch.setattr(bot, "RSI_ALERT_LOW", 10.0)
+    monkeypatch.setattr(bot, "RSI_ALERT_TIMEFRAME", "1h")
+    bot._send_rsi_extreme_alert([
+        {"symbol": "AAA", "tf": "1h", "rsi": 93.2, "kind": "overbought", "price": 1.23},
+        {"symbol": "BBB", "tf": "1h", "rsi": 6.1, "kind": "oversold", "price": 0.004},
+    ])
+    assert len(sent) == 1
+    assert "AAA" in sent[0] and "BBB" in sent[0]
+    assert "Overbought" in sent[0] and "Oversold" in sent[0]
+
+
+def test_rsi_digest_silent_when_none(monkeypatch):
+    import bot
+    sent = []
+    monkeypatch.setattr(bot, "send_message", lambda m, *a, **k: sent.append(m))
+    monkeypatch.setattr(bot, "RSI_ALERT_ENABLED", True)
+    monkeypatch.setattr(bot, "RSI_ALERT_ALWAYS", False)
+    bot._send_rsi_extreme_alert([])
+    assert sent == []                                    # no extremes → no message (no spam)
+
+
+def test_rsi_digest_heartbeat_when_always(monkeypatch):
+    import bot
+    sent = []
+    monkeypatch.setattr(bot, "send_message", lambda m, *a, **k: sent.append(m))
+    monkeypatch.setattr(bot, "RSI_ALERT_ENABLED", True)
+    monkeypatch.setattr(bot, "RSI_ALERT_ALWAYS", True)
+    monkeypatch.setattr(bot, "RSI_ALERT_HIGH", 90.0)
+    monkeypatch.setattr(bot, "RSI_ALERT_LOW", 10.0)
+    monkeypatch.setattr(bot, "RSI_ALERT_TIMEFRAME", "1h")
+    bot._send_rsi_extreme_alert([])
+    assert len(sent) == 1 and "no coins" in sent[0]
+
+
+# ── Strategy-2 30-min Telegram digest (grouped, clean form) ──────────────────
+def test_strategy2_digest_is_grouped_and_sorted(monkeypatch):
+    import strategy2_scanner as SC
+    sent = []
+    monkeypatch.setattr(SC.telegram_utils, "send_message", lambda m, *a, **k: sent.append(m))
+    SC._send_digest([
+        {"base": "AAA", "direction": "long", "score": 88, "price": 1.234},
+        {"base": "BBB", "direction": "short", "score": 12, "price": 0.005},
+        {"base": "CCC", "direction": "long", "score": 91, "price": 64230.0},
+    ])
+    assert len(sent) == 1                      # ONE message, not three
+    msg = sent[0]
+    assert "STRATEGY 2" in msg and "3 new" in msg
+    assert "🟢 LONG" in msg and "🔴 SHORT" in msg
+    assert msg.index("CCC") < msg.index("AAA")   # longs highest-conviction first
+
+
+def test_strategy2_digest_silent_when_empty(monkeypatch):
+    import strategy2_scanner as SC
+    sent = []
+    monkeypatch.setattr(SC.telegram_utils, "send_message", lambda m, *a, **k: sent.append(m))
+    SC._send_digest([])
+    assert sent == []                          # nothing new → no message

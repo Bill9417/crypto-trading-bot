@@ -100,6 +100,8 @@ def test_maybe_trade_respects_capacity_and_dupes(monkeypatch):
     monkeypatch.setattr(config, "STRATEGY2_LIVE_MIN_SCORE", 85)
     monkeypatch.setattr(config, "STRATEGY2_LIVE_TOP_N", 150)
     monkeypatch.setattr(L, "s1_bot_running", lambda: False)
+    # account reads cleanly (the fail-closed precondition for the dup guard)
+    monkeypatch.setattr(E, "account_snapshot", lambda **k: {"ok": True, "positions": []})
     placed = []
     monkeypatch.setattr(E, "open_trade", lambda *a, **k: placed.append(a))
     # capacity full
@@ -120,6 +122,7 @@ def test_maybe_trade_places_when_all_gates_pass(monkeypatch):
     monkeypatch.setattr(config, "STRATEGY2_LIVE_LIGHTS", 5)
     monkeypatch.setattr(config, "MAX_SL_PCT", 0.04)
     monkeypatch.setattr(L, "s1_bot_running", lambda: False)
+    monkeypatch.setattr(E, "account_snapshot", lambda **k: {"ok": True, "positions": []})
     monkeypatch.setattr(E, "has_capacity", lambda: True)
     monkeypatch.setattr(E, "has_open_position", lambda s: False)
     captured = {}

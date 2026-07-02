@@ -12,7 +12,7 @@
     <link rel="manifest" href="/manifest.webmanifest">
     <meta name="theme-color" content="#0e1018">
     <link rel="apple-touch-icon" href="/static/apple-touch-icon.png">
-    <link rel="stylesheet" href="/static/app.css?v=20260628">
+    <link rel="stylesheet" href="/static/app.css?v={{ asset_ver }}">
     <style>
         /* theme variables now come from static/app.css */
         * { box-sizing: border-box; }
@@ -236,6 +236,11 @@
                 <div class="stat-value num" id="s-tvl">—</div>
                 <div class="stat-note" id="s-tvl-note">across all chains</div>
             </div>
+            <div class="stat-card" id="s-dom-card" style="display:none;" title="Share of the total crypto market cap held by BTC — rising dominance = money hiding in BTC, falling = rotating into alts">
+                <div class="stat-label">BTC Dominance</div>
+                <div class="stat-value num" id="s-dom">—</div>
+                <div class="stat-note" id="s-dom-note">global market cap</div>
+            </div>
         </div>
 
         <!-- Whale vs Crowd positioning -->
@@ -359,6 +364,20 @@
             const oc = d.onchain || {};
             document.getElementById('s-tvl').textContent = fmtUsd(oc.total_tvl || 0);
             document.getElementById('s-tvl-note').textContent = (oc.chains || []).length + ' chains tracked';
+
+            const gm = d.global_mkt || {};
+            if (gm.btc_dominance != null) {
+                document.getElementById('s-dom-card').style.display = '';
+                document.getElementById('s-dom').textContent = gm.btc_dominance.toFixed(1) + '%';
+                const bits = [];
+                if (gm.total_mcap_usd != null) {
+                    const chg = gm.mcap_change_24h_pct;
+                    bits.push('mcap ' + fmtUsd(gm.total_mcap_usd) +
+                        (chg != null ? ' (' + (chg >= 0 ? '+' : '') + chg.toFixed(1) + '% 24h)' : ''));
+                }
+                if (gm.eth_dominance != null) bits.push('ETH ' + gm.eth_dominance.toFixed(1) + '%');
+                document.getElementById('s-dom-note').textContent = bits.join(' · ') || 'global market cap';
+            }
 
             document.getElementById('futures-body').innerHTML = fut.map(r => {
                 const chg = r.change_pct || 0;

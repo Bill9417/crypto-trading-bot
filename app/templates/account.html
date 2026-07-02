@@ -9,7 +9,7 @@
     <link rel="manifest" href="/manifest.webmanifest">
     <meta name="theme-color" content="#0e1018">
     <link rel="apple-touch-icon" href="/static/apple-touch-icon.png">
-    <link rel="stylesheet" href="/static/app.css?v=20260628">
+    <link rel="stylesheet" href="/static/app.css?v={{ asset_ver }}">
     <style>
         :root{--green:#34d399;}
         *{box-sizing:border-box;}
@@ -312,7 +312,7 @@
                 <td><div class="manage">
                     <div style="font-size:.58rem;line-height:1.4;text-align:right;min-width:96px;" title="Stop-loss / take-profit on the exchange, distance from mark, $ at risk and reward:risk">
                         <span class="dim">SL</span> ${pr.sl?'<b class="loss">'+fmt(pr.sl,6)+'</b>'+d(ri.slDist):'<span class="loss">none</span>'}<br>
-                        <span class="dim">TP</span> ${pr.tp?'<b class="profit">'+fmt(pr.tp,6)+'</b>'+d(ri.tpDist):'<span class="dim">none</span>'}<br>
+                        <span class="dim">TP</span> ${pr.tp?'<b class="win">'+fmt(pr.tp,6)+'</b>'+d(ri.tpDist):'<span class="dim">none</span>'}<br>
                         <span class="dim">${ri.riskUsd!=null?'risk $'+ri.riskUsd.toFixed(2):''}${ri.rr!=null?' · R:R '+ri.rr.toFixed(1):''}</span>
                     </div>
                     <input class="mini" id="sl_${k}" placeholder="${pr.sl?fmt(pr.sl,6):'SL'}">
@@ -402,16 +402,31 @@
 
         // Top banner: how many open positions actually have a stop-loss. A
         // position with no stop is the exact failure that ran unprotected before.
-        function renderProtBar(pos, ord){
+        // Also aggregates the portfolio's worst case: the total loss if EVERY
+        // stop got hit, as USDT and as % of margin balance — the one number that
+        // says whether the open book could actually hurt the account.
+        function renderProtBar(pos, ord, bal){
             const bar = document.getElementById('protbar');
             if(!pos || !pos.length){ bar.innerHTML=''; return; }
             const naked = pos.filter(p => protFor(p.symbol, ord).sl == null);
-            const total = pos.length, safe = total - naked.length;
+            const total = pos.length;
+            let atRisk = 0, covered = 0;
+            pos.forEach(p=>{
+                const ri = riskInfo(p, protFor(p.symbol, ord));
+                if(ri.riskUsd != null){ atRisk += ri.riskUsd; covered++; }
+            });
+            const equity = bal && +bal.margin_balance > 0 ? +bal.margin_balance : null;
+            let riskTxt = '';
+            if(covered > 0){
+                const pct = equity ? ' · ' + (atRisk/equity*100).toFixed(1) + '% of equity' : '';
+                const partial = covered < total ? ` (${covered} of ${total} measurable)` : '';
+                riskTxt = ` <span class="dim" style="font-weight:600;" title="Total loss if every stop-loss got hit, vs margin balance — the open book's worst case${partial}">— worst case −${atRisk.toFixed(2)} USDT${pct}</span>`;
+            }
             if(naked.length === 0){
-                bar.innerHTML = `<div class="protsum ok">🛡 All ${total} position${total>1?'s':''} have a stop-loss.</div>`;
+                bar.innerHTML = `<div class="protsum ok">🛡 All ${total} position${total>1?'s':''} have a stop-loss.${riskTxt}</div>`;
             } else {
                 const names = naked.map(p=>(p.symbol||'').replace(':USDT','')).join(', ');
-                bar.innerHTML = `<div class="protsum warn">⚠ ${naked.length} of ${total} position${total>1?'s':''} have NO stop-loss: <b>${names}</b> — set one below.</div>`;
+                bar.innerHTML = `<div class="protsum warn">⚠ ${naked.length} of ${total} position${total>1?'s':''} have NO stop-loss: <b>${names}</b> — set one below.${riskTxt}</div>`;
             }
         }
 
@@ -442,7 +457,7 @@
 
                 renderPositions(pos, ord);
                 renderOrders(ord);
-                renderProtBar(pos, ord);
+                renderProtBar(pos, ord, bal);
                 document.getElementById('updated').textContent = 'updated ' + new Date().toLocaleTimeString();
             }).catch(()=>{
                 document.getElementById('errbox').innerHTML = `<div class="errbar">⚠ Network error reaching the dashboard API.</div>`;

@@ -19,6 +19,8 @@ from __future__ import annotations
 
 import threading
 import time
+from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 
 import ccxt
 
@@ -319,6 +321,27 @@ def below_min_order_size(symbol: str, amount: float, price: float) -> tuple[bool
     return False, ""
 
 
+def _place_stop_with_retry(ex, symbol, close_side, amount, stop_price, *, attempts=4):
+    """Place the reduceOnly STOP_MARKET that protects the whole position, retrying
+    a few times with a short backoff. A stop can be transiently rejected right
+    after the entry fills (e.g. -2022 ReduceOnly while the position propagates, or
+    a rate-limit / network blip); retrying turns those into a placed stop instead
+    of a naked position. Returns the order dict, or re-raises the last error if
+    every attempt failed."""
+    last_exc = None
+    for i in range(attempts):
+        try:
+            return ex.create_order(
+                symbol, "STOP_MARKET", close_side, amount, None,
+                {"stopPrice": stop_price, "reduceOnly": True},
+            )
+        except Exception as exc:  # noqa: BLE001
+            last_exc = exc
+            print(f"[executor] SL attempt {i + 1}/{attempts} failed for {symbol}: {exc}")
+            time.sleep(0.6 * (i + 1))
+    raise last_exc
+
+
 def open_trade(symbol, direction, entry, sl, tp1, tp2, lights_count, aligned, *, notify=True, manage="bracket"):
     """
     Open a position for an activated signal (legacy market-on-touch path, used when
@@ -381,6 +404,7 @@ def open_trade(symbol, direction, entry, sl, tp1, tp2, lights_count, aligned, *,
             send_message(msg)
         # Track the (simulated) open position so the concurrency cap counts it.
         with _active_lock:
+            plan["opened_at"] = time.time()
             _active_brackets[(symbol, direction)] = plan
         return plan
 
@@ -388,6 +412,8 @@ def open_trade(symbol, direction, entry, sl, tp1, tp2, lights_count, aligned, *,
     ex = _get_exchange()
     entry_side = "buy" if is_long else "sell"
     close_side = "sell" if is_long else "buy"
+
+    # 1) ENTRY. If this fails, no position exists, so there is nothing to protect.
     try:
         try:
             ex.set_margin_mode(MARGIN_MODE, symbol)
@@ -398,19 +424,62 @@ def open_trade(symbol, direction, entry, sl, tp1, tp2, lights_count, aligned, *,
         except Exception as exc:  # noqa: BLE001
             print(f"[executor] set_leverage note for {symbol}: {exc}")
 
+        # Clear any stale conditional SL/TP left on this symbol by a PRIOR closed
+        # trade before placing fresh brackets. reduceOnly stops do NOT auto-cancel
+        # when a position closes, so without this a leftover stop could fire
+        # against the new position.
+        try:
+            _cancel_protective_orders(ex, symbol)
+        except Exception as exc:  # noqa: BLE001
+            print(f"[executor] pre-open stale-order cleanup note {symbol}: {exc}")
+
         entry_order = ex.create_order(symbol, "market", entry_side, amount)
         plan["orders"].append({"role": "entry", "id": entry_order.get("id")})
         plan["live"] = True
+    except Exception as exc:  # noqa: BLE001
+        plan["error"] = str(exc)
+        print(f"[executor] LIVE entry FAILED for {symbol}: {exc}")
+        if notify:
+            send_message(f"⚠️ LIVE entry FAILED: {direction} {symbol}\n{exc}")
+        return plan
 
-        if PLACE_BRACKET_ORDERS:
-            sl_p = _round_price(symbol, sl)
-            # Stop loss — always protects the WHOLE position.
-            sl_order = ex.create_order(
-                symbol, "STOP_MARKET", close_side, amount, None,
-                {"stopPrice": sl_p, "reduceOnly": True},
-            )
+    # 2) Entry FILLED → the position now EXISTS. Track it IMMEDIATELY so it counts
+    #    toward the concurrency cap and can always be found/managed, even if a
+    #    protective leg below fails.
+    plan["opened_at"] = time.time()
+    with _active_lock:
+        _active_brackets[(symbol, direction)] = plan
+
+    if PLACE_BRACKET_ORDERS:
+        sl_p = _round_price(symbol, sl)
+        # Stop loss — protects the WHOLE position. Retry transient rejections
+        # (e.g. -2022 ReduceOnly while the fill propagates); if it STILL can't be
+        # placed, EMERGENCY-CLOSE rather than let the position run naked.
+        try:
+            sl_order = _place_stop_with_retry(ex, symbol, close_side, amount, sl_p)
             plan["orders"].append({"role": "sl", "id": sl_order.get("id")})
             plan["sl_placed"] = True
+        except Exception as exc:  # noqa: BLE001
+            plan["error"] = f"stop-loss placement failed: {exc}"
+            plan["sl_placed"] = False
+            print(f"[executor] CRITICAL: SL failed after retries for {symbol}: {exc} — emergency closing")
+            closed = close_position_market(symbol)
+            with _active_lock:
+                _active_brackets.pop((symbol, direction), None)
+            # Safety alarms ALWAYS send (even when routine order notifications are
+            # muted) — a naked position is real-money risk the user must know about.
+            if closed.get("ok"):
+                send_message(f"🛑 {direction} {symbol}: stop-loss could NOT be placed — position "
+                             f"was EMERGENCY-CLOSED to avoid running naked.")
+            else:
+                send_message(f"🚨 {direction} {symbol}: POSITION OPEN with NO STOP-LOSS and the "
+                             f"emergency close also FAILED ({closed.get('error')}). MANUAL ACTION NEEDED.",
+                             force=True)   # true emergency — always audible, even in quiet mode
+            return plan
+
+        # Take-profit. NON-fatal: the position is already stop-protected, so a TP
+        # failure leaves the position open WITH its stop instead of aborting.
+        try:
             if manage == "trailing":
                 # S3/S4: no take-profit — the bot ratchets the stop each candle.
                 plan["tp_rest"] = amount
@@ -441,27 +510,22 @@ def open_trade(symbol, direction, entry, sl, tp1, tp2, lights_count, aligned, *,
                 )
                 plan["orders"].append({"role": "tp", "id": tp_order.get("id")})
                 plan["tp_rest"] = amount
+        except Exception as exc:  # noqa: BLE001
+            print(f"[executor] TP placement failed for {symbol} (position IS stop-protected): {exc}")
+            if notify:
+                send_message(f"⚠️ {direction} {symbol}: take-profit order failed ({exc}). "
+                             f"Position is OPEN and stop-protected; no TP set.")
 
-        net = "TESTNET" if USE_TESTNET else "MAINNET"
-        msg = (
-            f"✅ LIVE {net} order filled: {direction} {symbol}\n"
-            f"qty {amount} @ ~{entry} | SL {sl} | TP1 {tp1} | TP2 {tp2}\n"
-            f"margin {plan['margin_usdt']} USDT × {LEVERAGE}x"
-        )
-        print(f"[executor][LIVE] {msg.replace(chr(10), ' | ')}")
-        if notify:
-            send_message(msg)
-        # Track the open position so the concurrency cap counts it and the
-        # breakeven hook can find it after TP1.
-        with _active_lock:
-            _active_brackets[(symbol, direction)] = plan
-        return plan
-    except Exception as exc:  # noqa: BLE001
-        plan["error"] = str(exc)
-        print(f"[executor] LIVE order FAILED for {symbol}: {exc}")
-        if notify:
-            send_message(f"⚠️ LIVE order FAILED: {direction} {symbol}\n{exc}")
-        return plan
+    net = "TESTNET" if USE_TESTNET else "MAINNET"
+    msg = (
+        f"✅ LIVE {net} order filled: {direction} {symbol}\n"
+        f"qty {amount} @ ~{entry} | SL {sl} | TP1 {tp1} | TP2 {tp2}\n"
+        f"margin {plan['margin_usdt']} USDT × {LEVERAGE}x"
+    )
+    print(f"[executor][LIVE] {msg.replace(chr(10), ' | ')}")
+    if notify:
+        send_message(msg)
+    return plan
 
 
 def close_symbol(symbol, *, notify=False):
@@ -1081,6 +1145,51 @@ def open_directional_counts() -> dict:
     return counts
 
 
+def reconcile_open_positions(*, min_age_sec: float = 90.0) -> dict:
+    """Release tracked brackets whose position has CLOSED on the exchange.
+
+    The S2 scanner has no per-fill callback (unlike the S1 bot, which calls
+    on_trade_closed when a trade exits), so without this _active_brackets would
+    only ever grow: once it reaches MAX_CONCURRENT_POSITIONS the cap wedges shut
+    and the engine silently stops opening new trades. Each sweep we compare the
+    tracked brackets to the live positions and, for any tracked (symbol,
+    direction) that is no longer open, call on_trade_closed — which frees the cap
+    slot AND cancels the stale reduceOnly SL/TP so it can't fire against a future
+    position on the same symbol.
+
+    Fail-safe: a missing/failed snapshot prunes NOTHING. Brackets younger than
+    ``min_age_sec`` are skipped, so a just-opened position whose fill has not yet
+    propagated into the snapshot is never mistaken for closed."""
+    if not is_live():
+        return {"ok": False, "reason": "dry-run", "released": []}
+    snap = account_snapshot()
+    if not snap.get("ok"):
+        return {"ok": False, "reason": "snapshot unavailable", "released": []}
+    live_keys = {
+        (p.get("symbol"), (p.get("side") or "").upper())
+        for p in (snap.get("positions") or [])
+        if p.get("symbol") and float(p.get("contracts") or 0.0)
+    }
+    now = time.time()
+    with _active_lock:
+        candidates = [
+            k for k, v in _active_brackets.items()
+            if now - float(v.get("opened_at") or 0.0) >= min_age_sec
+        ]
+    released = []
+    for (symbol, direction) in candidates:
+        if (symbol, direction) in live_keys:
+            continue
+        try:
+            on_trade_closed(symbol, direction)      # frees the cap slot + cancels stale SL/TP
+            released.append((symbol, direction))
+        except Exception as exc:  # noqa: BLE001
+            print(f"[executor] reconcile cleanup note {symbol} {direction}: {exc}")
+    if released:
+        print(f"[executor][RECONCILE] released {len(released)} closed position(s): {released}")
+    return {"ok": True, "released": released}
+
+
 def funding_rate(symbol: str):
     """Current funding rate for a perpetual as a per-interval fraction
     (Binance 8h): 0.001 = 0.10%/8h. Positive = longs pay shorts (crowded longs).
@@ -1318,14 +1427,25 @@ def ensure_stop_losses(*, notify=True) -> dict:
         if has_sl:
             skipped.append({"symbol": symbol, "reason": "already protected"})
             continue
-        # Strategy stop = entry ∓ MAX_SL_PCT, clamped to the right side of mark so
-        # an underwater position is stopped immediately rather than rejected.
+        # Prefer the trade's PLANNED (ATR) stop when we still track this position,
+        # so a rescued naked position keeps its intended (often tighter) risk
+        # rather than always falling back to the MAX_SL_PCT cap. Fall back to
+        # entry ∓ MAX_SL_PCT when unknown, and clamp to the right side of mark so
+        # an already-underwater position is stopped immediately, not rejected.
+        planned_sl = None
+        with _active_lock:
+            bp = _active_brackets.get((symbol, side.upper()))
+        if bp and bp.get("sl"):
+            try:
+                planned_sl = float(bp["sl"])
+            except (TypeError, ValueError):
+                planned_sl = None
         if side == "long":
-            sl = entry * (1 - max_sl)
+            sl = planned_sl if (planned_sl and planned_sl < entry) else entry * (1 - max_sl)
             if sl >= mark:
                 sl = mark * (1 - 0.005)
         else:
-            sl = entry * (1 + max_sl)
+            sl = planned_sl if (planned_sl and planned_sl > entry) else entry * (1 + max_sl)
             if sl <= mark:
                 sl = mark * (1 + 0.005)
         res = set_protection(symbol, sl=sl)
@@ -1410,6 +1530,8 @@ def realized_pnl_summary(limit: int = 1000) -> dict:
         rows = ex.fapiPrivateGetIncome({"limit": limit})
         realized = commission = funding = 0.0
         trades = []
+        day_net: dict[str, float] = {}     # local calendar day → net income that day
+        tz = ZoneInfo("Asia/Taipei")
         for it in rows:
             typ = it.get("incomeType")
             try:
@@ -1425,6 +1547,21 @@ def realized_pnl_summary(limit: int = 1000) -> dict:
                 commission += amt          # Binance reports fees as negative income
             elif typ == "FUNDING_FEE":
                 funding += amt             # can be + or -
+            else:
+                continue
+            # Daily buckets over the SAME income types the net figure uses, so the
+            # bars sum to `net` exactly (transfers/rebates excluded from both).
+            ts = int(it.get("time") or 0)
+            if ts:
+                day = datetime.fromtimestamp(ts / 1000, tz).strftime("%Y-%m-%d")
+                day_net[day] = day_net.get(day, 0.0) + amt
+        # Continuous last-14-day series (zero-filled) so the chart shows quiet
+        # days as gaps in activity rather than silently skipping them.
+        today = datetime.now(tz).date()
+        daily = []
+        for i in range(13, -1, -1):
+            d = (today - timedelta(days=i)).strftime("%Y-%m-%d")
+            daily.append({"date": d, "net": round(day_net.get(d, 0.0), 4)})
         trades.sort(key=lambda x: x["time"], reverse=True)   # newest first
         pnls = [t["pnl"] for t in trades]
         wins = sum(1 for p in pnls if p > 0)
@@ -1467,6 +1604,7 @@ def realized_pnl_summary(limit: int = 1000) -> dict:
             "streak": streak, "streak_type": streak_type,
             "best": round(max(pnls), 4) if pnls else 0.0,
             "worst": round(min(pnls), 4) if pnls else 0.0,
+            "daily": daily,
             "trades": trades[:80],
         }
     except Exception as exc:  # noqa: BLE001

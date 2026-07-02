@@ -176,6 +176,13 @@ def maybe_trade(sig: dict, ohlcv, rank=None):
         print(f"[s2-live] skip {base}: concurrency cap full "
               f"({executor.concurrent_commitments()}/{config.MAX_CONCURRENT_POSITIONS})")
         return None
+    # Fail CLOSED on an unreadable account — a transient snapshot failure must
+    # never let us stack a 2nd position on a symbol we already hold (which would
+    # double real exposure). Only once the account reads cleanly do we trust the
+    # duplicate-position guard below.
+    if not executor.account_snapshot().get("ok"):
+        print(f"[s2-live] skip {base}: account snapshot unavailable — failing closed (no duplicate risk)")
+        return None
     if executor.has_open_position(symbol):
         print(f"[s2-live] skip {base}: already holding a position")
         return None
@@ -187,10 +194,15 @@ def maybe_trade(sig: dict, ohlcv, rank=None):
 
     print(f"[s2-live] PLACING {exec_dir} {base} score {score} | entry {entry:.6g} "
           f"SL {sl:.6g} TP {tp2:.6g}")
+    # NOTE: S2 live always enters at MARKET via open_trade (taker). The account's
+    # USE_POST_ONLY_ENTRY / USE_RESTING_ORDERS flags apply only to the S1 resting
+    # path and are intentionally NOT used here — the scanner has no resting-fill
+    # callback, so a maker-only limit could sit unfilled or unmanaged. The fee
+    # delta is a few cents on this account; entry_mode is surfaced in status().
     plan = executor.open_trade(
         symbol, exec_dir, entry, sl, tp1, tp2,
         config.STRATEGY2_LIVE_LIGHTS, True,         # lights, aligned → position size
-        notify=True, manage="bracket",
+        notify=config.LIVE_ORDER_NOTIFY, manage="bracket",
     )
     if plan and plan.get("error"):
         print(f"[s2-live] order error {base}: {plan['error']}")
@@ -216,6 +228,7 @@ def status() -> dict:
         "enabled": _flag("STRATEGY2_LIVE"),
         "live_master": _flag("LIVE_TRADING"),
         "testnet": _flag("USE_TESTNET", "true"),
+        "entry_mode": "market",                 # S2 live enters at market (taker), not post-only/resting
         "s1_running": s1_bot_running(),
         "min_score": min_score,
         "short_ceiling": 100 - min_score,

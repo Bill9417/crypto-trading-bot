@@ -561,9 +561,16 @@ def sync_record_states_in_scan_data() -> None:
     os.replace(temp_path, DATA_FILE)
 
 
+# Single source of truth for the static-asset cache-bust query (?v=...). Bump
+# this ONE value whenever app.css / i18n.js change and every template busts its
+# cache — no more hunting down 10 hardcoded copies (which once shipped an
+# unstyled page to users). Templates reference it as ?v={{ asset_ver }}.
+ASSET_VER = "20260702"
+
+
 @app.context_processor
 def inject_csrf_token():
-    return {"csrf_token": csrf_token}
+    return {"csrf_token": csrf_token, "asset_ver": ASSET_VER}
 
 
 @app.before_request
@@ -1057,7 +1064,12 @@ def _perf_selected_strategy():
     if arg == "all" or arg in BT.STRATEGIES:
         return arg
     st = _live_strategy_state()
-    return st.get("running") or st.get("saved") or "default"
+    cand = st.get("running") or st.get("saved") or "default"
+    # The live engine may be a key that NO SignalRecord is tagged with (e.g.
+    # 'strategy2_live' when S2 is the live engine and the S1 companion only scans),
+    # which would silently scope the page to zero trades. Clamp to a real records
+    # strategy so the page always shows the tracked track record.
+    return cand if cand in BT.STRATEGIES else "all"
 
 
 def _filter_records_by_strategy(records, strategy):
@@ -1170,6 +1182,12 @@ def performance():
                     streak_type = "loss"
                 else:
                     break
+            else:
+                # A closed record that is neither a clean win nor a loss (e.g. a
+                # MANUAL_CLOSE that kept its booked PnL) ENDS the current streak
+                # rather than being silently stepped over (which would let a run
+                # of wins/losses incorrectly span across it).
+                break
 
         # Expectancy = average PnL the strategy returns per closed trade.
         # A positive number means each trade is, on average, profitable.
@@ -1400,16 +1418,22 @@ def get_performance_stats():
         _perf_selected_strategy())
     records = get_qualified_records(records)
     
-    # Cumulative PnL over time
+    # Cumulative PnL over time — accumulate in EXIT-time order (the same axis the
+    # points are labelled with). The query is ordered by ENTRY time, so with
+    # overlapping/concurrent trades a late-exiting early entry would otherwise be
+    # summed before an earlier-exiting later entry, making the curve zig-zag in time.
     cumulative_pnl = []
     running_pnl = 0
-    for r in records:
-        if r.pnl_pct is not None:
-            running_pnl += r.pnl_pct
-            cumulative_pnl.append({
-                "timestamp": r.exit_timestamp.strftime("%m/%d %H:%M") if r.exit_timestamp else r.timestamp.strftime("%m/%d %H:%M"),
-                "pnl": round(running_pnl, 2)
-            })
+    closed_in_exit_order = sorted(
+        (r for r in records if r.pnl_pct is not None),
+        key=lambda r: r.exit_timestamp or r.timestamp,
+    )
+    for r in closed_in_exit_order:
+        running_pnl += r.pnl_pct
+        cumulative_pnl.append({
+            "timestamp": r.exit_timestamp.strftime("%m/%d %H:%M") if r.exit_timestamp else r.timestamp.strftime("%m/%d %H:%M"),
+            "pnl": round(running_pnl, 2)
+        })
     
     # Win rate by lights count
     lights_stats = {}
@@ -1850,27 +1874,31 @@ def api_account():
         positions = snap.get("positions") or []
         if positions:
             symbols = {p.get("symbol") for p in positions if p.get("symbol")}
+            # Newest record per (symbol, DIRECTION). Keying on symbol alone let an
+            # old closed or opposite-direction trade on the same coin flag a
+            # perfectly-healthy live position as 'diverged'; matching the side too
+            # removes that whole class of false warnings on the live-money screen.
             latest = {}
             for rec in (SignalRecord.query
                         .filter(SignalRecord.symbol.in_(symbols))
                         .order_by(SignalRecord.timestamp.desc()).all()):
-                latest.setdefault(rec.symbol, rec)  # newest per symbol
+                latest.setdefault((rec.symbol, (rec.direction or "").upper()), rec)
             for p in positions:
-                rec = latest.get(p.get("symbol"))
+                rec = latest.get((p.get("symbol"), (p.get("side") or "").upper()))
                 status = (rec.status if rec else None)
                 p["db_status"] = status
                 # Bot thinks this is closed (or never tracked it) but it's live.
                 p["db_diverged"] = bool(status and status not in ("PENDING", "TP1_PARTIAL"))
     except Exception as exc:  # noqa: BLE001 — enrichment must never break the snapshot
         print(f"[account] db-status enrichment note: {exc}")
-    return jsonify(snap)
+    return jsonify(_json_safe(snap))
 
 
 @app.route("/api/account/history")
 @admin_required
 def api_account_history():
     """Realized-P&L history (bot + manual trades) straight from Binance."""
-    return jsonify(executor.realized_pnl_history(limit=80))
+    return jsonify(_json_safe(executor.realized_pnl_history(limit=80)))
 
 
 @app.route("/api/performance/real")
@@ -1879,7 +1907,22 @@ def api_performance_real():
     """Real Binance account P&L (realized + fees + funding) for the performance
     page's 'Live Binance' panel — the ground truth the simulated stats reconcile
     against. Distinct from the DB-record analytics on the same page."""
-    return jsonify(executor.realized_pnl_summary())
+    return jsonify(_json_safe(executor.realized_pnl_summary()))
+
+
+def _json_safe(obj):
+    """Recursively replace non-finite floats (inf/-inf/nan) with None. jsonify
+    otherwise emits the bare tokens `Infinity`/`NaN`, which are invalid JSON and
+    make the browser's response.json() throw — silently breaking whichever panel
+    consumed the endpoint (e.g. profit_factor=inf after an all-green run)."""
+    import math
+    if isinstance(obj, float):
+        return obj if math.isfinite(obj) else None
+    if isinstance(obj, dict):
+        return {k: _json_safe(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [_json_safe(v) for v in obj]
+    return obj
 
 
 def _parse_price(raw):

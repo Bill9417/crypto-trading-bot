@@ -36,6 +36,7 @@ ALERT_COOLDOWN_SEC = int(os.getenv("STRATEGY2_ALERT_COOLDOWN_SEC", "14400"))  # 
 CANDLES = int(os.getenv("STRATEGY2_CANDLES", "400"))               # ≥ SIGNAL_MIN_CANDLES (347)
 RETAIN_HOURS = float(os.getenv("STRATEGY2_RETAIN_HOURS", "24"))    # how long signals stay on the page
 MAX_KEEP = int(os.getenv("STRATEGY2_MAX_KEEP", "60"))
+DIGEST_SEC = int(os.getenv("STRATEGY2_DIGEST_SEC", "1800"))        # Telegram: one grouped digest every 30 min
 
 SIGNALS_FILE = os.path.join(os.path.dirname(__file__), "strategy2_signals.json")
 
@@ -87,15 +88,37 @@ def _write(recent: list, scanning: int, done: int) -> None:
     os.replace(tmp, SIGNALS_FILE)
 
 
-def _alert(sig: dict) -> None:
-    arrow = "🟢 LONG" if sig["direction"] == "long" else "🔴 SHORT"
-    msg = (f"{arrow} · STRATEGY 2 ({TIMEFRAME})\n"
-           f"{sig['base']}  ·  score {sig['score']}/100\n"
-           f"price {sig['price']:.6g}\n{sig['tv_url']}")
-    telegram_utils.send_message(msg)
+def _fmt_price(p) -> str:
+    try:
+        return f"{float(p):.6g}"
+    except (TypeError, ValueError):
+        return str(p)
 
 
-def scan_once(client, recent: list, last_alert: dict) -> list:
+def _send_digest(sigs: list) -> None:
+    """Send ONE clean Strategy-2 Telegram digest for the signals collected since
+    the last one — grouped by direction, highest conviction first. Called on the
+    DIGEST_SEC cadence (default every 30 min) instead of a message per signal, so
+    the channel gets a single tidy summary rather than a stream of alerts."""
+    if not sigs:
+        return
+    longs = sorted([s for s in sigs if s["direction"] == "long"], key=lambda s: -s["score"])
+    shorts = sorted([s for s in sigs if s["direction"] == "short"], key=lambda s: s["score"])
+    lines = [f"📊 STRATEGY 2 · {TIMEFRAME} signals",
+             f"— last {DIGEST_SEC // 60} min · {len(sigs)} new —"]
+    if longs:
+        lines.append("\n🟢 LONG")
+        lines += [f"  • {s['base']}  ·  {s['score']}/100  ·  {_fmt_price(s['price'])}" for s in longs]
+    if shorts:
+        lines.append("\n🔴 SHORT")
+        lines += [f"  • {s['base']}  ·  {s['score']}/100  ·  {_fmt_price(s['price'])}" for s in shorts]
+    try:
+        telegram_utils.send_message("\n".join(lines))
+    except Exception as exc:  # noqa: BLE001 — a failed alert must never kill the loop
+        print(f"[strategy2] digest send failed: {exc}")
+
+
+def scan_once(client, recent: list, last_alert: dict, pending: list) -> list:
     syms = universe(client)
     total = len(syms)
     print(f"[strategy2] scanning {total} {TIMEFRAME} perps…")
@@ -131,9 +154,9 @@ def scan_once(client, recent: list, last_alert: dict) -> list:
                     "tv_url": _tv_url(sym),
                 }
                 recent.insert(0, sig)
+                pending.append(sig)                  # buffered → next 30-min digest
                 print(f"[strategy2] SIGNAL {direction.upper()} {sig['base']} score {sig['score']}")
-                _alert(sig)
-                _write(recent, total, i + 1)        # surface immediately
+                _write(recent, total, i + 1)        # surface on the page immediately
                 # Opt-in LIVE execution — a no-op unless STRATEGY2_LIVE is on. The
                 # best-plan filter + all safety gates live inside maybe_trade; `i`
                 # is the volume rank (universe is sorted most-liquid first).
@@ -167,14 +190,22 @@ def main() -> None:
     )
     recent = _load_recent()
     last_alert = {}
+    pending = []                    # new signals awaiting the next digest
+    last_digest = time.time()       # cadence anchor for the 30-min digest
 
     def _guard():
-        """Never let a live position sit without a stop-loss. When S2 is the live
-        engine it manages the account, so each cycle it auto-sets a stop on any
-        naked position (orphaned S1 positions, manual entries, or a bracket that
-        failed to place). No-op in dry-run / alert-only."""
+        """Keep the live account consistent every cycle. When S2 is the live
+        engine it manages the account, so each sweep it (1) reconciles closed
+        positions — freeing concurrency-cap slots and cancelling stale SL/TP so
+        the engine never wedges shut or fires an old stop at a new position — and
+        (2) auto-sets a stop on any naked position (orphaned/manual entries, or a
+        bracket that failed to place). No-op in dry-run / alert-only."""
         if not config.STRATEGY2_LIVE:
             return
+        try:
+            executor.reconcile_open_positions()    # release cap slots + cancel stale orders
+        except Exception as exc:  # noqa: BLE001 — reconcile must never kill the loop
+            print(f"[strategy2] reconcile error: {exc}")
         try:
             executor.ensure_stop_losses()
         except Exception as exc:  # noqa: BLE001 — protection must never kill the loop
@@ -185,9 +216,17 @@ def main() -> None:
         start = time.time()
         _guard()                               # …and at the top of every sweep
         try:
-            recent = scan_once(client, recent, last_alert)
+            recent = scan_once(client, recent, last_alert, pending)
         except Exception as exc:  # noqa: BLE001 — keep the loop alive
             print(f"[strategy2] sweep error: {exc}")
+        # Flush a single grouped Telegram digest on a clean DIGEST_SEC cadence
+        # (default every 30 min). Silent when nothing new fired in the window.
+        if time.time() - last_digest >= DIGEST_SEC:
+            if pending:
+                _send_digest(pending)
+                print(f"[strategy2] sent digest of {len(pending)} signal(s)")
+                pending.clear()
+            last_digest = time.time()
         elapsed = time.time() - start
         sleep_for = max(15, INTERVAL_SEC - elapsed)
         print(f"[strategy2] sweep done in {elapsed:.0f}s; sleeping {sleep_for:.0f}s")

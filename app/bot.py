@@ -44,6 +44,11 @@ from config import (
     RSI_PERIOD,
     RSI_UPPER_THRESHOLD,
     RSI_LOWER_THRESHOLD,
+    RSI_ALERT_ENABLED,
+    RSI_ALERT_HIGH,
+    RSI_ALERT_LOW,
+    RSI_ALERT_TIMEFRAME,
+    RSI_ALERT_ALWAYS,
     STOCH_RSI_RSI_PERIOD,
     STOCH_RSI_STOCH_PERIOD,
     STOCH_RSI_K_SMOOTH,
@@ -1132,11 +1137,6 @@ def calculate_obv(prices, volumes):
             obv.append(obv[-1])
     return np.array(obv)
 
-def calculate_ema(prices, period):
-    if len(prices) < period:
-        return None
-    return pd.Series(prices).ewm(span=period, adjust=False).mean().iloc[-1]
-
 def calculate_atr(ohlcv, period=14):
     if len(ohlcv) < period + 1:
         return None
@@ -1777,6 +1777,40 @@ def resolve_live_strategy():
     return "default", "bracket"
 
 
+def _send_rsi_extreme_alert(extremes: list) -> None:
+    """Send ONE Telegram digest per scan listing coins whose RSI hit a blow-off
+    extreme (≥ RSI_ALERT_HIGH overbought / ≤ RSI_ALERT_LOW oversold) on the alert
+    timeframe. Alert-only — it never touches trading. Silent when the watch is off
+    or nothing is extreme, unless RSI_ALERT_ALWAYS forces a per-scan heartbeat."""
+    if not RSI_ALERT_ENABLED:
+        return
+    if not extremes and not RSI_ALERT_ALWAYS:
+        return
+
+    def _price(e):
+        p = e.get("price")
+        return f"{p:.6g}" if isinstance(p, (int, float)) else "n/a"
+
+    if not extremes:
+        send_message(f"📊 RSI watch ({RSI_ALERT_TIMEFRAME}): no coins "
+                     f"≥{RSI_ALERT_HIGH:g} or ≤{RSI_ALERT_LOW:g} this scan.", force=True)
+        return
+
+    over = sorted([e for e in extremes if e["kind"] == "overbought"], key=lambda e: -e["rsi"])
+    under = sorted([e for e in extremes if e["kind"] == "oversold"], key=lambda e: e["rsi"])
+    lines = [f"📊 RSI EXTREMES ({RSI_ALERT_TIMEFRAME}) — {len(extremes)} coin(s)"]
+    if over:
+        lines.append(f"\n🔴 Overbought (RSI ≥ {RSI_ALERT_HIGH:g}):")
+        lines += [f"  {e['symbol']}  ·  RSI {e['rsi']:.1f}  ·  {_price(e)}" for e in over]
+    if under:
+        lines.append(f"\n🟢 Oversold (RSI ≤ {RSI_ALERT_LOW:g}):")
+        lines += [f"  {e['symbol']}  ·  RSI {e['rsi']:.1f}  ·  {_price(e)}" for e in under]
+    try:
+        send_message("\n".join(lines), force=True)   # RSI alert is whitelisted through quiet mode
+    except Exception as exc:  # noqa: BLE001 — an alert must never break the scan
+        print(f"[bot] RSI-extreme alert send failed: {exc}")
+
+
 def run_bot() -> None:
     global queued_signals
     scan_start_time = get_now_taiwan().strftime("%Y-%m-%d %H:%M:%S")
@@ -1847,7 +1881,8 @@ def run_bot() -> None:
 
         alerts_sent = 0
         collected_alerts = []
-        
+        rsi_extremes = []          # coins at an RSI blow-off extreme → one Telegram digest per scan
+
         for symbol in symbols:
             is_tradeable = symbol in tradeable_symbols
             for timeframe in TIMEFRAMES:
@@ -1883,6 +1918,19 @@ def run_bot() -> None:
                         continue
                         
                     current_rsi = rsi_values[-1]
+                    # RSI extreme watch — collect coins whose RSI is at a blow-off
+                    # extreme (≥ HIGH overbought / ≤ LOW oversold) on the alert
+                    # timeframe, for a single Telegram digest at the end of the scan.
+                    if (RSI_ALERT_ENABLED and timeframe == RSI_ALERT_TIMEFRAME
+                            and current_rsi is not None
+                            and (current_rsi >= RSI_ALERT_HIGH or current_rsi <= RSI_ALERT_LOW)):
+                        rsi_extremes.append({
+                            "symbol": symbol.split("/")[0].split(":")[0],
+                            "tf": timeframe,
+                            "rsi": round(float(current_rsi), 1),
+                            "kind": "overbought" if current_rsi >= RSI_ALERT_HIGH else "oversold",
+                            "price": current_price,
+                        })
                     bull_score, bear_score, details = calculate_strategy_score(closed_prices, closed_volumes, rsi_values)
                     display_score = max(bull_score, bear_score)
                     
@@ -2501,6 +2549,8 @@ def run_bot() -> None:
         
         # Send batch alerts after all symbols are scanned
         alerts_sent = send_batch_alerts(collected_alerts)
+        # One RSI-extreme digest per scan (coins ≥90 / ≤10 RSI). Alert-only.
+        _send_rsi_extreme_alert(rsi_extremes)
     finally:
         # Add back any remaining existing queued signals (not scanned in this run)
         for remaining_key, (remaining_dir, remaining_sig) in existing_queued.items():

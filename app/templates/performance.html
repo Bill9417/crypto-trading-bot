@@ -9,7 +9,7 @@
     <link rel="manifest" href="/manifest.webmanifest">
     <meta name="theme-color" content="#0e1018">
     <link rel="apple-touch-icon" href="/static/apple-touch-icon.png">
-    <link rel="stylesheet" href="/static/app.css?v=20260628">
+    <link rel="stylesheet" href="/static/app.css?v={{ asset_ver }}">
     <style>
         :root {
             --wolf-blue: #00d2ff;
@@ -741,6 +741,17 @@
                 <div class="rp-cell"><div class="rp-k">Avg loss</div><div class="rp-v" id="rp-avgloss">—</div></div>
                 <div class="rp-cell"><div class="rp-k">Max drawdown</div><div class="rp-v" id="rp-mdd">—</div></div>
                 <div class="rp-cell"><div class="rp-k">Streak</div><div class="rp-v" id="rp-streak">—</div></div>
+                <div class="rp-cell"><div class="rp-k">Today</div><div class="rp-v" id="rp-today">—</div></div>
+                <div class="rp-cell"><div class="rp-k">Last 7 days</div><div class="rp-v" id="rp-7d">—</div></div>
+            </div>
+            <!-- Daily net P&L (realized + fees + funding, same basis as "Net") — the
+                 at-a-glance "which days made or lost money" view, like the exchange's own. -->
+            <div id="rp-daily-wrap" style="display:none;margin-top:14px;">
+                <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:6px;">
+                    <span style="font-size:.66rem;font-weight:800;letter-spacing:.05em;text-transform:uppercase;color:var(--wolf-muted,#8a99ad);">Daily net P&amp;L · last 14 days</span>
+                    <span id="rp-daily-range" style="font-size:.62rem;color:var(--wolf-muted,#8a99ad);"></span>
+                </div>
+                <div id="rp-daily" style="display:flex;align-items:stretch;gap:4px;height:76px;"></div>
             </div>
             <div id="rp-rows" style="margin-top:12px;font-size:.74rem;"></div>
             <p style="margin:10px 0 0;font-size:.68rem;color:var(--wolf-muted,#8a99ad);line-height:1.5;">Straight from Binance income records (incl. fees + funding) — <b>this is your real account</b>. The cards below are the bot's <b>tracked/simulated</b> signals; they differ on purpose (the sim models partial-TP, and any DRY-RUN period logs signals that never hit the exchange).</p>
@@ -771,6 +782,34 @@
                         stk.textContent=(d.streak&&d.streak_type)?(d.streak+d.streak_type):'—';
                         stk.className='rp-v '+(d.streak_type==='W'?'win':(d.streak_type==='L'?'loss':''));
                         meta.textContent = 'real account · '+d.n_trades+' closed trades';
+                        // Daily net P&L bars: positives grow up from a mid baseline, negatives down.
+                        var daily=d.daily||[];
+                        if(daily.length){
+                            var today=daily[daily.length-1].net;
+                            var week=daily.slice(-7).reduce(function(s,x){return s+x.net;},0);
+                            setV('rp-today', money(today), today);
+                            setV('rp-7d', money(week), week);
+                            var maxAbs=Math.max.apply(null, daily.map(function(x){return Math.abs(x.net);}).concat([1e-9]));
+                            var wrap=document.getElementById('rp-daily-wrap');
+                            document.getElementById('rp-daily-range').textContent =
+                                daily[0].date.slice(5)+' → '+daily[daily.length-1].date.slice(5)+' · peak ±'+maxAbs.toFixed(2)+' USDT';
+                            document.getElementById('rp-daily').innerHTML = daily.map(function(x){
+                                var h=Math.abs(x.net)/maxAbs*50;                   // 0–50% of the column
+                                var up=x.net>=0, quiet=Math.abs(x.net)<1e-9;
+                                var bar=quiet
+                                    ? '<div style="position:absolute;top:50%;left:15%;right:15%;height:2px;margin-top:-1px;border-radius:2px;background:rgba(255,255,255,.10);"></div>'
+                                    : '<div style="position:absolute;left:15%;right:15%;border-radius:3px;'+
+                                      (up?('bottom:50%;height:'+Math.max(h,3)+'%;background:linear-gradient(180deg,#34d399,#10b981);')
+                                         :('top:50%;height:'+Math.max(h,3)+'%;background:linear-gradient(180deg,#ef4444,#f87171);'))+'"></div>';
+                                return '<div title="'+x.date+' · '+(x.net>=0?'+':'')+x.net.toFixed(4)+' USDT" '+
+                                       'style="position:relative;flex:1;min-width:0;background:rgba(255,255,255,.02);border-radius:5px;">'+
+                                       bar+
+                                       '<div style="position:absolute;top:50%;left:0;right:0;height:1px;background:rgba(255,255,255,.06);"></div>'+
+                                       '<div style="position:absolute;bottom:-1px;left:0;right:0;text-align:center;font-size:.5rem;color:var(--wolf-muted,#8a99ad);opacity:.8;">'+Number(x.date.slice(8))+'</div>'+
+                                       '</div>';
+                            }).join('');
+                            wrap.style.display='block';
+                        }
                         var rows=(d.trades||[]).slice(0,12).map(function(t){
                             var dt=new Date(t.time); var sym=(t.symbol||'').replace('USDT','');
                             var c=t.pnl>=0?'win':'loss';
