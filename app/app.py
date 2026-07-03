@@ -1690,11 +1690,19 @@ def index():
 @login_required
 def get_scan_data():
     data = load_data()
+    data["age_sec"] = scan_age_seconds(data.get("last_update"))
+    data["interval_min"] = CHECK_INTERVAL_MINUTES
+    # Freshness poll: when the dashboard already holds this scan (?since= matches
+    # last_update) it only needs status/age, so skip the DB sweep and drop the
+    # ~300 KB signals payload. The client re-renders only on a NEW scan anyway,
+    # so this turns the frequent poll into a ~1 KB no-op.
+    since = request.args.get("since")
+    if since and since == data.get("last_update"):
+        data.pop("signals", None)
+        return jsonify(data)
     records = get_qualified_records(SignalRecord.query.all())
     cleaned_signals = clean_signals(data.get("signals", []), records)
     data["signals"] = cleaned_signals
-    data["age_sec"] = scan_age_seconds(data.get("last_update"))
-    data["interval_min"] = CHECK_INTERVAL_MINUTES
     return jsonify(data)
 
 

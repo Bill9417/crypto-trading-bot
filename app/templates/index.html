@@ -23,7 +23,9 @@
             --wolf-gold: #ffcf4b;
             --wolf-dark: #171a26;
             --wolf-slate: #0e1018;
-            --wolf-card: rgba(30, 36, 56, 0.72);
+            /* near-opaque: lets panels drop backdrop-filter blur (a big GPU cost
+               over large areas) while keeping the same dark-glass look */
+            --wolf-card: rgba(26, 31, 48, 0.92);
             --wolf-border: rgba(255, 255, 255, 0.08);
             --wolf-muted: #8a99ad;
             --wolf-text: #f1f5f9;
@@ -32,7 +34,7 @@
             --short: #dc2626;
             --short-bg: rgba(220, 38, 38, 0.14);
             --radius: 14px;
-            --shadow: 0 14px 40px rgba(0, 0, 0, 0.38);
+            --shadow: 0 8px 24px rgba(0, 0, 0, 0.26);
         }
 
         * { box-sizing: border-box; }
@@ -54,14 +56,11 @@
             border: 1px solid var(--wolf-border);
             border-radius: var(--radius);
             box-shadow: var(--shadow);
-            backdrop-filter: blur(12px);
-            -webkit-backdrop-filter: blur(12px);
             padding: 12px 18px;
             margin-bottom: 14px;
             display: flex;
             flex-direction: column;
             gap: 10px;
-            border-left: 4px solid var(--wolf-blue);
         }
         /* Row 1: brand on the left, status + meta + actions on the right */
         .tb-main { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
@@ -77,15 +76,18 @@
         #bot-status-badge { display: inline-flex; align-items: center; }
         .scan-age { font-size: .68rem; color: var(--wolf-muted); font-weight: 600; }
         .scan-age.stale { color: #f87171; font-weight: 800; }
+        /* Both health banners share one compact row — quiet when everything is
+           OK, loud only on warn/halt. */
+        .status-row { display:flex; gap:10px; margin-bottom:12px; flex-wrap:wrap; }
+        .status-row > * { flex:1 1 340px; margin-bottom:0 !important; }
         .prot-banner { display:flex; align-items:center; gap:10px; text-decoration:none; border-radius:12px;
-            padding:9px 14px; margin-bottom:12px; font-size:.82rem; border:1px solid; }
+            padding:8px 14px; font-size:.78rem; border:1px solid; }
         .prot-banner .pb-go { margin-left:auto; font-weight:800; opacity:.85; font-size:.72rem; }
-        .prot-banner.ok { color:#34d399; background:rgba(16,185,129,.1); border-color:rgba(16,185,129,.4); }
+        .prot-banner.ok { color:#34d399; background:rgba(16,185,129,.06); border-color:rgba(16,185,129,.26); }
         .prot-banner.warn { color:#fca5a5; background:rgba(239,68,68,.12); border-color:rgba(239,68,68,.5); }
-        /* Normalise both status chips (Bootstrap .badge + custom .btc-badge) to
-           identical pills so they line up perfectly. !important beats Bootstrap
-           and the inline font-size the status JS injects. */
-        .tb-status .badge, .tb-status .btc-badge {
+        /* Normalise the bot-status chip (Bootstrap .badge) to the pill shape.
+           !important beats Bootstrap and the inline font-size the status JS injects. */
+        .tb-status .badge {
             display: inline-flex !important; align-items: center; justify-content: center;
             height: 22px; padding: 0 11px !important; line-height: 1;
             border-radius: 999px !important; font-size: 0.62rem !important;
@@ -100,23 +102,15 @@
         /* Row 2: dedicated navigation strip */
         .tb-nav { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding-top: 10px; border-top: 1px solid var(--wolf-border); }
 
-        /* BTC regime badge — "don't fight Bitcoin" filter status */
-        .btc-badge { display: inline-block; font-size: 0.62rem; font-weight: 800; letter-spacing: 0.04em;
-            padding: 2px 8px; border-radius: 999px; border: 1px solid; }
-        .btc-badge.btc-bull { color: #34d399; background: rgba(16,185,129,0.14); border-color: rgba(16,185,129,0.4); }
-        .btc-badge.btc-bear { color: #f87171; background: rgba(239,68,68,0.14); border-color: rgba(239,68,68,0.4); }
-        .btc-badge.btc-neutral { color: var(--wolf-gold); background: rgba(255,207,75,0.12); border-color: rgba(255,207,75,0.35); }
-        .btc-badge.btc-off { color: var(--wolf-muted); background: rgba(255,255,255,0.05); border-color: var(--wolf-border); }
-
         /* daily circuit-breaker banner (dashboard) */
         .cb-banner {
             display: flex; align-items: center; flex-wrap: wrap; gap: 8px 18px;
-            padding: 10px 16px; margin-bottom: 16px; border-radius: 12px;
+            padding: 8px 14px; border-radius: 12px;
             border: 1px solid; text-decoration: none; color: var(--wolf-text);
-            font-size: 0.8rem; transition: transform .15s, box-shadow .2s;
+            font-size: 0.78rem; transition: transform .15s, box-shadow .2s;
         }
         .cb-banner:hover { transform: translateY(-1px); }
-        .cb-banner.cb-ok { background: rgba(22,163,74,0.08); border-color: rgba(22,163,74,0.3); }
+        .cb-banner.cb-ok { background: rgba(22,163,74,0.05); border-color: rgba(22,163,74,0.24); }
         .cb-banner.cb-halted { background: rgba(220,38,38,0.12); border-color: rgba(220,38,38,0.45);
             animation: cbBlink 1.8s infinite; }
         @keyframes cbBlink { 0%,100% { box-shadow: 0 0 0 rgba(220,38,38,0); } 50% { box-shadow: 0 0 16px rgba(220,38,38,0.4); } }
@@ -165,12 +159,10 @@
             border: 1px solid var(--wolf-border);
             border-radius: 12px;
             padding: 12px 14px;
-            box-shadow: 0 8px 24px rgba(0,0,0,.18);
-            backdrop-filter: blur(10px);
-            -webkit-backdrop-filter: blur(10px);
+            box-shadow: 0 4px 14px rgba(0,0,0,.14);
             transition: transform .15s ease, border-color .15s, box-shadow .15s;
         }
-        .stat-card:hover { transform: translateY(-2px); border-color: rgba(0,210,255,0.22); box-shadow: 0 12px 30px rgba(0,0,0,.28); }
+        .stat-card:hover { transform: translateY(-1px); border-color: rgba(0,210,255,0.22); box-shadow: 0 8px 20px rgba(0,0,0,.2); }
         .analytics-panel { transition: border-color .15s; }
         .analytics-panel:hover { border-color: rgba(255,255,255,0.14); }
         .stat-label { font-size: 0.65rem; font-weight: 700; text-transform: uppercase; letter-spacing: .6px; color: var(--wolf-muted); }
@@ -181,9 +173,7 @@
         .entries-panel {
             background: var(--wolf-card); border: 1px solid var(--wolf-border);
             border-radius: 14px; padding: 14px 16px; margin-bottom: 14px;
-            box-shadow: 0 8px 24px rgba(0,0,0,.18);
-            backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
-            border-left: 4px solid #34d399;
+            box-shadow: 0 4px 14px rgba(0,0,0,.14);
         }
         .entries-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 12px; flex-wrap: wrap; }
         .entries-title { font-size: .98rem; font-weight: 800; display: flex; align-items: center; gap: 8px; }
@@ -231,10 +221,8 @@
             background: var(--wolf-card);
             border: 1px solid var(--wolf-border);
             border-radius: 14px;
-            box-shadow: 0 10px 28px rgba(0,0,0,.2);
+            box-shadow: 0 4px 14px rgba(0,0,0,.14);
             padding: 14px;
-            backdrop-filter: blur(10px);
-            -webkit-backdrop-filter: blur(10px);
         }
         .analytics-head {
             display: flex;
@@ -266,9 +254,9 @@
 
         /* ── Dashboard headlines strip ── */
         .news-strip { display: flex; gap: 10px; overflow-x: auto; padding-bottom: 4px; scrollbar-width: thin; }
-        .news-chip { flex: 0 0 auto; width: 240px; background: rgba(255,255,255,0.03); border: 1px solid var(--wolf-border); border-left: 3px solid var(--wolf-gold); border-radius: 10px; padding: 9px 12px; transition: border-color .15s, transform .15s; }
-        .news-chip:hover { transform: translateY(-2px); border-left-color: var(--wolf-blue); }
-        .news-chip .news-src { font-size: 0.58rem; font-weight: 800; text-transform: uppercase; letter-spacing: .05em; color: var(--wolf-gold); }
+        .news-chip { flex: 0 0 auto; width: 240px; background: rgba(255,255,255,0.03); border: 1px solid var(--wolf-border); border-radius: 10px; padding: 9px 12px; transition: border-color .15s, transform .15s; }
+        .news-chip:hover { transform: translateY(-2px); border-color: rgba(0,210,255,.35); }
+        .news-chip .news-src { font-size: 0.58rem; font-weight: 800; text-transform: uppercase; letter-spacing: .05em; color: var(--wolf-muted); }
         .news-chip a { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; margin-top: 4px; color: var(--wolf-text); text-decoration: none; font-size: 0.76rem; font-weight: 600; line-height: 1.35; }
         .news-chip a:hover { color: var(--wolf-blue); }
 
@@ -335,9 +323,10 @@
             border: 1px solid var(--wolf-border);
             background: rgba(255,255,255,0.03);
         }
-        .flow-card.queued { background: rgba(37, 99, 235, 0.10); }
-        .flow-card.active { background: rgba(245, 158, 11, 0.10); }
-        .flow-card.closed { background: rgba(22, 163, 74, 0.08); }
+        /* colour lives in the number, not the whole card — calmer at a glance */
+        .flow-card.queued .flow-value { color: #93c5fd; }
+        .flow-card.active .flow-value { color: #fcd34d; }
+        .flow-card.closed .flow-value { color: #4ade80; }
         .flow-label {
             font-size: 0.62rem;
             text-transform: uppercase;
@@ -425,8 +414,6 @@
             border-radius: var(--radius);
             box-shadow: var(--shadow);
             overflow: hidden;
-            backdrop-filter: blur(12px);
-            -webkit-backdrop-filter: blur(12px);
         }
         .panel-head {
             padding: 12px 16px;
@@ -486,14 +473,16 @@
             max-width: 100%;
         }
 
-        /* ── Lights ── */
+        /* ── Lights — ALWAYS one row: base dots · divider · SMC bonus dots.
+           The column is sized to fit the max (8 base + 3 SMC), so they never
+           wrap onto a confusing second line. ── */
         .lights {
-            display: flex; gap: 5px; align-items: center; justify-content: center;
-            flex-wrap: wrap; max-width: 100%; row-gap: 5px;
+            display: flex; gap: 4px; align-items: center; justify-content: center;
+            flex-wrap: nowrap; max-width: 100%;
         }
         /* Filled = passed (glows) · hollow = missed (outline, recedes) · violet = SMC bonus. */
         .light {
-            width: 9px; height: 9px; border-radius: 50%;
+            width: 8px; height: 8px; border-radius: 50%;
             flex: 0 0 auto;
             box-sizing: border-box;
             transition: background .15s ease, box-shadow .15s ease, border-color .15s ease;
@@ -586,13 +575,9 @@
         .tv-btn:hover { background: var(--wolf-blue); color: #000; border-color: var(--wolf-blue); }
 
         .live-val { font-weight: 700; font-size: 0.8rem; color: var(--wolf-text); font-variant-numeric: tabular-nums; }
-        .asset-meta {
-            display: flex;
-            align-items: center;
-            gap: 8px;
-            flex-wrap: wrap;
-            margin-top: 4px;
-        }
+        /* symbol + status badges on ONE line — the full rejection reason lives in
+           the expandable panel, so every row stays a single compact strip */
+        .asset-line { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; min-width: 0; }
         .trade-status-badge {
             display: inline-flex;
             align-items: center;
@@ -608,7 +593,9 @@
             white-space: nowrap;
         }
         .trade-status-badge.status-queued { background: rgba(37, 99, 235, 0.16); color: #93c5fd; }
-        .trade-status-badge.status-rejected { background: rgba(239, 68, 68, 0.14); color: #fca5a5; }
+        /* rejected is the DEFAULT state for most scanned rows — keep it quiet so
+           the rare queued/active/closed badges are the ones that pop */
+        .trade-status-badge.status-rejected { background: rgba(148, 163, 184, 0.10); color: #94a3b8; border-color: rgba(148, 163, 184, 0.22); }
         .trade-status-badge.status-active { background: rgba(245, 158, 11, 0.16); color: #fcd34d; }
         .trade-status-badge.status-pending { background: rgba(148, 163, 184, 0.14); color: #cbd5e1; }
         .trade-status-badge.status-tp { background: rgba(22, 163, 74, 0.16); color: #86efac; }
@@ -629,11 +616,6 @@
         /* watch-only never trades, so strip the conviction glow that implies a setup */
         .signal-card.watch-only.max-conviction-card,
         .signal-card.watch-only.high-conviction-card { box-shadow: none; background: transparent !important; }
-        .trade-status-reason {
-            font-size: 0.66rem;
-            color: var(--wolf-muted);
-            line-height: 1.35;
-        }
         /* ── Aligned signal list (single shared grid) ── */
         .signal-list-wrap {
             overflow-x: auto;
@@ -647,7 +629,7 @@
                 56px
                 92px
                 46px
-                122px
+                158px
                 88px
                 44px
                 34px
@@ -656,7 +638,7 @@
             align-items: center;
             min-height: 46px;
             padding: 8px 14px;
-            min-width: 734px;
+            min-width: 770px;
         }
 
         .signal-list-header .signal-row-grid {
@@ -744,22 +726,29 @@
             border: 1px solid rgba(255,255,255,0.05);
             border-radius: 10px;
             background: rgba(30, 36, 56, 0.42);
-            transition: all 0.18s;
+            /* only the properties that actually change — `all` makes the browser
+               watch every property on 200+ rows */
+            transition: border-color 0.18s, background-color 0.18s;
             position: relative;
             overflow: hidden;
+            /* rows outside the viewport skip layout & paint entirely — the single
+               biggest win for a 200+ row list */
+            content-visibility: auto;
+            contain-intrinsic-size: auto 48px;
         }
         .signal-card:hover { border-color: rgba(255,255,255,0.1); }
-        /* Direction colour always wins — conviction adds glow on top */
-        .signal-card.long-card  { box-shadow: inset 4px 0 0 var(--long);  border-left-color: rgba(16,185,129,0.3); }
-        .signal-card.short-card { box-shadow: inset 4px 0 0 var(--short); border-left-color: rgba(239,68,68,0.3); }
+        /* Direction = a thin left bar. Conviction upgrades the border/background
+           tint only — no outer glows, so 200+ rows stay readable as a list. */
+        .signal-card.long-card  { box-shadow: inset 3px 0 0 rgba(16,185,129,0.75); }
+        .signal-card.short-card { box-shadow: inset 3px 0 0 rgba(239,68,68,0.75); }
 
-        /* 4-light: faint outer glow matching direction */
-        .signal-card.long-card.high-conviction-card  { box-shadow: inset 4px 0 0 var(--long),  0 0 10px 1px rgba(16,185,129,0.12); border-color: rgba(16,185,129,0.22); }
-        .signal-card.short-card.high-conviction-card { box-shadow: inset 4px 0 0 var(--short), 0 0 10px 1px rgba(239,68,68,0.12);  border-color: rgba(239,68,68,0.22); }
+        /* 4-light: direction-tinted border */
+        .signal-card.long-card.high-conviction-card  { border-color: rgba(16,185,129,0.13); }
+        .signal-card.short-card.high-conviction-card { border-color: rgba(239,68,68,0.13); }
 
-        /* 5+ lights: strong outer glow matching direction */
-        .signal-card.long-card.max-conviction-card  { box-shadow: inset 4px 0 0 var(--long),  0 0 18px 3px rgba(16,185,129,0.28); border-color: rgba(16,185,129,0.4); background: rgba(16,185,129,0.05) !important; }
-        .signal-card.short-card.max-conviction-card { box-shadow: inset 4px 0 0 var(--short), 0 0 18px 3px rgba(239,68,68,0.28);  border-color: rgba(239,68,68,0.4);  background: rgba(239,68,68,0.05)  !important; }
+        /* 5+ lights: tinted background + stronger border — stands out without glowing */
+        .signal-card.long-card.max-conviction-card  { border-color: rgba(16,185,129,0.26); background: rgba(16,185,129,0.03) !important; }
+        .signal-card.short-card.max-conviction-card { border-color: rgba(239,68,68,0.26);  background: rgba(239,68,68,0.03)  !important; }
 
         .signal-card.expanded { background: rgba(22, 28, 46, 0.92) !important; }
 
@@ -1138,7 +1127,6 @@
                 align-items: flex-end;
             }
             .symbol-tag { font-size: 0.9rem; }
-            .asset-meta { margin-top: 2px; }
             .live-val { font-size: 0.78rem; }
             .light { width: 11px; height: 11px; }
             .side-pill { min-width: 46px; height: 24px; font-size: 0.6rem; }
@@ -1171,29 +1159,13 @@
             .brand h1 { font-size: 0.8rem; }
         }
 
-        /* ── Unified navigation pills ── */
-        .nav-pill {
-            display: inline-flex; align-items: center; gap: 5px;
-            font-size: 0.64rem; font-weight: 800; letter-spacing: 0.04em;
-            padding: 5px 11px; border-radius: 999px; text-decoration: none;
-            border: 1px solid var(--wolf-border); color: var(--wolf-muted);
-            background: rgba(255,255,255,0.03); transition: transform .14s, background .14s, color .14s, border-color .14s;
-        }
-        .nav-pill:hover { transform: translateY(-1px); color: var(--wolf-text); }
-        .nav-pill.perf { border-color: rgba(0,210,255,0.4); color: var(--wolf-blue); }
-        .nav-pill.perf:hover { background: rgba(0,210,255,0.14); }
-        .nav-pill.funnel { border-color: rgba(251,113,133,0.45); color: #fb7185; }
-        .nav-pill.funnel:hover { background: rgba(251,113,133,0.14); }
-        .nav-pill.market { border-color: rgba(255,207,75,0.4); color: var(--wolf-gold); }
-        .nav-pill.market:hover { background: rgba(255,207,75,0.14); }
-        .nav-pill.backtest { border-color: rgba(192,132,252,0.45); color: #c084fc; }
-        .nav-pill.backtest:hover { background: rgba(192,132,252,0.14); }
-        .nav-pill.admin { border-color: rgba(129,140,248,0.45); color: #818cf8; }
-        .nav-pill.admin:hover { background: rgba(129,140,248,0.14); }
-        .nav-pill.paper { border-color: rgba(52,211,153,0.45); color: #34d399; }
-        .nav-pill.paper:hover { background: rgba(52,211,153,0.14); }
-        .nav-pill.account { border-color: rgba(255,207,75,0.55); color: var(--wolf-gold); }
-        .nav-pill.account:hover { background: rgba(255,207,75,0.16); }
+        /* ── Navigation pills — ONE quiet style. Colour is reserved for the
+           active page + the live regime chips, so the nav stops competing with
+           the data below it. (Overrides the per-page colours from app.css.) ── */
+        .tb-nav .nav-pill { border-color: var(--wolf-border); color: var(--wolf-muted); background: rgba(255,255,255,0.03); }
+        .tb-nav .nav-pill:hover { color: var(--wolf-text); border-color: rgba(255,255,255,0.24); background: rgba(255,255,255,0.06); }
+        .tb-nav .nav-pill.active { color: #0b0e14; background: var(--wolf-text); border-color: var(--wolf-text); }
+        .tb-nav .nav-pill.logout:hover { color: #f87171; border-color: rgba(239,68,68,0.45); background: rgba(239,68,68,0.10); }
 
         /* ── Global polish (desktop + phone) ── */
         html { scroll-behavior: smooth; }
@@ -1219,10 +1191,9 @@
         .hero-side .acct-cell b { font-size: .88rem; }
         .ls-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
             background: var(--wolf-card, #161a26); border: 1px solid var(--wolf-border, #262c3d);
-            border-left: 4px solid var(--wolf-gold, #ffcf4b); border-radius: 12px; padding: 9px 14px; }
+            border-radius: 12px; padding: 9px 14px; }
         .coins-panel { background: var(--wolf-card); border: 1px solid var(--wolf-border);
-            border-radius: 14px; padding: 14px 16px; box-shadow: var(--shadow);
-            backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); }
+            border-radius: 14px; padding: 14px 16px; box-shadow: var(--shadow); }
         .cp-head { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; margin-bottom: 10px; }
         .cp-title { font-size: .7rem; font-weight: 800; letter-spacing: .06em; color: var(--wolf-muted); text-transform: uppercase; }
         .cp-meta { font-size: .6rem; color: var(--wolf-muted); }
@@ -1249,10 +1220,10 @@
         .acct-strip { margin-bottom: 12px; }
         .acct-link { display:flex; align-items:center; gap:18px; flex-wrap:wrap;
             background: var(--wolf-card); border:1px solid var(--wolf-border);
-            border-left:4px solid var(--wolf-gold); border-radius:12px;
+            border-radius:12px;
             padding:10px 16px; text-decoration:none; color:var(--wolf-text);
             transition: border-color .14s, transform .14s; }
-        .acct-link:hover { border-left-color: var(--wolf-blue); transform: translateY(-1px); }
+        .acct-link:hover { border-color: rgba(0,210,255,.35); transform: translateY(-1px); }
         .acct-title { font-size:.7rem; font-weight:800; letter-spacing:.05em; color:var(--wolf-gold); white-space:nowrap; }
         .acct-net { font-size:.58rem; font-weight:800; letter-spacing:.05em; padding:2px 7px; border-radius:999px;
             border:1px solid var(--wolf-border); color:var(--wolf-muted); }
@@ -1285,8 +1256,6 @@
                         <span id="bot-status-badge">
                             <span class="badge bg-success" style="font-size:.65rem;">BOT IDLE</span>
                         </span>
-                        {% set _r = dashboard_summary.get('btc_regime', 'neutral') if dashboard_summary else 'neutral' %}
-                        <span class="tb-meta-item">BTC <span id="btc-regime-badge" class="btc-badge btc-{{ _r }}">{{ _r|upper }}</span></span>
                     </div>
                     <div class="tb-meta">
                         <span class="tb-meta-item">👤 <b>{{ user.username|upper }}</b></span>
@@ -1296,29 +1265,29 @@
                     <div class="tb-buttons">
                         <button class="btn btn-ghost" onclick="openStrategyModal()">Rules</button>
                         <button class="btn btn-wolf refresh-btn" onclick="fetchLivePrices()">↻ Refresh</button>
-                        <a href="{{ url_for('logout') }}" class="btn btn-ghost">Logout</a>
                     </div>
                 </div>
             </div>
             {% include '_nav.html' %}
         </header>
 
-        <!-- Daily Circuit-Breaker Banner -->
-        {% if circuit %}
-        <a href="{{ url_for('performance') }}" class="cb-banner {{ 'cb-halted' if circuit.halted else 'cb-ok' }}" title="Daily risk guardrail — click for full performance">
-            <span class="cb-ico">{{ '🛑' if circuit.halted else '✅' }}</span>
-            <span class="cb-main">{{ 'TRADING HALTED TODAY' if circuit.halted else 'Trading Allowed' }}</span>
-            {% if circuit.halted %}<span class="cb-reason">{{ circuit.halt_reason }}</span>{% endif %}
-            <span class="cb-stat">Net <b class="{{ 'up' if circuit.today_net_pnl > 0 else 'down' if circuit.today_net_pnl < 0 else '' }}">{{ "+" if circuit.today_net_pnl > 0 }}{{ circuit.today_net_pnl }}%</b></span>
-            <span class="cb-stat">Losses <b class="{{ 'down' if circuit.losses_today >= circuit.max_losses else '' }}">{{ circuit.losses_today }}/{{ circuit.max_losses }}</b></span>
-            <span class="cb-stat">Loss DD <b class="{{ 'down' if circuit.loss_drawdown <= circuit.max_drawdown_pct else '' }}">{{ circuit.loss_drawdown }}%/{{ circuit.max_drawdown_pct }}%</b></span>
-        </a>
-        {% endif %}
-
-        {% if user.is_admin %}
-        <!-- Live position protection banner (admin) — surfaces unprotected positions -->
-        <a href="{{ url_for('account') }}" id="protbanner" class="prot-banner" style="display:none;"></a>
-        {% endif %}
+        <!-- Health banners — circuit breaker + live-position protection on one compact row -->
+        <div class="status-row">
+            {% if circuit %}
+            <a href="{{ url_for('performance') }}" class="cb-banner {{ 'cb-halted' if circuit.halted else 'cb-ok' }}" title="Daily risk guardrail — click for full performance">
+                <span class="cb-ico">{{ '🛑' if circuit.halted else '✅' }}</span>
+                <span class="cb-main">{{ 'TRADING HALTED TODAY' if circuit.halted else 'Trading Allowed' }}</span>
+                {% if circuit.halted %}<span class="cb-reason">{{ circuit.halt_reason }}</span>{% endif %}
+                <span class="cb-stat">Net <b class="{{ 'up' if circuit.today_net_pnl > 0 else 'down' if circuit.today_net_pnl < 0 else '' }}">{{ "+" if circuit.today_net_pnl > 0 }}{{ circuit.today_net_pnl }}%</b></span>
+                <span class="cb-stat">Losses <b class="{{ 'down' if circuit.losses_today >= circuit.max_losses else '' }}">{{ circuit.losses_today }}/{{ circuit.max_losses }}</b></span>
+                <span class="cb-stat">Loss DD <b class="{{ 'down' if circuit.loss_drawdown <= circuit.max_drawdown_pct else '' }}">{{ circuit.loss_drawdown }}%/{{ circuit.max_drawdown_pct }}%</b></span>
+            </a>
+            {% endif %}
+            {% if user.is_admin %}
+            <!-- Live position protection banner (admin) — surfaces unprotected positions -->
+            <a href="{{ url_for('account') }}" id="protbanner" class="prot-banner" style="display:none;"></a>
+            {% endif %}
+        </div>
 
         <!-- ◈ Hero — main-coin heatmap tiles (everyone) + live account/strategy (admin) -->
         <div class="hero-grid">
@@ -1651,18 +1620,14 @@
                     <div class="signal-card {{ 'long-card' if signal.direction == 'LONG' else 'short-card' }} {{ 'max-conviction-card' if signal.get('effective_lights', 0) >= 5 else 'high-conviction-card' if signal.get('effective_lights', 0) >= 4 else '' }}{{ ' watch-only' if signal.get('tradeable') == False else '' }}" id="card-{{ signal.symbol|replace('/', '-')|replace(':', '-') }}" data-card-id="{{ signal.symbol|replace('/', '-')|replace(':', '-') }}" data-dir="{{ signal.direction }}" data-status="{{ signal.trade_status or '' }}" data-lights="{{ signal.get('effective_lights', 0) }}" data-score="{{ signal.score or 0 }}" data-rsi="{{ signal.rsi }}">
                         <div class="signal-row-grid signal-row-hit" role="button" tabindex="0" aria-expanded="false">
                             <div class="cell cell-asset">
-                                <div>
-                                    <a href="{{ signal.tv_url }}" target="_blank" class="symbol-tag" style="color: var(--wolf-blue); text-decoration: none;" onclick="event.stopPropagation()">{{ signal.symbol }}</a>{% if signal.get('tradeable') == False %}<span class="watch-only-badge" title="Scanned for market breadth — ranked outside the tradeable top pairs, so it never queues or trades.">Watch only</span>{% endif %}
-                                    {% if signal.trade_status %}
-                                    <div class="asset-meta">
-                                        <span class="trade-status-badge status-{{ signal.trade_status|lower }}">
-                                            {% if signal.trade_status == 'queued' %}QUEUED{% elif signal.trade_status == 'rejected' %}REJECTED{% elif signal.trade_status in ['active', 'pending'] %}PENDING{% elif signal.trade_status == 'tp1_partial' %}TP1 PARTIAL{% elif signal.trade_status == 'tp' %}TP ✓{% elif signal.trade_status == 'sl' %}SL ✗{% elif signal.trade_status == 'manual_close' %}MANUAL CLOSED{% else %}{{ signal.trade_status|upper }}{% endif %}
-                                        </span>
-                                        {% if signal.record_status_reason %}
-                                        <span class="trade-status-reason">{{ signal.record_status_reason }}</span>
-                                        {% endif %}
-                                    </div>
-                                    {% endif %}
+                                <div class="asset-line">
+                                    <a href="{{ signal.tv_url }}" target="_blank" class="symbol-tag" style="color: var(--wolf-blue); text-decoration: none;" onclick="event.stopPropagation()">{{ signal.symbol }}</a>
+                                    {%- if signal.get('tradeable') == False %}<span class="watch-only-badge" title="Scanned for market breadth — ranked outside the tradeable top pairs, so it never queues or trades.">Watch only</span>{% endif %}
+                                    {%- if signal.trade_status %}
+                                    <span class="trade-status-badge status-{{ signal.trade_status|lower }}"{% if signal.record_status_reason %} title="{{ signal.record_status_reason }}"{% endif %}>
+                                        {%- if signal.trade_status == 'queued' %}QUEUED{% elif signal.trade_status == 'rejected' %}REJECTED{% elif signal.trade_status in ['active', 'pending'] %}PENDING{% elif signal.trade_status == 'tp1_partial' %}TP1 PARTIAL{% elif signal.trade_status == 'tp' %}TP ✓{% elif signal.trade_status == 'sl' %}SL ✗{% elif signal.trade_status == 'manual_close' %}MANUAL CLOSED{% else %}{{ signal.trade_status|upper }}{% endif -%}
+                                    </span>
+                                    {%- endif %}
                                 </div>
                             </div>
                             <div class="cell cell-side">
@@ -1759,6 +1724,12 @@
                                         </div>
                                     </div>
                                 </div>
+                                {% if signal.record_status_reason %}
+                                <div class="card-section">
+                                    <div class="card-section-title">Latest Scan Status</div>
+                                    {{ signal.record_status_reason }}
+                                </div>
+                                {% endif %}
                                 {% if signal.smc %}
                                 <div class="card-section">
                                     <div class="card-section-title">SMC 1h</div>
@@ -2256,11 +2227,13 @@
             const details = (signal.details && signal.details.length)
                 ? `<div class="card-section"><div class="card-section-title">Strategy Signals</div>${signal.details.join(' · ')}</div>` : '';
             const status = statusInfo(signal);
-            const statusHtml = status
-                ? `<div class="asset-meta">
-                        <span class="trade-status-badge ${status.cls}">${status.label}</span>
-                        ${signal.record_status_reason ? `<span class="trade-status-reason">${signal.record_status_reason}</span>` : ''}
-                   </div>`
+            const reasonAttr = signal.record_status_reason
+                ? ` title="${String(signal.record_status_reason).replace(/"/g, '&quot;')}"` : '';
+            const statusBadge = status
+                ? `<span class="trade-status-badge ${status.cls}"${reasonAttr}>${status.label}</span>`
+                : '';
+            const reasonSection = signal.record_status_reason
+                ? `<div class="card-section"><div class="card-section-title">Latest Scan Status</div>${signal.record_status_reason}</div>`
                 : '';
             const liveValue = formatLiveValue(signal.current_price);
 
@@ -2268,9 +2241,8 @@
                 <div class="signal-card ${cardCls}${isExpanded ? ' expanded' : ''}" id="card-${id}" data-card-id="${id}" data-dir="${signal.direction}" data-status="${signal.trade_status || ''}" data-lights="${effLights}" data-score="${signal.score || 0}" data-rsi="${signal.rsi}">
                     <div class="signal-row-grid signal-row-hit" role="button" tabindex="0" aria-expanded="${isExpanded}">
                         <div class="cell cell-asset">
-                            <div>
-                                <a href="${signal.tv_url}" target="_blank" class="symbol-tag" style="color: var(--wolf-blue); text-decoration: none;" onclick="event.stopPropagation()">${signal.symbol}</a>${watchBadge}
-                                ${statusHtml}
+                            <div class="asset-line">
+                                <a href="${signal.tv_url}" target="_blank" class="symbol-tag" style="color: var(--wolf-blue); text-decoration: none;" onclick="event.stopPropagation()">${signal.symbol}</a>${watchBadge}${statusBadge}
                             </div>
                         </div>
                         <div class="cell cell-side"><span class="side-pill ${sideCls}">${signal.direction}</span></div>
@@ -2289,6 +2261,7 @@
                     <div class="card-expand">
                         <div class="card-expand-inner">
                             ${renderExpandMetrics(signal)}
+                            ${reasonSection}
                             ${renderSmcCard(signal.smc)}
                             ${renderTpslCard(signal)}
                             ${details}
@@ -2409,6 +2382,7 @@
         }
 
         async function fetchDashboardSummary() {
+            if (document.hidden) return;
             try {
                 const response = await fetch('/api/dashboard_summary');
                 const data = await response.json();
@@ -2550,9 +2524,20 @@
             el.title = ageSec > staleAfter ? 'Scan is overdue — is the bot running?' : 'Time since last scan';
         }
 
+        // The age pill ticks locally every second — the network poll only has to
+        // re-sync it, so polling can be much less frequent without a frozen pill.
+        let lastAgeSec = null, lastAgeAt = 0, lastIntervalMin = null;
+        setInterval(() => {
+            if (lastAgeSec == null || document.hidden) return;
+            renderScanAge(lastAgeSec + Math.round((Date.now() - lastAgeAt) / 1000), lastIntervalMin);
+        }, 1000);
+
         async function checkForUpdates() {
+            if (document.hidden) return;   // background tabs skip all polling
             try {
-                const response = await fetch('/api/scan_data');
+                // ?since= lets the server skip the ~300 KB signals payload when the
+                // scan hasn't changed — the response is then a ~1 KB status ping.
+                const response = await fetch('/api/scan_data?since=' + encodeURIComponent(lastScanTime));
                 const data = await response.json();
 
                 const badgeEl = document.getElementById('bot-status-badge');
@@ -2561,12 +2546,13 @@
                 } else {
                     badgeEl.innerHTML = '<span class="badge bg-success" style="font-size:.65rem;">BOT IDLE</span>';
                 }
+                lastAgeSec = data.age_sec; lastAgeAt = Date.now(); lastIntervalMin = data.interval_min;
                 renderScanAge(data.age_sec, data.interval_min);
 
-                if (data.last_update !== lastScanTime) {
+                if (data.last_update !== lastScanTime && Array.isArray(data.signals)) {
                     lastScanTime = data.last_update;
                     document.getElementById('last-update').innerText = lastScanTime;
-                    renderAllSignals(data.signals || []);
+                    renderAllSignals(data.signals);
                     fetchLivePrices();
                     fetchDashboardSummary();
                     refreshTopEntries();
@@ -2580,16 +2566,22 @@
             const card = document.getElementById(`card-${rowId(item.symbol)}`);
             if (!card) return;
 
+            const valSpan = card.querySelector('.live-val');
+            const next = String(item.live_price);
+            // unchanged price → no DOM writes, no flash animation. Prevents 200+
+            // simultaneous repaints on every refresh cycle.
+            if (valSpan && valSpan.innerText === next) return;
+
             card.classList.add('updated');
             setTimeout(() => card.classList.remove('updated'), 1000);
 
-            const valSpan = card.querySelector('.live-val');
-            if (valSpan) valSpan.innerText = item.live_price;
+            if (valSpan) valSpan.innerText = next;
             const metricLivePrice = card.querySelector('.metric-live-price');
-            if (metricLivePrice) metricLivePrice.innerText = item.live_price;
+            if (metricLivePrice) metricLivePrice.innerText = next;
         }
 
         async function fetchLivePrices() {
+            if (document.hidden) return;
             const btn = document.querySelector('.refresh-btn');
             btn.disabled = true;
             btn.innerText = 'Updating...';
@@ -2651,6 +2643,7 @@
             }).join('');
         }
         async function refreshTopEntries() {
+            if (document.hidden) return;
             try {
                 const r = await fetch('/api/top_entries', { headers: { 'Accept': 'application/json' } });
                 if (r.ok) renderTopEntries(await r.json());
@@ -2663,7 +2656,7 @@
         {% if user.is_admin %}
         async function checkProtection() {
             const el = document.getElementById('protbanner');
-            if (!el) return;
+            if (!el || document.hidden) return;
             try {
                 const d = await (await fetch('/api/account')).json();
                 const pos = (d && d.positions) || [];
@@ -2691,16 +2684,25 @@
         fetchLivePrices();
         fetchDashboardSummary();
         checkForUpdates();            // populate freshness pill immediately on load
-        setInterval(checkForUpdates, 5000);
+        setInterval(checkForUpdates, 10000);
         setInterval(fetchLivePrices, 15000);
         setInterval(fetchDashboardSummary, 30000);
         setInterval(refreshTopEntries, 15000);
+        // Coming back to the tab → refresh everything once, immediately (all the
+        // pollers no-op while the tab is hidden, so data may be stale).
+        document.addEventListener('visibilitychange', () => {
+            if (document.hidden) return;
+            checkForUpdates();
+            fetchLivePrices();
+            fetchDashboardSummary();
+            refreshTopEntries();
+        });
 
         // 📰 Market headlines — same feeds as the Market page, via the lightweight
         // /api/news (RSS only, cached ~5 min server-side). Shown for all users.
         async function loadHeadlines() {
             const el = document.getElementById('dash-news');
-            if (!el) return;
+            if (!el || document.hidden) return;
             try {
                 const r = await fetch('/api/news', { headers: { 'Accept': 'application/json' } });
                 if (!r.ok) return;
@@ -2719,7 +2721,7 @@
         // 📊 Today's Briefing — computed read of BTC, US indices & alt breadth.
         async function loadBriefing() {
             const el = document.getElementById('briefing-body');
-            if (!el) return;
+            if (!el || document.hidden) return;
             const escB = s => (s || '').replace(/</g, '&lt;');
             const sign = v => (v >= 0 ? '+' : '');
             const arr = v => (v >= 0 ? '▲' : '▼');
@@ -2800,7 +2802,7 @@
         // side, so this poll is cheap. Stays hidden for non-admins / on error.
         async function loadAccountStrip() {
             const strip = document.getElementById('acct-strip');
-            if (!strip) return;
+            if (!strip || document.hidden) return;
             try {
                 const r = await fetch('/api/account');
                 if (!r.ok) return;
@@ -2827,7 +2829,7 @@
         // Realized history changes slowly → poll once a minute. Inline SVG, no lib.
         async function loadAccountSpark() {
             const el = document.getElementById('acct-spark');
-            if (!el) return;
+            if (!el || document.hidden) return;
             try {
                 const r = await fetch('/api/account/history');
                 if (!r.ok) return;
@@ -2894,6 +2896,7 @@
                     'stroke-linejoin="round" stroke-linecap="round" vector-effect="non-scaling-stroke"/>';
         }
         async function loadMainCoins() {
+            if (document.hidden) return;
             try {
                 const r = await fetch('/api/main_coins');
                 if (!r.ok) return;

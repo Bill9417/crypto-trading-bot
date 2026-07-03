@@ -1,11 +1,14 @@
 // ════════════════════════════════════════════════════════════════════════════
-//  All-in-One PRO — EMA + Trend Lines + MSB-OB + Smart Money Concepts
+//  All-in-One ULTIMATE — EMA + Tunnel/Vegas + Trend Lines + MSB-OB + SMC
+//                        + Confidence Meter + Volume Profile
 //  Trend Lines © LonesomeTheBlue | MSB-OB © EmreKb (MPL 2.0)
 //  Smart Money Concepts © LuxAlgo (CC BY-NC-SA 4.0)
+//  Double Tunnel © Gilbert0967 | Vegas EMA200 © rsu9111 (MPL 2.0)
 //  NOTE: SMC portion is non-commercial per LuxAlgo's license. Keep attribution.
+//  Panels: Confidence Meter = top-right · Volume Profile = top-left (defaults)
 // ════════════════════════════════════════════════════════════════════════════
 //@version=6
-indicator("All-in-One PRO: EMA + TL + MSB + SMC", overlay=true, max_lines_count=500, max_boxes_count=500, max_labels_count=500, max_bars_back=4900)
+indicator("All-in-One ULTIMATE", overlay=true, max_lines_count=500, max_boxes_count=500, max_labels_count=500, max_bars_back=5000)
 
 // ╔═══════════════════════════════════════════════════════╗
 // ║  ① MASTER MODULE TOGGLES                               ║
@@ -16,8 +19,8 @@ showTL    = input.bool(true,  "Trend Lines",         group=gM, tooltip="Auto-dra
 showMSB   = input.bool(false, "MSB + Order Blocks (legacy)", group=gM, tooltip="EmreKb market-structure + OB/BB zones. OFF by default — overlaps with SMC below.")
 showSMC   = input.bool(true,  "Smart Money Concepts", group=gM, tooltip="LuxAlgo SMC: structure, order blocks, FVG, EQH/EQL, zones")
 showSIG   = input.bool(false, "Signal Layer (Long/Short)", group=gM, tooltip="Confluence signal. OFF by default — not trading advice.")
-showPanel = input.bool(true,  "Info Panel",          group=gM, tooltip="Live status table")
-hideText  = input.bool(true,  "Hide All Text Labels", group=gM, tooltip="Keep blocks and lines, but remove all words (MSB, EQH/EQL, Premium, etc.) from the chart. Info panel text is unaffected.")
+showPanel = input.bool(true,  "Confidence Panel",    group=gM, tooltip="Top-right live status table")
+hideText  = input.bool(true,  "Hide All Text Labels", group=gM, tooltip="Keep blocks and lines, but remove all words (MSB, EQH/EQL, Premium, etc.) from the chart. Info panels are unaffected.")
 
 // ╔═══════════════════════════════════════════════════════╗
 // ║  ② EMA SETTINGS                                        ║
@@ -44,8 +47,6 @@ plot(showEMA ? emaTrend : na, "EMA Trend", color=emaTrendCol, linewidth=2)
 
 // ╔═══════════════════════════════════════════════════════╗
 // ║  ② b  DOUBLE TUNNEL + VEGAS EMA200 TREND LINE          ║
-//  Double Tunnel © Gilbert0967 (MPL 2.0)                   ║
-//  Vegas EMA200 trend line © rsu9111 (MPL 2.0)             ║
 // ╚═══════════════════════════════════════════════════════╝
 gDT = "② Double Tunnel"
 showTunnel  = input.bool(true,  "Show Double Tunnel", group=gDT)
@@ -120,7 +121,7 @@ dtcol      = input.color(color.red,  "Down", inline="tcol", group=gT)
 gS = "④ MSB + Order Blocks (legacy)"
 zigzag_len  = input.int(9, "ZigZag Length", group=gS)
 show_zigzag = input.bool(true, "Show ZigZag Lines", group=gS)
-zigzagColor = input.color(color.new(color.gray, 30), "ZigZag Color", group=gS, tooltip="Color of the zigzag swing line (was an unclear default blue).")
+zigzagColor = input.color(color.new(color.gray, 30), "ZigZag Color", group=gS, tooltip="Color of the zigzag swing line.")
 show_msb_line = input.bool(false, "Show MSB Structure Lines", group=gS, tooltip="The horizontal green/red line at each structure break. OFF keeps the OB/BB blocks but hides the line.")
 fib_factor  = input.float(0.33, "Breakout Confirm (Fib)", 0, 1, 0.01, group=gS)
 text_size   = input.string(size.tiny, "Zone Label Size", [size.tiny, size.small, size.normal, size.large, size.huge], group=gS)
@@ -137,10 +138,6 @@ bu_bb_text_color = input.color(color.green, "", group=gS, inline="bubb")
 be_bb_color = input.color(color.new(color.red, 70), "Bearish BB/MB", group=gS, inline="bebb")
 be_bb_border_color = input.color(color.red, "", group=gS, inline="bebb")
 be_bb_text_color = input.color(color.red, "", group=gS, inline="bebb")
-
-gP = "⑨ Info Panel"
-panelPos = input.string("Top Right", "Position", ["Top Right", "Top Left", "Bottom Right", "Bottom Left", "Middle Right"], group=gP)
-panelSize = input.string(size.small, "Text Size", [size.tiny, size.small, size.normal, size.large], group=gP)
 
 // ════════════════════════════════════════════════════════════════════════════
 //  SMC INPUTS (LuxAlgo) — groups ⑤–⑧, BOS/CHoCH text removed
@@ -307,12 +304,14 @@ f_already_exists(float slope, int baseBar, bool isUp) =>
                 break
     found
 
+// FIX: retire oldest active line(s) until under the cap (was: retired at most one, could stay over cap)
 f_retire_oldest(bool isUp) =>
     cnt = 0
     for t in tlines
         if t.isUp == isUp and not t.broken
             cnt += 1
-    if cnt > maxActiveTL
+    while cnt > maxActiveTL
+        retired = false
         for i = 0 to array.size(tlines) - 1
             t = array.get(tlines, i)
             if t.isUp == isUp and not t.broken
@@ -320,7 +319,11 @@ f_retire_oldest(bool isUp) =>
                 line.set_extend(t.ln, extend.none)
                 line.set_style(t.ln, line.style_dotted)
                 line.set_color(t.ln, color.new(t.isUp ? utcol : dtcol, 60))
+                cnt -= 1
+                retired := true
                 break
+        if not retired
+            break
     0
 
 f_prune_broken() =>
@@ -597,7 +600,7 @@ for bear_ob in be_ob_boxes
     bottom = box.get_bottom(bear_ob)
     if close > top
         f_delete_box(be_ob_boxes)
-    if close > bottom
+    else if close > bottom            // FIX: was a bare `if`, which read a shifted box after deletion
         alert("Price in the BE-OB zone")
     else
         box.set_right(bear_ob, bar_index + 10)
@@ -1031,7 +1034,11 @@ if showSMC
 if showEqualHighsLows_g
     getCurrentStructure(equalHighsLowsLengthInput,true)
 
-if showInternals_g or showInternalOrderBlocks_g or showTrend_g
+// FIX: run whenever SMC is on — internalTrend.bias feeds the Confidence Meter's
+// SMC factor, so the state must keep updating even if the internal-structure
+// DISPLAY toggles are all off. Drawing and OB storage stay gated by their own
+// toggles inside displayStructure, so nothing extra is drawn.
+if showSMC
     displayStructure(true)
 
 if showStructure_g or showSwingOrderBlocks_g or showHighLowSwings_g
@@ -1100,17 +1107,24 @@ shortCol = color.rgb(255, 23, 68)
 //  sizing, or backtest is implied. Treat it as context, not a command.
 // ════════════════════════════════════════════════════════════════════════════
 gSC = "⑩ Confidence Meter"
-showScore   = input.bool(true, "Show Confidence Meter", group=gSC, tooltip="0–100 directional agreement across EMA, SMC, Vegas, Tunnel, Trendlines. A meter, not a prediction.")
-scoreLongTh = input.int(70, "Long Threshold", minval=50, maxval=100, group=gSC, tooltip="Score above this flags a LONG bias marker.")
-scoreShortTh= input.int(70, "Short Threshold", minval=50, maxval=100, group=gSC, tooltip="Score below (100 - this) flags a SHORT bias marker.")
+showScore   = input.bool(true, "Show Confidence Meter", group=gSC, tooltip="0–100 directional agreement across EMA, SMC, Vegas, Tunnel, Trendlines and Volume. A meter, not a prediction.")
+showFactors = input.bool(false, "Show Factor Breakdown", group=gSC, tooltip="Adds the 7 individual factor rows under the score. OFF = clean minimal panel.")
+scoreLongTh = input.int(70, "Long Threshold", minval=50, maxval=100, group=gSC, tooltip="Score AT OR ABOVE this flags a LONG bias.")
+scoreShortTh= input.int(70, "Short Threshold", minval=50, maxval=100, group=gSC, tooltip="SHORT bias triggers at or below (100 − this). E.g. 70 → short at score ≤ 30.")
+volBiasLen  = input.int(360, "Volume Bias Length", minval=20, maxval=5000, group=gSC, tooltip="Window for the volume-weighted mean price behind the new Volume factor. This is a per-bar POC proxy: identical on history and realtime, unlike the drawn Volume Profile which only exists on the last bar.")
+confirmClose= input.bool(true, "Confirm Signals on Bar Close", group=gSC, tooltip="ON = Long/Short markers and their alerts only finalize when the bar closes, so they never appear and then vanish intrabar. OFF = can fire mid-bar (repaints until close).")
+useAdxFilter= input.bool(true, "ADX Regime Filter ≥", group=gSC, inline="adx", tooltip="Blocks Long/Short signals while ADX is below the threshold (ranging market). Does NOT change the confidence score itself — the panel's Regime row shows the current state.")
+adxTh       = input.int(20, "", minval=10, maxval=50, group=gSC, inline="adx")
+adxLen      = input.int(14, "ADX Length", minval=5, maxval=50, group=gSC)
 
 // factor weights (sum = 100)
-wEMAstack = 25
-wEMA200   = 20
+wEMAstack = 20
+wEMA200   = 15
 wSMC      = 25
 wVegas    = 15
 wTunnel   = 10
 wTrendln  = 5
+wVolume   = 10
 
 // each factor returns +1 bullish / -1 bearish / 0 neutral
 fEMAstack = emaFast > emaMed and emaMed > emaSlow and emaSlow > emaTrend ? 1 : emaFast < emaMed and emaMed < emaSlow and emaSlow < emaTrend ? -1 : 0
@@ -1119,14 +1133,23 @@ fSMC      = internalTrend.bias == BULLISH ? 1 : internalTrend.bias == BEARISH ? 
 fVegas    = ta.change(vegasEMA200) > 0 ? 1 : ta.change(vegasEMA200) < 0 ? -1 : 0
 fTunnel   = close > dt_ma1 and close > dt_ma3 ? 1 : close < dt_ma2 and close < dt_ma4 ? -1 : 0
 fTrendln  = tlBrokeDown ? 1 : tlBrokeUp ? -1 : 0
+// Volume Bias: price vs the volume-weighted mean price of the last volBiasLen bars.
+// This is the score's POC stand-in. The drawn Volume Profile can't be used here:
+// it is computed on the LAST bar only, so feeding it into the score would make
+// historical signals differ from realtime ones (repaint). This rolling version
+// is O(1) per bar and identical on history and realtime.
+volMean   = math.sum(close * volume, volBiasLen) / math.sum(volume, volBiasLen)
+fVolume   = na(volMean) ? 0 : close > volMean ? 1 : close < volMean ? -1 : 0
 
 // weighted net, normalized to 0–100 (50 = neutral)
-netRaw = fEMAstack*wEMAstack + fEMA200*wEMA200 + fSMC*wSMC + fVegas*wVegas + fTunnel*wTunnel + fTrendln*wTrendln
+netRaw = fEMAstack*wEMAstack + fEMA200*wEMA200 + fSMC*wSMC + fVegas*wVegas + fTunnel*wTunnel + fTrendln*wTrendln + fVolume*wVolume
 confScore = 50 + netRaw / 2.0
 confScore := math.max(0, math.min(100, confScore))
 
-scoreLong  = showScore and confScore >= scoreLongTh
-scoreShort = showScore and confScore <= (100 - scoreShortTh)
+// threshold CROSSINGS (events) — the "High Confidence" alerts fire once when the
+// score enters the zone, not on every bar it stays there
+scoreLong  = showScore and confScore >= scoreLongTh        and nz(confScore[1], 50) <  scoreLongTh
+scoreShort = showScore and confScore <= (100 - scoreShortTh) and nz(confScore[1], 50) >  (100 - scoreShortTh)
 
 // ── retain the original arm-and-fire entry markers, now confirmed by score ──
 var bool longArmed2 = false
@@ -1140,14 +1163,19 @@ if msbFlipDown
     shortArmed2 := true
     longArmed2 := false
 
+// regime + repaint filters
+[dmiPlus, dmiMinus, adxVal] = ta.dmi(adxLen, adxLen)
+regimeOK  = not useAdxFilter or adxVal >= adxTh
+sigWindow = not confirmClose or barstate.isconfirmed   // historical bars are always confirmed
+
 longSig = false
 shortSig = false
-if showSIG
-    if longArmed2 and trendUp and confScore >= scoreLongTh and lastSig != 1
+if showSIG and sigWindow
+    if longArmed2 and trendUp and regimeOK and confScore >= scoreLongTh and lastSig != 1
         longSig := true
         lastSig := 1
         longArmed2 := false
-    if shortArmed2 and trendDown and confScore <= (100 - scoreShortTh) and lastSig != -1
+    if shortArmed2 and trendDown and regimeOK and confScore <= (100 - scoreShortTh) and lastSig != -1
         shortSig := true
         lastSig := -1
         shortArmed2 := false
@@ -1165,46 +1193,296 @@ alertcondition(scoreLong,  "High Long Confidence",  "Confidence meter crossed in
 alertcondition(scoreShort, "High Short Confidence", "Confidence meter crossed into short bias")
 
 // ════════════════════════════════════════════════════════════════════════════
-//  INFO PANEL — with confidence meter + factor breakdown
+//  CONFIDENCE PANEL — clean / minimal · TOP RIGHT
+//  Default = 4 rows (score, bias, trend, active TL). Toggle factor breakdown on.
 // ════════════════════════════════════════════════════════════════════════════
+gP = "⑪ Confidence Panel"
+panelPos = input.string("Top Right", "Position", ["Top Right", "Top Left", "Bottom Right", "Bottom Left", "Middle Right"], group=gP)
+panelSize = input.string(size.normal, "Text Size", [size.tiny, size.small, size.normal, size.large], group=gP)
+
 f_panelpos(p) =>
     p == "Top Right" ? position.top_right : p == "Top Left" ? position.top_left : p == "Bottom Right" ? position.bottom_right : p == "Bottom Left" ? position.bottom_left : position.middle_right
 
-f_facCol(int f) => f == 1 ? color.lime : f == -1 ? color.red : color.gray
+f_facCol(int f) => f == 1 ? #26a69a : f == -1 ? #ef5350 : color.gray
 f_facTxt(int f) => f == 1 ? "Bull" : f == -1 ? "Bear" : "—"
 
-var table infoPanel = table.new(f_panelpos(panelPos), 2, 11, bgcolor=color.new(color.black, 20), border_color=color.new(color.gray, 50), border_width=1, frame_color=color.gray, frame_width=1)
+// 10-segment score bar: ██████░░░░
+f_scoreBar(float sc) =>
+    filled = math.round(sc / 10)
+    string s = ""
+    for i = 1 to 10
+        s += i <= filled ? "█" : "░"
+    s
+
+var table infoPanel = table.new(f_panelpos(panelPos), 2, 12, bgcolor=color.new(#0d0d12, 15), border_color=color.new(color.gray, 65), border_width=1, frame_color=color.new(color.gray, 45), frame_width=1)
 
 if barstate.islast and showPanel
-    pxTxt = close > emaTrend ? "Above EMA200" : "Below EMA200"
-    pxCol = close > emaTrend ? color.lime : color.red
+    // score → accent color + bias text
+    scoreCol = confScore >= scoreLongTh ? #26a69a : confScore <= (100 - scoreShortTh) ? #ef5350 : #ffb300
+    biasTxt  = confScore >= scoreLongTh ? "LONG" : confScore <= (100 - scoreShortTh) ? "SHORT" : "Neutral"
+    trendTxt = close > emaTrend ? "Above 200" : "Below 200"
+    trendCol = close > emaTrend ? #26a69a : #ef5350
+    regTxt   = adxVal >= adxTh ? "Trending · " + str.tostring(adxVal, "#") : "Ranging · " + str.tostring(adxVal, "#")
+    regCol   = adxVal >= adxTh ? color.white : #ffb300
     activeTL = 0
     for t in tlines
         if not t.broken
             activeTL += 1
-    // confidence color: green high, red low, gray mid
-    scoreCol = confScore >= scoreLongTh ? color.lime : confScore <= (100 - scoreShortTh) ? color.red : color.orange
-    biasTxt = confScore >= scoreLongTh ? "LONG bias" : confScore <= (100 - scoreShortTh) ? "SHORT bias" : "Neutral"
 
-    table.cell(infoPanel, 0, 0, "CONFIDENCE METER", text_color=color.white, text_size=panelSize, bgcolor=color.new(color.blue, 40))
-    table.cell(infoPanel, 1, 0, "", bgcolor=color.new(color.blue, 40))
-    table.cell(infoPanel, 0, 1, "Score (0–100)", text_color=color.silver, text_size=panelSize, text_halign=text.align_left)
-    table.cell(infoPanel, 1, 1, str.tostring(math.round(confScore)), text_color=color.white, text_size=panelSize, bgcolor=color.new(scoreCol, 60))
-    table.cell(infoPanel, 0, 2, "Bias", text_color=color.silver, text_size=panelSize, text_halign=text.align_left)
-    table.cell(infoPanel, 1, 2, biasTxt, text_color=scoreCol, text_size=panelSize)
-    table.cell(infoPanel, 0, 3, "— factors —", text_color=color.gray, text_size=panelSize, text_halign=text.align_left)
-    table.cell(infoPanel, 1, 3, "", text_size=panelSize)
-    table.cell(infoPanel, 0, 4, "EMA Stack (25)", text_color=color.silver, text_size=panelSize, text_halign=text.align_left)
-    table.cell(infoPanel, 1, 4, f_facTxt(fEMAstack), text_color=f_facCol(fEMAstack), text_size=panelSize)
-    table.cell(infoPanel, 0, 5, "Price vs EMA200 (20)", text_color=color.silver, text_size=panelSize, text_halign=text.align_left)
-    table.cell(infoPanel, 1, 5, f_facTxt(fEMA200), text_color=f_facCol(fEMA200), text_size=panelSize)
-    table.cell(infoPanel, 0, 6, "SMC Structure (25)", text_color=color.silver, text_size=panelSize, text_halign=text.align_left)
-    table.cell(infoPanel, 1, 6, f_facTxt(fSMC), text_color=f_facCol(fSMC), text_size=panelSize)
-    table.cell(infoPanel, 0, 7, "Vegas Slope (15)", text_color=color.silver, text_size=panelSize, text_halign=text.align_left)
-    table.cell(infoPanel, 1, 7, f_facTxt(fVegas), text_color=f_facCol(fVegas), text_size=panelSize)
-    table.cell(infoPanel, 0, 8, "Tunnel Position (10)", text_color=color.silver, text_size=panelSize, text_halign=text.align_left)
-    table.cell(infoPanel, 1, 8, f_facTxt(fTunnel), text_color=f_facCol(fTunnel), text_size=panelSize)
-    table.cell(infoPanel, 0, 9, "Trendline Break (5)", text_color=color.silver, text_size=panelSize, text_halign=text.align_left)
-    table.cell(infoPanel, 1, 9, f_facTxt(fTrendln), text_color=f_facCol(fTrendln), text_size=panelSize)
-    table.cell(infoPanel, 0, 10, "Active Trendlines", text_color=color.silver, text_size=panelSize, text_halign=text.align_left)
-    table.cell(infoPanel, 1, 10, str.tostring(activeTL), text_color=color.white, text_size=panelSize)
+    // Header: title + score number
+    table.cell(infoPanel, 0, 0, "CONFIDENCE", text_color=color.white, text_size=panelSize, text_halign=text.align_left, bgcolor=color.new(#1c1c28, 0))
+    table.cell(infoPanel, 1, 0, str.tostring(math.round(confScore)), text_color=color.white, text_size=panelSize, text_halign=text.align_center, bgcolor=color.new(scoreCol, 35))
+
+    // Score bar + bias
+    table.cell(infoPanel, 0, 1, " " + f_scoreBar(confScore), text_color=scoreCol, text_size=panelSize, text_halign=text.align_left)
+    table.cell(infoPanel, 1, 1, biasTxt + " ", text_color=scoreCol, text_size=panelSize, text_halign=text.align_right)
+
+    // Trend
+    table.cell(infoPanel, 0, 2, " Trend", text_color=color.silver, text_size=panelSize, text_halign=text.align_left)
+    table.cell(infoPanel, 1, 2, trendTxt + " ", text_color=trendCol, text_size=panelSize, text_halign=text.align_right)
+
+    // Regime (ADX)
+    table.cell(infoPanel, 0, 3, " Regime", text_color=color.silver, text_size=panelSize, text_halign=text.align_left)
+    table.cell(infoPanel, 1, 3, regTxt + " ", text_color=regCol, text_size=panelSize, text_halign=text.align_right)
+
+    // Active trendlines
+    table.cell(infoPanel, 0, 4, " Active TL", text_color=color.silver, text_size=panelSize, text_halign=text.align_left)
+    table.cell(infoPanel, 1, 4, str.tostring(activeTL) + " ", text_color=color.white, text_size=panelSize, text_halign=text.align_right)
+
+    // Optional factor breakdown
+    if showFactors
+        table.cell(infoPanel, 0, 5, " EMA Stack",   text_color=color.silver, text_size=panelSize, text_halign=text.align_left)
+        table.cell(infoPanel, 1, 5, f_facTxt(fEMAstack) + " ", text_color=f_facCol(fEMAstack), text_size=panelSize, text_halign=text.align_right)
+        table.cell(infoPanel, 0, 6, " Px vs 200",    text_color=color.silver, text_size=panelSize, text_halign=text.align_left)
+        table.cell(infoPanel, 1, 6, f_facTxt(fEMA200) + " ", text_color=f_facCol(fEMA200), text_size=panelSize, text_halign=text.align_right)
+        table.cell(infoPanel, 0, 7, " SMC",          text_color=color.silver, text_size=panelSize, text_halign=text.align_left)
+        table.cell(infoPanel, 1, 7, f_facTxt(fSMC) + " ", text_color=f_facCol(fSMC), text_size=panelSize, text_halign=text.align_right)
+        table.cell(infoPanel, 0, 8, " Vegas",        text_color=color.silver, text_size=panelSize, text_halign=text.align_left)
+        table.cell(infoPanel, 1, 8, f_facTxt(fVegas) + " ", text_color=f_facCol(fVegas), text_size=panelSize, text_halign=text.align_right)
+        table.cell(infoPanel, 0, 9, " Tunnel",       text_color=color.silver, text_size=panelSize, text_halign=text.align_left)
+        table.cell(infoPanel, 1, 9, f_facTxt(fTunnel) + " ", text_color=f_facCol(fTunnel), text_size=panelSize, text_halign=text.align_right)
+        table.cell(infoPanel, 0, 10, " TL Break",    text_color=color.silver, text_size=panelSize, text_halign=text.align_left)
+        table.cell(infoPanel, 1, 10, f_facTxt(fTrendln) + " ", text_color=f_facCol(fTrendln), text_size=panelSize, text_halign=text.align_right)
+        table.cell(infoPanel, 0, 11, " Volume",      text_color=color.silver, text_size=panelSize, text_halign=text.align_left)
+        table.cell(infoPanel, 1, 11, f_facTxt(fVolume) + " ", text_color=f_facCol(fVolume), text_size=panelSize, text_halign=text.align_right)
+
+// ════════════════════════════════════════════════════════════════════════════
+//  SIMPLE VOLUME PROFILE  ·  Right-Side Histogram + Info Panel  ·  TOP LEFT panel
+//  All identifiers prefixed  vp  — nothing clashes with the modules above.
+//  Draws only on the last bar → ~zero load.
+// ════════════════════════════════════════════════════════════════════════════
+gGen  = "⑫ Volume Profile · General"
+vpShow     = input.bool(true,          "Show Volume Profile",                                 group = gGen)
+vpLookback = input.int(360,            "Lookback (bars)",    minval = 10, maxval = 5000, step = 10, group = gGen)
+vpRows     = input.int(25,             "Rows (resolution)",  minval = 10, maxval = 150,       group = gGen, tooltip="Higher = finer profile but more boxes. With SMC/MSB also drawing, very high values may hit the 500-box chart limit and drop the oldest drawings.")
+vpVA       = input.float(70,           "Value Area %",       minval = 30, maxval = 95,        group = gGen) / 100.0
+vpSplit    = input.string("Proportional", "Buy / Sell Split", options = ["Proportional", "Up/Down Candle"], group = gGen, tooltip="Proportional = split each bar's volume by where it closed in its range (smoother). Up/Down = 100% buy on green bars, 100% sell on red (coarser).")
+
+gStyle = "⑫ Volume Profile · Style"
+vpWidth   = input.int(60,   "Profile Width (bars)",      minval = 10, maxval = 200, group = gStyle)
+vpOffset  = input.int(10,   "Offset From Last Bar",      minval = 0,  maxval = 100, group = gStyle)
+vpBuyCol  = input.color(#26a69a, "Buy / Sell", inline = "bs", group = gStyle)
+vpSellCol = input.color(#ef5350, "",           inline = "bs", group = gStyle)
+vpVATr    = input.int(15,   "Value-Area Transparency",   minval = 0, maxval = 90, group = gStyle)
+vpOutTr   = input.int(70,   "Outside-VA Transparency",   minval = 0, maxval = 95, group = gStyle)
+
+gLvl = "⑫ Volume Profile · Levels"
+vpShowPOC = input.bool(true, "Point of Control (POC)", inline = "poc", group = gLvl)
+vpPOCCol  = input.color(#ffb300, "",                   inline = "poc", group = gLvl)
+vpShowVA  = input.bool(true, "Value Area High / Low",  inline = "va",  group = gLvl)
+vpVACol   = input.color(#2962ff, "",                   inline = "va",  group = gLvl)
+vpExtend  = input.bool(false, "Extend Levels To The Right",            group = gLvl)
+vpShowLbl = input.bool(true,  "Show Price Labels On Levels",           group = gLvl)
+
+gPnl = "⑫ Volume Profile · Info Panel"
+vpShowPanel = input.bool(true, "Show Info Panel", group = gPnl)
+vpPanelPos  = input.string("Top Left", "Position", options = ["Top Right","Top Left","Bottom Right","Bottom Left","Middle Right"], group = gPnl, tooltip="Defaults to Top Left so it doesn't collide with the Confidence panel (Top Right).")
+vpTxtSize   = input.string("Small", "Text Size", options = ["Tiny","Small","Normal"], group = gPnl)
+
+// ------------------------------------------------------------------ Helpers
+posOf(s) =>
+    switch s
+        "Top Left"     => position.top_left
+        "Bottom Right" => position.bottom_right
+        "Bottom Left"  => position.bottom_left
+        "Middle Right" => position.middle_right
+        => position.top_right
+
+sizeOf(s) =>
+    switch s
+        "Tiny"   => size.tiny
+        "Normal" => size.normal
+        => size.small
+
+// ------------------------------------------------------------------ Persistent handles
+var box[]   vpBoxes  = array.new<box>()
+var line[]  vpLines  = array.new<line>()
+var label[] vpLabels = array.new<label>()
+var table   vpTable  = na
+
+// ------------------------------------------------------------------ Main (last bar only)
+if barstate.islast and (vpShow or vpShowPanel)
+    // ---- wipe the previous frame
+    for b in vpBoxes
+        box.delete(b)
+    vpBoxes.clear()
+    for l in vpLines
+        line.delete(l)
+    vpLines.clear()
+    for lb in vpLabels
+        label.delete(lb)
+    vpLabels.clear()
+    if not na(vpTable)
+        table.delete(vpTable)
+        vpTable := na
+
+    // ---- window + price range
+    int   len      = int(math.min(vpLookback, bar_index))
+    int   startIdx = bar_index - len + 1
+    float hi = high
+    float lo = low
+    for i = 0 to len - 1
+        hi := math.max(hi, high[i])
+        lo := math.min(lo, low[i])
+    float step = (hi - lo) / vpRows
+
+    if step > 0
+        // ---- accumulate volume into price bins (each bar spread across its hi-lo range)
+        float[] totV = array.new<float>(vpRows, 0.0)
+        float[] buyV = array.new<float>(vpRows, 0.0)
+
+        for i = 0 to len - 1
+            float bh = high[i]
+            float bl = low[i]
+            float bc = close[i]
+            float bo = open[i]
+            float bv = volume[i]
+            if bv > 0 and bh > bl
+                // buy share of this bar's volume
+                float buyR = vpSplit == "Up/Down Candle" ? (bc >= bo ? 1.0 : 0.0) : math.max(0.0, math.min(1.0, (bc - bl) / (bh - bl)))
+                int s0 = int(math.max(math.floor((bl - lo) / step), 0))
+                int s1 = int(math.min(math.floor((bh - lo) / step), vpRows - 1))
+                for r = s0 to s1
+                    float binLo = lo + r * step
+                    float ov    = math.min(bh, binLo + step) - math.max(bl, binLo)   // overlap of bar with this bin
+                    if ov > 0
+                        float add = bv * (ov / (bh - bl))
+                        totV.set(r, totV.get(r) + add)
+                        buyV.set(r, buyV.get(r) + add * buyR)
+
+        float maxV  = totV.max()
+        float total = totV.sum()
+
+        if maxV > 0 and total > 0
+            int pocIdx = totV.indexof(maxV)
+
+            // ---- value area: expand out from POC toward the heavier neighbour until % reached
+            int   vahIdx = pocIdx
+            int   valIdx = pocIdx
+            float vaVol  = maxV
+            float target = total * vpVA
+            while vaVol < target
+                if valIdx <= 0 and vahIdx >= vpRows - 1
+                    break
+                float upV = vahIdx < vpRows - 1 ? totV.get(vahIdx + 1) : -1.0
+                float dnV = valIdx > 0          ? totV.get(valIdx - 1) : -1.0
+                if upV < 0 and dnV < 0
+                    break
+                if upV >= dnV
+                    vahIdx += 1
+                    vaVol  += math.max(upV, 0)
+                else
+                    valIdx -= 1
+                    vaVol  += math.max(dnV, 0)
+
+            float pocPrice = lo + (pocIdx + 0.5) * step
+            float vahPrice = lo + (vahIdx + 1.0) * step
+            float valPrice = lo + (valIdx + 0.0) * step
+
+            int anchorL   = bar_index + vpOffset      // left edge of the histogram (blank area to the right)
+            int lineRight = anchorL + vpWidth
+
+            // ================= draw histogram (only if vpShow) =================
+            if vpShow
+                for r = 0 to vpRows - 1
+                    float tv = totV.get(r)
+                    if tv > 0
+                        float rowHi = lo + (r + 0.85) * step
+                        float rowLo = lo + (r + 0.15) * step
+                        float bvr   = buyV.get(r)
+                        int sellLen = int(math.round((tv - bvr) / maxV * vpWidth))
+                        int buyLen  = int(math.round(bvr / maxV * vpWidth))
+                        bool inVA   = r >= valIdx and r <= vahIdx
+                        int  tr     = int(r == pocIdx ? math.max(0, vpVATr - 10) : (inVA ? vpVATr : vpOutTr))
+                        // sell (left sub-segment)
+                        if sellLen > 0
+                            vpBoxes.push(box.new(anchorL, rowHi, anchorL + sellLen, rowLo, xloc = xloc.bar_index, border_width = 0, bgcolor = color.new(vpSellCol, tr)))
+                        // buy (right sub-segment, continues from the sell tip)
+                        if buyLen > 0
+                            int bStart = anchorL + sellLen
+                            vpBoxes.push(box.new(bStart, rowHi, bStart + buyLen, rowLo, xloc = xloc.bar_index, border_width = 0, bgcolor = color.new(vpBuyCol, tr)))
+
+                // ---- level lines
+                lineExt = vpExtend ? extend.right : extend.none
+                if vpShowPOC
+                    vpLines.push(line.new(startIdx, pocPrice, lineRight, pocPrice, xloc = xloc.bar_index, extend = lineExt, color = vpPOCCol, width = 2, style = line.style_solid))
+                if vpShowVA
+                    vpLines.push(line.new(startIdx, vahPrice, lineRight, vahPrice, xloc = xloc.bar_index, extend = lineExt, color = vpVACol, width = 1, style = line.style_dashed))
+                    vpLines.push(line.new(startIdx, valPrice, lineRight, valPrice, xloc = xloc.bar_index, extend = lineExt, color = vpVACol, width = 1, style = line.style_dashed))
+
+                // ---- price tags
+                if vpShowLbl
+                    if vpShowPOC
+                        vpLabels.push(label.new(lineRight, pocPrice, "POC " + str.tostring(pocPrice, format.mintick), xloc.bar_index, yloc.price, vpPOCCol, label.style_label_left, color.white, size.tiny))
+                    if vpShowVA
+                        vpLabels.push(label.new(lineRight, vahPrice, "VAH " + str.tostring(vahPrice, format.mintick), xloc.bar_index, yloc.price, vpVACol, label.style_label_left, color.white, size.tiny))
+                        vpLabels.push(label.new(lineRight, valPrice, "VAL " + str.tostring(valPrice, format.mintick), xloc.bar_index, yloc.price, vpVACol, label.style_label_left, color.white, size.tiny))
+
+            // ================= info panel =================
+            if vpShowPanel
+                // derived stats
+                float buyTot = buyV.sum()
+                float buyPct = buyTot / total * 100
+                float selPct = 100 - buyPct
+                float vaW    = vahPrice - valPrice
+                float vaWpct = vaW / pocPrice * 100
+                string posTxt = close > vahPrice ? "ABOVE · Premium" : close < valPrice ? "BELOW · Discount" : "INSIDE · Balanced"
+                color  posCol = close > vahPrice ? color.new(#ef5350, 0) : close < valPrice ? color.new(#26a69a, 0) : color.new(#ffb300, 0)
+                float  pocPos = pocIdx / (vpRows - 1.0)
+                string strTxt = pocPos > 0.66 ? "Buyers dominant" : pocPos < 0.34 ? "Sellers dominant" : "Two-sided"
+
+                color th = color.new(#2962ff, 0)
+                color bg = color.new(chart.bg_color, 15)
+                color fg = chart.fg_color
+                ts       = sizeOf(vpTxtSize)
+
+                vpTable := table.new(posOf(vpPanelPos), 2, 9, frame_color = color.new(color.gray, 40), frame_width = 1, border_color = color.new(color.gray, 70), border_width = 1)
+
+                table.cell(vpTable, 0, 0, "VOLUME PROFILE", text_color = color.white, bgcolor = th, text_size = ts, text_halign = text.align_left)
+                table.cell(vpTable, 1, 0, "", bgcolor = th)
+                table.merge_cells(vpTable, 0, 0, 1, 0)
+
+                table.cell(vpTable, 0, 1, " Price vs VA", text_color = fg, bgcolor = bg, text_size = ts, text_halign = text.align_left)
+                table.cell(vpTable, 1, 1, posTxt + " ", text_color = color.white, bgcolor = posCol, text_size = ts, text_halign = text.align_right)
+
+                table.cell(vpTable, 0, 2, " POC", text_color = fg, bgcolor = bg, text_size = ts, text_halign = text.align_left)
+                table.cell(vpTable, 1, 2, str.tostring(pocPrice, format.mintick) + " ", text_color = vpPOCCol, bgcolor = bg, text_size = ts, text_halign = text.align_right)
+
+                table.cell(vpTable, 0, 3, " VAH", text_color = fg, bgcolor = bg, text_size = ts, text_halign = text.align_left)
+                table.cell(vpTable, 1, 3, str.tostring(vahPrice, format.mintick) + " ", text_color = vpVACol, bgcolor = bg, text_size = ts, text_halign = text.align_right)
+
+                table.cell(vpTable, 0, 4, " VAL", text_color = fg, bgcolor = bg, text_size = ts, text_halign = text.align_left)
+                table.cell(vpTable, 1, 4, str.tostring(valPrice, format.mintick) + " ", text_color = vpVACol, bgcolor = bg, text_size = ts, text_halign = text.align_right)
+
+                table.cell(vpTable, 0, 5, " VA Width", text_color = fg, bgcolor = bg, text_size = ts, text_halign = text.align_left)
+                table.cell(vpTable, 1, 5, str.tostring(vaW, format.mintick) + " (" + str.tostring(vaWpct, "#.##") + "%) ", text_color = fg, bgcolor = bg, text_size = ts, text_halign = text.align_right)
+
+                table.cell(vpTable, 0, 6, " Buy / Sell", text_color = fg, bgcolor = bg, text_size = ts, text_halign = text.align_left)
+                table.cell(vpTable, 1, 6, str.tostring(buyPct, "#.#") + "% / " + str.tostring(selPct, "#.#") + "% ", text_color = buyPct >= selPct ? vpBuyCol : vpSellCol, bgcolor = bg, text_size = ts, text_halign = text.align_right)
+
+                table.cell(vpTable, 0, 7, " Structure", text_color = fg, bgcolor = bg, text_size = ts, text_halign = text.align_left)
+                table.cell(vpTable, 1, 7, strTxt + " ", text_color = fg, bgcolor = bg, text_size = ts, text_halign = text.align_right)
+
+                table.cell(vpTable, 0, 8, " Lookback", text_color = fg, bgcolor = bg, text_size = ts, text_halign = text.align_left)
+                table.cell(vpTable, 1, 8, str.tostring(len) + " bars ", text_color = fg, bgcolor = bg, text_size = ts, text_halign = text.align_right)
+// ════════════════════════════════════════════════════════════════════════════
