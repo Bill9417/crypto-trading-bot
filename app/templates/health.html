@@ -1,0 +1,358 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <title>Wolf Scanner — System Health</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
+    <link rel="manifest" href="/manifest.webmanifest">
+    <meta name="theme-color" content="#0e1018">
+    <link rel="apple-touch-icon" href="/static/apple-touch-icon.png">
+    <link rel="stylesheet" href="/static/app.css?v={{ asset_ver }}">
+    <style>
+        :root {
+            --blue: #00d2ff;
+            --gold: #ffcf4b;
+            --slate: #0e1018;
+            --card: rgba(30,36,56,.72);
+            --border: rgba(255,255,255,.08);
+            --muted: #8a99ad;
+            --text: #f1f5f9;
+            --ok: #16a34a;
+            --bad: #dc2626;
+            --amber: #f59e0b;
+            --radius: 14px;
+            --shadow: 0 14px 40px rgba(0,0,0,.4);
+        }
+        * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+        html { -webkit-text-size-adjust: 100%; }
+        body {
+            margin: 0; background: var(--slate);
+            background-image: var(--page-bg-glow);
+            color: var(--text);
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+            -webkit-font-smoothing: antialiased; min-height: 100vh;
+        }
+        .num { font-variant-numeric: tabular-nums; }
+        .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+        .wrap { max-width: var(--page-max); margin: 0 auto; padding: 10px clamp(12px,4vw,20px) calc(34px + env(safe-area-inset-bottom)); }
+
+        /* ── Sticky header ── */
+        .bar {
+            position: sticky; top: 0; z-index: 20;
+            background: rgba(10,12,20,.92);
+            border: 1px solid var(--border);
+            border-radius: var(--radius); box-shadow: var(--shadow);
+            padding: 12px 16px; margin: 4px 0 16px;
+            display: flex; align-items: center; justify-content: space-between; gap: 10px;
+        }
+        .brand { display: flex; align-items: center; gap: 11px; min-width: 0; }
+        .brand-icon { font-size: 1.7rem; line-height: 1; }
+        .brand h1 { font-size: clamp(1rem,3.6vw,1.2rem); font-weight: 900; margin: 0; letter-spacing: -.4px; white-space: nowrap; }
+        .brand h1 span { color: var(--blue); }
+        .brand-sub { font-size: .7rem; color: var(--muted); margin-top: 2px; }
+        .actions { display: flex; gap: 8px; flex-shrink: 0; }
+        .btn {
+            background: rgba(255,255,255,.04); border: 1px solid var(--border);
+            color: var(--muted); font: inherit; font-weight: 700; font-size: .78rem;
+            padding: 9px 13px; border-radius: 11px; text-decoration: none; cursor: pointer;
+            display: inline-flex; align-items: center; gap: 6px; transition: color .15s, border-color .15s; white-space: nowrap;
+        }
+        .btn:hover, .btn:active { border-color: rgba(0,210,255,.4); color: var(--text); }
+
+        /* ── Hero verdict ── */
+        .hero {
+            background: linear-gradient(135deg, rgba(30,36,56,.85), rgba(14,17,28,.85));
+            border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow);
+            padding: 18px 20px; margin-bottom: 14px; position: relative; overflow: hidden;
+        }
+        .hero::before { content:""; position:absolute; inset:0 auto 0 0; width:5px; background: var(--ok); }
+        .hero.warn::before { background: var(--amber); }
+        .hero.down::before { background: var(--bad); }
+        .hero-top { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+        .hero-big { font-size: clamp(1.5rem,6vw,2rem); font-weight: 900; letter-spacing: -.5px; }
+        .hero-big.ok { color: var(--ok); }
+        .hero-big.warn { color: var(--amber); }
+        .hero-big.down { color: var(--bad); }
+        .hero-sub { font-size: .74rem; color: var(--muted); }
+        .issues { margin-top: 12px; display: flex; flex-direction: column; gap: 8px; }
+        .issue {
+            display: flex; align-items: baseline; gap: 9px; flex-wrap: wrap;
+            font-size: .84rem; line-height: 1.5; color: #cdd6e2;
+            background: rgba(255,255,255,.03); border: 1px solid var(--border);
+            border-radius: 10px; padding: 9px 12px;
+        }
+        .issue .sev { font-size: .62rem; font-weight: 900; letter-spacing: .6px; padding: 2px 8px; border-radius: 999px; flex-shrink: 0; }
+        .issue.warn .sev { background: rgba(245,158,11,.16); color: var(--amber); }
+        .issue.down .sev { background: rgba(239,68,68,.16); color: var(--bad); }
+        .issue code { color: var(--gold); background: rgba(255,207,75,.09); padding: 1px 8px; border-radius: 6px; font-weight: 700; font-size: .78rem; white-space: nowrap; }
+        .all-clear { font-size: .86rem; color: #cdd6e2; margin-top: 10px; }
+
+        /* ── Chips row ── */
+        .chips { display: grid; grid-template-columns: repeat(4,1fr); gap: 9px; margin-bottom: 14px; }
+        .chip { background: var(--card); border: 1px solid var(--border); border-radius: 13px; padding: 11px 12px; text-align: center; }
+        .chip .k { font-size: .62rem; text-transform: uppercase; letter-spacing: .6px; color: var(--muted); font-weight: 700; }
+        .chip .v { font-size: clamp(1.05rem,4vw,1.3rem); font-weight: 900; margin-top: 4px; }
+        .chip .v.blue { color: var(--blue); }
+        .chip .v.ok { color: var(--ok); }
+        .chip .v.warn { color: var(--amber); }
+        .chip .v.bad { color: var(--bad); }
+
+        /* ── Card shell ── */
+        .card { background: var(--card); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow); padding: 16px clamp(13px,3.5vw,20px); margin-bottom: 14px; }
+        .card-h { display: flex; align-items: center; gap: 9px; margin-bottom: 3px; }
+        .card-h .ic { font-size: 1.05rem; }
+        .card-h h2 { font-size: .98rem; font-weight: 800; margin: 0; }
+        .card .hint { font-size: .74rem; color: var(--muted); margin: 0 0 13px; line-height: 1.45; }
+
+        /* ── Process rows ── */
+        .proc { display: flex; align-items: center; gap: 11px; padding: 11px 4px; border-top: 1px solid rgba(255,255,255,.05); flex-wrap: wrap; }
+        .proc:first-of-type { border-top: none; }
+        .pdot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
+        .pdot.up { background: var(--ok); box-shadow: 0 0 8px rgba(22,163,74,.7); }
+        .pdot.downd { background: var(--bad); box-shadow: 0 0 8px rgba(220,38,38,.7); }
+        .pmain { min-width: 0; flex: 1 1 220px; }
+        .pname { font-size: .9rem; font-weight: 800; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+        .prole { font-size: .72rem; color: var(--muted); margin-top: 2px; line-height: 1.4; }
+        .pstats { font-size: .74rem; color: var(--muted); text-align: right; flex-shrink: 0; line-height: 1.6; }
+        .pstats b { color: var(--text); font-weight: 700; }
+        .pbadge { font-size: .62rem; font-weight: 900; letter-spacing: .5px; padding: 2px 8px; border-radius: 999px; white-space: nowrap; }
+        .pbadge.restart { background: rgba(245,158,11,.16); color: var(--amber); }
+        .pbadge.stopped { background: rgba(239,68,68,.16); color: var(--bad); }
+        .pbadge.dup { background: rgba(239,68,68,.16); color: var(--bad); }
+        .pbadge.live { background: rgba(0,210,255,.12); color: var(--blue); }
+        .pchanged { flex-basis: 100%; font-size: .7rem; color: var(--amber); opacity: .85; margin: 2px 0 0 21px; }
+
+        /* ── Freshness bars ── */
+        .fresh { margin-bottom: 12px; }
+        .fresh:last-child { margin-bottom: 0; }
+        .fresh-top { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; margin-bottom: 4px; flex-wrap: wrap; }
+        .fresh-name { font-size: .8rem; font-weight: 700; }
+        .fresh-val { font-size: .74rem; color: var(--muted); }
+        .fresh-val b { color: var(--text); }
+        .track { background: rgba(255,255,255,.05); border-radius: 8px; height: 16px; overflow: hidden; }
+        .fill { height: 100%; border-radius: 8px; min-width: 4px; transition: width .5s ease; background: linear-gradient(90deg, var(--ok), #22c55e); }
+        .fill.warn { background: linear-gradient(90deg, var(--amber), #c2740a); }
+        .fill.bad { background: linear-gradient(90deg, var(--bad), #b91c1c); }
+
+        /* ── Log rows ── */
+        .logrow { padding: 10px 4px; border-top: 1px solid rgba(255,255,255,.05); }
+        .logrow:first-of-type { border-top: none; }
+        .log-top { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+        .log-name { font-weight: 800; font-size: .84rem; color: var(--blue); }
+        .log-meta { font-size: .72rem; color: var(--muted); }
+        .log-err-pill { font-size: .64rem; font-weight: 800; padding: 2px 8px; border-radius: 999px; background: rgba(255,255,255,.05); color: var(--muted); }
+        .log-err-pill.has { background: rgba(245,158,11,.14); color: var(--amber); }
+        .log-line { font-size: .7rem; color: #aab6c5; margin-top: 5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .log-line.err { color: #f0a8a8; }
+        .log-line .tag { color: var(--muted); font-weight: 700; margin-right: 6px; }
+
+        /* ── Help card ── */
+        .help-cmd { display: flex; align-items: baseline; gap: 10px; padding: 7px 0; font-size: .8rem; flex-wrap: wrap; }
+        .help-cmd code { color: var(--gold); background: rgba(255,207,75,.09); padding: 2px 9px; border-radius: 6px; font-weight: 700; white-space: nowrap; }
+        .help-cmd span { color: var(--muted); font-size: .74rem; }
+        .help-note { font-size: .72rem; color: var(--muted); margin-top: 10px; line-height: 1.55; border-top: 1px solid rgba(255,255,255,.05); padding-top: 10px; }
+
+        @media (max-width: 560px) {
+            .chips { grid-template-columns: repeat(2,1fr); }
+            .pstats { text-align: left; }
+        }
+    </style>
+</head>
+<body>
+<div class="wrap">
+    <header class="bar">
+        <div class="brand">
+            <div class="brand-icon">🩺</div>
+            <div style="min-width:0">
+                <h1>Wolf <span>Health</span></h1>
+                <div class="brand-sub" id="genAt">{{ health.generated_at }}</div>
+            </div>
+        </div>
+        <div class="actions">
+            <button class="btn" onclick="loadHealth(this)">↻&nbsp;Refresh</button>
+        </div>
+    </header>
+
+    <div class="nav-standalone">{% include '_nav.html' %}</div>
+
+    <section class="hero" id="hero">
+        <div class="hero-top">
+            <div class="hero-big" id="heroBig">—</div>
+            <div class="hero-sub" id="heroSub"></div>
+        </div>
+        <div id="issueBox"></div>
+    </section>
+
+    <div class="chips" id="chips"></div>
+
+    <div class="card">
+        <div class="card-h"><span class="ic">⚙️</span><h2>Processes</h2></div>
+        <p class="hint">The three parts started by <b>./run_all.sh</b>. "Restart pending" means a code or .env file was edited <em>after</em> the process started — it is still running the old version until you restart.</p>
+        <div id="procs"></div>
+    </div>
+
+    <div class="card">
+        <div class="card-h"><span class="ic">⏱</span><h2>Data freshness</h2></div>
+        <p class="hint">How recently each engine produced data. A full bar means it's overdue.</p>
+        <div id="fresh"></div>
+    </div>
+
+    <div class="card">
+        <div class="card-h"><span class="ic">📜</span><h2>Logs</h2></div>
+        <p class="hint">Last activity and any error-looking lines near the end of each log (checked over the last ~64&nbsp;KB). A quiet log for a live process can be normal between scans.</p>
+        <div id="logs"></div>
+    </div>
+
+    <div class="card">
+        <div class="card-h"><span class="ic">🧰</span><h2>Fix-it commands</h2></div>
+        <p class="hint">Run these yourself in Terminal, from the project folder. This page only <em>watches</em> — it never restarts anything.</p>
+        <div class="help-cmd"><code>./run_all.sh bg</code><span>restart everything detached (safe: stops old copies first, runs tests)</span></div>
+        <div class="help-cmd"><code>./run_all.sh status</code><span>quick check of what's running</span></div>
+        <div class="help-cmd"><code>./run_all.sh stop</code><span>stop web + bot + scanner</span></div>
+        <div class="help-cmd"><code>tail -50 app/logs/bot.log</code><span>read the live engine's recent log</span></div>
+        <div class="help-note">Templates (the page layouts) reload on their own — only <b>.py</b> and <b>.env</b> edits need a restart. The Cloudflare tunnel is separate: restarting the stack keeps the same public URL, but restarting the <em>tunnel</em> changes it.</div>
+    </div>
+</div>
+
+<script>
+const INITIAL = {{ health|tojson }};
+const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const fmtAgo = s => s == null ? '—'
+    : s < 90 ? s + 's ago'
+    : s < 5400 ? Math.round(s / 60) + 'm ago'
+    : s < 172800 ? (s / 3600).toFixed(1) + 'h ago'
+    : Math.round(s / 86400) + 'd ago';
+const fmtUp = s => s == null ? '—'
+    : s < 3600 ? Math.floor(s / 60) + 'm'
+    : s < 172800 ? Math.floor(s / 3600) + 'h ' + Math.floor(s % 3600 / 60) + 'm'
+    : Math.floor(s / 86400) + 'd ' + Math.floor(s % 86400 / 3600) + 'h';
+const fmtB = b => b == null ? '—'
+    : b < 1024 ? b + ' B'
+    : b < 1048576 ? (b / 1024).toFixed(1) + ' KB'
+    : b < 1073741824 ? (b / 1048576).toFixed(1) + ' MB'
+    : (b / 1073741824).toFixed(2) + ' GB';
+
+function render(h) {
+    document.getElementById('genAt').textContent = h.generated_at || '—';
+
+    // Hero
+    const hero = document.getElementById('hero');
+    const big = document.getElementById('heroBig');
+    hero.className = 'hero ' + h.overall;
+    big.className = 'hero-big ' + h.overall;
+    big.textContent = h.overall === 'ok' ? '✓ ALL SYSTEMS GO'
+                    : h.overall === 'warn' ? '⚠ NEEDS ATTENTION'
+                    : '⛔ SOMETHING IS DOWN';
+    const eng = h.engine || {};
+    document.getElementById('heroSub').innerHTML = eng.running_name
+        ? 'live engine: <b>' + esc(eng.running_name) + '</b>'
+        : 'no live engine detected';
+    const box = document.getElementById('issueBox');
+    if (h.issues && h.issues.length) {
+        box.innerHTML = '<div class="issues">' + h.issues.map(i =>
+            '<div class="issue ' + esc(i.sev) + '">' +
+            '<span class="sev">' + (i.sev === 'down' ? 'DOWN' : 'WARN') + '</span>' +
+            '<span>' + esc(i.text) + '</span>' +
+            (i.fix ? '<code>' + esc(i.fix) + '</code>' : '') +
+            '</div>').join('') + '</div>';
+    } else {
+        box.innerHTML = '<div class="all-clear">Nothing to do — every process is up, running current code, and producing fresh data. 🐺</div>';
+    }
+
+    // Chips
+    const web = (h.processes || []).find(p => p.key === 'web') || {};
+    const st = h.storage || {};
+    const scanAge = h.scan ? h.scan.age_sec : null;
+    const s2Age = h.scan && h.scan.s2 ? h.scan.s2.age_sec : null;
+    document.getElementById('chips').innerHTML =
+        chip('Web uptime', fmtUp(web.uptime_sec), web.running ? 'blue' : 'bad') +
+        chip('Last S1 scan', fmtAgo(scanAge), h.scan && h.scan.stale ? 'warn' : 'ok') +
+        chip('Last S2 sweep', fmtAgo(s2Age), h.scan && h.scan.s2 && h.scan.s2.stale ? 'warn' : 'ok') +
+        chip('Disk free', (st.disk_free_gb != null ? st.disk_free_gb + ' GB' : '—'),
+             st.disk_free_gb != null && st.disk_free_gb < 5 ? 'bad' : '');
+
+    // Processes
+    document.getElementById('procs').innerHTML = (h.processes || []).map(p => {
+        const badges = [];
+        if (!p.running) badges.push('<span class="pbadge stopped">STOPPED</span>');
+        if (p.instances > 1) badges.push('<span class="pbadge dup">' + p.instances + ' COPIES</span>');
+        if (p.restart_needed) badges.push('<span class="pbadge restart">⟳ RESTART PENDING</span>');
+        if (p.running && /LIVE engine/.test(p.role)) badges.push('<span class="pbadge live">LIVE</span>');
+        const stats = p.running
+            ? 'pid <b class="num">' + p.pid + '</b> · up <b>' + fmtUp(p.uptime_sec) + '</b> · <b>' + (p.rss_mb != null ? p.rss_mb + ' MB' : '—') + '</b> RAM'
+            : 'not found in process list';
+        const changed = p.restart_needed
+            ? '<div class="pchanged">changed after start: ' + p.changed_files.map(esc).join(', ') + '</div>' : '';
+        return '<div class="proc">' +
+            '<span class="pdot ' + (p.running ? 'up' : 'downd') + '"></span>' +
+            '<div class="pmain"><div class="pname">' + esc(p.label) + ' ' + badges.join(' ') + '</div>' +
+            '<div class="prole">' + esc(p.role) + '</div></div>' +
+            '<div class="pstats">' + stats + '</div>' + changed +
+            '</div>';
+    }).join('');
+
+    // Freshness bars
+    const rows = [];
+    if (h.scan) {
+        const lim = (h.scan.interval_min || 60) * 60 + 900;
+        rows.push(freshBar('S1 market scan', h.scan.age_sec, lim,
+            'last: ' + esc(h.scan.last_update || '—') + ' · expected every ' + (h.scan.interval_min || '?') + 'm'));
+        if (h.scan.s2) {
+            rows.push(freshBar('Strategy-2 sweep', h.scan.s2.age_sec, 1800,
+                h.scan.s2.live == null ? 'no signals file yet'
+                : h.scan.s2.live ? 'scanner reports LIVE trading armed' : 'alert-only mode'));
+        }
+    }
+    document.getElementById('fresh').innerHTML = rows.join('');
+
+    // Logs
+    document.getElementById('logs').innerHTML = (h.logs || []).map(l => {
+        if (!l.exists) {
+            return '<div class="logrow"><div class="log-top"><span class="log-name mono">' + esc(l.name) +
+                   '</span><span class="log-meta">missing</span></div></div>';
+        }
+        const pill = l.recent_errors > 0
+            ? '<span class="log-err-pill has">' + l.recent_errors + ' error line(s) near end</span>'
+            : '<span class="log-err-pill">no recent errors</span>';
+        const lastErr = l.last_error
+            ? '<div class="log-line err mono"><span class="tag">last error</span>' + esc(l.last_error) + '</div>' : '';
+        return '<div class="logrow">' +
+            '<div class="log-top"><span class="log-name mono">' + esc(l.name) + '</span>' +
+            '<span class="log-meta">wrote ' + fmtAgo(l.written_ago_sec) + ' · ' + fmtB(l.size) + '</span>' + pill + '</div>' +
+            (l.last_line ? '<div class="log-line mono"><span class="tag">last line</span>' + esc(l.last_line) + '</div>' : '') +
+            lastErr + '</div>';
+    }).join('');
+}
+
+function chip(k, v, cls) {
+    return '<div class="chip"><div class="k">' + k + '</div><div class="v num ' + (cls || '') + '">' + esc(v) + '</div></div>';
+}
+
+function freshBar(name, age, limit, sub) {
+    const pct = age == null ? 100 : Math.min(100, Math.round(100 * age / limit));
+    const cls = pct >= 100 ? 'bad' : pct >= 75 ? 'warn' : '';
+    const val = age == null ? '<b>no data</b>' : '<b>' + fmtAgo(age) + '</b> · ' + sub;
+    return '<div class="fresh">' +
+        '<div class="fresh-top"><span class="fresh-name">' + esc(name) + '</span>' +
+        '<span class="fresh-val">' + val + '</span></div>' +
+        '<div class="track"><div class="fill ' + cls + '" style="width:' + Math.max(3, pct) + '%"></div></div></div>';
+}
+
+async function loadHealth(btn) {
+    if (btn) btn.style.opacity = '.5';
+    try {
+        const r = await fetch('/api/health', { headers: { 'Accept': 'application/json' } });
+        if (r.ok) render(await r.json());
+    } catch (e) { /* keep last render */ }
+    finally { if (btn) btn.style.opacity = ''; }
+}
+
+render(INITIAL);
+setInterval(() => { if (!document.hidden) loadHealth(); }, 15000);
+document.addEventListener('visibilitychange', () => { if (!document.hidden) loadHealth(); });
+</script>
+</body>
+</html>

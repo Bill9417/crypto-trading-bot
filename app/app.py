@@ -2134,6 +2134,251 @@ def api_account_cancel_protection():
     return jsonify(executor.cancel_protection(symbol))
 
 
+# --- System health (/health ops page) ---------------------------------------
+# Answers, at a glance, the three questions that otherwise need a terminal:
+# is every process alive, does anything need a RESTART to pick up new code,
+# and what did the logs last complain about. Strictly READ-ONLY — it runs one
+# `ps` and reads files; it never starts, stops or restarts anything (restarts
+# are always done by the operator with ./run_all.sh).
+
+_HEALTH_LOGS = ("app.log", "bot.log", "strategy2.log")
+
+# (key, command regex, source files that make the process stale when edited
+# after it started — i.e. the running code no longer matches the disk).
+_HEALTH_PROCS = (
+    ("web", r"python\S*\s+(-u\s+)?(\S*/)?app\.py",
+     ("app.py", "config.py", "market_data.py", "market_intel.py", "strategy2_meter.py",
+      "executor.py", "indicators.py", "smc.py", "telegram_utils.py", "backtest.py",
+      "strategy2_live.py", ".env")),
+    ("bot", r"python\S*\s+(-u\s+)?(\S*/)?bot\.py",
+     ("bot.py", "config.py", "market_data.py", "executor.py", "indicators.py",
+      "smc.py", "telegram_utils.py", "backtest.py", "strategy2_live.py", ".env")),
+    ("s2", r"python\S*\s+(-u\s+)?(\S*/)?strategy2_scanner\.py",
+     ("strategy2_scanner.py", "strategy2_meter.py", "strategy2_live.py", "config.py",
+      "market_data.py", "executor.py", "telegram_utils.py", ".env")),
+)
+
+
+def _ps_snapshot():
+    """One `ps` pass → [{pid, started, rss_kb, cmd}] for every process."""
+    import subprocess
+    try:
+        out = subprocess.run(
+            ["ps", "-axo", "pid=,lstart=,rss=,command="],
+            capture_output=True, text=True, timeout=5,
+            env={**os.environ, "LC_ALL": "C"},   # stable month names for lstart
+        ).stdout
+    except Exception:  # noqa: BLE001 — health must never take the page down
+        return []
+    rows = []
+    for line in out.splitlines():
+        parts = line.split(None, 7)   # pid dow mon day hh:mm:ss year rss command
+        if len(parts) < 8:
+            continue
+        pid, _dow, mon, day, hms, year, rss, cmd = parts
+        try:
+            started = datetime.strptime(f"{mon} {day} {hms} {year}", "%b %d %H:%M:%S %Y")
+        except ValueError:
+            started = None
+        rows.append({"pid": int(pid), "started": started,
+                     "rss_kb": int(rss) if rss.isdigit() else 0, "cmd": cmd})
+    return rows
+
+
+def _log_health(base):
+    """Size / last write / recent error lines per stack log (tail ~64 KB each)."""
+    import re
+    err_re = re.compile(r"error|traceback|exception|critical", re.IGNORECASE)
+    logs = []
+    for name in _HEALTH_LOGS:
+        path = os.path.join(base, "logs", name)
+        entry = {"name": name, "exists": os.path.exists(path), "size": 0,
+                 "written_ago_sec": None, "last_line": None,
+                 "recent_errors": 0, "last_error": None}
+        if entry["exists"]:
+            try:
+                st = os.stat(path)
+                entry["size"] = st.st_size
+                entry["written_ago_sec"] = max(0, int(time.time() - st.st_mtime))
+                with open(path, "rb") as f:
+                    f.seek(max(0, st.st_size - 65536))
+                    tail = f.read().decode("utf-8", "replace")
+                lines = [ln.strip() for ln in tail.splitlines() if ln.strip()]
+                if lines:
+                    entry["last_line"] = lines[-1][:220]
+                errs = [ln for ln in lines if err_re.search(ln)]
+                entry["recent_errors"] = len(errs)
+                if errs:
+                    entry["last_error"] = errs[-1][:220]
+            except Exception:  # noqa: BLE001
+                pass
+        logs.append(entry)
+    return logs
+
+
+def build_health():
+    """Full stack snapshot for /health — JSON-safe primitives only."""
+    import re
+    import shutil
+    import config as _config
+
+    base = os.path.dirname(__file__)
+    now = datetime.now()
+    s2_is_engine = (_config.read_env_var("STRATEGY2_LIVE", "false") or "false") \
+        .strip().lower() in ("1", "true", "yes", "on")
+
+    labels = {
+        "web": ("Web dashboard", f"serves this site on :{os.getenv('FLASK_PORT', '4000')}"),
+        "bot": ("S1 bot",
+                "scan-only companion — refreshes the dashboard, places NO orders"
+                if s2_is_engine else
+                "LIVE engine — scans hourly and places real orders"),
+        "s2": ("S2 scanner",
+               "LIVE engine — trades TV.pine confluence on 15m"
+               if s2_is_engine else
+               "alert-only companion — feeds /strategy2, places NO orders"),
+    }
+
+    ps = _ps_snapshot()
+    issues, processes = [], []
+    for key, pattern, sources in _HEALTH_PROCS:
+        matches = [p for p in ps if re.search(pattern, p["cmd"])]
+        label, role = labels[key]
+        proc = {"key": key, "label": label, "role": role,
+                "running": bool(matches), "pid": None, "uptime_sec": None,
+                "rss_mb": None, "instances": len(matches),
+                "restart_needed": False, "changed_files": []}
+        if matches:
+            m = matches[0]
+            proc["pid"] = m["pid"]
+            proc["rss_mb"] = round(m["rss_kb"] / 1024, 1)
+            if m["started"]:
+                proc["uptime_sec"] = max(0, int((now - m["started"]).total_seconds()))
+                changed = []
+                for fname in sources:
+                    fpath = os.path.join(base, fname)
+                    try:
+                        if os.path.getmtime(fpath) > m["started"].timestamp() + 2:
+                            changed.append(fname)
+                    except OSError:
+                        continue
+                proc["changed_files"] = changed
+                proc["restart_needed"] = bool(changed)
+        processes.append(proc)
+
+        if not matches:
+            issues.append({"sev": "down",
+                           "text": f"{label} is NOT running ({role}).",
+                           "fix": "./run_all.sh bg"})
+        elif len(matches) > 1:
+            issues.append({"sev": "down",
+                           "text": f"{label}: {len(matches)} copies are running — "
+                                   "duplicates can double-trade.",
+                           "fix": "./run_all.sh stop && ./run_all.sh bg"})
+        elif proc["restart_needed"]:
+            issues.append({"sev": "warn",
+                           "text": f"{label} is running OLD code — "
+                                   f"{', '.join(proc['changed_files'])} changed after it started.",
+                           "fix": "./run_all.sh bg"})
+
+    # Scan freshness — S1 writes scan_results.json each sweep, S2 rewrites
+    # strategy2_signals.json every ~5 min.
+    data = load_data()
+    age = scan_age_seconds(data.get("last_update"))
+    scan_limit = CHECK_INTERVAL_MINUTES * 60 + 900   # one interval + 15 min grace
+    scan = {"last_update": data.get("last_update"), "age_sec": age,
+            "interval_min": CHECK_INTERVAL_MINUTES,
+            "stale": age is None or age > scan_limit}
+    if scan["stale"] and any(p["key"] == "bot" and p["running"] for p in processes):
+        issues.append({"sev": "warn",
+                       "text": "S1 scan data is stale — the bot is up but hasn't finished "
+                               f"a scan in over {CHECK_INTERVAL_MINUTES + 15} minutes.",
+                       "fix": "tail -50 app/logs/bot.log"})
+
+    s2 = {"age_sec": None, "live": None, "stale": True}
+    try:
+        with open(os.path.join(base, "strategy2_signals.json")) as f:
+            s2_data = json.load(f) or {}
+        s2["age_sec"] = max(0, int(time.time() - float(s2_data.get("generated_at", 0))))
+        s2["live"] = bool(s2_data.get("live"))
+        s2["stale"] = s2["age_sec"] > 1800
+    except Exception:  # noqa: BLE001
+        pass
+    if s2["stale"] and any(p["key"] == "s2" and p["running"] for p in processes):
+        issues.append({"sev": "warn",
+                       "text": "Strategy-2 signals are stale — the scanner is up but "
+                               "hasn't written a sweep in 30+ minutes.",
+                       "fix": "tail -50 app/logs/strategy2.log"})
+    scan["s2"] = s2
+
+    # Storage / data files.
+    db_path = os.path.join(base, "instance", "signals.db")
+    try:
+        from sqlalchemy import func
+        by_status = {(s or "?"): int(c) for s, c in
+                     db.session.query(SignalRecord.status, func.count())
+                     .group_by(SignalRecord.status).all()}
+    except Exception:  # noqa: BLE001
+        by_status = {}
+    storage = {
+        "db_bytes": os.path.getsize(db_path) if os.path.exists(db_path) else 0,
+        "records_total": sum(by_status.values()),
+        "records_by_status": by_status,
+        "scan_file_bytes": os.path.getsize(DATA_FILE) if os.path.exists(DATA_FILE) else 0,
+        "disk_free_gb": round(shutil.disk_usage(base).free / 1e9, 1),
+        "bot_lock": os.path.exists(os.path.join(base, "bot.lock")),
+        "tunnel_running": any("cloudflared" in p["cmd"] for p in ps),
+    }
+    if storage["disk_free_gb"] < 5:
+        issues.append({"sev": "warn",
+                       "text": f"Low disk space — {storage['disk_free_gb']} GB free.",
+                       "fix": None})
+
+    # Which engine is trading vs which one .env selects (divergence = pending
+    # restart), reusing the admin switcher's ground truth.
+    try:
+        st = _live_strategy_state()
+        engine = {"saved_name": st["saved_name"], "running_name": st["running_name"],
+                  "diverged": st["diverged"]}
+        if st["diverged"]:
+            issues.append({"sev": "warn",
+                           "text": f"Engine divergence — .env selects \"{st['saved_name']}\" "
+                                   f"but \"{st['running_name']}\" is the one trading.",
+                           "fix": "./run_all.sh bg"})
+    except Exception:  # noqa: BLE001
+        engine = {"saved_name": None, "running_name": None, "diverged": False}
+
+    overall = "ok"
+    for i in issues:
+        if i["sev"] == "down":
+            overall = "down"
+            break
+        overall = "warn"
+
+    return {
+        "generated_at": now.strftime("%Y-%m-%d %H:%M:%S"),
+        "overall": overall,
+        "issues": issues,
+        "engine": engine,
+        "processes": processes,
+        "scan": scan,
+        "logs": _log_health(base),
+        "storage": storage,
+    }
+
+
+@app.route("/health")
+@admin_required
+def health_page():
+    return render_template("health.html", health=build_health(), user=current_user)
+
+
+@app.route("/api/health")
+@admin_required
+def api_health():
+    return jsonify(build_health())
+
+
 @app.route("/sw.js")
 def service_worker():
     """Serve the service worker from root so its scope covers the whole app."""
