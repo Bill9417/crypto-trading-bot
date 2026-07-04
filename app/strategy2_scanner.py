@@ -45,10 +45,52 @@ HEATMAP_TOP = int(os.getenv("STRATEGY2_HEATMAP_TOP", "40"))
 # this trade myself" moments. The 30-min digest still covers everything else.
 HC_ALERT = os.getenv("STRATEGY2_HC_ALERT", "true").strip().lower() in ("1", "true", "yes", "on")
 
+# ── Pump Radar ────────────────────────────────────────────────────────────────
+# Piggybacks on the sweep's already-fetched candles (zero extra API calls) to
+# catch coins moving RIGHT NOW: 1h price change + last-hour volume vs its own
+# 24h norm. Alert-grade movers (both thresholds crossed) send an immediate
+# Telegram alert; the dashboard's 🚀 Pump Radar strip shows the top list.
+MOVER_1H_PCT = float(os.getenv("MOVER_1H_PCT", "4"))            # |1h %| for alert grade
+MOVER_VOL_MULT = float(os.getenv("MOVER_VOL_MULT", "3"))        # last-hour vol vs 24h norm
+MOVER_ALERT_COOLDOWN_SEC = int(os.getenv("MOVER_ALERT_COOLDOWN_SEC", "7200"))
+MOVER_KEEP = int(os.getenv("MOVER_KEEP", "12"))                 # rows on the dashboard
+MOVER_STALE_SEC = 1800                                          # drop entries not re-seen
+
 SIGNALS_FILE = os.path.join(os.path.dirname(__file__), "strategy2_signals.json")
 
 # Latest meter score per top symbol, refreshed in place during each sweep.
 LATEST_SCORES: dict = {}
+# Latest mover read per symbol, refreshed in place during each sweep.
+LATEST_MOVERS: dict = {}
+
+
+def _mover_metrics(ohlcv):
+    """1h/24h change + last-hour volume vs its 24h average, on CLOSED 15m
+    candles. Needs ~25h of history; returns None when there isn't enough."""
+    o = ohlcv[:-1] if ohlcv else []                 # drop the forming candle
+    if len(o) < 101:
+        return None
+    closes = [float(c[4]) for c in o]
+    vols = [float(c[5]) for c in o]
+    if not closes[-5] or not closes[-97]:
+        return None
+    vol_1h = sum(vols[-4:])
+    prior = vols[-100:-4]                           # the 24h before this hour
+    avg_1h = sum(prior) / len(prior) * 4
+    return {
+        "chg_1h": (closes[-1] / closes[-5] - 1) * 100,
+        "chg_24h": (closes[-1] / closes[-97] - 1) * 100,
+        "vol_mult": (vol_1h / avg_1h) if avg_1h > 0 else 0.0,
+        "price": closes[-1],
+    }
+
+
+def _top_movers() -> list:
+    """Freshest reads, biggest 1h move first, trimmed for the dashboard."""
+    cutoff = time.time() - MOVER_STALE_SEC
+    rows = [m for m in LATEST_MOVERS.values() if m["ts"] >= cutoff and abs(m["chg_1h"]) >= 1.0]
+    rows.sort(key=lambda m: -abs(m["chg_1h"]))
+    return rows[:MOVER_KEEP]
 
 
 def _tv_url(symbol: str) -> str:
@@ -96,6 +138,8 @@ def _write(recent: list, scanning: int, done: int) -> None:
         "signals": recent,
         # Volume-ranked meter scores for the heatmap (rank preserved via list order).
         "scores": list(LATEST_SCORES.values()),
+        # 🚀 Pump Radar rows for the dashboard strip.
+        "movers": _top_movers(),
     }
     tmp = SIGNALS_FILE + ".tmp"
     with open(tmp, "w", encoding="utf-8") as f:
@@ -159,6 +203,30 @@ def scan_once(client, recent: list, last_alert: dict, pending: list) -> list:
                 "score": res.get("score"), "price": res.get("price"),
                 "ts": time.time(), "tv_url": _tv_url(sym),
             }
+
+        # 🚀 Pump Radar — reuses this symbol's candles, no extra API call.
+        mv = _mover_metrics(ohlcv)
+        if mv:
+            hot = abs(mv["chg_1h"]) >= MOVER_1H_PCT and mv["vol_mult"] >= MOVER_VOL_MULT
+            LATEST_MOVERS[sym] = {
+                "symbol": sym, "base": sym.split("/")[0], "hot": hot,
+                "ts": time.time(), "tv_url": _tv_url(sym), **mv,
+            }
+            key = ("mover", sym)
+            now_ts = time.time()
+            if hot and now_ts - last_alert.get(key, 0) >= MOVER_ALERT_COOLDOWN_SEC:
+                last_alert[key] = now_ts
+                arrow = "🚀" if mv["chg_1h"] > 0 else "📉"
+                print(f"[strategy2] MOVER {sym.split('/')[0]} {mv['chg_1h']:+.1f}% 1h "
+                      f"vol {mv['vol_mult']:.1f}x")
+                try:
+                    telegram_utils.send_message(
+                        f"{arrow} MOVER · {sym.split('/')[0]} {mv['chg_1h']:+.1f}% in 1h\n"
+                        f"volume {mv['vol_mult']:.1f}× normal · 24h {mv['chg_24h']:+.1f}% "
+                        f"@ {_fmt_price(mv['price'])}\n{_tv_url(sym)}",
+                        force=True)
+                except Exception as exc:  # noqa: BLE001 — alert must never kill the sweep
+                    print(f"[strategy2] mover alert failed {sym}: {exc}")
 
         if res.get("signal"):
             direction = res["signal"]

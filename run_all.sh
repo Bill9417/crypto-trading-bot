@@ -10,13 +10,15 @@
 #   ./run_all.sh status    show whether each process is running
 #
 # ── ONE ENGINE AT A TIME ─────────────────────────────────────────────────────
-# The live engine is chosen by STRATEGY2_LIVE in app/.env (the same switch that
-# arms Strategy-2 live trading), so the 25 USDT account is only ever driven by
-# one strategy:
-#   STRATEGY2_LIVE=false (default) → web + S1 bot (LIVE) + S2 scanner (alert-only,
-#                                    so /strategy2 still shows live 15m signals)
-#   STRATEGY2_LIVE=true            → web + S2 scanner (LIVE engine); S1 is NOT
-#                                    started at all
+# The live engine is chosen by STRATEGY2_LIVE / STRATEGY3_LIVE in app/.env, so
+# the 25 USDT account is only ever driven by one strategy:
+#   both false (default)  → web + S1 bot (LIVE) + S2 + S3 scanners (alert-only)
+#   STRATEGY2_LIVE=true   → web + S2 scanner (LIVE engine) + S1 scan-only + S3 alert-only
+#   STRATEGY3_LIVE=true   → web + S3 flip engine (LIVE) + S1 scan-only + S2 alert-only
+#   BOTH true             → S2 wins; S3 refuses to arm (in code) and stays alert-only
+# S3 = "Vegas Flag Flip" (strategy3_scanner.py): BTC/SOL/HYPE 15m (config.
+# STRATEGY3_SYMBOLS), TV.pine flag + Vegas-line agreement, flip on the
+# opposite flag; signals from Binance charts, orders on Bybit (see TV_strategy.pine).
 #
 # Runs the test suite first (the safety gate). Bypass with SKIP_TESTS=1.
 # Safe to re-run: it kills any previous instances and clears stale locks first,
@@ -49,6 +51,7 @@ stop_all() {
     pkill -f "[p]ython.*app.py"                2>/dev/null && echo "  • web app stopped"    || echo "  • web app not running"
     pkill -f "[p]ython.*bot.py"                2>/dev/null && echo "  • S1 bot stopped"     || echo "  • S1 bot not running"
     pkill -f "[p]ython.*strategy2_scanner.py"  2>/dev/null && echo "  • S2 scanner stopped" || echo "  • S2 scanner not running"
+    pkill -f "[p]ython.*strategy3_scanner.py"  2>/dev/null && echo "  • S3 flip stopped"    || echo "  • S3 flip not running"
     pkill -f "[t]ail -n 5 -f .*logs/" 2>/dev/null   # kill any stray log tail from a prior run
     rm -f "$APP/bot.lock" 2>/dev/null
 }
@@ -57,9 +60,13 @@ status_all() {
     if pgrep -f "[p]ython.*app.py"               >/dev/null; then echo "  web app    : RUNNING (pid $(pgrep -f '[p]ython.*app.py' | tr '\n' ' '))";              else echo "  web app    : stopped"; fi
     if pgrep -f "[p]ython.*bot.py"               >/dev/null; then echo "  S1 bot     : RUNNING (pid $(pgrep -f '[p]ython.*bot.py' | tr '\n' ' '))";              else echo "  S1 bot     : stopped"; fi
     if pgrep -f "[p]ython.*strategy2_scanner.py" >/dev/null; then echo "  S2 scanner : RUNNING (pid $(pgrep -f '[p]ython.*strategy2_scanner.py' | tr '\n' ' '))"; else echo "  S2 scanner : stopped"; fi
+    if pgrep -f "[p]ython.*strategy3_scanner.py" >/dev/null; then echo "  S3 flip    : RUNNING (pid $(pgrep -f '[p]ython.*strategy3_scanner.py' | tr '\n' ' '))"; else echo "  S3 flip    : stopped"; fi
 }
 
 # --- choose the live engine from app/.env ----------------------------------
+# Precedence: S2 > S3 > S1. The S3 scanner ALWAYS runs (alert-only unless it is
+# the armed engine — it self-gates in code, incl. refusing when S2 is also live).
+START_S3_COMPANION=1
 if read_env_bool STRATEGY2_LIVE; then
     ENGINE_NAME="Strategy 2 scanner (LIVE)"
     ENGINE_CMD="strategy2_scanner.py"
@@ -67,6 +74,18 @@ if read_env_bool STRATEGY2_LIVE; then
     START_ALERT_SCANNER=0           # the scanner IS the engine; don't start a 2nd one
     START_SCANONLY_S1=1            # S1 scan-only companion → keeps the main dashboard
                                     # refreshing hourly WITHOUT trading (no lock, no orders)
+    if read_env_bool STRATEGY3_LIVE; then
+        echo "WARNING: STRATEGY2_LIVE and STRATEGY3_LIVE are BOTH true — one live"
+        echo "         engine at a time. S2 stays live; S3 will refuse to arm and"
+        echo "         runs alert-only. Set STRATEGY2_LIVE=false to hand over to S3."
+    fi
+elif read_env_bool STRATEGY3_LIVE; then
+    ENGINE_NAME="Strategy 3 Vegas Flag Flip (LIVE)"
+    ENGINE_CMD="strategy3_scanner.py"
+    ENGINE_LOG="$LOG_DIR/strategy3.log"
+    START_S3_COMPANION=0            # the flip scanner IS the engine
+    START_ALERT_SCANNER=1           # S2 keeps alerting (its live gate is false here)
+    START_SCANONLY_S1=1
 else
     ENGINE_NAME="S1 bot (LIVE)"
     ENGINE_CMD="bot.py"
@@ -101,6 +120,7 @@ echo "Clearing any previous instances..."
 pkill -f "[p]ython.*app.py" 2>/dev/null
 pkill -f "[p]ython.*bot.py" 2>/dev/null
 pkill -f "[p]ython.*strategy2_scanner.py" 2>/dev/null
+pkill -f "[p]ython.*strategy3_scanner.py" 2>/dev/null
 pkill -f "[t]ail -n 5 -f .*logs/" 2>/dev/null  # kill any stray log tail from a prior run
 rm -f "$APP/bot.lock" 2>/dev/null
 sleep 1
@@ -117,6 +137,9 @@ if [ "$MODE" = "bg" ]; then
     nohup "$PYTHON" -u "$ENGINE_CMD" >> "$ENGINE_LOG" 2>&1 & disown
     if [ "$START_ALERT_SCANNER" = "1" ]; then
         nohup "$PYTHON" -u strategy2_scanner.py >> "$LOG_DIR/strategy2.log" 2>&1 & disown
+    fi
+    if [ "$START_S3_COMPANION" = "1" ]; then
+        nohup "$PYTHON" -u strategy3_scanner.py >> "$LOG_DIR/strategy3.log" 2>&1 & disown
     fi
     if [ "$START_SCANONLY_S1" = "1" ]; then
         echo "  + S1 scan-only companion (refreshes the dashboard hourly; no orders)"
@@ -155,6 +178,14 @@ if [ "$START_ALERT_SCANNER" = "1" ]; then
     SCANNER_PID=$!
 fi
 
+# --- S3 Vegas-flip companion (alert-only unless it IS the engine) -----------
+S3_PID=""
+if [ "$START_S3_COMPANION" = "1" ]; then
+    echo "Starting S3 Vegas Flag Flip (alert-only companion)..."
+    "$PYTHON" -u strategy3_scanner.py >> "$LOG_DIR/strategy3.log" 2>&1 &
+    S3_PID=$!
+fi
+
 # --- optionally start the S1 scan-only companion (S2-engine mode) ----------
 # Scans + refreshes the main dashboard hourly, but holds no lock and places no
 # orders, so S2 stays the sole live engine.
@@ -171,12 +202,14 @@ cleanup() {
     echo "Shutting down..."
     kill "$APP_PID" "$ENGINE_PID" 2>/dev/null
     [ -n "$SCANNER_PID" ] && kill "$SCANNER_PID" 2>/dev/null
+    [ -n "$S3_PID" ] && kill "$S3_PID" 2>/dev/null
     [ -n "$SCANONLY_PID" ] && kill "$SCANONLY_PID" 2>/dev/null
     # give the bot a moment to release its lock, then force if needed
     sleep 2
     pkill -f "[p]ython.*app.py" 2>/dev/null
     pkill -f "[p]ython.*bot.py" 2>/dev/null
     pkill -f "[p]ython.*strategy2_scanner.py" 2>/dev/null
+    pkill -f "[p]ython.*strategy3_scanner.py" 2>/dev/null
     pkill -f "[t]ail -n 5 -f .*logs/" 2>/dev/null  # kill any stray log tail from a prior run
     rm -f "$APP/bot.lock" 2>/dev/null
     echo "All stopped."
@@ -194,6 +227,7 @@ echo "  Dashboard   : http://$HOST:$PORT"
 echo "  Web log     : $LOG_DIR/app.log        (pid $APP_PID)"
 echo "  Engine log  : $ENGINE_LOG   (pid $ENGINE_PID)"
 [ -n "$SCANNER_PID" ] && echo "  Scanner log : $LOG_DIR/strategy2.log  (pid $SCANNER_PID, alert-only)"
+[ -n "$S3_PID" ] && echo "  S3 flip log : $LOG_DIR/strategy3.log  (pid $S3_PID, alert-only)"
 echo "  Press Ctrl+C to stop everything."
 echo "──────────────────────────────────────────────"
 echo ""

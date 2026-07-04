@@ -1411,6 +1411,67 @@
             <div class="entries-row" id="entries-row"></div>
         </section>
 
+        <!-- 🚀 Pump Radar — coins moving RIGHT NOW (1h change + volume vs normal).
+             Data rides on /api/strategy2_signals (the S2 sweep computes it from
+             candles it already fetched); rows marked HOT crossed both alert
+             thresholds and also triggered a Telegram alert. -->
+        <section class="analytics-panel" id="radar-panel">
+            <div class="analytics-head">
+                <div>
+                    <div class="analytics-title">🚀 Pump Radar</div>
+                    <div class="analytics-subtitle" id="radar-sub">Coins moving right now — 1h change with volume confirmation · refreshes with each 15m sweep</div>
+                </div>
+                <a href="{{ url_for('strategy2') }}" class="analytics-link">Strategy 2 →</a>
+            </div>
+            <div id="radar-row" style="display:flex; gap:8px; overflow-x:auto; padding:2px 0 6px; -webkit-overflow-scrolling:touch;">
+                <div class="analytics-subtitle">Waiting for the scanner's next sweep…</div>
+            </div>
+        </section>
+        <script>
+        (function () {
+            function chip(m) {
+                var up = m.chg_1h >= 0;
+                var col = up ? 'var(--long, #4ade80)' : 'var(--short, #f87171)';
+                var border = m.hot ? col : 'rgba(255,255,255,.09)';
+                var flame = m.hot ? (up ? ' 🚀' : ' 📉') : '';
+                var px = m.price >= 1000 ? m.price.toLocaleString('en-US', {maximumFractionDigits: 1})
+                       : m.price.toPrecision(4);
+                return '<a href="' + m.tv_url + '" target="_blank" rel="noopener" style="' +
+                    'flex:0 0 auto; min-width:118px; text-decoration:none; color:inherit;' +
+                    'background:rgba(255,255,255,.03); border:1px solid ' + border + ';' +
+                    'border-radius:12px; padding:8px 11px; display:block;">' +
+                    '<div style="font-weight:800; font-size:.82rem;">' + m.base + flame + '</div>' +
+                    '<div style="font-size:.95rem; font-weight:800; color:' + col + ';">' +
+                        (up ? '+' : '') + m.chg_1h.toFixed(1) + '% <span style="font-size:.62rem; opacity:.65;">1h</span></div>' +
+                    '<div style="font-size:.66rem; color:var(--wolf-muted, #8a99ad); margin-top:2px;">' +
+                        'vol ' + m.vol_mult.toFixed(1) + '× · 24h ' + (m.chg_24h >= 0 ? '+' : '') + m.chg_24h.toFixed(1) + '%</div>' +
+                    '<div style="font-size:.64rem; color:var(--wolf-muted, #8a99ad);">' + px + '</div></a>';
+            }
+            function load() {
+                fetch('/api/strategy2_signals')
+                    .then(function (r) { return r.ok ? r.json() : null; })
+                    .then(function (d) {
+                        if (!d) return;
+                        var row = document.getElementById('radar-row');
+                        var movers = d.movers || [];
+                        if (!movers.length) {
+                            row.innerHTML = '<div class="analytics-subtitle">No notable movers right now (needs the scanner running with radar support) — quiet market or sweep in progress.</div>';
+                            return;
+                        }
+                        row.innerHTML = movers.map(chip).join('');
+                        var hot = movers.filter(function (m) { return m.hot; }).length;
+                        document.getElementById('radar-sub').textContent =
+                            'Coins moving right now — 1h change with volume confirmation · ' +
+                            (hot ? hot + ' HOT (alerted on Telegram)' : 'no alert-grade movers at the moment');
+                    })
+                    .catch(function () {});
+            }
+            load();
+            setInterval(function () { if (!document.hidden) load(); }, 60000);
+            document.addEventListener('visibilitychange', function () { if (!document.hidden) load(); });
+        })();
+        </script>
+
         <!-- Market headlines — same feeds as the Market page (cached server-side) -->
         <section class="analytics-panel">
             <div class="analytics-head">

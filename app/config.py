@@ -431,3 +431,34 @@ STRATEGY2_LIVE_LIGHTS = int(os.getenv("STRATEGY2_LIVE_LIGHTS", "5"))
 # order. Defaults to the same tradeable tier S1 uses; pairs outside it stay
 # alert-only no matter how strong the signal.
 STRATEGY2_LIVE_TOP_N = int(os.getenv("STRATEGY2_LIVE_TOP_N", str(TOP_SYMBOL_LIMIT)))
+
+# ── Strategy 3 — "Vegas Flag Flip" (opt-in, OFF by default) ──────────────────
+# BTC + SOL + HYPE by default (STRATEGY3_SYMBOLS), 15m. Signals come from BINANCE charts (same candles as the
+# TradingView chart); orders go to the user's BYBIT account (BYBIT_API_KEY /
+# BYBIT_API_SECRET in .env) — a SEPARATE account from the Binance one S1/S2
+# drive, so the bot.lock / one-Binance-engine rules do not apply to it.
+# Mirrors TV_strategy.pine: a TV.pine confluence flag sets the direction, the
+# Vegas line (SMA5 of EMA200) must agree before entry, and the position is held
+# until the OPPOSITE flag appears, then flipped. Manual closes on Bybit are
+# respected — the scanner stands down for that symbol until the NEXT flag.
+# By default the scanner is ALERT-ONLY. Real orders need STRATEGY3_LIVE=true
+# AND Bybit keys AND LIVE_TRADING=true (the master gate: false ⇒ dry-run logs).
+STRATEGY3_LIVE = _env_bool("STRATEGY3_LIVE", False)
+# Comma-separated base assets it may trade (must exist on BOTH Binance futures
+# — chart source — and Bybit linear perps — execution venue).
+STRATEGY3_SYMBOLS = [s.strip().upper() for s in
+                     os.getenv("STRATEGY3_SYMBOLS", "BTC,SOL,HYPE").split(",") if s.strip()]
+# Flag threshold — same semantics as the TV.pine meter (long ≥ TH, short ≤ 100−TH).
+# 70 matches the indicator's default triangles, NOT S2's stricter 85 gate.
+STRATEGY3_SCORE_TH = int(os.getenv("STRATEGY3_SCORE_TH", "70"))
+# ADX regime filter for the flag (0 disables). 20 matches the indicator default.
+STRATEGY3_ADX_TH = int(os.getenv("STRATEGY3_ADX_TH", "20"))
+# Emergency (disaster) stop for flip positions — NOT part of the strategy rules.
+# The exit is the opposite flag; this stop only caps a crash while waiting for
+# it. It is attached to the Bybit order and re-armed by the guardian if missing.
+STRATEGY3_EMERGENCY_SL_PCT = float(os.getenv("STRATEGY3_EMERGENCY_SL_PCT", "0.04"))
+# Position size on Bybit: margin × leverage = notional per flip. Bybit minimums
+# apply (SOL: 0.1 SOL ≈ 8 USDT notional; HYPE: 0.01), so 3 USDT × 4x = 12 USDT
+# notional clears both. Size to YOUR Bybit balance, not the Binance account's.
+STRATEGY3_MARGIN_USDT = float(os.getenv("STRATEGY3_MARGIN_USDT", "3"))
+STRATEGY3_LEVERAGE = int(os.getenv("STRATEGY3_LEVERAGE", str(LEVERAGE)))

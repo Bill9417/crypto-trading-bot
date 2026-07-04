@@ -2141,7 +2141,7 @@ def api_account_cancel_protection():
 # `ps` and reads files; it never starts, stops or restarts anything (restarts
 # are always done by the operator with ./run_all.sh).
 
-_HEALTH_LOGS = ("app.log", "bot.log", "strategy2.log")
+_HEALTH_LOGS = ("app.log", "bot.log", "strategy2.log", "strategy3.log")
 
 # (key, command regex, source files that make the process stale when edited
 # after it started — i.e. the running code no longer matches the disk).
@@ -2156,6 +2156,9 @@ _HEALTH_PROCS = (
     ("s2", r"python\S*\s+(-u\s+)?(\S*/)?strategy2_scanner\.py",
      ("strategy2_scanner.py", "strategy2_meter.py", "strategy2_live.py", "config.py",
       "market_data.py", "executor.py", "telegram_utils.py", ".env")),
+    ("s3", r"python\S*\s+(-u\s+)?(\S*/)?strategy3_scanner\.py",
+     ("strategy3_scanner.py", "strategy3_exec.py", "strategy2_meter.py", "config.py",
+      "market_data.py", "indicators.py", "telegram_utils.py", ".env")),
 )
 
 
@@ -2557,6 +2560,30 @@ def api_news():
         return jsonify({"items": nw.get("items", []), "errors": nw.get("errors", [])})
     except Exception as e:  # noqa: BLE001
         return jsonify({"items": [], "errors": [str(e)]}), 200
+
+
+@app.route("/stocks")
+@login_required
+def stocks_page():
+    """Stock watch — Taiwan top-50 + US top-100 with Binance-perp comparison.
+    Read-only public data via stocks_data.py; isolated from the scanner/bot."""
+    import stocks_data
+    try:
+        data = stocks_data.build_stocks()
+    except Exception as e:  # noqa: BLE001 — never let this page break
+        print(f"Stocks page error: {e}")
+        data = stocks_data.empty_payload(str(e))
+    return render_template("stocks.html", stocks=data, user=current_user)
+
+
+@app.route("/api/stocks")
+@login_required
+def api_stocks():
+    import stocks_data
+    try:
+        return jsonify(stocks_data.build_stocks())
+    except Exception as e:  # noqa: BLE001
+        return jsonify(stocks_data.empty_payload(str(e))), 200
 
 
 def build_briefing():

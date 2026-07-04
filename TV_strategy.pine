@@ -1,0 +1,243 @@
+// ════════════════════════════════════════════════════════════════════════════
+//  VEGAS FLAG FLIP — Strategy (backtest) version of TV.pine's signal layer
+//
+//  Trades the two rules, exactly as discussed:
+//    1. A LONG/SHORT flag fires (same arm-and-fire confluence signal as the
+//       All-in-One ULTIMATE indicator: MSB flip arms it, it fires on bar close
+//       when price is on the right side of EMA200, ADX confirms a trend, and
+//       the confidence score reaches the threshold).
+//    2. The Vegas line (SMA5 of EMA200 — the green/red line in the tunnel)
+//       must be the SAME color as the flag: green → long, red → short.
+//  Position is held until the OPPOSITE flag appears, then flipped (the new
+//  entry again waits for the Vegas color to agree).
+//
+//  Designed for the 15m chart on BTC / SOL / HYPE perps (BINANCE:BTCUSDT.P,
+//  BINANCE:SOLUSDT.P, BINANCE:HYPEUSDT.P — the bot reads Binance candles and
+//  orders on Bybit). Apply separately on each symbol's 15m chart — an orange
+//  warning shows if the timeframe differs.
+//
+//  Sizing mirrors the live bot: 2500 USDT order value (50 USDT margin × 50x —
+//  margin_long/short = 2%), Bybit taker fee 0.055%. Emergency SL 1.5% ==
+//  STRATEGY3_EMERGENCY_SL_PCT (at 50x, liquidation is ~2% away, so the stop
+//  must sit inside it).
+//
+//  Fidelity note vs TV.pine: everything is ported 1:1 EXCEPT the trendline
+//  factor (weight 5), which is held neutral — same as the bot's Python port —
+//  so this backtest matches what the live automation actually trades. The
+//  score can therefore differ from the chart panel by at most ±2.5.
+// ════════════════════════════════════════════════════════════════════════════
+//@version=6
+strategy("Vegas Flag Flip — BTC/SOL/HYPE 15m", overlay=true,
+     initial_capital=250,
+     default_qty_type=strategy.cash, default_qty_value=2500,
+     margin_long=2, margin_short=2,
+     commission_type=strategy.commission.percent, commission_value=0.055,
+     slippage=2, process_orders_on_close=true,
+     max_labels_count=500)
+
+// ╔═══════════════════════════════════════════════════════╗
+// ║  INPUTS                                                ║
+// ╚═══════════════════════════════════════════════════════╝
+gR = "① Rules"
+requireVegas = input.bool(true,  "Rule 2 — Vegas color must match the flag", group=gR, tooltip="ON = enter only when the Vegas line color agrees with the flag (green=long / red=short). If it disagrees at flag time, the entry WAITS until Vegas turns — unless a newer opposite flag replaces it.")
+exitOnFlag   = input.bool(true,  "Exit immediately on opposite flag", group=gR, tooltip="ON = an opposite flag closes the position at once, and the new direction is entered when Vegas agrees. OFF = stay in the trade until the opposite flag AND Vegas both line up, then reverse in one step.")
+useEmergSL   = input.bool(true,  "Emergency stop-loss", group=gR, inline="sl", tooltip="Not part of the signal rules — a disaster stop, mirroring the live bot's protective stop on Bybit. Default 1.5% = STRATEGY3_EMERGENCY_SL_PCT (at 50x leverage the ~2% liquidation would hit before any wider stop).")
+emergSLPct   = input.float(1.5,  "", minval=0.5, maxval=25, step=0.5, group=gR, inline="sl") / 100
+
+gF = "② Flag (same as the indicator)"
+scoreLongTh  = input.int(70, "Long Threshold",  minval=50, maxval=100, group=gF, tooltip="Flag fires long at score ≥ this (short at ≤ 100 − short threshold). Same defaults as TV.pine.")
+scoreShortTh = input.int(70, "Short Threshold", minval=50, maxval=100, group=gF)
+useAdxFilter = input.bool(true, "ADX Regime Filter ≥", group=gF, inline="adx")
+adxTh        = input.int(20, "", minval=10, maxval=50, group=gF, inline="adx")
+adxLen       = input.int(14, "ADX Length", minval=5, maxval=50, group=gF)
+zigzag_len   = input.int(9, "MSB ZigZag Length", group=gF)
+fib_factor   = input.float(0.33, "MSB Breakout Confirm (Fib)", 0, 1, 0.01, group=gF)
+volBiasLen   = input.int(360, "Volume Bias Length", minval=20, maxval=5000, group=gF)
+
+gD = "③ Backtest window"
+useDate   = input.bool(false, "Limit date range", group=gD)
+startDate = input.time(timestamp("1 Jan 2025 00:00 +0000"), "From", group=gD)
+endDate   = input.time(timestamp("1 Jan 2030 00:00 +0000"), "To", group=gD)
+inWindow  = not useDate or (time >= startDate and time <= endDate)
+
+// ╔═══════════════════════════════════════════════════════╗
+// ║  FACTORS (identical maths to TV.pine)                  ║
+// ╚═══════════════════════════════════════════════════════╝
+emaFast  = ta.ema(close, 20)
+emaMed   = ta.ema(close, 50)
+emaSlow  = ta.ema(close, 100)
+emaTrend = ta.ema(close, 200)
+
+// Double Tunnel EMAs
+dt_ma1 = ta.ema(close, 144)
+dt_ma2 = ta.ema(close, 169)
+dt_ma3 = ta.ema(close, 288)
+dt_ma4 = ta.ema(close, 338)
+
+// Vegas EMA200 line — green rising / red falling (RULE 2)
+vegasEMA200 = ta.sma(ta.ema(close, 200), 5)
+fVegas = ta.change(vegasEMA200) > 0 ? 1 : ta.change(vegasEMA200) < 0 ? -1 : 0
+
+fEMAstack = emaFast > emaMed and emaMed > emaSlow and emaSlow > emaTrend ? 1 : emaFast < emaMed and emaMed < emaSlow and emaSlow < emaTrend ? -1 : 0
+fEMA200   = close > emaTrend ? 1 : close < emaTrend ? -1 : 0
+fTunnel   = close > dt_ma1 and close > dt_ma3 ? 1 : close < dt_ma2 and close < dt_ma4 ? -1 : 0
+volMean   = math.sum(close * volume, volBiasLen) / math.sum(volume, volBiasLen)
+fVolume   = na(volMean) ? 0 : close > volMean ? 1 : close < volMean ? -1 : 0
+
+// ── SMC internal structure bias (LuxAlgo port, drawing-free) ──
+// leg(5) pivots update internal high/low; a close crossing them sets the bias.
+// leg(50) tracks the swing level only for the "internal ≠ swing" filter, as in
+// displayStructure(internal=true) with the confluence filter OFF (default).
+f_leg(int size) =>
+    var int l = 0
+    if high[size] > ta.highest(size)
+        l := 0   // bearish leg starts → pivot HIGH at high[size]
+    else if low[size] < ta.lowest(size)
+        l := 1   // bullish leg starts → pivot LOW at low[size]
+    l
+
+legI = f_leg(5)
+legS = f_leg(50)
+
+var float iHigh = na, var bool iHighCrossed = true
+var float iLow  = na, var bool iLowCrossed  = true
+var float sHigh = na, var float sLow = na
+var int   fSMC  = 0
+
+if ta.change(legI) == -1
+    iHigh := high[5]
+    iHighCrossed := false
+if ta.change(legI) == +1
+    iLow := low[5]
+    iLowCrossed := false
+if ta.change(legS) == -1
+    sHigh := high[50]
+if ta.change(legS) == +1
+    sLow := low[50]
+
+if not na(iHigh) and ta.crossover(close, iHigh) and not iHighCrossed and iHigh != sHigh
+    iHighCrossed := true
+    fSMC := 1
+if not na(iLow) and ta.crossunder(close, iLow) and not iLowCrossed and iLow != sLow
+    iLowCrossed := true
+    fSMC := -1
+
+// ── Confidence score — TV.pine weights; trendline factor held neutral ──
+netRaw = fEMAstack*20 + fEMA200*15 + fSMC*25 + fVegas*15 + fTunnel*10 + 0*5 + fVolume*10
+confScore = math.max(0, math.min(100, 50 + netRaw / 2.0))
+
+// ╔═══════════════════════════════════════════════════════╗
+// ║  MSB ARM (EmreKb zigzag "market" flip — exact port)    ║
+// ╚═══════════════════════════════════════════════════════╝
+to_up   = high >= ta.highest(zigzag_len)
+to_down = low  <= ta.lowest(zigzag_len)
+
+trendL = 1
+trendL := nz(trendL[1], 1)
+trendL := trendL == 1 and to_down ? -1 : trendL == -1 and to_up ? 1 : trendL
+
+last_trend_up_since = ta.barssince(to_up[1])
+low_val = ta.lowest(nz(last_trend_up_since > 0 ? last_trend_up_since : 1, 1))
+last_trend_down_since = ta.barssince(to_down[1])
+high_val = ta.highest(nz(last_trend_down_since > 0 ? last_trend_down_since : 1, 1))
+
+var float h0 = na, var float h1 = na
+var float l0 = na, var float l1 = na
+if ta.change(trendL) != 0
+    if trendL == 1
+        l1 := l0
+        l0 := low_val
+    if trendL == -1
+        h1 := h0
+        h0 := high_val
+
+market = 1
+market := nz(market[1], 1)
+last_l0 = ta.valuewhen(ta.change(market) != 0, l0, 0)
+last_h0 = ta.valuewhen(ta.change(market) != 0, h0, 0)
+market := last_l0 == l0 or last_h0 == h0 ? market :
+     market == 1 and not na(l1) and l0 < l1 and l0 < l1 - math.abs(h0 - l1) * fib_factor ? -1 :
+     market == -1 and not na(h1) and h0 > h1 and h0 > h1 + math.abs(h1 - l0) * fib_factor ? 1 : market
+
+msbFlipUp   = ta.change(market) != 0 and market == 1
+msbFlipDown = ta.change(market) != 0 and market == -1
+
+// ╔═══════════════════════════════════════════════════════╗
+// ║  FLAGS (arm-and-fire, bar-close confirmed)             ║
+// ╚═══════════════════════════════════════════════════════╝
+var bool longArmed = false
+var bool shortArmed = false
+var int  lastSig = 0
+
+if msbFlipUp
+    longArmed := true
+    shortArmed := false
+if msbFlipDown
+    shortArmed := true
+    longArmed := false
+
+[dmiP, dmiM, adxVal] = ta.dmi(adxLen, adxLen)
+regimeOK = not useAdxFilter or adxVal >= adxTh
+
+longFlag = false
+shortFlag = false
+if barstate.isconfirmed or barstate.ishistory
+    if longArmed and close > emaTrend and regimeOK and confScore >= scoreLongTh and lastSig != 1
+        longFlag := true
+        lastSig := 1
+        longArmed := false
+    if shortArmed and close < emaTrend and regimeOK and confScore <= (100 - scoreShortTh) and lastSig != -1
+        shortFlag := true
+        lastSig := -1
+        shortArmed := false
+
+// ╔═══════════════════════════════════════════════════════╗
+// ║  TRADE LOGIC — flag sets direction, Vegas gates entry  ║
+// ╚═══════════════════════════════════════════════════════╝
+var int pendingDir = 0
+if longFlag
+    pendingDir := 1
+if shortFlag
+    pendingDir := -1
+
+wantLong  = pendingDir ==  1 and (not requireVegas or fVegas ==  1)
+wantShort = pendingDir == -1 and (not requireVegas or fVegas == -1)
+
+if inWindow and (barstate.isconfirmed or barstate.ishistory)
+    // opposite flag closes the trade at once (Vegas only gates the NEW entry)
+    if exitOnFlag
+        if strategy.position_size > 0 and pendingDir == -1 and not wantShort
+            strategy.close("Long", comment="opp flag")
+        if strategy.position_size < 0 and pendingDir == 1 and not wantLong
+            strategy.close("Short", comment="opp flag")
+    // enter / reverse when both rules agree
+    if wantLong and strategy.position_size <= 0
+        strategy.entry("Long", strategy.long)
+    if wantShort and strategy.position_size >= 0
+        strategy.entry("Short", strategy.short)
+
+// emergency (disaster) stop — mirrors the live bot's protective stop
+if useEmergSL and strategy.position_size > 0
+    strategy.exit("SL-L", from_entry="Long", stop=strategy.position_avg_price * (1 - emergSLPct))
+if useEmergSL and strategy.position_size < 0
+    strategy.exit("SL-S", from_entry="Short", stop=strategy.position_avg_price * (1 + emergSLPct))
+
+// ╔═══════════════════════════════════════════════════════╗
+// ║  VISUALS                                               ║
+// ╚═══════════════════════════════════════════════════════╝
+plot(vegasEMA200, "Vegas EMA200", color=fVegas >= 0 ? color.new(color.green, 0) : color.new(color.red, 0), linewidth=2)
+t1a = plot(dt_ma1, "Tunnel1-A", color=color.new(color.orange, 60))
+t1b = plot(dt_ma2, "Tunnel1-B", color=color.new(color.orange, 60))
+fill(t1a, t1b, color=dt_ma1 > dt_ma2 ? color.new(color.orange, 85) : color.new(color.red, 88))
+
+plotshape(longFlag,  "Long Flag",  shape.triangleup,   location.belowbar, color.rgb(0, 230, 118), text="LONG",  textcolor=color.white, size=size.small)
+plotshape(shortFlag, "Short Flag", shape.triangledown, location.abovebar, color.rgb(255, 23, 68), text="SHORT", textcolor=color.white, size=size.small)
+// waiting-for-Vegas marker: flag direction set but Vegas color still disagrees
+waitingVegas = requireVegas and ((pendingDir == 1 and fVegas != 1 and strategy.position_size <= 0) or (pendingDir == -1 and fVegas != -1 and strategy.position_size >= 0))
+plotchar(waitingVegas, "Waiting for Vegas", "⏳", location.bottom, color.new(color.yellow, 30), size=size.tiny)
+
+// timeframe reminder — the rules are built for 15m
+var table warnTbl = table.new(position.bottom_right, 1, 1)
+if barstate.islast and timeframe.period != "15"
+    table.cell(warnTbl, 0, 0, "⚠ built for the 15m chart (current: " + timeframe.period + ")",
+         text_color=color.orange, bgcolor=color.new(color.black, 20), text_size=size.small)

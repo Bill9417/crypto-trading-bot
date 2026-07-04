@@ -1,0 +1,387 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <title>Wolf Scanner — Stock Watch</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
+    <link rel="manifest" href="/manifest.webmanifest">
+    <meta name="theme-color" content="#0e1018">
+    <link rel="apple-touch-icon" href="/static/apple-touch-icon.png">
+    <link rel="stylesheet" href="/static/app.css?v={{ asset_ver }}">
+    <style>
+        :root {
+            --blue: #00d2ff;
+            --gold: #ffcf4b;
+            --slate: #0e1018;
+            --card: rgba(30,36,56,.72);
+            --border: rgba(255,255,255,.08);
+            --muted: #8a99ad;
+            --text: #f1f5f9;
+            --ok: #16a34a;
+            --bad: #dc2626;
+            --amber: #f59e0b;
+            --radius: 14px;
+            --shadow: 0 14px 40px rgba(0,0,0,.4);
+        }
+        * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+        html { -webkit-text-size-adjust: 100%; }
+        body {
+            margin: 0; background: var(--slate);
+            background-image: var(--page-bg-glow);
+            color: var(--text);
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+            -webkit-font-smoothing: antialiased; min-height: 100vh;
+        }
+        .num { font-variant-numeric: tabular-nums; }
+        .wrap { max-width: var(--page-max); margin: 0 auto; padding: 10px clamp(12px,4vw,20px) calc(34px + env(safe-area-inset-bottom)); }
+
+        /* ── Sticky header ── */
+        .bar {
+            position: sticky; top: 0; z-index: 20;
+            background: rgba(10,12,20,.92);
+            border: 1px solid var(--border);
+            border-radius: var(--radius); box-shadow: var(--shadow);
+            padding: 12px 16px; margin: 4px 0 16px;
+            display: flex; align-items: center; justify-content: space-between; gap: 10px;
+        }
+        .brand { display: flex; align-items: center; gap: 11px; min-width: 0; }
+        .brand-icon { font-size: 1.7rem; line-height: 1; }
+        .brand h1 { font-size: clamp(1rem,3.6vw,1.2rem); font-weight: 900; margin: 0; letter-spacing: -.4px; white-space: nowrap; }
+        .brand h1 span { color: var(--blue); }
+        .brand-sub { font-size: .7rem; color: var(--muted); margin-top: 2px; }
+        .actions { display: flex; gap: 8px; flex-shrink: 0; }
+        .btn {
+            background: rgba(255,255,255,.04); border: 1px solid var(--border);
+            color: var(--muted); font: inherit; font-weight: 700; font-size: .78rem;
+            padding: 9px 13px; border-radius: 11px; text-decoration: none; cursor: pointer;
+            display: inline-flex; align-items: center; gap: 6px; transition: color .15s, border-color .15s; white-space: nowrap;
+        }
+        .btn:hover, .btn:active { border-color: rgba(0,210,255,.4); color: var(--text); }
+
+        /* ── Session tiles ── */
+        .sessions { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 14px; }
+        @media (max-width: 680px) { .sessions { grid-template-columns: 1fr; } }
+        .sess {
+            background: linear-gradient(135deg, rgba(30,36,56,.85), rgba(14,17,28,.85));
+            border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow);
+            padding: 15px 18px; display: flex; align-items: center; gap: 14px; position: relative; overflow: hidden;
+        }
+        .sess::before { content: ''; position: absolute; inset: 0 auto 0 0; width: 4px; background: var(--muted); opacity: .5; }
+        .sess.open::before { background: var(--ok); opacity: 1; }
+        .sess.holiday::before { background: var(--amber); opacity: 1; }
+        .sess-flag { font-size: 1.9rem; line-height: 1; }
+        .sess-name { font-size: .82rem; font-weight: 800; letter-spacing: .4px; }
+        .sess-hours { font-size: .68rem; color: var(--muted); margin-top: 1px; }
+        .sess-right { margin-left: auto; text-align: right; }
+        .sess-state { font-size: .8rem; font-weight: 900; letter-spacing: .6px; }
+        .sess.open  .sess-state { color: var(--ok); }
+        .sess.closed .sess-state { color: var(--muted); }
+        .sess.holiday .sess-state { color: var(--amber); }
+        .sess-cd { font-size: .7rem; color: var(--muted); margin-top: 2px; }
+        .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: currentColor; margin-right: 5px; vertical-align: 1px; }
+        .sess.open .dot { animation: pulse 1.6s ease-in-out infinite; }
+        @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: .35; } }
+
+        /* ── Error strip ── */
+        .errs { display: none; background: rgba(220,38,38,.12); border: 1px solid rgba(220,38,38,.35);
+                border-radius: var(--radius); padding: 9px 14px; font-size: .74rem; color: #fda4a4; margin-bottom: 12px; }
+
+        /* ── Cards / tables ── */
+        .card { background: var(--card); border: 1px solid var(--border); border-radius: var(--radius);
+                box-shadow: var(--shadow); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+                padding: 14px 16px 10px; margin-bottom: 16px; }
+        .card-head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; margin-bottom: 8px; }
+        .card-head h2 { font-size: .95rem; font-weight: 900; margin: 0; letter-spacing: -.2px; }
+        .card-head .sub { font-size: .68rem; color: var(--muted); }
+        .tbl-wrap { overflow-x: auto; margin: 0 -16px; padding: 0 16px; }
+        table { width: 100%; border-collapse: collapse; font-size: .8rem; min-width: 560px; }
+        thead th {
+            text-align: right; font-size: .64rem; font-weight: 800; letter-spacing: .6px; text-transform: uppercase;
+            color: var(--muted); padding: 7px 8px; border-bottom: 1px solid var(--border); white-space: nowrap;
+            position: sticky; top: 0;
+        }
+        thead th.l { text-align: left; }
+        thead th[data-k] { cursor: pointer; user-select: none; }
+        thead th[data-k]:hover { color: var(--text); }
+        thead th .arr { font-size: .6rem; }
+        tbody td { padding: 6px 8px; text-align: right; border-bottom: 1px solid rgba(255,255,255,.04); white-space: nowrap; }
+        tbody td.l { text-align: left; }
+        tbody tr:hover { background: rgba(255,255,255,.03); }
+        .rk { color: var(--muted); font-size: .68rem; width: 26px; }
+        .tick { font-weight: 800; }
+        .nm { color: var(--muted); font-size: .72rem; max-width: 180px; overflow: hidden; text-overflow: ellipsis; }
+        .up { color: #4ade80; } .dn { color: #f87171; } .fl { color: var(--muted); }
+        .gap { display: inline-block; min-width: 62px; text-align: center; padding: 2px 7px; border-radius: 7px;
+               font-weight: 800; font-size: .74rem; }
+        .gap.up { background: rgba(22,163,74,.14); }
+        .gap.dn { background: rgba(220,38,38,.14); }
+        .gap.hot { box-shadow: inset 0 0 0 1px currentColor; }
+        .gap.fl { background: rgba(255,255,255,.04); font-weight: 600; }
+
+        /* ── Top-gaps strip ── */
+        .gaps { display: flex; gap: 8px; flex-wrap: wrap; margin: 2px 0 10px; }
+        .gapchip { background: rgba(255,255,255,.04); border: 1px solid var(--border); border-radius: 10px;
+                   padding: 6px 10px; font-size: .72rem; font-weight: 700; }
+        .gapchip small { color: var(--muted); font-weight: 600; margin-left: 4px; }
+
+        .note { font-size: .68rem; color: var(--muted); line-height: 1.55; margin: 8px 2px 6px; }
+        .note b { color: var(--text); }
+        .foot { text-align: center; font-size: .66rem; color: var(--muted); margin-top: 6px; }
+    </style>
+</head>
+<body>
+<div class="wrap">
+    <div class="bar">
+        <div class="brand">
+            <div class="brand-icon">🏛️</div>
+            <div>
+                <h1>STOCK <span>WATCH</span></h1>
+                <div class="brand-sub">台灣 50 · US 100 · Binance perp gap</div>
+            </div>
+        </div>
+        <div class="actions">
+            <button class="btn" onclick="loadStocks(true)">⟳ <span id="upd">refresh</span></button>
+        </div>
+    </div>
+
+    <div class="nav-standalone">{% include '_nav.html' %}</div>
+
+    <div class="sessions">
+        <div class="sess" id="sess-tw">
+            <div class="sess-flag">🇹🇼</div>
+            <div>
+                <div class="sess-name">TAIWAN — TWSE</div>
+                <div class="sess-hours" id="tw-hours">09:00–13:30 台北 · Mon–Fri</div>
+            </div>
+            <div class="sess-right">
+                <div class="sess-state" id="tw-state"><span class="dot"></span>—</div>
+                <div class="sess-cd" id="tw-cd"></div>
+            </div>
+        </div>
+        <div class="sess" id="sess-us">
+            <div class="sess-flag">🇺🇸</div>
+            <div>
+                <div class="sess-name">USA — NYSE / NASDAQ</div>
+                <div class="sess-hours" id="us-hours">09:30–16:00 New York · Mon–Fri</div>
+            </div>
+            <div class="sess-right">
+                <div class="sess-state" id="us-state"><span class="dot"></span>—</div>
+                <div class="sess-cd" id="us-cd"></div>
+            </div>
+        </div>
+    </div>
+
+    <div class="errs" id="errs"></div>
+
+    <div class="card">
+        <div class="card-head">
+            <h2>🇺🇸 US TOP 100 <span style="color:var(--gold)">vs BINANCE PERPS</span></h2>
+            <span class="sub" id="us-asof"></span>
+        </div>
+        <div class="gaps" id="gaps"></div>
+        <div class="tbl-wrap">
+            <table id="tbl-us">
+                <thead><tr>
+                    <th class="l rk">#</th>
+                    <th class="l">Ticker</th>
+                    <th class="l">Name</th>
+                    <th data-k="price">Stock $ <span class="arr"></span></th>
+                    <th data-k="change_pct">Δ Day <span class="arr"></span></th>
+                    <th data-k="perp_price">Perp $ <span class="arr"></span></th>
+                    <th data-k="perp_diff_pct">Perp vs Stock <span class="arr"></span></th>
+                </tr></thead>
+                <tbody></tbody>
+            </table>
+        </div>
+        <div class="note"><b>Perp vs Stock</b> = Binance's 24/7 tokenized-stock perp price against the real
+            stock quote. While the US market is <b>closed</b> the gap shows where crypto traders think the
+            stock will open; while it is <b>open</b> it is the perp's premium (+) / discount (−). Rows
+            without a perp show —. These perps are excluded from the trading engines
+            (EXCLUDE_TRADFI_PERPS) — this table is watch-only.</div>
+    </div>
+
+    <div class="card">
+        <div class="card-head">
+            <h2>🇹🇼 TAIWAN TOP 50</h2>
+            <span class="sub" id="tw-asof"></span>
+        </div>
+        <div class="tbl-wrap">
+            <table id="tbl-tw">
+                <thead><tr>
+                    <th class="l rk">#</th>
+                    <th class="l">代號</th>
+                    <th class="l">名稱</th>
+                    <th data-k="price">Price NT$ <span class="arr"></span></th>
+                    <th data-k="change_pct">Δ Day <span class="arr"></span></th>
+                    <th data-k="high">High <span class="arr"></span></th>
+                    <th data-k="low">Low <span class="arr"></span></th>
+                    <th data-k="volume_lots">Vol 張 <span class="arr"></span></th>
+                </tr></thead>
+                <tbody></tbody>
+            </table>
+        </div>
+        <div class="note">Constituents ≈ 台灣50指數 (top 50 by market cap, list as of 2026-07). Quotes from
+            TWSE; volume in 張 (1 張 = 1,000 shares).</div>
+    </div>
+
+    <div class="foot" id="foot">Sources: TWSE MIS · Yahoo Finance · Binance Futures — auto-refresh 30s while visible.</div>
+</div>
+
+<script>
+const INITIAL = {{ stocks|tojson }};
+let DATA = INITIAL;
+const SORT = { us: { k: null, dir: -1 }, tw: { k: null, dir: -1 } };
+
+function esc(s) { return String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+function fmtPx(v, dp) {
+    if (v == null) return '—';
+    dp = dp ?? (v >= 1000 ? 1 : 2);
+    return v.toLocaleString('en-US', { minimumFractionDigits: dp, maximumFractionDigits: dp });
+}
+function fmtPct(v) { return v == null ? '—' : (v > 0 ? '+' : '') + v.toFixed(2) + '%'; }
+function pctCls(v) { return v == null ? 'fl' : v > 0 ? 'up' : v < 0 ? 'dn' : 'fl'; }
+function fmtVol(v) {
+    if (v == null) return '—';
+    if (v >= 1e9) return (v / 1e9).toFixed(1) + 'B';
+    if (v >= 1e6) return (v / 1e6).toFixed(1) + 'M';
+    if (v >= 1e3) return (v / 1e3).toFixed(1) + 'K';
+    return String(Math.round(v));
+}
+function fmtDur(sec) {
+    sec = Math.max(0, Math.round(sec));
+    const d = Math.floor(sec / 86400), h = Math.floor(sec % 86400 / 3600), m = Math.floor(sec % 3600 / 60);
+    if (d > 0) return d + 'd ' + h + 'h';
+    if (h > 0) return h + 'h ' + String(m).padStart(2, '0') + 'm';
+    return m + 'm ' + String(Math.floor(sec % 60)).padStart(2, '0') + 's';
+}
+function fmtWhen(ts) {
+    const dt = new Date(ts * 1000), now = new Date();
+    const t = dt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    return dt.toDateString() === now.toDateString() ? t
+        : dt.toLocaleDateString([], { weekday: 'short' }) + ' ' + t;
+}
+
+function renderSession(key, m) {
+    const box = document.getElementById('sess-' + key);
+    const st = document.getElementById(key + '-state');
+    const cd = document.getElementById(key + '-cd');
+    if (!m) { st.innerHTML = '<span class="dot"></span>—'; cd.textContent = ''; return; }
+    box.className = 'sess ' + (m.state === 'open' ? 'open' : (m.holiday ? 'holiday' : 'closed'));
+    const now = Date.now() / 1000;
+    if (m.state === 'open') {
+        st.innerHTML = '<span class="dot"></span>OPEN';
+        cd.textContent = m.next_close_ts ? 'closes in ' + fmtDur(m.next_close_ts - now) + ' (' + fmtWhen(m.next_close_ts) + ')' : '';
+    } else {
+        st.innerHTML = '<span class="dot"></span>' + (m.holiday ? 'CLOSED · HOLIDAY' : 'CLOSED');
+        cd.textContent = m.next_open_ts ? 'opens ' + fmtWhen(m.next_open_ts) + ' · in ' + fmtDur(m.next_open_ts - now) : '';
+    }
+}
+
+function sortedRows(rows, s) {
+    if (!s.k) return rows;
+    return rows.slice().sort((a, b) => {
+        const av = a[s.k], bv = b[s.k];
+        if (av == null && bv == null) return 0;
+        if (av == null) return 1;
+        if (bv == null) return -1;
+        return (av - bv) * s.dir;
+    });
+}
+
+function gapCell(v) {
+    if (v == null) return '<span class="gap fl">—</span>';
+    const hot = Math.abs(v) >= 1 ? ' hot' : '';
+    return '<span class="gap ' + pctCls(v) + hot + '">' + fmtPct(v) + '</span>';
+}
+
+function render() {
+    const d = DATA || {};
+    renderSession('tw', d.tw && d.tw.market);
+    renderSession('us', d.us && d.us.market);
+
+    // error strip
+    const errs = [];
+    if (d.tw && d.tw.error) errs.push('TW quotes: ' + d.tw.error);
+    if (d.us && d.us.error) errs.push('US quotes: ' + d.us.error);
+    if (d.perp_error) errs.push('Binance perps: ' + d.perp_error);
+    const eb = document.getElementById('errs');
+    eb.style.display = errs.length ? 'block' : 'none';
+    eb.textContent = errs.length ? '⚠ ' + errs.join(' · ') + ' — showing last good data.' : '';
+
+    // "as of" chips
+    const twm = d.tw && d.tw.market, usm = d.us && d.us.market;
+    document.getElementById('tw-asof').textContent =
+        twm && twm.quote_age_sec != null ? 'quotes as of ' + fmtDur(twm.quote_age_sec) + ' ago' : '';
+    document.getElementById('us-asof').textContent =
+        usm && usm.quote_age_sec != null ? 'stock quotes as of ' + fmtDur(usm.quote_age_sec) + ' ago · perps live' : '';
+
+    // US table + top-gap chips
+    const usRows = (d.us && d.us.rows) || [];
+    const gaps = usRows.filter(r => r.perp_diff_pct != null)
+        .slice().sort((a, b) => Math.abs(b.perp_diff_pct) - Math.abs(a.perp_diff_pct)).slice(0, 5);
+    document.getElementById('gaps').innerHTML = gaps.map(r =>
+        '<span class="gapchip ' + pctCls(r.perp_diff_pct) + '">' + esc(r.ticker) + ' ' + fmtPct(r.perp_diff_pct) +
+        '<small>perp ' + fmtPx(r.perp_price) + '</small></span>').join('');
+
+    document.querySelector('#tbl-us tbody').innerHTML = sortedRows(usRows, SORT.us).map((r, i) =>
+        '<tr><td class="l rk num">' + (i + 1) + '</td>' +
+        '<td class="l tick">' + esc(r.ticker) + '</td>' +
+        '<td class="l nm">' + esc(r.name) + '</td>' +
+        '<td class="num">' + fmtPx(r.price) + '</td>' +
+        '<td class="num ' + pctCls(r.change_pct) + '">' + fmtPct(r.change_pct) + '</td>' +
+        '<td class="num">' + (r.perp_price != null ? fmtPx(r.perp_price) : '—') + '</td>' +
+        '<td class="num">' + gapCell(r.perp_diff_pct) + '</td></tr>').join('');
+
+    // TW table
+    const twRows = (d.tw && d.tw.rows) || [];
+    document.querySelector('#tbl-tw tbody').innerHTML = sortedRows(twRows, SORT.tw).map((r, i) =>
+        '<tr><td class="l rk num">' + (i + 1) + '</td>' +
+        '<td class="l tick">' + esc(r.code) + '</td>' +
+        '<td class="l nm">' + esc(r.name) + ' <span style="opacity:.6">' + esc(r.name_en) + '</span></td>' +
+        '<td class="num">' + fmtPx(r.price) + '</td>' +
+        '<td class="num ' + pctCls(r.change_pct) + '">' + fmtPct(r.change_pct) + '</td>' +
+        '<td class="num">' + fmtPx(r.high) + '</td>' +
+        '<td class="num">' + fmtPx(r.low) + '</td>' +
+        '<td class="num">' + fmtVol(r.volume_lots) + '</td></tr>').join('');
+
+    // sort arrows
+    document.querySelectorAll('table thead th[data-k]').forEach(th => {
+        const tbl = th.closest('table').id === 'tbl-us' ? 'us' : 'tw';
+        th.querySelector('.arr').textContent = SORT[tbl].k === th.dataset.k ? (SORT[tbl].dir < 0 ? '▼' : '▲') : '';
+    });
+}
+
+document.querySelectorAll('table thead th[data-k]').forEach(th => {
+    th.addEventListener('click', () => {
+        const tbl = th.closest('table').id === 'tbl-us' ? 'us' : 'tw';
+        const s = SORT[tbl];
+        if (s.k === th.dataset.k) {
+            if (s.dir === -1) s.dir = 1; else { s.k = null; s.dir = -1; }  // desc → asc → default
+        } else { s.k = th.dataset.k; s.dir = -1; }
+        render();
+    });
+});
+
+let loading = false;
+function loadStocks(manual) {
+    if (loading) return;
+    loading = true;
+    const u = document.getElementById('upd');
+    if (manual) u.textContent = '…';
+    fetch('/api/stocks')
+        .then(r => r.ok ? r.json() : null)
+        .then(d => { if (d) { DATA = d; render(); } })
+        .catch(() => {})
+        .finally(() => { loading = false; u.textContent = 'refresh'; });
+}
+
+render();
+setInterval(() => { if (!document.hidden) loadStocks(false); }, 30000);
+setInterval(() => { if (!document.hidden && DATA) { renderSession('tw', DATA.tw && DATA.tw.market); renderSession('us', DATA.us && DATA.us.market); } }, 1000);
+document.addEventListener('visibilitychange', () => { if (!document.hidden) loadStocks(false); });
+</script>
+</body>
+</html>

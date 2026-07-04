@@ -1,0 +1,390 @@
+"""
+Strategy 3 — "Vegas Flag Flip": BTC + SOL + HYPE (config.STRATEGY3_SYMBOLS), 15m.
+Signals from BINANCE charts · orders on the user's BYBIT account.
+
+The Python twin of TV_strategy.pine. Two rules, exactly as on the chart:
+
+  1. FLAG — the TV.pine confluence signal fires (MSB structure flip arms it;
+     it fires on a CLOSED 15m bar when price is on the right side of EMA200,
+     ADX confirms a trend, and the confidence score reaches the threshold).
+  2. VEGAS — the Vegas line (SMA5 of EMA200, the green/red line in the tunnel)
+     must MATCH the flag: green → long, red → short. If it disagrees at flag
+     time the entry WAITS until Vegas turns (unless a newer opposite flag
+     replaces the direction first).
+
+  The position is held until the OPPOSITE flag appears → close immediately,
+  then enter the new direction once Vegas agrees. There is no take-profit; a
+  wide EMERGENCY stop (config.STRATEGY3_EMERGENCY_SL_PCT) rests on Bybit
+  purely as crash protection.
+
+Split-exchange design (user's request): candles are fetched from BINANCE
+(identical to the TradingView chart driving the strategy), execution happens
+on BYBIT via strategy3_exec. MANUAL intervention is expected and respected —
+close a position by hand on Bybit and the scanner stands down for that symbol
+until the NEXT flag; a position it did not open is never touched.
+
+By DEFAULT alert-only. Arming real orders needs ALL of: STRATEGY3_LIVE=true,
+BYBIT_API_KEY/BYBIT_API_SECRET in app/.env, and LIVE_TRADING=true (the master
+gate — while false, orders are logged as dry-runs).
+
+Signals come from strategy3_signal.py — an EXACT bar-by-bar port of
+TV_strategy.pine (zigzag MSB arm, LuxAlgo internal bias, TV score weights,
+per-bar ADX gate, arm-and-fire flags with alternation), so the TradingView
+backtest and this bot fire the same flags on the same candles. The only
+deliberate divergence, in both: the trendline factor (weight 5) is neutral.
+
+State (last flag per symbol, consumed marker, our open direction) persists in
+strategy3_state.json so a restart never re-enters or loses track of a flip.
+"""
+import json
+import os
+import time
+
+import config
+import strategy3_exec as X
+import strategy3_signal as SIG
+import telegram_utils
+from market_data import SafeBinanceClient, RateLimitCooldownError, timeframe_to_seconds
+
+TIMEFRAME = os.getenv("STRATEGY3_TIMEFRAME", "15m")
+TF_SEC = timeframe_to_seconds(TIMEFRAME)
+POLL_SEC = int(os.getenv("STRATEGY3_POLL_SEC", "45"))       # candle-close watcher
+# Deep history on purpose: the arm/alternation state replays from the start of
+# the series, so more bars ⇒ the last-bar flag matches TradingView better.
+CANDLES = int(os.getenv("STRATEGY3_CANDLES", "1000"))
+
+STATE_FILE = os.path.join(os.path.dirname(__file__), "strategy3_state.json")
+
+
+def symbols() -> list:
+    return [f"{b}/{config.QUOTE_ASSET}:{config.QUOTE_ASSET}" for b in config.STRATEGY3_SYMBOLS]
+
+
+# ── signal computation (pure, on CLOSED candles) ─────────────────────────────
+
+def closed_candles(ohlcv, now=None) -> list:
+    """Drop the still-forming candle so every read is bar-close confirmed,
+    like the indicator's 'Confirm Signals on Bar Close'."""
+    if not ohlcv:
+        return []
+    now = now or time.time()
+    last_open_ts = float(ohlcv[-1][0]) / 1000.0
+    return ohlcv[:-1] if now < last_open_ts + TF_SEC else ohlcv
+
+
+def flag_on_last_bar(ohlcv) -> tuple:
+    """(flag, snapshot) for the last CLOSED bar, straight from the exact
+    TV_strategy.pine port — flag is 'long'/'short'/None."""
+    snap = SIG.last_bar(ohlcv, config.STRATEGY3_SCORE_TH, config.STRATEGY3_ADX_TH)
+    return snap["flag"], snap
+
+
+# ── flip decision (pure — unit-tested) ───────────────────────────────────────
+
+def decide(state: dict, flag, vegas: int, holding) -> tuple:
+    """One symbol's flip decision for a closed bar.
+
+    state   {'last_flag': 'long'/'short'/None, 'consumed': bool} — mutated
+    flag    'long'/'short'/None — flag fired on THIS bar
+    vegas   +1 green / -1 red / 0 flat
+    holding 'long'/'short'/None — OUR open position direction
+
+    Returns (close: bool, open_dir: 'long'/'short'/None). A new flag replaces
+    the pending direction; an opposite flag closes at once; entry requires
+    Vegas agreement and each flag opens at most one position (consumed)."""
+    if flag and flag != state.get("last_flag"):
+        state["last_flag"] = flag
+        state["consumed"] = False
+
+    want = state.get("last_flag")
+    close = bool(holding and want and holding != want)
+    effective = None if holding and not close else holding
+
+    open_dir = None
+    if want and not state.get("consumed") and effective != want:
+        if (want == "long" and vegas > 0) or (want == "short" and vegas < 0):
+            open_dir = want
+    return close, open_dir
+
+
+# ── execution (Bybit via strategy3_exec) ─────────────────────────────────────
+
+def _tg(msg: str) -> None:
+    """S3 is the live engine — its flag/trade/error alerts always punch through
+    quiet mode (force=True), like the naked-position safety alarm."""
+    try:
+        telegram_utils.send_message(msg, force=True)
+    except Exception as exc:  # noqa: BLE001 — alerts must never kill the loop
+        print(f"[strategy3] telegram failed: {exc}")
+
+
+# Errors that deserve a retry on the next closed candle instead of burning the
+# flag: network blips, exchange hiccups and rate limits. Anything else (below
+# min size, insufficient balance, bad params) is treated as final for the flag.
+_TRANSIENT_ERR = ("timeout", "timed out", "connection", "network", "temporar",
+                  "unavailable", "busy", "502", "503", "504", "10006",
+                  "rate limit", "too many")
+
+
+def _is_transient(err) -> bool:
+    e = str(err or "").lower()
+    return any(t in e for t in _TRANSIENT_ERR)
+
+
+def live_blocked() -> str:
+    """'' when execution may proceed (incl. dry-run), else why it is alert-only."""
+    if not config.STRATEGY3_LIVE:
+        return "STRATEGY3_LIVE=false (alert-only)"
+    return ""
+
+
+def open_flip(symbol: str, direction: str, price: float, score) -> str:
+    """Enter a flip position on Bybit: market + emergency SL, no TP (the exit
+    is the opposite flag). Returns an outcome for the flag bookkeeping:
+      'opened' — in a position now (real fill or dry-run)
+      'retry'  — transient failure; try again on the next closed candle
+      'skip'   — final for this flag (alert-only mode, manual position, sizing)"""
+    blocked = live_blocked()
+    if blocked:
+        print(f"[strategy3] would OPEN {direction.upper()} {symbol} — {blocked}")
+        return "skip"
+    if X.is_live():
+        try:
+            if X.get_position(symbol):
+                print(f"[strategy3] skip {symbol}: a Bybit position already exists "
+                      f"(manual?) — not touching it")
+                _tg(f"⚠️ S3 skipped {direction.upper()} {symbol.split('/')[0]} — a position "
+                    f"already exists on Bybit (manual?). Close it or let me manage it.")
+                return "skip"
+        except Exception as exc:  # noqa: BLE001 — fail closed on an unreadable account
+            print(f"[strategy3] cannot read Bybit positions ({exc}) — will retry")
+            return "retry"
+
+    is_long = direction == "long"
+    slp = config.STRATEGY3_EMERGENCY_SL_PCT
+    sl = price * (1 - slp) if is_long else price * (1 + slp)
+
+    res = X.open_flip(symbol, direction, price, sl)
+    if not res.get("ok"):
+        err = res.get("error")
+        print(f"[strategy3] order error {symbol}: {err}")
+        if _is_transient(err):
+            return "retry"
+        _tg(f"⚠️ S3 order error {symbol.split('/')[0]} {direction.upper()}: {err}")
+        return "skip"
+    tag = "DRY-RUN " if res.get("dry") else ""
+    print(f"[strategy3] {tag}OPENED {direction.upper()} {symbol} @ {price:.6g} "
+          f"(score {score}, emergency SL {sl:.6g}, qty {res.get('qty')})")
+    _tg(f"🔀 S3 {tag}FLIP · {direction.upper()} {symbol.split('/')[0]} @ {price:.6g} (Bybit)\n"
+        f"score {score}/100 · Vegas agrees · exit = opposite flag "
+        f"(emergency SL {slp:.0%})")
+    if res.get("leverage_warning"):
+        _tg(f"⚠️ S3 · {symbol.split('/')[0]} leverage may not be {config.STRATEGY3_LEVERAGE}x "
+            f"— Bybit said: {res['leverage_warning']}\nSame {price * res.get('qty', 0):.0f} USDT "
+            f"notional, but MORE margin may be locked than expected — check free balance "
+            f"before the next flip.")
+    return "opened"
+
+
+def close_flip(symbol: str, why: str) -> bool:
+    blocked = live_blocked()
+    if blocked:
+        print(f"[strategy3] would CLOSE {symbol} ({why}) — {blocked}")
+        return False
+    res = X.close_flip(symbol)
+    if not res.get("ok"):
+        print(f"[strategy3] close error {symbol}: {res.get('error')}")
+        _tg(f"⚠️ S3 close FAILED {symbol.split('/')[0]}: {res.get('error')} — check Bybit!")
+        return False
+    tag = "DRY-RUN " if res.get("dry") else ""
+    print(f"[strategy3] {tag}CLOSED {symbol} — {why}")
+    _tg(f"🔀 S3 {tag}EXIT · {symbol.split('/')[0]} (Bybit) — {why}")
+    return True
+
+
+# ── state persistence ────────────────────────────────────────────────────────
+
+def load_state() -> dict:
+    try:
+        with open(STATE_FILE, "r", encoding="utf-8") as f:
+            return json.load(f) or {}
+    except Exception:  # noqa: BLE001
+        return {}
+
+
+def save_state(state: dict) -> None:
+    tmp = STATE_FILE + ".tmp"
+    payload = {**state, "updated_at": time.time(),
+               "live": bool(config.STRATEGY3_LIVE and X.is_live())}
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(payload, f, indent=1)
+    os.replace(tmp, STATE_FILE)
+
+
+# ── main loop ────────────────────────────────────────────────────────────────
+
+# Guardian-alert cooldown: a naked position gets re-tried and re-alerted every
+# poll (~45s) until fixed, which would spam Telegram during a real outage.
+# This is the single most dangerous failure mode in the system (unbounded
+# downside on a 50x position with no floor), so it still alerts periodically
+# rather than going silent after the first message.
+_GUARDIAN_ALERT_COOLDOWN_SEC = 600
+_last_guardian_alert: dict = {}
+
+
+def _guardian_alert(base: str, detail: str) -> None:
+    now = time.time()
+    if now - _last_guardian_alert.get(base, 0) >= _GUARDIAN_ALERT_COOLDOWN_SEC:
+        _last_guardian_alert[base] = now
+        _tg(f"🚨 S3 GUARDIAN FAILED · {base} has NO stop-loss on Bybit and the "
+            f"auto-repair failed: {detail}\nThis position is UNPROTECTED at "
+            f"{config.STRATEGY3_LEVERAGE}x — check Bybit now and set a stop "
+            f"by hand if this repeats.")
+
+
+def reconcile_position(sym: str, st: dict) -> None:
+    """EVERY poll (not just on candle closes): notice an emergency-SL hit or a
+    MANUAL close within ~45s and stand down until the next flag, and keep the
+    emergency stop armed on a position we hold. No-op in dry-run.
+
+    A failure to (re-)arm the stop is the single most dangerous failure mode
+    here — a naked position at 50x has no floor — so it gets a LOUD, repeating
+    Telegram alert, not just a log line nobody is watching in real time."""
+    if not (st.get("pos_dir") and X.is_live()):
+        return
+    base = sym.split("/")[0]
+    try:
+        pos = X.get_position(sym)
+    except Exception as exc:  # noqa: BLE001 — keep last known state on API blips
+        print(f"[strategy3] reconcile error {sym}: {exc}")
+        return
+
+    if not pos:
+        print(f"[strategy3] {base}: position gone on Bybit (SL or manual "
+              f"close) — standing down until the next flag")
+        _tg(f"ℹ️ S3 · {base} position closed on Bybit (stop or manual) — "
+            f"waiting for the next flag")
+        st["pos_dir"] = None
+        st["consumed"] = True
+        return
+
+    if pos.get("sl"):
+        return                                          # protected — nothing to do
+
+    # A stop still missing next cycle (~45s later) re-enters this same path and
+    # retries — no separate immediate re-check here, which would risk a false
+    # alarm from Bybit's own propagation delay right after a successful set.
+    try:
+        X.ensure_stop(sym, pos=pos)
+        print(f"[strategy3] guardian armed the stop on {sym}")
+    except Exception as exc:  # noqa: BLE001
+        print(f"[strategy3] GUARDIAN FAILED to arm stop on {sym}: {exc}")
+        _guardian_alert(base, str(exc)[:200])
+
+
+def step(client, state: dict) -> None:
+    """One pass over the symbols; trades only on NEW closed 15m candles, but
+    reconciles positions on every pass. State is saved after each symbol so a
+    mid-pass abort can never lose an opened position."""
+    for sym in symbols():
+        st = state.setdefault(sym, {"last_flag": None, "consumed": False,
+                                    "pos_dir": None, "last_candle": 0})
+        reconcile_position(sym, st)
+
+        try:
+            raw = client.call("fetch_ohlcv", sym, TIMEFRAME, None, CANDLES)
+        except RateLimitCooldownError as exc:
+            print(f"[strategy3] cooldown: {exc}; pausing 30s")
+            save_state(state)
+            time.sleep(30)
+            return
+        except Exception as exc:  # noqa: BLE001
+            print(f"[strategy3] Binance fetch error {sym}: {exc}")
+            continue
+
+        ohlcv = closed_candles(raw)
+        if not ohlcv:
+            continue
+        last_ts = float(ohlcv[-1][0])
+        if last_ts <= st.get("last_candle", 0):
+            continue                                    # no new closed bar yet
+        st["last_candle"] = last_ts
+
+        try:
+            flag, snap = flag_on_last_bar(ohlcv)
+        except Exception as exc:  # noqa: BLE001
+            print(f"[strategy3] compute error {sym}: {exc}")
+            continue
+        if snap["insufficient"]:
+            continue
+
+        base = sym.split("/")[0]
+        vegas_txt = "green" if snap["vegas"] > 0 else "red" if snap["vegas"] < 0 else "flat"
+        # heartbeat — one line per closed candle so the log (and /health) show life
+        print(f"[strategy3] {base} {TIMEFRAME} close · score {snap['score']:.1f} · "
+              f"vegas {vegas_txt} · msb {snap['msb']} · flag {flag or '—'} · "
+              f"pos {st.get('pos_dir') or 'flat'}")
+
+        if flag and flag != st.get("last_flag"):
+            st["open_attempts"] = 0                     # fresh flag → fresh retries
+            _tg(f"🚩 S3 FLAG · {flag.upper()} {base} ({TIMEFRAME}, Binance chart)\n"
+                f"score {snap['score']:.0f}/100 · Vegas "
+                f"{'agrees → entering' if (snap['vegas'] > 0) == (flag == 'long') and snap['vegas'] != 0 else 'disagrees → waiting'}")
+
+        close, open_dir = decide(st, flag, snap["vegas"], st.get("pos_dir"))
+        if close:
+            if close_flip(sym, f"opposite flag ({st['last_flag']})"):
+                st["pos_dir"] = None
+        if open_dir and not st.get("pos_dir"):
+            outcome = open_flip(sym, open_dir, snap["price"], snap["score"])
+            if outcome == "opened":
+                st["pos_dir"] = open_dir
+                st["consumed"] = True
+            elif outcome == "retry":
+                st["open_attempts"] = st.get("open_attempts", 0) + 1
+                if st["open_attempts"] >= 3:            # give up after 3 candles
+                    st["consumed"] = True
+                    _tg(f"⚠️ S3 gave up opening {open_dir.upper()} {base} after "
+                        f"{st['open_attempts']} attempts — waiting for the next flag")
+                # else: flag stays live → retried on the next closed candle
+            else:                                       # 'skip' — final for this flag
+                st["consumed"] = True
+
+        save_state(state)                               # persist after each symbol
+
+    save_state(state)
+
+
+def main() -> None:
+    blocked = live_blocked()
+    if blocked:
+        mode = f"ALERT-ONLY ({blocked})"
+    elif not X.keys_present():
+        mode = "ARMED but no BYBIT_API_KEY/BYBIT_API_SECRET in app/.env → dry-run"
+    elif not config.LIVE_TRADING:
+        mode = "ARMED but LIVE_TRADING=false → dry-run"
+    else:
+        mode = "LIVE on BYBIT"
+    print(f"[strategy3] Vegas Flag Flip starting — {', '.join(config.STRATEGY3_SYMBOLS)} "
+          f"{TIMEFRAME} (Binance charts → Bybit orders) · score ≥{config.STRATEGY3_SCORE_TH} "
+          f"· ADX ≥{config.STRATEGY3_ADX_TH} · {config.STRATEGY3_MARGIN_USDT} USDT × "
+          f"{config.STRATEGY3_LEVERAGE}x · mode: {mode}")
+    client = SafeBinanceClient(
+        min_rest_interval=float(os.getenv("STRATEGY3_REST_INTERVAL", "0.35")),
+        max_retries=3,
+    )
+    state = load_state()
+    state.pop("updated_at", None)
+    state.pop("live", None)
+
+    while True:
+        start = time.time()
+        try:
+            step(client, state)
+        except Exception as exc:  # noqa: BLE001 — keep the loop alive
+            print(f"[strategy3] step error: {exc}")
+        time.sleep(max(10, POLL_SEC - (time.time() - start)))
+
+
+if __name__ == "__main__":
+    main()

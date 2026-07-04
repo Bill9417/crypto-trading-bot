@@ -1473,6 +1473,14 @@ def set_protection(symbol: str, *, sl=None, tp=None) -> dict:
         return {"ok": False, "error": str(exc)}
 
 
+# Cooldown for the "could NOT protect a naked position" alert — this is the
+# single most important safety notification in the whole system (a naked
+# leveraged position has no floor), so it must not go silent, but a persistent
+# failure shouldn't spam a message every ~5 min sweep either.
+_last_guardian_fail_alert: dict = {}
+_GUARDIAN_FAIL_COOLDOWN_SEC = 900
+
+
 def ensure_stop_losses(*, notify=True) -> dict:
     """Guardian: every open position MUST have a stop-loss. Scans live positions
     and, for any with NO stop-loss order, places one (reduceOnly STOP_MARKET) at
@@ -1535,7 +1543,7 @@ def ensure_stop_losses(*, notify=True) -> dict:
         if res.get("ok"):
             protected.append({"symbol": symbol, "side": side, "sl": round(sl, 8)})
         else:
-            skipped.append({"symbol": symbol, "reason": res.get("error")})
+            skipped.append({"symbol": symbol, "reason": res.get("error"), "side": side})
 
     if protected and notify:
         lines = "\n".join(f"  {x['side'].upper()} {x['symbol']} → SL {x['sl']:.6g}"
@@ -1544,6 +1552,27 @@ def ensure_stop_losses(*, notify=True) -> dict:
     if protected:
         print(f"[executor][GUARDIAN] auto-set SL on {len(protected)} naked position(s): "
               f"{[x['symbol'] for x in protected]}")
+
+    # A FAILED protection attempt on a genuinely naked position is the single
+    # most dangerous silent failure this bot can have — previously `skipped`
+    # was only returned to a caller that discards it, so this could run for
+    # an unbounded time with zero notification. "already protected" entries
+    # are routine and excluded; only a real set_protection failure alerts.
+    real_failures = [s for s in skipped if s.get("reason") != "already protected"]
+    if real_failures and notify:
+        now = time.time()
+        due = [s for s in real_failures
+               if now - _last_guardian_fail_alert.get(s["symbol"], 0) >= _GUARDIAN_FAIL_COOLDOWN_SEC]
+        if due:
+            for s in due:
+                _last_guardian_fail_alert[s["symbol"]] = now
+            lines = "\n".join(f"  {s['side'].upper()} {s['symbol']} → {s['reason']}" for s in due)
+            send_message(
+                f"🚨 GUARDIAN FAILED to protect {len(due)} naked position(s) — "
+                f"NO stop-loss is resting on the exchange:\n{lines}\n"
+                f"Check the /account page and set a stop by hand if this repeats.")
+            print(f"[executor][GUARDIAN] FAILED to protect {len(due)} position(s): "
+                  f"{[s['symbol'] for s in due]}")
     return {"ok": True, "protected": protected, "skipped": skipped}
 
 
