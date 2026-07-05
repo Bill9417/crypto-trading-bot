@@ -96,44 +96,62 @@ def test_closed_candles_uses_the_tf_sec_passed_in_not_the_module_default():
     assert len(S3.closed_candles(ohlcv, 15 * 60, now)) == 2  # would be "closed" on a 15m tf
 
 
-def test_symbols_from_config():
+# NOTE: these three tests must never assert a specific coin list — the user
+# turns symbols on/off in .env (BTC was switched off 2026-07-05) and preflight
+# runs against the real .env, so hardcoding "BTC" here aborted a live launch.
+# Pin fixture values with monkeypatch to test the MECHANICS instead.
+
+def test_symbols_from_config(monkeypatch):
+    monkeypatch.setattr(S3.config, "STRATEGY3_SYMBOLS", ["BTC", "SOL", "HYPE", "XAUT"])
+    assert S3.symbols() == ["BTC/USDT:USDT", "SOL/USDT:USDT",
+                            "HYPE/USDT:USDT", "XAUT/USDT:USDT"]
+    # and whatever is really configured right now must map to the same format
+    monkeypatch.undo()
     syms = S3.symbols()
-    assert syms[0].startswith("BTC/")
-    assert all(s.endswith(":USDT") for s in syms)
-    assert len(syms) == 4
-    assert "SOL/USDT:USDT" in syms
-    assert "HYPE/USDT:USDT" in syms
-    assert "XAUT/USDT:USDT" in syms
+    assert syms and all(s.endswith("/USDT:USDT") for s in syms)
+    assert [s.split("/")[0] for s in syms] == S3.config.STRATEGY3_SYMBOLS
 
 
-def test_strategy3_params_per_symbol_override():
-    """XAUT gets its own timeframe/margin (30m, bigger size); the rest fall
-    back to the shared defaults — this is the config the whole per-symbol
-    sizing/timeframe refactor depends on."""
+def test_strategy3_params_per_symbol_override(monkeypatch):
+    """Per-symbol overrides win per key; everything else falls back to the
+    shared defaults — this is the config the whole per-symbol sizing/timeframe
+    refactor depends on. Values are pinned here, NOT read from .env, so the
+    user can freely enable/disable symbols without breaking preflight."""
+    monkeypatch.setattr(S3.config, "STRATEGY3_TIMEFRAME", "15m")
+    monkeypatch.setattr(S3.config, "STRATEGY3_MARGIN_USDT", 30.0)
+    monkeypatch.setattr(S3.config, "STRATEGY3_LEVERAGE", 50)
+    monkeypatch.setattr(S3.config, "STRATEGY3_OVERRIDES",
+                        {"XAUT": {"timeframe": "30m", "margin": 60.0}})
     xaut = S3.config.strategy3_params("XAUT")
     sol = S3.config.strategy3_params("SOL")
-    assert xaut["timeframe"] == "30m"
-    assert xaut["margin"] == 60.0
-    assert xaut["leverage"] == 50
-    assert sol["timeframe"] == "15m"
-    assert sol["margin"] == 30.0
-    assert sol["leverage"] == 50
-    # worst-case total margin lock is unchanged by the XAUT addition (a
-    # regression a careless sizing tweak could easily break silently)
-    total = sum(S3.config.strategy3_params(b)["margin"] for b in S3.config.STRATEGY3_SYMBOLS)
+    assert xaut == {"timeframe": "30m", "margin": 60.0, "leverage": 50}
+    assert sol == {"timeframe": "15m", "margin": 30.0, "leverage": 50}
+    # worst-case total margin lock for the full 4-coin list (a regression a
+    # careless merge bug in strategy3_params could easily break silently)
+    total = sum(S3.config.strategy3_params(b)["margin"]
+                for b in ["BTC", "SOL", "HYPE", "XAUT"])
     assert total == 150.0
 
 
-def test_status_line_and_banner_mention_every_symbol():
+def test_status_line_and_banner_mention_every_symbol(monkeypatch):
     """Regression: the per-symbol breakdown used by both the startup banner
     and the /bybit web page must actually list every configured symbol with
     its own timeframe — a single shared TIMEFRAME string silently dropped
     XAUT's 30m override in an earlier draft of this refactor."""
+    monkeypatch.setattr(S3.config, "STRATEGY3_SYMBOLS", ["BTC", "SOL", "HYPE", "XAUT"])
+    monkeypatch.setattr(S3.config, "STRATEGY3_TIMEFRAME", "15m")
+    monkeypatch.setattr(S3.config, "STRATEGY3_MARGIN_USDT", 30.0)
+    monkeypatch.setattr(S3.config, "STRATEGY3_LEVERAGE", 50)
+    monkeypatch.setattr(S3.config, "STRATEGY3_OVERRIDES",
+                        {"XAUT": {"timeframe": "30m", "margin": 60.0}})
+    line = S3.status_line()
+    assert "BTC 15m 1500 USDT×50x" in line
+    assert "XAUT 30m 3000 USDT×50x" in line
+    # and with the real live config: every enabled symbol must appear
+    monkeypatch.undo()
     line = S3.status_line()
     for base in S3.config.STRATEGY3_SYMBOLS:
         assert base in line
-    assert "XAUT 30m" in line
-    assert "BTC 15m" in line
 
 
 def _synth_ohlcv(n=900, seed=7):
