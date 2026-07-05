@@ -1,0 +1,99 @@
+"""Liquidation tracker — parser + aggregation tests (no sockets opened:
+importing liquidations must never connect; only start() does)."""
+import json
+import time
+
+import liquidations as L
+
+# Events older than the 24h rolling window are trimmed by _push on arrival,
+# so parser fixtures must carry a CURRENT timestamp to survive into _events.
+NOW_MS = int(time.time() * 1000)
+
+
+def _clear():
+    with L._lock:
+        L._events.clear()
+
+
+def test_import_does_not_start_collector():
+    assert L._started is False or L._started is True  # attribute exists
+    # The real guarantee: no thread named liq-* unless start() was called.
+    import threading
+    if not L._started:
+        assert not [t for t in threading.enumerate() if t.name.startswith("liq-")]
+
+
+def test_binance_parser_sell_order_is_long_liquidation():
+    _clear()
+    msg = json.dumps({"e": "forceOrder", "o": {
+        "s": "BTCUSDT", "S": "SELL", "q": "0.5", "p": "60000", "ap": "60100",
+        "T": NOW_MS}})
+    L._on_binance(msg)
+    with L._lock:
+        ev = L._events[-1]
+    assert ev["sym"] == "BTC"
+    assert ev["side"] == "long"            # SELL force order closes a LONG
+    assert abs(ev["usd"] - 0.5 * 60100) < 1e-6
+
+
+def test_bybit_parser_buy_order_is_short_liquidation():
+    _clear()
+    msg = json.dumps({"topic": "allLiquidation.SOLUSDT", "data": [
+        {"s": "SOLUSDT", "S": "Buy", "v": "10", "p": "82.5", "T": NOW_MS}]})
+    L._on_bybit(msg)
+    with L._lock:
+        ev = L._events[-1]
+    assert ev["sym"] == "SOL"
+    assert ev["side"] == "short"
+    assert abs(ev["usd"] - 825.0) < 1e-6
+
+
+def test_okx_parser_uses_ctval_and_skips_unknown_instruments():
+    _clear()
+    L._okx_ctval["BTC-USDT-SWAP"] = 0.01
+    msg = json.dumps({"arg": {"channel": "liquidation-orders", "instType": "SWAP"},
+                      "data": [{"instId": "BTC-USDT-SWAP", "details": [
+                          {"posSide": "long", "side": "sell", "sz": "100",
+                           "bkPx": "60000", "ts": str(NOW_MS)}]}]})
+    L._on_okx(msg)
+    with L._lock:
+        ev = L._events[-1]
+    # 100 contracts × 0.01 BTC × 60000 = 60,000 USDT (NOT 6,000,000 — the
+    # exact 100× bug the ctVal cache exists to prevent)
+    assert abs(ev["usd"] - 60000.0) < 1e-6
+    # unknown instrument (no ctVal loaded) must be skipped, never guessed
+    n_before = len(L._events)
+    msg2 = json.dumps({"arg": {"channel": "liquidation-orders", "instType": "SWAP"},
+                       "data": [{"instId": "ZZZ-USDT-SWAP", "details": [
+                           {"posSide": "long", "side": "sell", "sz": "5",
+                            "bkPx": "10", "ts": str(NOW_MS)}]}]})
+    L._on_okx(msg2)
+    with L._lock:
+        assert len(L._events) == n_before
+
+
+def test_aggregate_windows_and_breakdowns():
+    now = int(time.time() * 1000)
+    evs = [
+        {"ts": now - 1000, "ex": "Binance", "sym": "BTC", "side": "long", "usd": 50000},
+        {"ts": now - 2000, "ex": "OKX", "sym": "ETH", "side": "short", "usd": 12000},
+        {"ts": now - 2 * 3600 * 1000, "ex": "Bybit", "sym": "SOL", "side": "long", "usd": 800},
+        {"ts": now - 30 * 3600 * 1000, "ex": "OKX", "sym": "DOGE", "side": "short", "usd": 999},
+    ]
+    agg = L.aggregate(evs, 86400, now)
+    assert agg["n_events"] == 3                       # 30h-old event outside window
+    assert agg["long_usd"] == 50800
+    assert agg["short_usd"] == 12000
+    assert agg["largest"]["symbol"] == "BTC" and agg["largest"]["exchange"] == "Binance"
+    assert agg["exchanges"][0]["exchange"] == "Binance"   # sorted by total desc
+    assert len(agg["series"]) == 24
+    assert L.aggregate(evs, 3600, now)["n_events"] == 2   # 1h window
+
+
+def test_headline_sentiment():
+    from market_intel import headline_sentiment
+    assert headline_sentiment("Bitcoin surges to record high as ETF inflows accelerate") == "bullish"
+    assert headline_sentiment("Exchange hacked, token plunges 40% in massive sell-off") == "bearish"
+    assert headline_sentiment("Tokenization panel discusses custody standards") == "neutral"
+    # mixed headline: equal hits → neutral, never a false positive
+    assert headline_sentiment("Bitcoin jumps above $63,000, reversing end-June losses") == "neutral"

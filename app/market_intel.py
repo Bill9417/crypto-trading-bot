@@ -16,6 +16,7 @@ A small in-memory TTL cache keeps the page snappy and avoids rate limits.
 """
 
 import json
+import re
 import time
 import urllib.request
 import urllib.error
@@ -189,7 +190,51 @@ NEWS_FEEDS = [
     ("CoinDesk", "https://www.coindesk.com/arc/outboundfeeds/rss/"),
     ("Cointelegraph", "https://cointelegraph.com/rss"),
     ("CryptoSlate", "https://cryptoslate.com/feed/"),
+    # Verified working 2026-07-05 (Bitcoin Magazine 403s bot requests — skipped).
+    ("The Block", "https://www.theblock.co/rss.xml"),
+    ("Decrypt", "https://decrypt.co/feed"),
+    ("The Defiant", "https://thedefiant.io/api/feed"),
+    ("Blockworks", "https://blockworks.co/feed"),
 ]
+
+# ── Headline sentiment (keyword-based, no external API) ─────────────────────
+# Deliberately simple and transparent: word-boundary hits of clearly-signed
+# words. A headline is 'bullish' when bull hits outnumber bear hits. This is
+# a mood gauge over ~40 headlines, not per-article NLP — at that aggregation
+# level, keyword polarity tracks the tape well enough to be useful.
+_BULL_WORDS = (
+    "surge", "soar", "rally", "rallies", "jump", "jumps", "gain", "gains",
+    "record high", "all-time high", "ath", "bullish", "adoption", "approval",
+    "approve", "approves", "inflow", "inflows", "breakout", "recover",
+    "recovers", "recovery", "rebound", "rebounds", "upgrade", "partnership",
+    "institutional", "accumulate", "accumulation", "climb", "climbs", "rise",
+    "rises", "rising", "top", "buy", "buying", "green", "milestone",
+    "breakthrough", "boom", "parabolic", "unlock global",
+)
+_BEAR_WORDS = (
+    "crash", "crashes", "plunge", "plunges", "dump", "dumps", "fall", "falls",
+    "drop", "drops", "tumble", "tumbles", "slump", "slumps", "sink", "sinks",
+    "bearish", "sell-off", "selloff", "liquidation", "liquidated", "hack",
+    "hacked", "exploit", "stolen", "scam", "fraud", "lawsuit", "sue", "sues",
+    "ban", "bans", "restrict", "crackdown", "fine", "fines", "penalty",
+    "outflow", "outflows", "fear", "warn", "warns", "warning", "bankrupt",
+    "bankruptcy", "default", "delist", "delists", "layoff", "layoffs",
+    "decline", "declines", "month low", "year low", "loss", "losses", "down",
+    "risk-off", "capitulation", "delisting", "block retail", "negative",
+)
+_BULL_RE = re.compile(r"\b(" + "|".join(re.escape(w) for w in _BULL_WORDS) + r")\b", re.I)
+_BEAR_RE = re.compile(r"\b(" + "|".join(re.escape(w) for w in _BEAR_WORDS) + r")\b", re.I)
+
+
+def headline_sentiment(title: str) -> str:
+    """'bullish' / 'bearish' / 'neutral' for one headline."""
+    bull = len(_BULL_RE.findall(title or ""))
+    bear = len(_BEAR_RE.findall(title or ""))
+    if bull > bear:
+        return "bullish"
+    if bear > bull:
+        return "bearish"
+    return "neutral"
 
 
 def _parse_rss(source: str, xml_text: str, limit: int) -> list[dict]:
@@ -201,10 +246,41 @@ def _parse_rss(source: str, xml_text: str, limit: int) -> list[dict]:
         link = (item.findtext("link") or "").strip()
         pub = (item.findtext("pubDate") or "").strip()
         if title and link:
-            items.append({"source": source, "title": title, "link": link, "published": pub})
+            items.append({"source": source, "title": title, "link": link, "published": pub,
+                          "sentiment": headline_sentiment(title)})
+        if len(items) >= limit:
+            break
+    if items:
+        return items
+    # Atom (e.g. Blockworks): namespaced <entry>, link as an href attribute.
+    ns = "{http://www.w3.org/2005/Atom}"
+    for entry in root.iter(f"{ns}entry"):
+        title = (entry.findtext(f"{ns}title") or "").strip()
+        link_el = entry.find(f"{ns}link")
+        link = (link_el.get("href") if link_el is not None else "") or ""
+        pub = (entry.findtext(f"{ns}published") or entry.findtext(f"{ns}updated") or "").strip()
+        if title and link:
+            items.append({"source": source, "title": title, "link": link, "published": pub,
+                          "sentiment": headline_sentiment(title)})
         if len(items) >= limit:
             break
     return items
+
+
+def _pub_ts(item: dict) -> float:
+    """Epoch seconds from an RSS pubDate (RFC 822) or Atom date (ISO 8601),
+    0 when unparseable."""
+    raw = item.get("published") or ""
+    try:
+        from email.utils import parsedate_to_datetime
+        return parsedate_to_datetime(raw).timestamp()
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        from datetime import datetime
+        return datetime.fromisoformat(raw.replace("Z", "+00:00")).timestamp()
+    except Exception:  # noqa: BLE001
+        return 0.0
 
 
 def _news(per_feed: int = 6) -> dict:
@@ -215,6 +291,18 @@ def _news(per_feed: int = 6) -> dict:
             out["items"].extend(_parse_rss(source, xml_text, per_feed))
         except Exception as e:  # noqa: BLE001
             out["errors"].append(f"{source}: {e}")
+    # One merged stream, newest first (unparseable dates keep feed order at the
+    # end) — reads like a wire feed instead of blocks grouped by source.
+    out["items"].sort(key=_pub_ts, reverse=True)
+    counts = {"bullish": 0, "bearish": 0, "neutral": 0}
+    for it in out["items"]:
+        counts[it["sentiment"]] += 1
+    total = sum(counts.values())
+    out["sentiment"] = {
+        **counts, "total": total,
+        # -100 (all bearish) … +100 (all bullish)
+        "score": round((counts["bullish"] - counts["bearish"]) / total * 100) if total else 0,
+    }
     return out
 
 
@@ -442,18 +530,27 @@ def market_intel(top_n: int = 15, pos_n: int = 6) -> dict:
     oc_delta = oi_change(tuple(r["symbol"] for r in rows))
     for r in rows:
         r["oi_change_24h_pct"] = oc_delta["rows"].get(r["symbol"])
+    # Fear & Greed + US stock indices: already built for the dashboard briefing
+    # but never surfaced on the Market Intel page itself — cheap to include
+    # since both are cached separately and don't add a new upstream call here.
+    fg = fear_greed()
+    st = stocks()
     errors = (bf.get("errors", []) + dl.get("errors", [])
               + nw.get("errors", []) + ls.get("errors", []) + gm.get("errors", [])
-              + oc_delta.get("errors", [])[:2])   # cap: 15 symbols could spam the bar
+              + oc_delta.get("errors", [])[:2]     # cap: 15 symbols could spam the bar
+              + fg.get("errors", []) + st.get("errors", []))
     return {
         "generated_at": int(time.time()),
         "futures": bf.get("rows", []),
         "positioning": ls.get("rows", []),
         "onchain": dl,
         "global_mkt": gm,
+        "fear_greed": fg,
+        "stocks": st.get("rows", []),
         # Calendar failures stay silent (events just don't render) — a dead feed
         # shouldn't paint the page's error bar red.
         "calendar": econ_calendar().get("events", []),
         "news": nw.get("items", []),
+        "news_sentiment": nw.get("sentiment"),
         "errors": errors,
     }

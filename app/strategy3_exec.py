@@ -25,6 +25,8 @@ Safety model:
 import math
 import os
 import time
+from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 
 import ccxt
 
@@ -81,6 +83,211 @@ def qty_for(price: float, margin: float, leverage: int,
     return qty, ""
 
 
+def account_snapshot() -> dict:
+    """Read-only Bybit balance + open positions across config.STRATEGY3_SYMBOLS —
+    same shape as executor.account_snapshot() so the web page can show BOTH
+    live accounts side by side. Works whenever keys exist, independent of
+    LIVE_TRADING/STRATEGY3_LIVE, so the page shows the real account even in
+    alert-only mode. NEVER sends an order."""
+    if not keys_present():
+        return {"ok": False, "error": "No Bybit API keys configured.",
+                "live": False, "balance": None, "positions": []}
+    try:
+        ex = client()
+        raw = ex.fetch_balance()
+        acct = (((raw.get("info") or {}).get("result") or {}).get("list") or [{}])[0]
+
+        def _num(key):
+            v = acct.get(key)
+            try:
+                return float(v) if v not in (None, "") else None
+            except (TypeError, ValueError):
+                return None
+
+        balance = {
+            "equity": _num("totalEquity"),
+            "wallet": _num("totalWalletBalance"),
+            "available": _num("totalAvailableBalance"),
+            "unrealized_pnl": _num("totalPerpUPL"),
+        }
+
+        our_symbols = {f"{b}/{config.QUOTE_ASSET}:{config.QUOTE_ASSET}"
+                       for b in config.STRATEGY3_SYMBOLS}
+        positions = []
+        for p in ex.fetch_positions(None, params={"settleCoin": config.QUOTE_ASSET}):
+            if p.get("symbol") not in our_symbols:
+                continue                      # ignore anything manually opened elsewhere
+            qty = float(p.get("contracts") or 0)
+            if not qty:
+                continue
+            sl = str((p.get("info") or {}).get("stopLoss") or "").strip()
+            positions.append({
+                "symbol": p.get("symbol"),
+                "side": (p.get("side") or "").upper(),
+                "contracts": qty,
+                "notional": p.get("notional"),
+                "entry": p.get("entryPrice"),
+                "mark": p.get("markPrice"),
+                "liq": p.get("liquidationPrice"),
+                "leverage": p.get("leverage"),
+                "unrealized_pnl": p.get("unrealizedPnl"),
+                "pnl_pct": p.get("percentage"),
+                "sl": float(sl) if sl not in ("", "0") else None,
+            })
+        return {"ok": True, "error": None, "live": is_live(),
+                "balance": balance, "positions": positions}
+    except Exception as exc:  # noqa: BLE001 — a read-only page must never 500 on an API blip
+        return {"ok": False, "error": str(exc)[:300], "live": is_live(),
+                "balance": None, "positions": []}
+
+
+def _closed_pnl_rows(limit: int = 200) -> list:
+    """Raw Bybit v5 closed-pnl rows across ALL our symbols (settleCoin scope,
+    not per-symbol), newest-first pages concatenated until `limit` or the API
+    runs dry. Bybit paginates via nextPageCursor, not offset/since."""
+    ex = client()
+    rows = []
+    cursor = ""
+    while len(rows) < limit:
+        params = {"category": "linear", "settleCoin": config.QUOTE_ASSET, "limit": 100}
+        if cursor:
+            params["cursor"] = cursor
+        r = ex.private_get_v5_position_closed_pnl(params)
+        result = (r or {}).get("result") or {}
+        page = result.get("list") or []
+        rows.extend(page)
+        cursor = result.get("nextPageCursor") or ""
+        if not cursor or not page:
+            break
+    return rows[:limit]
+
+
+def closed_pnl_history(limit: int = 80) -> dict:
+    """Read-only realized-P&L history for the Bybit sub-account — Strategy 3
+    flips only, since this key only ever trades config.STRATEGY3_SYMBOLS."""
+    if not keys_present():
+        return {"ok": False, "error": "No Bybit API keys configured.", "trades": []}
+    try:
+        trades = []
+        for it in _closed_pnl_rows(limit):
+            try:
+                pnl = float(it.get("closedPnl") or 0.0)
+            except (TypeError, ValueError):
+                pnl = 0.0
+            trades.append({"symbol": it.get("symbol"), "pnl": pnl,
+                            "asset": config.QUOTE_ASSET,
+                            "time": int(it.get("updatedTime") or 0)})
+        trades.sort(key=lambda x: x["time"], reverse=True)
+        return {"ok": True, "trades": trades}
+    except Exception as exc:  # noqa: BLE001
+        return {"ok": False, "error": str(exc)[:300], "trades": []}
+
+
+def closed_pnl_summary(limit: int = 1000) -> dict:
+    """Ground-truth Bybit sub-account P&L for the /performance page's Bybit
+    panel — same shape as executor.realized_pnl_summary() so both accounts'
+    panels can share frontend rendering code.
+
+    Unlike Binance's income stream (which reports REALIZED_PNL/COMMISSION/
+    FUNDING_FEE as separate rows), Bybit's closed-pnl endpoint reports one
+    already-net 'closedPnl' per closed position — there is no separate fee/
+    funding breakdown available here, so commission/funding are always 0 and
+    net == realized. (This account only ever trades STRATEGY3_SYMBOLS, so
+    there is no cross-strategy contamination to worry about either way.)"""
+    if not keys_present():
+        return {"ok": False, "error": "No Bybit API keys configured."}
+    try:
+        rows = _closed_pnl_rows(limit)
+        trades = []
+        day_net: dict = {}
+        tz = ZoneInfo("Asia/Taipei")
+        for it in rows:
+            try:
+                pnl = float(it.get("closedPnl") or 0.0)
+            except (TypeError, ValueError):
+                pnl = 0.0
+            ts = int(it.get("updatedTime") or 0)
+            trades.append({"symbol": it.get("symbol"), "pnl": pnl, "time": ts})
+            if ts:
+                day = datetime.fromtimestamp(ts / 1000, tz).strftime("%Y-%m-%d")
+                day_net[day] = day_net.get(day, 0.0) + pnl
+        today = datetime.now(tz).date()
+        daily = []
+        for i in range(13, -1, -1):
+            d = (today - timedelta(days=i)).strftime("%Y-%m-%d")
+            daily.append({"date": d, "net": round(day_net.get(d, 0.0), 4)})
+        trades.sort(key=lambda x: x["time"], reverse=True)
+
+        sym_agg: dict = {}
+        for t in trades:
+            s = sym_agg.setdefault(t["symbol"] or "?", {"net": 0.0, "n": 0, "wins": 0, "losses": 0})
+            s["net"] += t["pnl"]; s["n"] += 1
+            if t["pnl"] > 0: s["wins"] += 1
+            elif t["pnl"] < 0: s["losses"] += 1
+        by_symbol = [{"symbol": k, "net": round(v["net"], 4), "n": v["n"],
+                      "wins": v["wins"], "losses": v["losses"]} for k, v in sym_agg.items()]
+        by_symbol.sort(key=lambda x: x["net"])
+
+        hour_agg = [{"hour": h, "net": 0.0, "wins": 0, "losses": 0} for h in range(24)]
+        for t in trades:
+            if not t["time"]:
+                continue
+            h = datetime.fromtimestamp(t["time"] / 1000, tz).hour
+            b = hour_agg[h]
+            b["net"] += t["pnl"]
+            if t["pnl"] > 0: b["wins"] += 1
+            elif t["pnl"] < 0: b["losses"] += 1
+        for b in hour_agg:
+            b["net"] = round(b["net"], 4)
+
+        pnls = [t["pnl"] for t in trades]
+        wins = sum(1 for p in pnls if p > 0)
+        losses = sum(1 for p in pnls if p < 0)
+        n = wins + losses
+        gross_win = sum(p for p in pnls if p > 0)
+        gross_loss = -sum(p for p in pnls if p < 0)
+        cum = peak = mdd = 0.0
+        for t in sorted(trades, key=lambda x: x["time"]):
+            cum += t["pnl"]; peak = max(peak, cum); mdd = min(mdd, cum - peak)
+        streak = 0
+        streak_type = None
+        for p in pnls:
+            res = "W" if p > 0 else ("L" if p < 0 else None)
+            if res is None:
+                continue
+            if streak_type is None:
+                streak_type, streak = res, 1
+            elif res == streak_type:
+                streak += 1
+            else:
+                break
+        realized = sum(pnls)
+        return {
+            "ok": True,
+            "realized": round(realized, 4), "commission": 0.0, "funding": 0.0,
+            "net": round(realized, 4),
+            "n_trades": n, "wins": wins, "losses": losses,
+            "win_rate": round(wins / n * 100, 1) if n else 0.0,
+            "gross_win": round(gross_win, 4),
+            "gross_loss": round(gross_loss, 4),
+            "profit_factor": (round(gross_win / gross_loss, 2) if gross_loss > 0
+                              else (None if gross_win == 0 else float("inf"))),
+            "avg_win": round(gross_win / wins, 4) if wins else 0.0,
+            "avg_loss": round(-gross_loss / losses, 4) if losses else 0.0,
+            "expectancy": round(realized / n, 4) if n else 0.0,
+            "max_drawdown": round(mdd, 4),
+            "streak": streak, "streak_type": streak_type,
+            "best": round(max(pnls), 4) if pnls else 0.0,
+            "worst": round(min(pnls), 4) if pnls else 0.0,
+            "daily": daily,
+            "by_symbol": by_symbol,
+            "hourly": hour_agg,
+            "trades": trades[:80],
+        }
+    except Exception as exc:  # noqa: BLE001
+        return {"ok": False, "error": str(exc)[:300]}
+
+
 def get_position(symbol: str) -> dict | None:
     """Our open Bybit position on symbol, or None. {'side','qty','entry','sl'}."""
     ex = client()
@@ -106,12 +313,14 @@ def _market_limits(symbol: str) -> tuple:
     return step, min_qty, min_notional
 
 
-def open_flip(symbol: str, direction: str, price: float, sl_price: float) -> dict:
-    """Market entry with the emergency stop attached. Returns
-    {ok, dry, qty, error, leverage_warning}. Dry-run (logged only) unless
-    is_live()."""
-    margin = config.STRATEGY3_MARGIN_USDT
-    lev = config.STRATEGY3_LEVERAGE
+def open_flip(symbol: str, direction: str, price: float, sl_price: float,
+              margin: float, leverage: int) -> dict:
+    """Market entry with the emergency stop attached. margin/leverage come
+    from config.strategy3_params for this symbol — they are NOT always the
+    global STRATEGY3_MARGIN_USDT/LEVERAGE, since XAUT trades a different size.
+    Returns {ok, dry, qty, error, leverage_warning}. Dry-run (logged only)
+    unless is_live()."""
+    lev = leverage
     res = {"ok": False, "dry": not is_live(), "qty": 0.0, "error": None,
            "leverage_warning": None}
 
@@ -146,7 +355,7 @@ def open_flip(symbol: str, direction: str, price: float, sl_price: float) -> dic
     except Exception as exc:  # noqa: BLE001 — 110043 'leverage not modified' is normal
         if "110043" not in str(exc) and "not modified" not in str(exc).lower():
             # Not benign: the account may stay on its PRIOR leverage tier, so
-            # this trade could lock more margin than STRATEGY3_MARGIN_USDT
+            # this trade could lock more margin than the configured margin
             # implies (same notional, less leverage ⇒ more margin required) —
             # surface it so the caller can tell the user, rather than a print()
             # nobody watches in real time.

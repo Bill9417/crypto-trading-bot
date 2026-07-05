@@ -34,8 +34,11 @@ from config import (
     LIVE_PARTIAL_TP, LIVE_TP_TARGET,
 )
 from market_data import SafeBinanceClient, RateLimitCooldownError
+import liquidations
 import market_intel
 import executor
+import strategy3_exec
+import strategy3_scanner
 
 def _resolve_secret_key() -> str:
     """A strong, persistent session key with zero manual setup.
@@ -353,6 +356,126 @@ def build_top_entries(data: dict, n: int = 5) -> dict:
     }
 
 
+def build_best_s1_trade(data: dict) -> dict:
+    """Single best Strategy 1 candidate right now — entry/SL/TP, R:R and a
+    plain-English reason. Half of the Funnel page's 'best trade' hero (the
+    other half is Strategy 3, see build_best_s3_trade). Ready (queued) setups
+    always outrank watch-only near-misses; if nothing is close, best is None
+    rather than forcing a pick."""
+    signals = data.get("signals", []) or []
+    cands = []
+    for s in signals:
+        if not s.get("tradeable"):
+            continue
+        if not (s.get("trade_queued") or s.get("trade_status") == "rejected"):
+            continue
+        reason = s.get("record_status_reason", "") or ""
+        queued = bool(s.get("trade_queued"))
+        lights = s.get("effective_lights") or 0
+        if not queued and lights < 4:
+            continue
+        fails = sum(1 for _, _, needle in FUNNEL_GATES if needle in reason)
+        entry, sl = _parse_price(s.get("entry")), _parse_price(s.get("sl"))
+        tp, tp2 = _parse_price(s.get("tp")), _parse_price(s.get("tp2"))
+        rr = None
+        rr_ref = tp2 or tp
+        if entry and sl and rr_ref:
+            risk = abs(entry - sl)
+            rr = round(abs(rr_ref - entry) / risk, 2) if risk else None
+        why = [d for d in (s.get("details") or []) if d][:2]
+        smc = s.get("smc") or {}
+        if smc.get("summary"):
+            why.append(smc["summary"])
+        blockers = [p.strip() for p in reason.split("rejected on latest scan:")[-1].split(";")
+                    if p.strip()] if (not queued and "rejected" in reason) else []
+        cands.append({
+            "symbol": s.get("symbol", "?"),
+            "direction": (s.get("direction") or "").upper(),
+            "lights": lights,
+            "conviction": s.get("conviction"),
+            "rsi": s.get("rsi"),
+            "entry": entry, "sl": sl, "tp": tp, "tp2": tp2,
+            "rr": rr,
+            "queued": queued,
+            "fails": fails,
+            "why": why[:3],
+            "blockers": blockers[:2],
+            "tv_url": s.get("tv_url"),
+        })
+    cands.sort(key=lambda c: (not c["queued"], -c["lights"], c["fails"]))
+    return {
+        "best": cands[0] if cands else None,
+        "runner_up": cands[1] if len(cands) > 1 else None,
+        "considered": len(cands),
+    }
+
+
+def build_best_s3_trade() -> dict:
+    """Best Strategy 3 (Vegas Flag Flip) candidate right now, across
+    config.STRATEGY3_SYMBOLS — the S3 half of the Funnel page's 'best trade'
+    hero. 'Armed' (the MSB flip already fired, waiting only on Vegas
+    agreement) ranks above a plain score-distance guess, since it reflects
+    the real arm-and-fire state machine (strategy3_scanner.decide), not a
+    heuristic reconstruction of it."""
+    import config
+    state = strategy3_scanner.load_state()
+    rows = []
+    for base in config.STRATEGY3_SYMBOLS:
+        sym = f"{base}/{config.QUOTE_ASSET}:{config.QUOTE_ASSET}"
+        st = state.get(sym, {})
+        score = st.get("last_score")
+        vegas = st.get("last_vegas")
+        holding = st.get("pos_dir")
+        armed = bool(st.get("last_flag")) and not st.get("consumed") and not holding
+        params = config.strategy3_params(base)
+
+        lean = dist = None
+        if score is not None:
+            long_gap = config.STRATEGY3_SCORE_TH - score
+            short_gap = score - (100 - config.STRATEGY3_SCORE_TH)
+            lean, dist = ("long", long_gap) if long_gap <= short_gap else ("short", short_gap)
+        vegas_agrees = bool(vegas is not None and lean and
+                            ((lean == "long" and vegas > 0) or (lean == "short" and vegas < 0)))
+
+        # IMPORTANT: score crossing the threshold does NOT by itself predict a
+        # flag — a flag only fires when the MSB trend structure FLIPS while
+        # score/ADX/direction line up on that same bar. So only the "armed"
+        # state (a flag already fired and is waiting on Vegas) is a genuine
+        # "about to trade" signal; anything else is descriptive context only,
+        # never phrased as an imminent trade.
+        if holding:
+            note = f"Already holding {holding.upper()} — a running position, not a new entry."
+        elif armed:
+            want_color = "green" if st["last_flag"] == "long" else "red"
+            note = (f"Flag armed {st['last_flag'].upper()} — waiting ONLY on the Vegas line "
+                    f"to turn {want_color} to enter.")
+        elif lean:
+            bias = f"Current bias {lean} (score {score:.0f}/100), Vegas {'agrees' if vegas_agrees else 'disagrees'}"
+            note = (f"{bias} — but no flag is armed right now; one needs the MSB trend "
+                    f"structure to flip {lean} first.")
+        else:
+            note = "No signal history yet — waiting for the next closed candle."
+
+        rows.append({
+            "symbol": base, "timeframe": params["timeframe"],
+            "notional": params["margin"] * params["leverage"], "leverage": params["leverage"],
+            "score": score, "vegas": vegas, "msb": st.get("last_msb"),
+            "armed_flag": st.get("last_flag"), "holding": holding,
+            "lean": lean, "dist_to_threshold": round(dist, 1) if dist is not None else None,
+            "vegas_agrees": vegas_agrees, "note": note, "seen": st.get("last_seen"),
+        })
+
+    def rank_key(r):
+        return (
+            r["holding"] is not None,                       # holding sorts LAST (not a new opportunity)
+            not (r["armed_flag"] and not r["holding"]),      # armed-and-unconsumed sorts first
+            not r["vegas_agrees"],
+            r["dist_to_threshold"] if r["dist_to_threshold"] is not None else 999,
+        )
+    rows.sort(key=rank_key)
+    return {"best": rows[0] if rows else None, "all": rows}
+
+
 def format_price(val: float) -> str:
     if val is None: return "N/A"
     if val < 0.0001: return f"{val:.8f}"
@@ -566,7 +689,7 @@ def sync_record_states_in_scan_data() -> None:
 # this ONE value whenever app.css / i18n.js change and every template busts its
 # cache — no more hunting down 10 hardcoded copies (which once shipped an
 # unstyled page to users). Templates reference it as ?v={{ asset_ver }}.
-ASSET_VER = "20260702b"
+ASSET_VER = "20260704"
 
 
 @app.context_processor
@@ -1805,13 +1928,21 @@ def api_main_coins():
 @app.route("/funnel")
 @login_required
 def funnel():
-    return render_template("funnel.html", funnel=build_funnel(load_data()), user=current_user)
+    data = load_data()
+    return render_template(
+        "funnel.html", funnel=build_funnel(data), user=current_user,
+        best_s1=build_best_s1_trade(data), best_s3=build_best_s3_trade(),
+    )
 
 
 @app.route("/api/funnel")
 @login_required
 def get_funnel():
-    return jsonify(build_funnel(load_data()))
+    data = load_data()
+    payload = build_funnel(data)
+    payload["best_s1"] = build_best_s1_trade(data)
+    payload["best_s3"] = build_best_s3_trade()
+    return jsonify(_json_safe(payload))
 
 
 @app.route("/api/top_entries")
@@ -2009,6 +2140,15 @@ def api_performance_real():
     return jsonify(_json_safe(executor.realized_pnl_summary()))
 
 
+@app.route("/api/performance/bybit")
+@admin_required
+def api_performance_bybit():
+    """Real Bybit sub-account P&L (Strategy 3 flips only) for the performance
+    page's Bybit panel — the exchange-side counterpart to /api/performance/real,
+    same shape so both panels share frontend rendering code."""
+    return jsonify(_json_safe(strategy3_exec.closed_pnl_summary()))
+
+
 # MAE/MFE excursions are immutable once a trade closes, so each record is
 # computed once and kept for the process lifetime. First load walks the klines
 # for every uncached trade (~0.3s each); later loads are instant.
@@ -2134,6 +2274,71 @@ def api_account_cancel_protection():
     return jsonify(executor.cancel_protection(symbol))
 
 
+@app.route("/bybit")
+@admin_required
+def bybit_page():
+    """Live Bybit account page for Strategy 3 (Vegas Flag Flip) — balance,
+    positions and per-symbol signal status, so you never need to open the
+    Bybit app to see what the flip engine is doing with real money."""
+    import config
+    per_symbol = {}
+    for base in config.STRATEGY3_SYMBOLS:
+        p = config.strategy3_params(base)
+        p["notional"] = p["margin"] * p["leverage"]
+        per_symbol[base] = p
+    return render_template(
+        "bybit.html",
+        user=current_user,
+        status_line=strategy3_scanner.status_line(),
+        cfg={
+            "symbols": config.STRATEGY3_SYMBOLS,
+            "per_symbol": per_symbol,
+            "score_th": config.STRATEGY3_SCORE_TH,
+            "adx_th": config.STRATEGY3_ADX_TH,
+            "emergency_sl_pct": config.STRATEGY3_EMERGENCY_SL_PCT,
+        },
+    )
+
+
+@app.route("/api/bybit")
+@admin_required
+def api_bybit():
+    """Read-only JSON snapshot of the live Bybit account + each symbol's last
+    known signal state (flag/vegas/msb/score), so the page can explain WHY a
+    position is or isn't open without recomputing the strategy itself."""
+    snap = strategy3_exec.account_snapshot()
+    state = strategy3_scanner.load_state()
+    status = []
+    for sym in strategy3_scanner.symbols():
+        st = state.get(sym, {})
+        status.append({
+            "symbol": sym,
+            "base": sym.split("/")[0],
+            "last_flag": st.get("last_flag"),
+            "pos_dir": st.get("pos_dir"),
+            "score": st.get("last_score"),
+            "vegas": st.get("last_vegas"),
+            "msb": st.get("last_msb"),
+            "seen": st.get("last_seen"),
+        })
+    snap["status"] = status
+    snap["blocked"] = strategy3_scanner.live_blocked()
+    return jsonify(_json_safe(snap))
+
+
+@app.route("/api/bybit/close", methods=["POST"])
+@admin_required
+def api_bybit_close():
+    """MANUAL: close an open Bybit flip position at market (reduce-only). The
+    scanner notices the position is gone on its next poll (~45s) and stands
+    down for that symbol until the next flag — same as an SL hit or a close
+    made directly on Bybit."""
+    symbol = request.form.get("symbol")
+    if symbol not in set(strategy3_scanner.symbols()):
+        return jsonify({"ok": False, "error": "unknown symbol"}), 400
+    return jsonify(strategy3_exec.close_flip(symbol))
+
+
 # --- System health (/health ops page) ---------------------------------------
 # Answers, at a glance, the three questions that otherwise need a terminal:
 # is every process alive, does anything need a RESTART to pick up new code,
@@ -2240,6 +2445,7 @@ def build_health():
                "LIVE engine — trades TV.pine confluence on 15m"
                if s2_is_engine else
                "alert-only companion — feeds /strategy2, places NO orders"),
+        "s3": ("S3 flip", f"Vegas Flag Flip on Bybit — {strategy3_scanner.mode_string()}"),
     }
 
     ps = _ps_snapshot()
@@ -2560,6 +2766,21 @@ def api_news():
         return jsonify({"items": nw.get("items", []), "errors": nw.get("errors", [])})
     except Exception as e:  # noqa: BLE001
         return jsonify({"items": [], "errors": [str(e)]}), 200
+
+
+@app.route("/api/liquidations")
+@login_required
+def api_liquidations():
+    """Live futures-liquidation aggregates (Binance + Bybit + OKX WebSockets).
+    The collector starts lazily on the first call and accumulates from there —
+    there is no free historical source, so the window fills up over time
+    (collecting_since tells the UI how much is really behind the numbers)."""
+    liquidations.start()
+    try:
+        window = min(int(request.args.get("window", 86400)), 86400)
+    except (TypeError, ValueError):
+        window = 86400
+    return jsonify(_json_safe(liquidations.snapshot(window)))
 
 
 @app.route("/stocks")

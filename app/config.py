@@ -433,10 +433,11 @@ STRATEGY2_LIVE_LIGHTS = int(os.getenv("STRATEGY2_LIVE_LIGHTS", "5"))
 STRATEGY2_LIVE_TOP_N = int(os.getenv("STRATEGY2_LIVE_TOP_N", str(TOP_SYMBOL_LIMIT)))
 
 # ── Strategy 3 — "Vegas Flag Flip" (opt-in, OFF by default) ──────────────────
-# BTC + SOL + HYPE by default (STRATEGY3_SYMBOLS), 15m. Signals come from BINANCE charts (same candles as the
-# TradingView chart); orders go to the user's BYBIT account (BYBIT_API_KEY /
-# BYBIT_API_SECRET in .env) — a SEPARATE account from the Binance one S1/S2
-# drive, so the bot.lock / one-Binance-engine rules do not apply to it.
+# BTC + SOL + HYPE + XAUT by default (STRATEGY3_SYMBOLS). Signals come from
+# BINANCE charts (same candles as the TradingView chart); orders go to the
+# user's BYBIT account (BYBIT_API_KEY / BYBIT_API_SECRET in .env) — a SEPARATE
+# account from the Binance one S1/S2 drive, so the bot.lock / one-Binance-
+# engine rules do not apply to it.
 # Mirrors TV_strategy.pine: a TV.pine confluence flag sets the direction, the
 # Vegas line (SMA5 of EMA200) must agree before entry, and the position is held
 # until the OPPOSITE flag appears, then flipped. Manual closes on Bybit are
@@ -447,7 +448,7 @@ STRATEGY3_LIVE = _env_bool("STRATEGY3_LIVE", False)
 # Comma-separated base assets it may trade (must exist on BOTH Binance futures
 # — chart source — and Bybit linear perps — execution venue).
 STRATEGY3_SYMBOLS = [s.strip().upper() for s in
-                     os.getenv("STRATEGY3_SYMBOLS", "BTC,SOL,HYPE").split(",") if s.strip()]
+                     os.getenv("STRATEGY3_SYMBOLS", "BTC,SOL,HYPE,XAUT").split(",") if s.strip()]
 # Flag threshold — same semantics as the TV.pine meter (long ≥ TH, short ≤ 100−TH).
 # 70 matches the indicator's default triangles, NOT S2's stricter 85 gate.
 STRATEGY3_SCORE_TH = int(os.getenv("STRATEGY3_SCORE_TH", "70"))
@@ -457,8 +458,29 @@ STRATEGY3_ADX_TH = int(os.getenv("STRATEGY3_ADX_TH", "20"))
 # The exit is the opposite flag; this stop only caps a crash while waiting for
 # it. It is attached to the Bybit order and re-armed by the guardian if missing.
 STRATEGY3_EMERGENCY_SL_PCT = float(os.getenv("STRATEGY3_EMERGENCY_SL_PCT", "0.04"))
-# Position size on Bybit: margin × leverage = notional per flip. Bybit minimums
-# apply (SOL: 0.1 SOL ≈ 8 USDT notional; HYPE: 0.01), so 3 USDT × 4x = 12 USDT
-# notional clears both. Size to YOUR Bybit balance, not the Binance account's.
+# Shared defaults — timeframe + position size (margin × leverage = notional)
+# for any symbol WITHOUT an override in STRATEGY3_OVERRIDES below.
+STRATEGY3_TIMEFRAME = os.getenv("STRATEGY3_TIMEFRAME", "15m")
 STRATEGY3_MARGIN_USDT = float(os.getenv("STRATEGY3_MARGIN_USDT", "3"))
 STRATEGY3_LEVERAGE = int(os.getenv("STRATEGY3_LEVERAGE", str(LEVERAGE)))
+# Per-symbol overrides. Gold (XAUT) trends far slower than the cryptos here, so
+# it trades a 30m chart (vs the others' 15m) at a bigger size — the same
+# emergency-SL %, score/ADX thresholds and leverage still apply to it unless
+# also overridden here. Any key omitted falls back to the shared defaults above.
+STRATEGY3_OVERRIDES = {
+    "XAUT": {
+        "timeframe": os.getenv("STRATEGY3_XAUT_TIMEFRAME", "30m"),
+        "margin": float(os.getenv("STRATEGY3_XAUT_MARGIN_USDT", "3")),
+    },
+}
+
+
+def strategy3_params(base: str) -> dict:
+    """Effective {timeframe, margin, leverage} for one Strategy 3 symbol —
+    STRATEGY3_OVERRIDES wins per key, otherwise the shared defaults above."""
+    ov = STRATEGY3_OVERRIDES.get(base.upper(), {})
+    return {
+        "timeframe": ov.get("timeframe", STRATEGY3_TIMEFRAME),
+        "margin": ov.get("margin", STRATEGY3_MARGIN_USDT),
+        "leverage": ov.get("leverage", STRATEGY3_LEVERAGE),
+    }

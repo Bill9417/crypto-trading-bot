@@ -1,0 +1,262 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Wolf Scanner — Bybit Account</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <link rel="manifest" href="/manifest.webmanifest">
+    <meta name="theme-color" content="#0e1018">
+    <link rel="apple-touch-icon" href="/static/apple-touch-icon.png">
+    <link rel="stylesheet" href="/static/app.css?v={{ asset_ver }}">
+    <style>
+        :root{--green:#34d399;--bybit:#f7a600;}
+        *{box-sizing:border-box;}
+        body{margin:0;background:var(--wolf-slate);background-image:var(--page-bg-glow);
+          color:var(--wolf-text);font-family:'Inter',-apple-system,sans-serif;-webkit-font-smoothing:antialiased;min-height:100vh;}
+        .num{font-variant-numeric:tabular-nums;}
+        .page-wrap{max-width:var(--page-max);margin:0 auto;padding:12px 16px 40px;}
+        .top-bar{background:var(--wolf-card);border:1px solid var(--wolf-border);border-radius:var(--radius);box-shadow:var(--shadow);
+          backdrop-filter:blur(12px);padding:14px 18px;margin-bottom:14px;display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;border-left:4px solid var(--bybit);}
+        .brand{display:flex;align-items:center;gap:12px;}
+        .brand-icon{font-size:2rem;line-height:1;filter:drop-shadow(0 0 6px rgba(247,166,0,.4));}
+        .brand h1{font-size:1.15rem;font-weight:800;margin:0;letter-spacing:-.4px;}
+        .brand h1 span{color:var(--bybit);}
+        .brand-sub{font-size:.75rem;color:var(--wolf-muted);margin-top:2px;}
+        .panel{background:var(--wolf-card);border:1px solid var(--wolf-border);border-radius:var(--radius);box-shadow:0 10px 28px rgba(0,0,0,.2);padding:18px;margin-bottom:14px;backdrop-filter:blur(10px);}
+        .panel-title{font-size:.78rem;font-weight:800;letter-spacing:.06em;text-transform:uppercase;color:var(--wolf-muted);margin-bottom:14px;display:flex;justify-content:space-between;align-items:center;gap:10px;}
+        .live-dot{display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--green);box-shadow:0 0 0 0 rgba(52,211,153,.6);animation:pulse 1.8s infinite;margin-right:6px;vertical-align:1px;}
+        @keyframes pulse{0%{box-shadow:0 0 0 0 rgba(52,211,153,.5);}70%{box-shadow:0 0 0 7px rgba(52,211,153,0);}100%{box-shadow:0 0 0 0 rgba(52,211,153,0);}}
+        .net-badge{font-size:.62rem;font-weight:800;padding:3px 10px;border-radius:999px;text-transform:uppercase;letter-spacing:.04em;}
+        .net-live{background:rgba(247,166,0,.16);color:var(--bybit);}
+        .net-alert{background:rgba(255,207,75,.14);color:#fbbf24;}
+        .net-off{background:rgba(138,153,173,.18);color:var(--wolf-muted);}
+        .stats{display:grid;grid-template-columns:repeat(5,1fr);gap:12px;margin-bottom:14px;}
+        @media(max-width:900px){.stats{grid-template-columns:repeat(3,1fr);}}
+        @media(max-width:560px){.stats{grid-template-columns:repeat(2,1fr);}}
+        .stat{background:var(--wolf-card);border:1px solid var(--wolf-border);border-radius:12px;padding:14px 16px;position:relative;overflow:hidden;}
+        .stat::after{content:"";position:absolute;top:0;left:0;right:0;height:2px;background:linear-gradient(90deg,var(--bybit),transparent);}
+        .stat-label{font-size:.6rem;text-transform:uppercase;letter-spacing:.05em;color:var(--wolf-muted);}
+        .stat-value{font-size:1.4rem;font-weight:800;margin-top:5px;line-height:1;}
+        .stat-note{font-size:.64rem;color:var(--wolf-muted);margin-top:6px;}
+        .win{color:var(--green);}.loss{color:#f87171;}.dim{color:var(--wolf-muted);}
+        table{width:100%;border-collapse:collapse;font-size:.8rem;}
+        th{text-align:right;font-size:.62rem;text-transform:uppercase;letter-spacing:.04em;color:var(--wolf-muted);font-weight:700;padding:7px 8px;white-space:nowrap;}
+        th:first-child,td:first-child{text-align:left;}
+        td{text-align:right;padding:9px 8px;border-top:1px solid rgba(255,255,255,.045);white-space:nowrap;}
+        .pill{font-size:.6rem;font-weight:700;padding:2px 8px;border-radius:999px;}
+        .pill.long{background:rgba(16,185,129,.18);color:var(--green);}
+        .pill.short{background:rgba(239,68,68,.18);color:#f87171;}
+        .pill.flat{background:rgba(138,153,173,.16);color:var(--wolf-muted);}
+        .table-wrap{overflow-x:auto;}
+        .empty{text-align:center;color:var(--wolf-muted);font-size:.82rem;padding:26px 10px;}
+        .btn-mini{font-size:.66rem;font-weight:700;padding:5px 10px;border-radius:7px;border:1px solid var(--wolf-border);cursor:pointer;background:rgba(255,255,255,.04);color:var(--wolf-text);}
+        .btn-mini.close{border-color:rgba(239,68,68,.45);color:#f87171;}
+        .btn-mini.close:hover{background:rgba(239,68,68,.16);}
+        .toast{position:fixed;bottom:18px;left:50%;transform:translateX(-50%);background:var(--wolf-card);border:1px solid var(--wolf-border);
+          color:var(--wolf-text);font-size:.8rem;padding:11px 18px;border-radius:11px;box-shadow:var(--shadow);z-index:50;opacity:0;transition:opacity .25s;pointer-events:none;}
+        .toast.show{opacity:1;}
+        .toast.ok{border-left:4px solid var(--green);}
+        .toast.err{border-left:4px solid #f87171;}
+        .errbar{background:rgba(220,38,38,.12);border:1px solid rgba(220,38,38,.3);color:#fca5a5;font-size:.78rem;padding:10px 14px;border-radius:11px;margin-bottom:12px;}
+        .note{font-size:.7rem;color:var(--wolf-muted);margin-top:4px;line-height:1.5;}
+        .meta-row{display:flex;flex-wrap:wrap;gap:18px;align-items:center;font-size:.76rem;color:var(--wolf-muted);}
+        .meta-row b{color:var(--wolf-text);font-weight:700;}
+        .sig-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px;}
+        .sig-card{background:rgba(255,255,255,.02);border:1px solid var(--wolf-border);border-radius:12px;padding:12px 14px;}
+        .sig-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;}
+        .sig-sym{font-weight:800;font-size:.92rem;}
+        .sig-row{display:flex;justify-content:space-between;font-size:.72rem;color:var(--wolf-muted);margin-top:4px;}
+        .sig-row b{color:var(--wolf-text);}
+        .vegas-green{color:var(--green);}.vegas-red{color:#f87171;}.vegas-flat{color:var(--wolf-muted);}
+        ::-webkit-scrollbar{width:9px;height:9px;}::-webkit-scrollbar-track{background:rgba(255,255,255,.02);}
+        ::-webkit-scrollbar-thumb{background:rgba(255,255,255,.14);border-radius:999px;}
+        ::-webkit-scrollbar-thumb:hover{background:rgba(247,166,0,.45);}
+    </style>
+</head>
+<body>
+    <div class="page-wrap">
+        <div class="top-bar">
+            <div class="brand">
+                <div class="brand-icon">🅱</div>
+                <div><h1>BYBIT <span>· STRATEGY 3</span></h1>
+                    <div class="brand-sub">Vegas Flag Flip — signals from Binance charts, orders on Bybit</div></div>
+            </div>
+            <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+                <span id="net-badge" class="net-badge net-off">—</span>
+            </div>
+        </div>
+
+        <div class="nav-standalone">{% include '_nav.html' %}</div>
+
+        <div id="errbox"></div>
+
+        <div class="stats">
+            <div class="stat"><div class="stat-label">Equity</div><div class="stat-value num" id="s-equity">—</div><div class="stat-note">wallet + unrealized</div></div>
+            <div class="stat"><div class="stat-label">Available</div><div class="stat-value num" id="s-avail">—</div><div class="stat-note">free margin</div></div>
+            <div class="stat"><div class="stat-label">Unrealized P&L</div><div class="stat-value num" id="s-upnl">—</div><div class="stat-note">open positions</div></div>
+            <div class="stat"><div class="stat-label">Open positions</div><div class="stat-value num" id="s-pos">—</div><div class="stat-note">of {{ cfg.symbols|length }} tradeable</div></div>
+            <div class="stat"><div class="stat-label">Mode</div><div class="stat-value" id="s-mode" style="font-size:.9rem;">—</div><div class="stat-note">score ≥{{ cfg.score_th }} · ADX ≥{{ cfg.adx_th }} · SL {{ (cfg.emergency_sl_pct*100)|round(1) }}%</div></div>
+        </div>
+
+        <div class="panel">
+            <div class="panel-title">
+                <span><span class="live-dot"></span>Signal status <span class="dim" style="font-size:.66rem;font-weight:600;">why each symbol does/doesn't have a position — size and timeframe differ per symbol</span></span>
+                <span class="dim" id="updated" style="font-size:.66rem;font-weight:600;">—</span>
+            </div>
+            <div class="sig-grid" id="sig-grid">
+                {% for s in cfg.symbols %}
+                <div class="sig-card">
+                    <div class="sig-head"><span class="sig-sym">{{ s }}</span><span class="pill flat" id="sig-pos-{{ s }}">flat</span></div>
+                    <div class="sig-row"><span>Timeframe</span><b>{{ cfg.per_symbol[s].timeframe }}</b></div>
+                    <div class="sig-row"><span>Size</span><b>{{ cfg.per_symbol[s].notional|round|int }} USDT × {{ cfg.per_symbol[s].leverage }}x</b></div>
+                    <div class="sig-row"><span>Armed flag</span><b id="sig-flag-{{ s }}">—</b></div>
+                    <div class="sig-row"><span>Score</span><b id="sig-score-{{ s }}">—</b></div>
+                    <div class="sig-row"><span>Vegas</span><b id="sig-vegas-{{ s }}">—</b></div>
+                    <div class="sig-row"><span>MSB trend</span><b id="sig-msb-{{ s }}">—</b></div>
+                    <div class="sig-row"><span>Last closed bar</span><b id="sig-seen-{{ s }}">—</b></div>
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+
+        <div class="panel">
+            <div class="panel-title">
+                <span><span class="live-dot"></span>Open positions</span>
+            </div>
+            <div class="table-wrap">
+                <table>
+                    <thead><tr><th>Symbol</th><th>Side</th><th>Size</th><th>Notional</th><th>Entry</th><th>Mark</th><th>Liq.</th><th>Lev</th><th>uPnL</th><th>uPnL %</th><th>SL</th><th></th></tr></thead>
+                    <tbody id="pos-body"><tr><td colspan="12" class="empty">Loading…</td></tr></tbody>
+                </table>
+            </div>
+        </div>
+
+        <div class="panel">
+            <div class="panel-title">Execution config</div>
+            <div class="meta-row">
+                <span>Mode: <b>{{ status_line }}</b></span>
+            </div>
+            <div class="note">This page reads directly from Bybit (live, uncached) and auto-refreshes every 8s. <b>Close</b> exits a position at market (reduce-only) — the scanner notices within ~45s and stands down for that symbol until the next flag, exactly as if the stop had been hit or you'd closed it by hand on Bybit. There is no manual Set/Reset here: Strategy 3 manages its own emergency stop and exits only on the opposite flag.</div>
+        </div>
+    </div>
+
+    <script>
+        const CSRF = "{{ csrf_token() }}";
+        const fmt = (x,d=2)=> (x===null||x===undefined||x==='')?'—':Number(x).toLocaleString(undefined,{maximumFractionDigits:d});
+        const sgn = (x,d=2)=> (x===null||x===undefined)?'—':((Number(x)>0?'+':'')+fmt(x,d));
+        const cls = x => (x===null||x===undefined)?'dim':(Number(x)>=0?'win':'loss');
+
+        let toastTimer=null;
+        function toast(msg, ok=true){
+            let t=document.getElementById('toast');
+            if(!t){ t=document.createElement('div'); t.id='toast'; document.body.appendChild(t); }
+            t.className='toast '+(ok?'ok':'err'); t.textContent=msg; t.classList.add('show');
+            clearTimeout(toastTimer); toastTimer=setTimeout(()=>t.classList.remove('show'), 4200);
+        }
+        function post(url, fields){
+            const body=new URLSearchParams(); body.set('csrf_token',CSRF);
+            Object.entries(fields).forEach(([k,v])=>{ if(v!==undefined&&v!==null&&v!=='') body.set(k,v); });
+            return fetch(url,{method:'POST',headers:{'X-CSRFToken':CSRF},body}).then(r=>r.json());
+        }
+
+        function sidePill(s){
+            const k = s==='LONG'?'long':s==='SHORT'?'short':'flat';
+            return `<span class="pill ${k}">${s||'flat'}</span>`;
+        }
+
+        function renderPositions(rows){
+            const b = document.getElementById('pos-body');
+            if(!rows || !rows.length){ b.innerHTML = `<tr><td colspan="12" class="empty">No open positions.</td></tr>`; return; }
+            b.innerHTML = rows.map(p=>{
+                const base = (p.symbol||'').split('/')[0];
+                return `<tr>
+                <td><b>${base}</b></td>
+                <td>${sidePill(p.side)}</td>
+                <td class="num">${fmt(p.contracts,6)}</td>
+                <td class="num dim">${fmt(p.notional)}</td>
+                <td class="num">${fmt(p.entry,6)}</td>
+                <td class="num">${fmt(p.mark,6)}</td>
+                <td class="num loss">${fmt(p.liq,6)}</td>
+                <td class="num dim">${fmt(p.leverage,0)}×</td>
+                <td class="num ${cls(p.unrealized_pnl)}">${sgn(p.unrealized_pnl)}</td>
+                <td class="num ${cls(p.pnl_pct)}">${sgn(p.pnl_pct)}%</td>
+                <td class="num ${p.sl!=null?'loss':'dim'}">${p.sl!=null?fmt(p.sl,6):'none'}</td>
+                <td><button class="btn-mini close" onclick="closePos('${p.symbol}')">Close</button></td>
+            </tr>`;}).join('');
+        }
+
+        function closePos(symbol){
+            const base = symbol.split('/')[0];
+            if(!confirm('Close your '+base+' position on Bybit at MARKET now?')) return;
+            post('/api/bybit/close', {symbol}).then(d=>{
+                if(d.ok){ toast('Closed '+base+(d.dry?' (dry-run)':'')); refresh(); }
+                else toast(d.error||'Failed to close.', false);
+            }).catch(()=>toast('Network error.', false));
+        }
+
+        function vegasTxt(v){
+            if(v>0) return '<span class="vegas-green">green ▲</span>';
+            if(v<0) return '<span class="vegas-red">red ▼</span>';
+            return '<span class="vegas-flat">flat —</span>';
+        }
+        function ago(sec){
+            if(!sec) return '—';
+            const d = (Date.now()/1000) - sec;
+            if(d < 3600) return Math.max(1,Math.round(d/60))+'m ago';
+            if(d < 86400) return (d/3600).toFixed(1)+'h ago';
+            return (d/86400).toFixed(1)+'d ago';
+        }
+
+        function renderStatus(rows){
+            (rows||[]).forEach(s=>{
+                const posEl = document.getElementById('sig-pos-'+s.base);
+                if(!posEl) return;
+                const dir = (s.pos_dir||'').toUpperCase();
+                posEl.className = 'pill ' + (dir==='LONG'?'long':dir==='SHORT'?'short':'flat');
+                posEl.textContent = dir || 'flat';
+                document.getElementById('sig-flag-'+s.base).textContent = s.last_flag ? s.last_flag.toUpperCase() : '—';
+                document.getElementById('sig-score-'+s.base).textContent = s.score!=null ? Number(s.score).toFixed(1)+'/100' : '—';
+                document.getElementById('sig-vegas-'+s.base).innerHTML = s.vegas!=null ? vegasTxt(s.vegas) : '—';
+                document.getElementById('sig-msb-'+s.base).textContent = s.msb || '—';
+                document.getElementById('sig-seen-'+s.base).textContent = ago(s.seen);
+            });
+        }
+
+        function setNet(live, blocked){
+            const el = document.getElementById('net-badge');
+            if(blocked){ el.className='net-badge net-alert'; el.textContent='ALERT-ONLY'; return; }
+            if(!live){ el.className='net-badge net-off'; el.textContent='NO KEYS / DRY-RUN'; return; }
+            el.className='net-badge net-live'; el.textContent='LIVE ON BYBIT';
+        }
+
+        function refresh(){
+            return fetch('/api/bybit').then(r=>r.json()).then(d=>{
+                const eb = document.getElementById('errbox');
+                eb.innerHTML = d.ok ? '' : `<div class="errbar">⚠ ${d.error||'Could not load Bybit account.'}</div>`;
+                setNet(d.live, d.blocked);
+                document.getElementById('s-mode').textContent = d.blocked ? 'Alert-only' : (d.live ? 'Live' : 'Dry-run');
+
+                const bal = d.balance || {};
+                document.getElementById('s-equity').textContent = fmt(bal.equity) + ' USDT';
+                document.getElementById('s-avail').textContent = fmt(bal.available) + ' USDT';
+                const up = document.getElementById('s-upnl');
+                up.textContent = sgn(bal.unrealized_pnl) + ' USDT'; up.className = 'stat-value num ' + cls(bal.unrealized_pnl);
+
+                const pos = d.positions||[];
+                document.getElementById('s-pos').textContent = pos.length;
+
+                renderPositions(pos);
+                renderStatus(d.status);
+                document.getElementById('updated').textContent = 'updated ' + new Date().toLocaleTimeString();
+            }).catch(()=>{
+                document.getElementById('errbox').innerHTML = `<div class="errbar">⚠ Network error reaching the dashboard API.</div>`;
+            });
+        }
+
+        refresh();
+        setInterval(refresh, 8000);
+    </script>
+</body>
+</html>

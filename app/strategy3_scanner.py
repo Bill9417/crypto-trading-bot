@@ -1,5 +1,7 @@
 """
-Strategy 3 — "Vegas Flag Flip": BTC + SOL + HYPE (config.STRATEGY3_SYMBOLS), 15m.
+Strategy 3 — "Vegas Flag Flip": BTC + SOL + HYPE + XAUT (config.STRATEGY3_SYMBOLS).
+Each symbol trades its own timeframe and position size (config.strategy3_params) —
+BTC/SOL/HYPE on 15m by default, XAUT on 30m (gold trends far slower than crypto).
 Signals from BINANCE charts · orders on the user's BYBIT account.
 
 The Python twin of TV_strategy.pine. Two rules, exactly as on the chart:
@@ -46,7 +48,7 @@ import strategy3_signal as SIG
 import telegram_utils
 from market_data import SafeBinanceClient, RateLimitCooldownError, timeframe_to_seconds
 
-TIMEFRAME = os.getenv("STRATEGY3_TIMEFRAME", "15m")
+TIMEFRAME = config.STRATEGY3_TIMEFRAME                      # shared default; XAUT overrides to 30m
 TF_SEC = timeframe_to_seconds(TIMEFRAME)
 POLL_SEC = int(os.getenv("STRATEGY3_POLL_SEC", "45"))       # candle-close watcher
 # Deep history on purpose: the arm/alternation state replays from the start of
@@ -62,14 +64,17 @@ def symbols() -> list:
 
 # ── signal computation (pure, on CLOSED candles) ─────────────────────────────
 
-def closed_candles(ohlcv, now=None) -> list:
+def closed_candles(ohlcv, tf_sec=None, now=None) -> list:
     """Drop the still-forming candle so every read is bar-close confirmed,
-    like the indicator's 'Confirm Signals on Bar Close'."""
+    like the indicator's 'Confirm Signals on Bar Close'. tf_sec defaults to
+    the shared TIMEFRAME's length; callers with a per-symbol override (XAUT's
+    30m) must pass their own tf_sec."""
     if not ohlcv:
         return []
+    tf_sec = tf_sec or TF_SEC
     now = now or time.time()
     last_open_ts = float(ohlcv[-1][0]) / 1000.0
-    return ohlcv[:-1] if now < last_open_ts + TF_SEC else ohlcv
+    return ohlcv[:-1] if now < last_open_ts + tf_sec else ohlcv
 
 
 def flag_on_last_bar(ohlcv) -> tuple:
@@ -138,9 +143,11 @@ def live_blocked() -> str:
     return ""
 
 
-def open_flip(symbol: str, direction: str, price: float, score) -> str:
+def open_flip(symbol: str, direction: str, price: float, score, margin: float, leverage: int) -> str:
     """Enter a flip position on Bybit: market + emergency SL, no TP (the exit
-    is the opposite flag). Returns an outcome for the flag bookkeeping:
+    is the opposite flag). margin/leverage come from config.strategy3_params
+    for this symbol (XAUT trades a different size/timeframe than the others).
+    Returns an outcome for the flag bookkeeping:
       'opened' — in a position now (real fill or dry-run)
       'retry'  — transient failure; try again on the next closed candle
       'skip'   — final for this flag (alert-only mode, manual position, sizing)"""
@@ -164,7 +171,7 @@ def open_flip(symbol: str, direction: str, price: float, score) -> str:
     slp = config.STRATEGY3_EMERGENCY_SL_PCT
     sl = price * (1 - slp) if is_long else price * (1 + slp)
 
-    res = X.open_flip(symbol, direction, price, sl)
+    res = X.open_flip(symbol, direction, price, sl, margin, leverage)
     if not res.get("ok"):
         err = res.get("error")
         print(f"[strategy3] order error {symbol}: {err}")
@@ -179,7 +186,7 @@ def open_flip(symbol: str, direction: str, price: float, score) -> str:
         f"score {score}/100 · Vegas agrees · exit = opposite flag "
         f"(emergency SL {slp:.0%})")
     if res.get("leverage_warning"):
-        _tg(f"⚠️ S3 · {symbol.split('/')[0]} leverage may not be {config.STRATEGY3_LEVERAGE}x "
+        _tg(f"⚠️ S3 · {symbol.split('/')[0]} leverage may not be {leverage}x "
             f"— Bybit said: {res['leverage_warning']}\nSame {price * res.get('qty', 0):.0f} USDT "
             f"notional, but MORE margin may be locked than expected — check free balance "
             f"before the next flip.")
@@ -236,10 +243,10 @@ def _guardian_alert(base: str, detail: str) -> None:
     now = time.time()
     if now - _last_guardian_alert.get(base, 0) >= _GUARDIAN_ALERT_COOLDOWN_SEC:
         _last_guardian_alert[base] = now
+        leverage = config.strategy3_params(base)["leverage"]
         _tg(f"🚨 S3 GUARDIAN FAILED · {base} has NO stop-loss on Bybit and the "
             f"auto-repair failed: {detail}\nThis position is UNPROTECTED at "
-            f"{config.STRATEGY3_LEVERAGE}x — check Bybit now and set a stop "
-            f"by hand if this repeats.")
+            f"{leverage}x — check Bybit now and set a stop by hand if this repeats.")
 
 
 def reconcile_position(sym: str, st: dict) -> None:
@@ -283,16 +290,21 @@ def reconcile_position(sym: str, st: dict) -> None:
 
 
 def step(client, state: dict) -> None:
-    """One pass over the symbols; trades only on NEW closed 15m candles, but
-    reconciles positions on every pass. State is saved after each symbol so a
-    mid-pass abort can never lose an opened position."""
+    """One pass over the symbols; trades only on a NEW closed candle FOR THAT
+    SYMBOL'S OWN TIMEFRAME (config.strategy3_params — XAUT is 30m, the rest are
+    15m by default), but reconciles positions on every pass regardless. State
+    is saved after each symbol so a mid-pass abort can never lose an opened
+    position."""
     for sym in symbols():
+        base = sym.split("/")[0]
+        params = config.strategy3_params(base)
+        tf_sec = timeframe_to_seconds(params["timeframe"])
         st = state.setdefault(sym, {"last_flag": None, "consumed": False,
                                     "pos_dir": None, "last_candle": 0})
         reconcile_position(sym, st)
 
         try:
-            raw = client.call("fetch_ohlcv", sym, TIMEFRAME, None, CANDLES)
+            raw = client.call("fetch_ohlcv", sym, params["timeframe"], None, CANDLES)
         except RateLimitCooldownError as exc:
             print(f"[strategy3] cooldown: {exc}; pausing 30s")
             save_state(state)
@@ -302,7 +314,7 @@ def step(client, state: dict) -> None:
             print(f"[strategy3] Binance fetch error {sym}: {exc}")
             continue
 
-        ohlcv = closed_candles(raw)
+        ohlcv = closed_candles(raw, tf_sec)
         if not ohlcv:
             continue
         last_ts = float(ohlcv[-1][0])
@@ -318,16 +330,22 @@ def step(client, state: dict) -> None:
         if snap["insufficient"]:
             continue
 
-        base = sym.split("/")[0]
         vegas_txt = "green" if snap["vegas"] > 0 else "red" if snap["vegas"] < 0 else "flat"
         # heartbeat — one line per closed candle so the log (and /health) show life
-        print(f"[strategy3] {base} {TIMEFRAME} close · score {snap['score']:.1f} · "
+        print(f"[strategy3] {base} {params['timeframe']} close · score {snap['score']:.1f} · "
               f"vegas {vegas_txt} · msb {snap['msb']} · flag {flag or '—'} · "
               f"pos {st.get('pos_dir') or 'flat'}")
+        # Persisted so the /bybit web page can show "why" without recomputing
+        # the signal itself — one line per closed candle, not per poll.
+        st["last_score"] = snap["score"]
+        st["last_vegas"] = snap["vegas"]
+        st["last_msb"] = snap["msb"]
+        st["last_price"] = snap["price"]
+        st["last_seen"] = time.time()
 
         if flag and flag != st.get("last_flag"):
             st["open_attempts"] = 0                     # fresh flag → fresh retries
-            _tg(f"🚩 S3 FLAG · {flag.upper()} {base} ({TIMEFRAME}, Binance chart)\n"
+            _tg(f"🚩 S3 FLAG · {flag.upper()} {base} ({params['timeframe']}, Binance chart)\n"
                 f"score {snap['score']:.0f}/100 · Vegas "
                 f"{'agrees → entering' if (snap['vegas'] > 0) == (flag == 'long') and snap['vegas'] != 0 else 'disagrees → waiting'}")
 
@@ -336,7 +354,8 @@ def step(client, state: dict) -> None:
             if close_flip(sym, f"opposite flag ({st['last_flag']})"):
                 st["pos_dir"] = None
         if open_dir and not st.get("pos_dir"):
-            outcome = open_flip(sym, open_dir, snap["price"], snap["score"])
+            outcome = open_flip(sym, open_dir, snap["price"], snap["score"],
+                                 params["margin"], params["leverage"])
             if outcome == "opened":
                 st["pos_dir"] = open_dir
                 st["consumed"] = True
@@ -355,20 +374,40 @@ def step(client, state: dict) -> None:
     save_state(state)
 
 
-def main() -> None:
+def mode_string() -> str:
+    """Short phrase for whether orders actually reach Bybit right now — shared
+    by the startup banner and the /bybit web page so they can never drift."""
     blocked = live_blocked()
     if blocked:
-        mode = f"ALERT-ONLY ({blocked})"
-    elif not X.keys_present():
-        mode = "ARMED but no BYBIT_API_KEY/BYBIT_API_SECRET in app/.env → dry-run"
-    elif not config.LIVE_TRADING:
-        mode = "ARMED but LIVE_TRADING=false → dry-run"
-    else:
-        mode = "LIVE on BYBIT"
-    print(f"[strategy3] Vegas Flag Flip starting — {', '.join(config.STRATEGY3_SYMBOLS)} "
-          f"{TIMEFRAME} (Binance charts → Bybit orders) · score ≥{config.STRATEGY3_SCORE_TH} "
-          f"· ADX ≥{config.STRATEGY3_ADX_TH} · {config.STRATEGY3_MARGIN_USDT} USDT × "
-          f"{config.STRATEGY3_LEVERAGE}x · mode: {mode}")
+        return f"ALERT-ONLY ({blocked})"
+    if not X.keys_present():
+        return "ARMED but no BYBIT_API_KEY/BYBIT_API_SECRET in app/.env → dry-run"
+    if not config.LIVE_TRADING:
+        return "ARMED but LIVE_TRADING=false → dry-run"
+    return "LIVE on BYBIT"
+
+
+def _symbol_breakdown() -> str:
+    """'BTC 15m 1500 USDT×50x · SOL 15m 1500 USDT×50x · ... ' — one clause per
+    symbol, since timeframe/size can now differ (XAUT vs the rest)."""
+    parts = []
+    for base in config.STRATEGY3_SYMBOLS:
+        p = config.strategy3_params(base)
+        parts.append(f"{base} {p['timeframe']} {p['margin'] * p['leverage']:.0f} USDT×{p['leverage']}x")
+    return " · ".join(parts)
+
+
+def status_line() -> str:
+    return (f"Execution: {mode_string()} | {_symbol_breakdown()} | "
+            f"score ≥{config.STRATEGY3_SCORE_TH} · ADX ≥{config.STRATEGY3_ADX_TH} | "
+            f"emergency SL {config.STRATEGY3_EMERGENCY_SL_PCT:.1%}")
+
+
+def main() -> None:
+    mode = mode_string()
+    print(f"[strategy3] Vegas Flag Flip starting — {_symbol_breakdown()} "
+          f"(Binance charts → Bybit orders) · score ≥{config.STRATEGY3_SCORE_TH} "
+          f"· ADX ≥{config.STRATEGY3_ADX_TH} · mode: {mode}")
     client = SafeBinanceClient(
         min_rest_interval=float(os.getenv("STRATEGY3_REST_INTERVAL", "0.35")),
         max_retries=3,

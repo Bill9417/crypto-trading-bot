@@ -16,6 +16,7 @@
             --blue: #00d2ff;
             --blue-dim: rgba(0,210,255,.14);
             --gold: #ffcf4b;
+            --bybit: #f7a600;
             --slate: #0e1018;
             --card: rgba(30,36,56,.72);
             --card-solid: #191d2b;
@@ -66,25 +67,6 @@
         .btn:hover, .btn:active { border-color: rgba(0,210,255,.4); color: var(--text); background: rgba(255,255,255,.07); }
         .btn .lbl-full { display: inline; }
 
-        /* ── Hero verdict ── */
-        .hero {
-            background: linear-gradient(135deg, rgba(30,36,56,.85), rgba(14,17,28,.85));
-            border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow);
-            padding: 18px 20px; margin-bottom: 14px; position: relative; overflow: hidden;
-        }
-        .hero::before { content:""; position:absolute; inset:0 auto 0 0; width:5px;
-            background: var(--blue); }
-        .hero.has-queued::before { background: var(--gold); }
-        .hero-top { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; }
-        .hero-big { font-size: clamp(2.4rem,11vw,3.4rem); font-weight: 900; line-height: 1; letter-spacing: -1.5px; }
-        .hero-big.zero { color: var(--text); }
-        .hero-big.go { color: var(--gold); }
-        .hero-cap { font-size: .82rem; color: var(--muted); font-weight: 700; text-transform: uppercase; letter-spacing: .8px; }
-        .hero-msg { margin-top: 12px; font-size: clamp(.85rem,2.6vw,.95rem); line-height: 1.55; color: #cdd6e2; }
-        .hero-msg b { color: var(--blue); }
-        .hero-msg .reg-bear { color: var(--short); font-weight: 800; }
-        .hero-msg .reg-bull { color: var(--long); font-weight: 800; }
-
         /* ── Chips row ── */
         .chips { display: grid; grid-template-columns: repeat(4,1fr); gap: 9px; margin-bottom: 16px; }
         .chip { background: var(--card); border: 1px solid var(--border); border-radius: 13px; padding: 11px 12px; text-align: center; }
@@ -97,11 +79,52 @@
         .reg-bull { background: rgba(34,197,94,.16); color: var(--long); }
         .reg-neutral, .reg-unknown, .reg-off { background: rgba(245,158,11,.16); color: var(--amber); }
 
+        /* ── Best-trade hero ── */
+        .ht-wrap { margin-bottom: 16px; }
+        .ht-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; margin-bottom: 9px; padding: 0 2px; }
+        .ht-title { font-size: 1.05rem; font-weight: 900; }
+        .ht-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+        @media (max-width: 760px) { .ht-grid { grid-template-columns: 1fr; } }
+        .ht-card { background: var(--card); border: 1px solid var(--border); border-radius: var(--radius);
+            box-shadow: var(--shadow); padding: 15px 16px; position: relative; overflow: hidden; }
+        .ht-card::before { content: ""; position: absolute; inset: 0 auto 0 0; width: 4px; }
+        .ht-card.s1::before { background: var(--blue); }
+        .ht-card.s3::before { background: var(--bybit); }
+        .ht-card.is-ready::before, .ht-card.is-armed::before { background: var(--gold); box-shadow: 0 0 12px var(--gold); }
+        .ht-card-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 12px; }
+        .ht-eng { font-size: .66rem; font-weight: 900; letter-spacing: .6px; color: var(--muted); text-transform: uppercase; }
+        .ht-eng-sub { font-size: .66rem; color: var(--muted); }
+        .ht-badge { font-size: .62rem; font-weight: 900; letter-spacing: .4px; padding: 3px 9px; border-radius: 999px; text-transform: uppercase; }
+        .ht-badge.ready, .ht-badge.armed { background: rgba(255,207,75,.18); color: var(--gold); }
+        .ht-badge.watch, .ht-badge.bias { background: rgba(0,210,255,.14); color: var(--blue); }
+        .ht-badge.holding { background: rgba(255,255,255,.08); color: var(--muted); }
+        .ht-badge.none { background: rgba(255,255,255,.06); color: var(--muted); }
+        .ht-sym-row { display: flex; align-items: center; gap: 9px; margin-bottom: 10px; flex-wrap: wrap; }
+        .ht-sym { font-size: 1.35rem; font-weight: 900; text-decoration: none; color: var(--text); }
+        .ht-sym:hover { color: var(--blue); }
+        .ht-levels { display: grid; grid-template-columns: repeat(4,1fr); gap: 7px; margin-bottom: 10px; }
+        .ht-lv { background: rgba(255,255,255,.03); border: 1px solid var(--border); border-radius: 9px; padding: 6px 8px; text-align: center; }
+        .ht-lv .k { font-size: .56rem; text-transform: uppercase; color: var(--muted); font-weight: 700; letter-spacing: .3px; }
+        .ht-lv .v { font-size: .84rem; font-weight: 800; margin-top: 2px; }
+        .ht-meta-row { display: flex; flex-wrap: wrap; gap: 10px; font-size: .7rem; color: var(--muted); margin-bottom: 9px; }
+        .ht-meta-row b { color: var(--text); }
+        .ht-why { font-size: .74rem; color: #cdd6e2; line-height: 1.6; margin: 0; padding-left: 16px; }
+        .ht-why li { margin-bottom: 2px; }
+        .ht-note { font-size: .78rem; color: #cdd6e2; line-height: 1.55; background: rgba(255,255,255,.03);
+            border: 1px solid var(--border); border-radius: 10px; padding: 9px 11px; margin-top: 4px; }
+        .ht-empty { color: var(--muted); font-size: .82rem; padding: 10px 0; line-height: 1.6; }
+        .ht-mini-board { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 11px; }
+        .ht-mini { font-size: .64rem; font-weight: 700; padding: 3px 8px; border-radius: 999px; border: 1px solid var(--border); color: var(--muted); }
+        .ht-mini.long { color: var(--long); border-color: rgba(34,197,94,.5); background: rgba(34,197,94,.1); }
+        .ht-mini.short { color: var(--short); border-color: rgba(239,68,68,.5); background: rgba(239,68,68,.1); }
+
         /* ── Card shell ── */
         .card { background: var(--card); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow); padding: 16px clamp(13px,3.5vw,20px); margin-bottom: 14px; }
         .card-h { display: flex; align-items: center; gap: 9px; margin-bottom: 3px; }
         .card-h .ic { font-size: 1.05rem; }
         .card-h h2 { font-size: .98rem; font-weight: 800; margin: 0; }
+        .card-h .scope { font-size: .62rem; font-weight: 800; color: var(--muted); background: rgba(255,255,255,.05);
+            border: 1px solid var(--border); padding: 2px 8px; border-radius: 999px; text-transform: uppercase; margin-left: auto; }
         .card .hint { font-size: .74rem; color: var(--muted); margin: 0 0 15px; line-height: 1.45; }
 
         /* ── Funnel stages ── */
@@ -151,6 +174,7 @@
         @media (max-width: 560px) {
             .chips { grid-template-columns: repeat(2,1fr); }
             .setups { grid-template-columns: 1fr; }
+            .ht-levels { grid-template-columns: repeat(2,1fr); }
             .btn .lbl-full { display: none; }
             .btn { padding: 9px 11px; }
         }
@@ -173,13 +197,16 @@
 
     <div class="nav-standalone">{% include '_nav.html' %}</div>
 
-    <section class="hero" id="hero">
-        <div class="hero-top">
-            <div class="hero-big zero" id="heroBig">{{ funnel.queued }}</div>
-            <div class="hero-cap">setups queued<br>waiting for entry</div>
+    <div class="ht-wrap">
+        <div class="ht-head">
+            <span class="ht-title">🎯 Best Trade Right Now</span>
+            <span class="dim" style="font-size:.66rem;color:var(--muted);" id="ht-updated">—</span>
         </div>
-        <div class="hero-msg" id="heroMsg"></div>
-    </section>
+        <div class="ht-grid">
+            <div class="ht-card s1" id="s1-card"></div>
+            <div class="ht-card s3" id="s3-card"></div>
+        </div>
+    </div>
 
     <div class="chips">
         <div class="chip"><div class="k">Scanned</div><div class="v num" id="c-total">{{ funnel.total }}</div></div>
@@ -189,28 +216,101 @@
     </div>
 
     <div class="card">
-        <div class="card-h"><span class="ic">🔻</span><h2>Drop-off funnel</h2></div>
+        <div class="card-h"><span class="ic">🔻</span><h2>Drop-off funnel</h2><span class="scope">Strategy 1 only</span></div>
         <p class="hint">Survivors after each gate, in screening order. A setup must clear <em>every</em> gate to queue. The widest drop is your bottleneck.</p>
         <div id="stages"></div>
         <div class="thr" id="thr"></div>
     </div>
 
     <div class="card">
-        <div class="card-h"><span class="ic">🚧</span><h2>Biggest blockers</h2></div>
+        <div class="card-h"><span class="ic">🚧</span><h2>Biggest blockers</h2><span class="scope">Strategy 1 only</span></div>
         <p class="hint">How many of all scanned setups each gate rejects (one setup can fail several). The top bar is the knob with the most leverage.</p>
         <div id="blockers"></div>
     </div>
 
     <div class="card">
-        <div class="card-h"><span class="ic">🎯</span><h2>Closest to qualifying</h2></div>
-        <p class="hint">Tradeable setups failing the fewest gates right now — the next in line if conditions shift.</p>
+        <div class="card-h"><span class="ic">🔎</span><h2>Other Strategy 1 candidates</h2><span class="scope">Strategy 1 only</span></div>
+        <p class="hint">Tradeable setups failing the fewest gates right now, beyond the single best pick above — the next in line if conditions shift.</p>
         <div class="setups" id="closest"></div>
     </div>
 </div>
 
 <script>
 const INITIAL = {{ funnel|tojson }};
+const INITIAL_S1 = {{ best_s1|tojson }};
+const INITIAL_S3 = {{ best_s3|tojson }};
 const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const fmt = (x,d=6)=> (x===null||x===undefined)?'—':Number(x).toLocaleString(undefined,{maximumFractionDigits:d});
+
+function renderS1Card(s1) {
+    const el = document.getElementById('s1-card');
+    const best = s1 && s1.best;
+    if (!best) {
+        el.className = 'ht-card s1';
+        el.innerHTML = `<div class="ht-card-head"><span class="ht-eng">Strategy 1 <span class="ht-eng-sub">· Wolf Confluence</span></span><span class="ht-badge none">None</span></div>
+            <div class="ht-empty">No Strategy 1 setup meets the bar right now — need a queued entry or ≥4 confluence lights on a tradeable coin. ${s1 && s1.considered ? s1.considered + ' candidate(s) considered, none qualified.' : 'Nothing tradeable this scan.'}</div>`;
+        return;
+    }
+    el.className = 'ht-card s1' + (best.queued ? ' is-ready' : '');
+    const dir = (best.direction || '').toUpperCase();
+    const sym = best.tv_url ? `<a class="ht-sym" href="${esc(best.tv_url)}" target="_blank" rel="noopener">${esc(best.symbol.replace(':USDT',''))}</a>` : `<span class="ht-sym">${esc(best.symbol)}</span>`;
+    const why = (best.why || []).map(w => `<li>${esc(w)}</li>`).join('') || '<li>No specific factors recorded.</li>';
+    const blockersTxt = (!best.queued && best.blockers && best.blockers.length)
+        ? `<div class="ht-note">⏳ Still needs: ${best.blockers.map(esc).join(' · ')}</div>` : '';
+    el.innerHTML = `
+        <div class="ht-card-head"><span class="ht-eng">Strategy 1 <span class="ht-eng-sub">· Wolf Confluence</span></span>
+            <span class="ht-badge ${best.queued ? 'ready' : 'watch'}">${best.queued ? 'Ready' : 'Watch'}</span></div>
+        <div class="ht-sym-row">${sym}<span class="dir ${dir}">${dir}</span></div>
+        <div class="ht-levels">
+            <div class="ht-lv"><div class="k">Entry</div><div class="v num">${fmt(best.entry)}</div></div>
+            <div class="ht-lv"><div class="k">Stop</div><div class="v num">${fmt(best.sl)}</div></div>
+            <div class="ht-lv"><div class="k">Target</div><div class="v num">${fmt(best.tp2 ?? best.tp)}</div></div>
+            <div class="ht-lv"><div class="k">R:R</div><div class="v num">${best.rr != null ? best.rr + 'R' : '—'}</div></div>
+        </div>
+        <div class="ht-meta-row"><span>Lights <b>${best.lights ?? '—'}</b></span><span>Conviction <b>${esc(best.conviction || '—')}</b></span><span>RSI <b>${best.rsi != null ? Number(best.rsi).toFixed(1) : '—'}</b></span></div>
+        <ul class="ht-why">${why}</ul>
+        ${blockersTxt}
+    `;
+}
+
+function s3MiniBoard(all, exceptSym) {
+    return (all || []).filter(r => r.symbol !== exceptSym).map(r => {
+        const k = r.holding ? (r.holding === 'long' ? 'long' : 'short') : (r.armed_flag ? (r.armed_flag === 'long' ? 'long' : 'short') : '');
+        const label = r.holding ? `${r.symbol} ${r.holding.toUpperCase()}` : (r.armed_flag ? `${r.symbol} armed ${r.armed_flag.toUpperCase()}` : `${r.symbol} ${r.score != null ? Math.round(r.score) : '—'}`);
+        return `<span class="ht-mini ${k}" title="${esc(r.note || '')}">${esc(label)}</span>`;
+    }).join('');
+}
+
+function renderS3Card(s3) {
+    const el = document.getElementById('s3-card');
+    const best = s3 && s3.best;
+    if (!best) {
+        el.className = 'ht-card s3';
+        el.innerHTML = `<div class="ht-card-head"><span class="ht-eng">Strategy 3 <span class="ht-eng-sub">· Vegas Flag Flip</span></span><span class="ht-badge none">None</span></div>
+            <div class="ht-empty">No Strategy 3 signal history yet.</div>`;
+        return;
+    }
+    const state = best.holding ? 'holding' : (best.armed_flag && !best.holding ? 'armed' : 'bias');
+    el.className = 'ht-card s3' + (state === 'armed' ? ' is-armed' : '');
+    const badge = state === 'armed' ? '<span class="ht-badge armed">Armed</span>' :
+                  state === 'holding' ? '<span class="ht-badge holding">Holding</span>' :
+                  '<span class="ht-badge bias">Bias only</span>';
+    const dirGuess = best.holding || best.armed_flag || best.lean;
+    const dir = (dirGuess || '').toUpperCase();
+    el.innerHTML = `
+        <div class="ht-card-head"><span class="ht-eng">Strategy 3 <span class="ht-eng-sub">· Vegas Flag Flip</span></span>${badge}</div>
+        <div class="ht-sym-row"><span class="ht-sym">${esc(best.symbol)}</span>${dir ? `<span class="dir ${dir === 'LONG' ? 'LONG' : 'SHORT'}">${dir}</span>` : ''}</div>
+        <div class="ht-levels">
+            <div class="ht-lv"><div class="k">Score</div><div class="v num">${best.score != null ? Math.round(best.score) : '—'}/100</div></div>
+            <div class="ht-lv"><div class="k">Vegas</div><div class="v">${best.vegas > 0 ? '🟢' : best.vegas < 0 ? '🔴' : '—'}</div></div>
+            <div class="ht-lv"><div class="k">MSB</div><div class="v">${esc(best.msb || '—')}</div></div>
+            <div class="ht-lv"><div class="k">Size</div><div class="v num">${fmt(best.notional,0)}×${best.leverage}x</div></div>
+        </div>
+        <div class="ht-meta-row"><span>Timeframe <b>${esc(best.timeframe)}</b></span></div>
+        <div class="ht-note">${esc(best.note || '')}</div>
+        <div class="ht-mini-board">${s3MiniBoard(s3.all, best.symbol)}</div>
+    `;
+}
 
 function render(f) {
     const total = f.total || 1;
@@ -218,31 +318,13 @@ function render(f) {
     document.getElementById('c-total').textContent = f.total;
     document.getElementById('c-trade').textContent = f.tradeable;
     document.getElementById('c-queued').textContent = f.queued;
-    document.getElementById('heroBig').textContent = f.queued;
     document.getElementById('lastUpdate').textContent = f.last_update || '—';
+    document.getElementById('ht-updated').textContent = f.last_update ? ('updated ' + f.last_update) : '';
 
     const reg = (f.btc_regime || 'unknown');
     const regEl = document.getElementById('c-regime');
     regEl.textContent = reg.toUpperCase();
     regEl.className = 'reg-pill reg-' + reg;
-
-    // Hero verdict
-    const hero = document.getElementById('hero');
-    const big = document.getElementById('heroBig');
-    const top1 = f.leaderboard && f.leaderboard[0];
-    let msg;
-    if (f.queued > 0) {
-        hero.classList.add('has-queued'); big.className = 'hero-big go';
-        msg = `<b>${f.queued}</b> setup(s) cleared every gate and are resting at their entry. You'll get a Telegram ping when one fills.`;
-    } else {
-        hero.classList.remove('has-queued'); big.className = 'hero-big zero';
-        const regNote = reg === 'bear' ? ` BTC is <span class="reg-bear">BEAR</span>, so every <b>long</b> is blocked — only shorts can pass.`
-                      : reg === 'bull' ? ` BTC is <span class="reg-bull">BULL</span>, so every <b>short</b> is blocked — only longs can pass.` : '';
-        msg = top1
-            ? `Nothing queued. The biggest single blocker is <b>${esc(top1.label)}</b>, knocking out <b>${top1.pct}%</b> of setups.${regNote}`
-            : 'No scan data yet.';
-    }
-    document.getElementById('heroMsg').innerHTML = msg;
 
     // Funnel stages — find biggest drop (excluding the final queued line)
     let maxDrop = -1, maxIdx = -1;
@@ -304,12 +386,19 @@ async function loadFunnel(btn) {
     if (btn) { btn.style.opacity = '.5'; }
     try {
         const r = await fetch('/api/funnel', { headers: { 'Accept': 'application/json' } });
-        if (r.ok) render(await r.json());
+        if (r.ok) {
+            const f = await r.json();
+            render(f);
+            renderS1Card(f.best_s1);
+            renderS3Card(f.best_s3);
+        }
     } catch (e) { /* keep last render */ }
     finally { if (btn) btn.style.opacity = ''; }
 }
 
 render(INITIAL);
+renderS1Card(INITIAL_S1);
+renderS3Card(INITIAL_S3);
 setInterval(() => loadFunnel(), 30000);
 </script>
 </body>

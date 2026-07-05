@@ -5,6 +5,7 @@
     <a href="{{ url_for('index') }}" class="nav-pill home{% if request.endpoint == 'index' %} active{% endif %}">🏠 DASHBOARD</a>
     {% if current_user.is_admin %}
     <a href="{{ url_for('account') }}" class="nav-pill account{% if request.endpoint == 'account' %} active{% endif %}">💰 ACCOUNT</a>
+    <a href="{{ url_for('bybit_page') }}" class="nav-pill bybit{% if request.endpoint == 'bybit_page' %} active{% endif %}">🅱 BYBIT</a>
     {% endif %}
     <a href="{{ url_for('performance') }}" class="nav-pill perf{% if request.endpoint == 'performance' %} active{% endif %}">📊 PERFORMANCE</a>
     <a href="{{ url_for('funnel') }}" class="nav-pill funnel{% if request.endpoint == 'funnel' %} active{% endif %}">🔻 FUNNEL</a>

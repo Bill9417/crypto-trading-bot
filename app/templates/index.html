@@ -1186,7 +1186,8 @@
         .hero-grid { display: grid; grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); gap: 12px; margin-bottom: 12px; align-items: stretch; }
         .hero-grid > :only-child { grid-column: 1 / -1; }
         .hero-side { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
-        .hero-side .acct-strip { margin-bottom: 0; flex: 1; }
+        .hero-side .acct-stack { flex: 1; display: flex; flex-direction: column; gap: 8px; min-height: 0; }
+        .hero-side .acct-stack .acct-strip { margin-bottom: 0; flex: 1; }
         .hero-side .acct-link { height: 100%; gap: 8px 16px; align-content: flex-start; padding: 12px 16px; }
         .hero-side .acct-cell b { font-size: .88rem; }
         .ls-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
@@ -1237,6 +1238,16 @@
         /* Colorblind-safe P&L: colour PLUS a ▲/▼ glyph + sign, never colour alone */
         .pnl-up { color: var(--long); } .pnl-down { color: var(--short); }
         @media (max-width:720px){ .acct-link{ gap:12px; } .acct-arrow{ display:none; } }
+        /* Bybit strip — same shape as the Binance one, distinct accent so the
+           two live accounts are never mistaken for each other at a glance. */
+        .acct-title.bybit { color: #f7a600; }
+        .acct-link.bybit:hover { border-color: rgba(247,166,0,.35); }
+        .net-bybit-live { background: rgba(247,166,0,.16); color: #f7a600; }
+        .net-bybit-alert { background: rgba(255,207,75,.14); color: #fbbf24; }
+        .sym-dots { display: flex; gap: 5px; align-items: center; }
+        .sym-dot { font-size: .62rem; font-weight: 800; padding: 2px 6px; border-radius: 999px; border: 1px solid var(--wolf-border); color: var(--wolf-muted); }
+        .sym-dot.long { color: var(--long); border-color: rgba(34,197,94,.5); background: rgba(34,197,94,.12); }
+        .sym-dot.short { color: var(--short); border-color: rgba(239,68,68,.5); background: rgba(239,68,68,.12); }
     </style>
 </head>
 <body>
@@ -1318,20 +1329,35 @@
             </section>
             {% if user.is_admin %}
             <div class="hero-side">
-                <!-- Live account snapshot — the REAL Binance account, so the
-                     DB-based stats below can be sanity-checked against ground truth. -->
-                <div id="acct-strip" class="acct-strip" style="display:none;">
-                    <a href="{{ url_for('account') }}" class="acct-link" title="Open the full account page">
-                        <span class="acct-title">💰 LIVE ACCOUNT</span>
-                        <span class="acct-net" id="acct-net">—</span>
-                        <span class="acct-cell"><span class="acct-k">Equity</span><b id="acct-equity">—</b></span>
-                        <span class="acct-cell"><span class="acct-k">Available</span><b id="acct-avail">—</b></span>
-                        <span class="acct-cell"><span class="acct-k">Unrealized</span><b id="acct-upnl">—</b></span>
-                        <span class="acct-cell" title="Realized P&L closed today (bot + manual, excl. fees)"><span class="acct-k">Realized today</span><b id="acct-today">—</b></span>
-                        <span class="acct-cell"><span class="acct-k">Open positions</span><b id="acct-pos">—</b></span>
-                        <span class="acct-cell acct-spark-cell" id="acct-spark-cell" title="Cumulative realized P&L (last trades)"><span class="acct-k">Realized trend</span><span class="acct-spark" id="acct-spark"></span></span>
-                        <span class="acct-arrow">→</span>
-                    </a>
+                <!-- Live account snapshots — the TWO real accounts (Binance for
+                     S1/S2, Bybit for S3), so the DB-based stats below can be
+                     sanity-checked against ground truth on either exchange. -->
+                <div class="acct-stack">
+                    <div id="acct-strip" class="acct-strip" style="display:none;">
+                        <a href="{{ url_for('account') }}" class="acct-link" title="Open the full Binance account page">
+                            <span class="acct-title">💰 BINANCE</span>
+                            <span class="acct-net" id="acct-net">—</span>
+                            <span class="acct-cell"><span class="acct-k">Equity</span><b id="acct-equity">—</b></span>
+                            <span class="acct-cell"><span class="acct-k">Available</span><b id="acct-avail">—</b></span>
+                            <span class="acct-cell"><span class="acct-k">Unrealized</span><b id="acct-upnl">—</b></span>
+                            <span class="acct-cell" title="Realized P&L closed today (bot + manual, excl. fees)"><span class="acct-k">Realized today</span><b id="acct-today">—</b></span>
+                            <span class="acct-cell"><span class="acct-k">Positions</span><b id="acct-pos">—</b></span>
+                            <span class="acct-cell acct-spark-cell" id="acct-spark-cell" title="Cumulative realized P&L (last trades)"><span class="acct-k">Trend</span><span class="acct-spark" id="acct-spark"></span></span>
+                            <span class="acct-arrow">→</span>
+                        </a>
+                    </div>
+                    <div id="bybit-strip" class="acct-strip" style="display:none;">
+                        <a href="{{ url_for('bybit_page') }}" class="acct-link bybit" title="Open the full Bybit account page">
+                            <span class="acct-title bybit">💱 BYBIT</span>
+                            <span class="acct-net" id="bybit-net">—</span>
+                            <span class="acct-cell"><span class="acct-k">Equity</span><b id="bybit-equity">—</b></span>
+                            <span class="acct-cell"><span class="acct-k">Available</span><b id="bybit-avail">—</b></span>
+                            <span class="acct-cell"><span class="acct-k">Unrealized</span><b id="bybit-upnl">—</b></span>
+                            <span class="acct-cell" title="Strategy 3 (Vegas Flag Flip) — long/short/flat per symbol"><span class="acct-k">Symbols</span><span class="sym-dots" id="bybit-syms">—</span></span>
+                            <span class="acct-cell"><span class="acct-k">Positions</span><b id="bybit-pos">—</b></span>
+                            <span class="acct-arrow">→</span>
+                        </a>
+                    </div>
                 </div>
                 <!-- Live strategy switcher — what the bot trades with REAL money -->
                 <div class="ls-row">
@@ -2884,6 +2910,41 @@
         }
         loadAccountStrip();
         setInterval(loadAccountStrip, 15000);
+
+        // Live Bybit snapshot strip (admin only) — Strategy 3's real account,
+        // shown right next to Binance so both live-money accounts sit side by
+        // side. Same fail-soft/hidden-on-error behaviour as loadAccountStrip.
+        async function loadBybitStrip() {
+            const strip = document.getElementById('bybit-strip');
+            if (!strip || document.hidden) return;
+            try {
+                const r = await fetch('/api/bybit');
+                if (!r.ok) return;
+                const a = await r.json();
+                if (!a.ok || !a.balance) return;
+                const fmt = (v) => (v == null ? '—' : Number(v).toFixed(2) + ' USDT');
+                document.getElementById('bybit-equity').textContent = fmt(a.balance.equity);
+                document.getElementById('bybit-avail').textContent = fmt(a.balance.available);
+                const up = Number(a.balance.unrealized_pnl || 0);
+                const upEl = document.getElementById('bybit-upnl');
+                const glyph = up > 0 ? '▲ ' : (up < 0 ? '▼ ' : '');
+                upEl.textContent = glyph + (up >= 0 ? '+' : '') + up.toFixed(2) + ' USDT';
+                upEl.className = up > 0 ? 'pnl-up' : (up < 0 ? 'pnl-down' : '');
+                document.getElementById('bybit-pos').textContent = (a.positions || []).length;
+                const netEl = document.getElementById('bybit-net');
+                netEl.className = 'acct-net ' + (a.blocked ? 'net-bybit-alert' : (a.live ? 'net-bybit-live' : ''));
+                netEl.textContent = a.blocked ? 'ALERT-ONLY' : (a.live ? 'LIVE' : 'DRY');
+                const syms = document.getElementById('bybit-syms');
+                syms.innerHTML = (a.status || []).map(s => {
+                    const dir = (s.pos_dir || '').toLowerCase();
+                    const k = dir === 'long' ? 'long' : dir === 'short' ? 'short' : '';
+                    return `<span class="sym-dot ${k}" title="${s.base}: ${dir || 'flat'}">${s.base}</span>`;
+                }).join('') || '—';
+                strip.style.display = 'block';
+            } catch (e) { /* leave hidden on error */ }
+        }
+        loadBybitStrip();
+        setInterval(loadBybitStrip, 15000);
 
         // Cumulative realized-P&L sparkline in the account strip (admin-only; the
         // element only exists for admins, so the guard hides it for everyone else).

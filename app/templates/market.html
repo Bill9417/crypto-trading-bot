@@ -63,7 +63,7 @@
         .btn-gold:hover { color: #171a26; filter: brightness(1.05); }
 
         /* ── Stats strip (matches dashboard) ── */
-        .stats-strip { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-bottom: 14px; }
+        .stats-strip { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; margin-bottom: 14px; }
         .stat-card {
             background: var(--wolf-card); border: 1px solid var(--wolf-border);
             border-radius: 12px; padding: 12px 14px; box-shadow: 0 8px 24px rgba(0,0,0,.18);
@@ -108,6 +108,50 @@
         .bar { flex: 1; height: 7px; background: rgba(255,255,255,0.06); border-radius: 999px; overflow: hidden; }
         .bar > span { display: block; height: 100%; border-radius: 999px; background: linear-gradient(90deg, var(--wolf-blue), var(--wolf-gold)); transition: width .5s; }
         .chain-tvl { width: 68px; flex: 0 0 68px; text-align: right; color: var(--wolf-muted); }
+
+        /* ── Liquidations panel ── */
+        .liq-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 10px; margin-bottom: 14px; }
+        .liq-cell { background: rgba(255,255,255,.03); border: 1px solid var(--wolf-border); border-radius: 11px; padding: 11px 13px; }
+        .liq-k { font-size: .6rem; text-transform: uppercase; letter-spacing: .05em; color: var(--wolf-muted); font-weight: 700; margin-bottom: 4px; }
+        .liq-v { font-size: 1.15rem; font-weight: 800; font-variant-numeric: tabular-nums; }
+        .liq-sub { font-size: .64rem; color: var(--wolf-muted); margin-top: 3px; }
+        .liq-win-btn { background: transparent; border: 1px solid var(--wolf-border); color: var(--wolf-muted);
+            font: inherit; font-size: .68rem; font-weight: 700; padding: 4px 12px; border-radius: 8px; cursor: pointer; }
+        .liq-win-btn.active { background: var(--wolf-blue); color: #000; border-color: var(--wolf-blue); }
+        .liq-ex-row { display: grid; grid-template-columns: 74px 1fr 120px; gap: 12px; align-items: center; padding: 8px 0; border-top: 1px solid rgba(255,255,255,.045); font-size: .78rem; }
+        .liq-ex-row:first-child { border-top: none; }
+        .liq-split { display: flex; height: 11px; border-radius: 6px; overflow: hidden; background: rgba(255,255,255,.05); }
+        .liq-split i { display: block; height: 100%; }
+        .liq-split .lg { background: var(--short); }        /* longs liquidated = red pain */
+        .liq-split .sh { background: var(--long); }
+        .liq-heat { display: flex; gap: 3px; align-items: stretch; height: 62px; margin-top: 4px; }
+        .liq-heat > div { position: relative; flex: 1; min-width: 0; background: rgba(255,255,255,.02); border-radius: 3px; }
+        .liq-sym-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+        .liq-sym-chip { font-size: .66rem; font-weight: 700; padding: 3px 9px; border-radius: 999px; border: 1px solid var(--wolf-border); color: var(--wolf-text); background: rgba(255,255,255,.03); }
+        .liq-sym-chip b { color: var(--wolf-gold); }
+
+        /* ── News sentiment ── */
+        .sent-badge { font-size: .68rem; font-weight: 800; padding: 3px 11px; border-radius: 999px; }
+        .sent-badge.pos { background: rgba(22,163,74,.16); color: #4ade80; }
+        .sent-badge.neg { background: rgba(220,38,38,.16); color: #f87171; }
+        .sent-badge.neu { background: rgba(255,255,255,.07); color: var(--wolf-muted); }
+        .news-sent { font-size: .58rem; font-weight: 800; padding: 2px 7px; border-radius: 999px; flex: 0 0 auto; align-self: flex-start; margin-top: 2px; }
+        .news-sent.bullish { background: rgba(22,163,74,.16); color: #4ade80; }
+        .news-sent.bearish { background: rgba(220,38,38,.16); color: #f87171; }
+        .news-sent.neutral { background: rgba(255,255,255,.06); color: var(--wolf-muted); }
+        .news-list { max-height: 560px; overflow-y: auto; }
+
+        /* ── Sentiment & Macro (Fear&Greed + US stock indices) ── */
+        .sm-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+        @media (max-width: 480px) { .sm-grid { grid-template-columns: 1fr; } }
+        .fg-value { font-size: 2rem; font-weight: 800; line-height: 1; }
+        .fg-label { font-size: 0.72rem; font-weight: 700; margin-top: 4px; }
+        .fg-delta { font-size: 0.66rem; color: var(--wolf-muted); margin-top: 4px; }
+        .fg-spark { width: 100%; height: 30px; margin-top: 8px; display: block; }
+        .stk-row { display: flex; align-items: center; justify-content: space-between; padding: 7px 0; border-top: 1px solid rgba(255,255,255,0.045); font-size: 0.8rem; }
+        .stk-row:first-child { border-top: none; }
+        .stk-name { font-weight: 700; }
+        .stk-price { color: var(--wolf-muted); margin-right: 8px; }
 
         /* ── News ── */
         .news-item { padding: 10px 0; border-top: 1px solid rgba(255,255,255,0.05); display: flex; gap: 10px; }
@@ -250,6 +294,36 @@
             <span id="econ-events" style="display:inline-flex;gap:8px;flex-wrap:wrap;font-size:.72rem;"></span>
         </div>
 
+        <!-- 💥 Live liquidations (Binance + Bybit + OKX WebSockets) -->
+        <div class="analytics-panel">
+            <div class="analytics-head">
+                <div class="analytics-title">💥 Liquidations <span style="text-transform:none;letter-spacing:0;font-weight:600;">— live from Binance · Bybit · OKX</span></div>
+                <div style="display:flex;gap:6px;align-items:center;">
+                    <button class="liq-win-btn" data-liq-win="3600">1h</button>
+                    <button class="liq-win-btn" data-liq-win="14400">4h</button>
+                    <button class="liq-win-btn active" data-liq-win="86400">24h</button>
+                </div>
+            </div>
+            <div class="liq-stats">
+                <div class="liq-cell"><div class="liq-k">Longs liquidated</div><div class="liq-v down" id="liq-long">—</div><div class="liq-sub">longs forced out (price fell)</div></div>
+                <div class="liq-cell"><div class="liq-k">Shorts liquidated</div><div class="liq-v up" id="liq-short">—</div><div class="liq-sub">shorts forced out (price rose)</div></div>
+                <div class="liq-cell"><div class="liq-k">Total</div><div class="liq-v" id="liq-total">—</div><div class="liq-sub" id="liq-count">— events</div></div>
+                <div class="liq-cell"><div class="liq-k">Largest single</div><div class="liq-v" id="liq-largest" style="font-size:.95rem;">—</div><div class="liq-sub" id="liq-largest-sub">—</div></div>
+            </div>
+            <div style="display:grid;grid-template-columns:minmax(220px,2fr) minmax(280px,3fr);gap:16px;align-items:start;" id="liq-body">
+                <div>
+                    <div class="analytics-note" style="margin-bottom:4px;">By exchange</div>
+                    <div id="liq-exchanges"><div class="skeleton">Collecting…</div></div>
+                </div>
+                <div>
+                    <div class="analytics-note" style="margin-bottom:4px;">Timeline <span style="color:var(--short);">■ longs</span> / <span style="color:var(--long);">■ shorts</span> per bucket</div>
+                    <div class="liq-heat" id="liq-heat"></div>
+                    <div class="liq-sym-chips" id="liq-symbols"></div>
+                </div>
+            </div>
+            <p class="analytics-note" id="liq-since" style="margin:10px 0 0;line-height:1.5;"></p>
+        </div>
+
         <!-- Whale vs Crowd positioning -->
         <div class="analytics-panel">
             <div class="analytics-head">
@@ -290,10 +364,31 @@
 
                 <div class="analytics-panel">
                     <div class="analytics-head">
-                        <div class="analytics-title">Crypto News</div>
-                        <div class="analytics-note">live feeds</div>
+                        <div class="analytics-title">Sentiment &amp; Macro</div>
+                        <div class="analytics-note">alternative.me · CNBC</div>
                     </div>
-                    <div id="news"><div class="skeleton">Loading…</div></div>
+                    <div class="sm-grid">
+                        <div>
+                            <div class="analytics-note" style="margin-bottom:2px;">Fear &amp; Greed</div>
+                            <div class="fg-value num" id="fg-value">—</div>
+                            <div class="fg-label" id="fg-label"></div>
+                            <div class="fg-delta" id="fg-delta"></div>
+                            <svg class="fg-spark" id="fg-spark" viewBox="0 0 100 30" preserveAspectRatio="none"></svg>
+                        </div>
+                        <div>
+                            <div class="analytics-note" style="margin-bottom:2px;">US Indices</div>
+                            <div id="stocks"><div class="skeleton">Loading…</div></div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="analytics-panel">
+                    <div class="analytics-head">
+                        <div class="analytics-title">📰 News + Sentiment</div>
+                        <span class="sent-badge neu" id="news-sent-badge" title="Keyword mood over the latest headlines from 7 outlets: bullish − bearish as % of all headlines">—</span>
+                    </div>
+                    <div class="analytics-note" id="news-sent-note" style="margin:-6px 0 10px;"></div>
+                    <div id="news" class="news-list"><div class="skeleton">Loading…</div></div>
                 </div>
             </div>
         </div>
@@ -386,6 +481,42 @@
                 document.getElementById('s-dom-note').textContent = bits.join(' · ') || 'global market cap';
             }
 
+            // Fear & Greed — value + 8-day sparkline (today vs a week ago).
+            const fg = d.fear_greed || {};
+            if (fg.value != null) {
+                const fgEl = document.getElementById('fg-value');
+                fgEl.textContent = fg.value;
+                fgEl.className = 'fg-value num ' + (fg.value <= 25 ? 'down' : fg.value >= 75 ? 'up' : '');
+                document.getElementById('fg-label').textContent = fg.label || '';
+                const hist = fg.history || [];
+                if (fg.week_ago != null) {
+                    const delta = fg.value - fg.week_ago;
+                    document.getElementById('fg-delta').textContent =
+                        (delta >= 0 ? '+' : '') + delta + ' vs a week ago (' + fg.week_ago + ')';
+                }
+                if (hist.length >= 2) {
+                    const w = 100, h = 30, pad = 2;
+                    const lo = Math.min(...hist), hi = Math.max(...hist), range = (hi - lo) || 1;
+                    const X = i => pad + i * (w - 2 * pad) / (hist.length - 1);
+                    const Y = v => h - pad - (v - lo) * (h - 2 * pad) / range;
+                    const line = hist.map((v, i) => X(i).toFixed(1) + ',' + Y(v).toFixed(1)).join(' ');
+                    const col = hist[hist.length - 1] >= hist[0] ? '#4ade80' : '#f87171';
+                    document.getElementById('fg-spark').innerHTML =
+                        '<polyline points="' + line + '" fill="none" stroke="' + col + '" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round"/>';
+                }
+            }
+
+            // US stock indices — same trading-day context the dashboard briefing uses.
+            const stk = d.stocks || [];
+            document.getElementById('stocks').innerHTML = stk.length ? stk.map(s => {
+                const chg = s.change_pct;
+                const cls = chg > 0 ? 'up' : chg < 0 ? 'down' : '';
+                const chgTxt = chg == null ? '—' : (chg >= 0 ? '+' : '') + chg.toFixed(2) + '%';
+                return '<div class="stk-row"><span class="stk-name">' + esc(s.name) + '</span>' +
+                    '<span><span class="stk-price num">' + (s.price != null ? s.price.toLocaleString() : '—') + '</span>' +
+                    '<b class="num ' + cls + '">' + chgTxt + '</b></span></div>';
+            }).join('') : '<div class="skeleton">No index data.</div>';
+
             // High-impact USD events: upcoming first, imminent (<12h) highlighted.
             const cal = (d.calendar || []).map(e => ({ ...e, t: Date.parse(e.date) }))
                 .filter(e => !isNaN(e.t) && e.t > Date.now() - 2 * 3600e3)
@@ -447,16 +578,98 @@
                 '<div class="chain-tvl num">' + fmtUsd(c.tvl) + '</div></div>'
             ).join('') || '<div class="skeleton">No chain data.</div>';
 
-            document.getElementById('news').innerHTML = (d.news || []).map(n =>
-                '<div class="news-item"><div class="news-rail"></div><div>' +
-                '<a href="' + n.link + '" target="_blank" rel="noopener">' + esc(n.title) + '</a>' +
-                '<div class="news-meta"><span class="news-src">' + esc(n.source) + '</span>' + (n.published ? ' · ' + esc(n.published) : '') + '</div>' +
-                '</div></div>'
-            ).join('') || '<div class="skeleton">No news.</div>';
+            renderNews(d.news || [], d.news_sentiment || null);
 
             if (d.generated_at) {
                 document.getElementById('updated').textContent = 'updated ' + new Date(d.generated_at * 1000).toLocaleTimeString();
             }
+        }
+
+        // ── News + sentiment ──
+        const SRC_COLORS = { 'CoinDesk': '#f0b90b', 'Cointelegraph': '#00d2ff', 'CryptoSlate': '#c084fc',
+                             'The Block': '#4ade80', 'Decrypt': '#fb7185', 'The Defiant': '#facc15', 'Blockworks': '#818cf8' };
+        function agoTxt(pub) {
+            let t = Date.parse(pub);
+            if (isNaN(t)) return pub || '';
+            const m = (Date.now() - t) / 60000;
+            if (m < 1) return 'now';
+            if (m < 60) return Math.round(m) + 'm ago';
+            if (m < 48 * 60) return (m / 60).toFixed(1).replace(/\.0$/, '') + 'h ago';
+            return Math.round(m / 1440) + 'd ago';
+        }
+        function renderNews(items, sent) {
+            if (sent && sent.total) {
+                const b = document.getElementById('news-sent-badge');
+                const s = sent.score;
+                b.textContent = (s > 0 ? '+' : '') + s + ' · ' + (s >= 15 ? 'Bullish' : s <= -15 ? 'Bearish' : 'Mixed');
+                b.className = 'sent-badge ' + (s >= 15 ? 'pos' : s <= -15 ? 'neg' : 'neu');
+                document.getElementById('news-sent-note').textContent =
+                    sent.bullish + ' bullish · ' + sent.bearish + ' bearish · ' + sent.neutral + ' neutral headlines (' + sent.total + ' from 7 outlets)';
+            }
+            const glyph = { bullish: '▲', bearish: '▼', neutral: '·' };
+            document.getElementById('news').innerHTML = (items || []).map(n => {
+                const sc = SRC_COLORS[n.source] || 'var(--wolf-gold)';
+                const st = n.sentiment || 'neutral';
+                return '<div class="news-item"><div class="news-rail" style="background:' + sc + ';"></div>' +
+                    '<span class="news-sent ' + st + '" title="headline mood: ' + st + '">' + glyph[st] + '</span><div>' +
+                    '<a href="' + n.link + '" target="_blank" rel="noopener">' + esc(n.title) + '</a>' +
+                    '<div class="news-meta"><span class="news-src" style="color:' + sc + ';">' + esc(n.source) + '</span> · ' + esc(agoTxt(n.published)) + '</div>' +
+                    '</div></div>';
+            }).join('') || '<div class="skeleton">No news.</div>';
+        }
+
+        // ── Liquidations (live WebSocket collector on the server) ──
+        let liqWindow = 86400;
+        document.querySelectorAll('[data-liq-win]').forEach(btn => btn.addEventListener('click', () => {
+            document.querySelectorAll('[data-liq-win]').forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
+            liqWindow = parseInt(btn.getAttribute('data-liq-win'), 10);
+            loadLiquidations();
+        }));
+        function loadLiquidations() {
+            fetch('/api/liquidations?window=' + liqWindow).then(r => r.json()).then(d => {
+                document.getElementById('liq-long').textContent = fmtUsd(d.long_usd);
+                document.getElementById('liq-short').textContent = fmtUsd(d.short_usd);
+                document.getElementById('liq-total').textContent = fmtUsd(d.total_usd);
+                document.getElementById('liq-count').textContent = d.n_events + ' events';
+                const lg = d.largest;
+                document.getElementById('liq-largest').textContent = lg ? fmtUsd(lg.usd) : '—';
+                document.getElementById('liq-largest-sub').textContent = lg
+                    ? (lg.symbol + ' ' + lg.side.toUpperCase() + ' on ' + lg.exchange + ' · ' + agoTxt(new Date(lg.ts).toISOString())) : 'none yet';
+
+                const exs = d.exchanges || [];
+                const maxEx = Math.max(1e-9, ...exs.map(e => e.total_usd));
+                document.getElementById('liq-exchanges').innerHTML = exs.length ? exs.map(e => {
+                    const lp = e.total_usd ? e.long_usd / e.total_usd * 100 : 0;
+                    const w = e.total_usd / maxEx * 100;
+                    return '<div class="liq-ex-row"><b>' + esc(e.exchange) + '</b>' +
+                        '<div class="liq-split" style="width:' + Math.max(6, w).toFixed(0) + '%" title="longs ' + fmtUsd(e.long_usd) + ' / shorts ' + fmtUsd(e.short_usd) + '">' +
+                        '<i class="lg" style="width:' + lp.toFixed(0) + '%"></i><i class="sh" style="width:' + (100 - lp).toFixed(0) + '%"></i></div>' +
+                        '<span class="num" style="text-align:right;">' + fmtUsd(e.total_usd) + ' <span class="muted">(' + e.n + ')</span></span></div>';
+                }).join('') : '<div class="skeleton">No liquidations captured yet in this window.</div>';
+
+                const series = d.series || [];
+                const maxB = Math.max(1e-9, ...series.map(b => b.long_usd + b.short_usd));
+                document.getElementById('liq-heat').innerHTML = series.map(b => {
+                    const tot = b.long_usd + b.short_usd;
+                    if (!tot) return '<div><div style="position:absolute;top:50%;left:22%;right:22%;height:2px;margin-top:-1px;background:rgba(255,255,255,.07);border-radius:2px;"></div></div>';
+                    const lh = b.long_usd / maxB * 92, sh = b.short_usd / maxB * 92;
+                    return '<div title="longs ' + fmtUsd(b.long_usd) + ' · shorts ' + fmtUsd(b.short_usd) + '">' +
+                        '<div style="position:absolute;bottom:0;left:12%;right:12%;height:' + Math.max(sh, 2).toFixed(1) + '%;background:var(--long);border-radius:2px 2px 0 0;opacity:.85;"></div>' +
+                        '<div style="position:absolute;bottom:' + Math.max(sh, 2).toFixed(1) + '%;left:12%;right:12%;height:' + Math.max(lh, 2).toFixed(1) + '%;background:var(--short);border-radius:2px 2px 0 0;opacity:.85;"></div></div>';
+                }).join('');
+
+                document.getElementById('liq-symbols').innerHTML = (d.symbols || []).slice(0, 8).map(s =>
+                    '<span class="liq-sym-chip">' + esc(s.symbol) + ' <b>' + fmtUsd(s.total_usd) + '</b></span>').join('');
+
+                const st = d.status || {};
+                const stTxt = Object.entries(st).map(([k, v]) => k + ': ' + v).join(' · ');
+                const since = d.collecting_since ? new Date(d.collecting_since * 1000).toLocaleString() : null;
+                document.getElementById('liq-since').textContent =
+                    'Live capture only — there is no free liquidation history, so totals accumulate from web-app start' +
+                    (since ? ' (' + since + ')' : '') + '. Streams: ' + stTxt +
+                    '. Binance throttles its feed to ≤1 order/symbol/sec, so violent cascades are under-counted on every tracker that uses it.';
+            }).catch(() => {});
         }
 
         function refreshIntel() {
@@ -464,7 +677,10 @@
         }
 
         render(BOOT);
+        renderNews(BOOT.news || [], BOOT.news_sentiment || null);
+        loadLiquidations();
         setInterval(refreshIntel, 60000);
+        setInterval(loadLiquidations, 30000);
     </script>
 </body>
 </html>

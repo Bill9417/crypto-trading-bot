@@ -85,6 +85,8 @@ html { scrollbar-width: thin; scrollbar-color: rgba(255, 255, 255, 0.18) transpa
 .nav-pill.paper:hover { background: rgba(52,211,153,0.14); }
 .nav-pill.account { border-color: rgba(255,207,75,0.55); color: var(--wolf-gold); }
 .nav-pill.account:hover { background: rgba(255,207,75,0.16); }
+.nav-pill.bybit { border-color: rgba(247,166,0,0.55); color: #f7a600; }
+.nav-pill.bybit:hover { background: rgba(247,166,0,0.16); }
 .nav-pill.logout { border-color: rgba(239,68,68,0.4); color: #f87171; }
 .nav-pill.logout:hover { background: rgba(239,68,68,0.14); }
 /* Active page — filled so you always know where you are. */

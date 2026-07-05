@@ -11,15 +11,19 @@
 //  Position is held until the OPPOSITE flag appears, then flipped (the new
 //  entry again waits for the Vegas color to agree).
 //
-//  Designed for the 15m chart on BTC / SOL / HYPE perps (BINANCE:BTCUSDT.P,
-//  BINANCE:SOLUSDT.P, BINANCE:HYPEUSDT.P — the bot reads Binance candles and
-//  orders on Bybit). Apply separately on each symbol's 15m chart — an orange
-//  warning shows if the timeframe differs.
+//  Designed for BTC / SOL / HYPE perps on the 15m chart (BINANCE:BTCUSDT.P,
+//  BINANCE:SOLUSDT.P, BINANCE:HYPEUSDT.P) and XAUT (BINANCE:XAUTUSDT.P) on
+//  the 30m chart — gold trends far slower than the cryptos here. The bot
+//  reads Binance candles and orders on Bybit. Apply separately on each
+//  symbol's OWN chart/timeframe — an orange warning shows if it doesn't match.
 //
-//  Sizing mirrors the live bot: 2500 USDT order value (50 USDT margin × 50x —
-//  margin_long/short = 2%), Bybit taker fee 0.055%. Emergency SL 1.5% ==
-//  STRATEGY3_EMERGENCY_SL_PCT (at 50x, liquidation is ~2% away, so the stop
-//  must sit inside it).
+//  Sizing mirrors the live bot and DIFFERS by symbol — set "Order size" in the
+//  strategy's Properties tab per chart: BTC/SOL/HYPE = 1500 USDT (30 USDT
+//  margin × 50x), XAUT = 3000 USDT (60 USDT margin × 50x). The default below
+//  (1500) matches 3 of the 4 symbols — change it before testing on XAUTUSDT.
+//  margin_long/short = 2% (50x) for all four. Bybit taker fee 0.055%.
+//  Emergency SL 1.5% == STRATEGY3_EMERGENCY_SL_PCT for all four (at 50x,
+//  liquidation is ~2% away, so the stop must sit inside it).
 //
 //  Fidelity note vs TV.pine: everything is ported 1:1 EXCEPT the trendline
 //  factor (weight 5), which is held neutral — same as the bot's Python port —
@@ -27,9 +31,9 @@
 //  score can therefore differ from the chart panel by at most ±2.5.
 // ════════════════════════════════════════════════════════════════════════════
 //@version=6
-strategy("Vegas Flag Flip — BTC/SOL/HYPE 15m", overlay=true,
+strategy("Vegas Flag Flip — BTC/SOL/HYPE 15m + XAUT 30m", overlay=true,
      initial_capital=250,
-     default_qty_type=strategy.cash, default_qty_value=2500,
+     default_qty_type=strategy.cash, default_qty_value=1500,
      margin_long=2, margin_short=2,
      commission_type=strategy.commission.percent, commission_value=0.055,
      slippage=2, process_orders_on_close=true,
@@ -236,8 +240,9 @@ plotshape(shortFlag, "Short Flag", shape.triangledown, location.abovebar, color.
 waitingVegas = requireVegas and ((pendingDir == 1 and fVegas != 1 and strategy.position_size <= 0) or (pendingDir == -1 and fVegas != -1 and strategy.position_size >= 0))
 plotchar(waitingVegas, "Waiting for Vegas", "⏳", location.bottom, color.new(color.yellow, 30), size=size.tiny)
 
-// timeframe reminder — the rules are built for 15m
+// timeframe reminder — 15m for BTC/SOL/HYPE, 30m for XAUT (gold trends slower)
+expectedTf = str.contains(syminfo.ticker, "XAUT") ? "30" : "15"
 var table warnTbl = table.new(position.bottom_right, 1, 1)
-if barstate.islast and timeframe.period != "15"
-    table.cell(warnTbl, 0, 0, "⚠ built for the 15m chart (current: " + timeframe.period + ")",
+if barstate.islast and timeframe.period != expectedTf
+    table.cell(warnTbl, 0, 0, "⚠ this symbol expects the " + expectedTf + "m chart (current: " + timeframe.period + ")",
          text_color=color.orange, bgcolor=color.new(color.black, 20), text_size=size.small)
