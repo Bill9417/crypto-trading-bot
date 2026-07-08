@@ -198,25 +198,54 @@ def closed_pnl_summary(limit: int = 1000) -> dict:
         return {"ok": False, "error": "No Bybit API keys configured."}
     try:
         rows = _closed_pnl_rows(limit)
-        trades = []
-        day_net: dict = {}
         tz = ZoneInfo("Asia/Taipei")
+
+        # Bybit books ONE closed-pnl row per closing EXECUTION, so a position
+        # scaled out in several partial closes (e.g. manually taking 10% off)
+        # yields several rows. Counting each row as a trade turned one position
+        # into many "wins" — the bug the operator caught. Group a position's
+        # partial closes back into a SINGLE trade, won or lost on its NET p&l:
+        # in one-way mode a symbol holds one position at a time, and Bybit keeps
+        # the same avgEntryPrice across every reduction of that position, so —
+        # walking a symbol's closes in time order — they are contiguous and
+        # share an entry price; a new trade begins when that entry changes.
+        raw = []
         for it in rows:
             try:
                 pnl = float(it.get("closedPnl") or 0.0)
             except (TypeError, ValueError):
                 pnl = 0.0
-            ts = int(it.get("updatedTime") or 0)
-            trades.append({"symbol": it.get("symbol"), "pnl": pnl, "time": ts})
-            if ts:
-                day = datetime.fromtimestamp(ts / 1000, tz).strftime("%Y-%m-%d")
-                day_net[day] = day_net.get(day, 0.0) + pnl
+            raw.append({"symbol": it.get("symbol"),
+                        "entry": str(it.get("avgEntryPrice") or ""),
+                        "pnl": pnl,
+                        "time": int(it.get("updatedTime") or it.get("createdTime") or 0)})
+        raw.sort(key=lambda r: (r["symbol"] or "", r["time"]))
+        trades = []
+        cur = None
+        for r in raw:
+            if cur and cur["symbol"] == r["symbol"] and cur["entry"] == r["entry"]:
+                cur["pnl"] += r["pnl"]
+                cur["time"] = max(cur["time"], r["time"])
+                cur["parts"] += 1
+            else:
+                cur = {"symbol": r["symbol"], "entry": r["entry"], "pnl": r["pnl"],
+                       "time": r["time"], "parts": 1}
+                trades.append(cur)
+        for t in trades:
+            t["pnl"] = round(t["pnl"], 6)
+        trades.sort(key=lambda x: x["time"], reverse=True)
+
+        # daily net (last 14 days), booked on each grouped trade's close time
+        day_net: dict = {}
+        for t in trades:
+            if t["time"]:
+                day = datetime.fromtimestamp(t["time"] / 1000, tz).strftime("%Y-%m-%d")
+                day_net[day] = day_net.get(day, 0.0) + t["pnl"]
         today = datetime.now(tz).date()
         daily = []
         for i in range(13, -1, -1):
             d = (today - timedelta(days=i)).strftime("%Y-%m-%d")
             daily.append({"date": d, "net": round(day_net.get(d, 0.0), 4)})
-        trades.sort(key=lambda x: x["time"], reverse=True)
 
         sym_agg: dict = {}
         for t in trades:
@@ -282,23 +311,27 @@ def closed_pnl_summary(limit: int = 1000) -> dict:
             "daily": daily,
             "by_symbol": by_symbol,
             "hourly": hour_agg,
-            "trades": trades[:80],
+            "trades": [{"symbol": t["symbol"], "pnl": t["pnl"], "time": t["time"],
+                        "parts": t["parts"]} for t in trades[:80]],
         }
     except Exception as exc:  # noqa: BLE001
         return {"ok": False, "error": str(exc)[:300]}
 
 
 def get_position(symbol: str) -> dict | None:
-    """Our open Bybit position on symbol, or None. {'side','qty','entry','sl'}."""
+    """Our open Bybit position on symbol, or None.
+    {'side','qty','entry','mark','sl'} — mark is None if Bybit omits it."""
     ex = client()
     for p in ex.fetch_positions([symbol]):
         qty = float(p.get("contracts") or 0)
         if qty > 0:
             sl = str((p.get("info") or {}).get("stopLoss") or "").strip()
+            mark = p.get("markPrice")
             return {
                 "side": p.get("side"),                      # 'long' / 'short'
                 "qty": qty,
                 "entry": float(p.get("entryPrice") or 0),
+                "mark": float(mark) if mark else None,
                 "sl": float(sl) if sl not in ("", "0") else None,
             }
     return None
@@ -407,6 +440,26 @@ def close_flip(symbol: str) -> dict:
     return res
 
 
+def set_stop(symbol: str, sl_price: float) -> None:
+    """Set/OVERWRITE the position's stop-loss via the v5 trading-stop endpoint.
+    Unlike ensure_stop (which only fills a MISSING stop), this replaces an
+    existing one — used by the break-even jump. Raises on failure so callers
+    can retry next poll. No-op (logged) when not live."""
+    if not is_live():
+        print(f"[s3-exec][DRY-RUN] move stop {symbol} → {sl_price:.6g} (no order sent)")
+        return
+    ex = client()
+    market_id = ex.market(symbol)["id"]
+    body = {"category": "linear", "symbol": market_id, "positionIdx": 0,
+            "tpslMode": "Full", "stopLoss": ex.price_to_precision(symbol, sl_price)}
+    setter = getattr(ex, "private_post_v5_position_trading_stop", None) or \
+        getattr(ex, "privatePostV5PositionTradingStop", None)
+    if setter is None:
+        raise RuntimeError("no trading-stop endpoint in this ccxt build")
+    setter(body)
+    print(f"[s3-exec] moved stop on {symbol} → {sl_price:.6g}")
+
+
 def ensure_stop(symbol: str, sl_price: float = None, pos: dict = None) -> None:
     """Guardian: if our position has NO stop-loss (order-attach failed, or it
     was removed by hand), set one via the v5 trading-stop endpoint. sl_price
@@ -418,17 +471,11 @@ def ensure_stop(symbol: str, sl_price: float = None, pos: dict = None) -> None:
         pos = get_position(symbol)
     if not pos or pos.get("sl"):
         return
-    ex = client()
     if sl_price is None:
         slp = config.STRATEGY3_EMERGENCY_SL_PCT
         sl_price = pos["entry"] * (1 - slp) if pos["side"] == "long" else pos["entry"] * (1 + slp)
-    market_id = ex.market(symbol)["id"]
-    body = {"category": "linear", "symbol": market_id, "positionIdx": 0,
-            "tpslMode": "Full", "stopLoss": ex.price_to_precision(symbol, sl_price)}
-    setter = getattr(ex, "private_post_v5_position_trading_stop", None) or \
-        getattr(ex, "privatePostV5PositionTradingStop", None)
-    if setter is None:
-        print(f"[s3-exec] no trading-stop endpoint in this ccxt — naked position on {symbol}!")
-        return
-    setter(body)
-    print(f"[s3-exec] guardian re-armed stop on {symbol} @ {sl_price:.6g}")
+    try:
+        set_stop(symbol, sl_price)
+        print(f"[s3-exec] guardian re-armed stop on {symbol} @ {sl_price:.6g}")
+    except RuntimeError as exc:
+        print(f"[s3-exec] {exc} — naked position on {symbol}!")

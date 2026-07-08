@@ -1159,13 +1159,8 @@
             .brand h1 { font-size: 0.8rem; }
         }
 
-        /* ── Navigation pills — ONE quiet style. Colour is reserved for the
-           active page + the live regime chips, so the nav stops competing with
-           the data below it. (Overrides the per-page colours from app.css.) ── */
-        .tb-nav .nav-pill { border-color: var(--wolf-border); color: var(--wolf-muted); background: rgba(255,255,255,0.03); }
-        .tb-nav .nav-pill:hover { color: var(--wolf-text); border-color: rgba(255,255,255,0.24); background: rgba(255,255,255,0.06); }
-        .tb-nav .nav-pill.active { color: #0b0e14; background: var(--wolf-text); border-color: var(--wolf-text); }
-        .tb-nav .nav-pill.logout:hover { color: #f87171; border-color: rgba(239,68,68,0.45); background: rgba(239,68,68,0.10); }
+        {# nav styling lives ONLY in static/app.css (quiet-luxury redesign
+           2026-07-05) — no local overrides, or the two would drift again #}
 
         /* ── Global polish (desktop + phone) ── */
         html { scroll-behavior: smooth; }
@@ -1282,13 +1277,15 @@
             {% include '_nav.html' %}
         </header>
 
-        <!-- Health banners — circuit breaker + live-position protection on one compact row -->
+        <!-- Health banners — shown ONLY when something needs attention (the
+             all-clear "Trading Allowed" strip was removed 2026-07-05, user
+             request: a green banner every day is noise; a red one is an alarm) -->
         <div class="status-row">
-            {% if circuit %}
-            <a href="{{ url_for('performance') }}" class="cb-banner {{ 'cb-halted' if circuit.halted else 'cb-ok' }}" title="Daily risk guardrail — click for full performance">
-                <span class="cb-ico">{{ '🛑' if circuit.halted else '✅' }}</span>
-                <span class="cb-main">{{ 'TRADING HALTED TODAY' if circuit.halted else 'Trading Allowed' }}</span>
-                {% if circuit.halted %}<span class="cb-reason">{{ circuit.halt_reason }}</span>{% endif %}
+            {% if circuit and circuit.halted %}
+            <a href="{{ url_for('performance') }}" class="cb-banner cb-halted" title="Daily risk guardrail — click for full performance">
+                <span class="cb-ico">🛑</span>
+                <span class="cb-main">TRADING HALTED TODAY</span>
+                <span class="cb-reason">{{ circuit.halt_reason }}</span>
                 <span class="cb-stat">Net <b class="{{ 'up' if circuit.today_net_pnl > 0 else 'down' if circuit.today_net_pnl < 0 else '' }}">{{ "+" if circuit.today_net_pnl > 0 }}{{ circuit.today_net_pnl }}%</b></span>
                 <span class="cb-stat">Losses <b class="{{ 'down' if circuit.losses_today >= circuit.max_losses else '' }}">{{ circuit.losses_today }}/{{ circuit.max_losses }}</b></span>
                 <span class="cb-stat">Loss DD <b class="{{ 'down' if circuit.loss_drawdown <= circuit.max_drawdown_pct else '' }}">{{ circuit.loss_drawdown }}%/{{ circuit.max_drawdown_pct }}%</b></span>

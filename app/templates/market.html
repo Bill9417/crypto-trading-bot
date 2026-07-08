@@ -244,12 +244,13 @@
 
         <div class="nav-standalone">{% include '_nav.html' %}</div>
 
-        <!-- Daily Circuit-Breaker Banner -->
-        {% if circuit %}
-        <a href="{{ url_for('performance') }}" class="cb-banner {{ 'cb-halted' if circuit.halted else 'cb-ok' }}" title="Daily risk guardrail — click for full performance">
-            <span class="cb-ico">{{ '🛑' if circuit.halted else '✅' }}</span>
-            <span class="cb-main">{{ 'TRADING HALTED TODAY' if circuit.halted else 'Trading Allowed' }}</span>
-            {% if circuit.halted %}<span class="cb-reason">{{ circuit.halt_reason }}</span>{% endif %}
+        <!-- Daily Circuit-Breaker Banner — halted only (the all-clear strip was
+             removed 2026-07-05, user request: green every day is noise) -->
+        {% if circuit and circuit.halted %}
+        <a href="{{ url_for('performance') }}" class="cb-banner cb-halted" title="Daily risk guardrail — click for full performance">
+            <span class="cb-ico">🛑</span>
+            <span class="cb-main">TRADING HALTED TODAY</span>
+            <span class="cb-reason">{{ circuit.halt_reason }}</span>
             <span class="cb-stat">Net <b class="{{ 'up' if circuit.today_net_pnl > 0 else 'down' if circuit.today_net_pnl < 0 else '' }}">{{ "+" if circuit.today_net_pnl > 0 }}{{ circuit.today_net_pnl }}%</b></span>
             <span class="cb-stat">Losses <b class="{{ 'down' if circuit.losses_today >= circuit.max_losses else '' }}">{{ circuit.losses_today }}/{{ circuit.max_losses }}</b></span>
             <span class="cb-stat">Loss DD <b class="{{ 'down' if circuit.loss_drawdown <= circuit.max_drawdown_pct else '' }}">{{ circuit.loss_drawdown }}%/{{ circuit.max_drawdown_pct }}%</b></span>

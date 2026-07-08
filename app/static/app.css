@@ -8,6 +8,7 @@
     --wolf-blue: #00d2ff;
     --wolf-blue-dim: rgba(0, 210, 255, 0.16);
     --wolf-gold: #ffcf4b;
+    --wolf-champagne: #e8ca8d;     /* nav accent — muted champagne, quieter than the data gold */
     --wolf-dark: #171a26;
     --wolf-slate: #0e1018;
     --wolf-bg: #0e1018;            /* alias some pages use */
@@ -57,42 +58,41 @@ html { scrollbar-width: thin; scrollbar-color: rgba(255, 255, 255, 0.18) transpa
 ::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.14); border-radius: 999px; }
 ::-webkit-scrollbar-thumb:hover { background: rgba(0, 210, 255, 0.35); }
 
-/* ── Global navigation bar (shared partial _nav.html) ───────────────────── */
-.tb-nav { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding-top: 10px; border-top: 1px solid var(--wolf-border); }
+/* ── Global navigation bar (shared partial _nav.html) ─────────────────────
+   Redesigned 2026-07-05: typography-led "private terminal" look. No emoji, no
+   per-page rainbow pills — quiet letterspaced small-caps in silver, a single
+   champagne accent for the page you are ON (hairline underline + faint tint),
+   colour otherwise reserved for the live regime chips. */
+.tb-nav { display: flex; align-items: center; gap: 2px; flex-wrap: wrap; padding-top: 10px; border-top: 1px solid var(--wolf-border); }
 
 .nav-pill {
-    display: inline-flex; align-items: center; gap: 5px;
-    font-size: 0.64rem; font-weight: 800; letter-spacing: 0.04em;
-    padding: 5px 11px; border-radius: 999px; text-decoration: none;
-    border: 1px solid var(--wolf-border); color: var(--wolf-muted);
-    background: rgba(255, 255, 255, 0.03);
-    transition: transform .14s, background .14s, color .14s, border-color .14s;
+    position: relative; display: inline-flex; align-items: center;
+    font-size: 0.66rem; font-weight: 600; letter-spacing: 0.15em; text-transform: uppercase;
+    padding: 7px 12px; border-radius: 8px; text-decoration: none;
+    border: 1px solid transparent; color: var(--wolf-muted); background: transparent;
+    transition: color .18s, background .18s, border-color .18s;
 }
-.nav-pill:hover { transform: translateY(-1px); color: var(--wolf-text); }
-.nav-pill.home { border-color: rgba(241,245,249,0.35); color: var(--wolf-text); }
-.nav-pill.home:hover { background: rgba(255,255,255,0.10); }
-.nav-pill.perf { border-color: rgba(0,210,255,0.4); color: var(--wolf-blue); }
-.nav-pill.perf:hover { background: rgba(0,210,255,0.14); }
-.nav-pill.funnel { border-color: rgba(251,113,133,0.45); color: #fb7185; }
-.nav-pill.funnel:hover { background: rgba(251,113,133,0.14); }
-.nav-pill.market { border-color: rgba(255,207,75,0.4); color: var(--wolf-gold); }
-.nav-pill.market:hover { background: rgba(255,207,75,0.14); }
-.nav-pill.backtest { border-color: rgba(192,132,252,0.45); color: #c084fc; }
-.nav-pill.backtest:hover { background: rgba(192,132,252,0.14); }
-.nav-pill.admin { border-color: rgba(129,140,248,0.45); color: #818cf8; }
-.nav-pill.admin:hover { background: rgba(129,140,248,0.14); }
-.nav-pill.paper { border-color: rgba(52,211,153,0.45); color: #34d399; }
-.nav-pill.paper:hover { background: rgba(52,211,153,0.14); }
-.nav-pill.account { border-color: rgba(255,207,75,0.55); color: var(--wolf-gold); }
-.nav-pill.account:hover { background: rgba(255,207,75,0.16); }
-.nav-pill.bybit { border-color: rgba(247,166,0,0.55); color: #f7a600; }
-.nav-pill.bybit:hover { background: rgba(247,166,0,0.16); }
-.nav-pill.logout { border-color: rgba(239,68,68,0.4); color: #f87171; }
-.nav-pill.logout:hover { background: rgba(239,68,68,0.14); }
-/* Active page — filled so you always know where you are. */
-.nav-pill.active { color: #0b0e14; background: var(--wolf-text); border-color: var(--wolf-text); box-shadow: 0 0 14px rgba(241, 245, 249, 0.22); }
-.nav-pill.active:hover { transform: none; background: var(--wolf-text); color: #0b0e14; }
-.nav-pill:active { transform: translateY(1px) scale(0.98); }
+/* hairline champagne underline, grows in on hover / stays lit on the active page */
+.nav-pill::after {
+    content: ""; position: absolute; left: 12px; right: 12px; bottom: 3px; height: 1px;
+    background: linear-gradient(90deg, transparent, var(--wolf-champagne), transparent);
+    transform: scaleX(0); opacity: 0; transition: transform .22s ease, opacity .22s ease;
+}
+.nav-pill:hover { color: var(--wolf-text); background: rgba(255, 255, 255, 0.035); }
+.nav-pill:hover::after { transform: scaleX(1); opacity: .55; }
+.nav-pill.active {
+    color: var(--wolf-champagne);
+    background: linear-gradient(180deg, rgba(232, 202, 141, 0.09), rgba(232, 202, 141, 0.02));
+    border-color: rgba(232, 202, 141, 0.26);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05);
+}
+.nav-pill.active::after { transform: scaleX(1); opacity: .9; }
+.nav-pill.active:hover { color: var(--wolf-champagne); }
+.nav-pill:active { transform: translateY(1px); }
+/* logout stays quiet until you mean it */
+.nav-pill.logout:hover { color: #f87171; background: rgba(239, 68, 68, 0.08); }
+/* thin divider between the pages and the session controls */
+.nav-sep { width: 1px; height: 15px; background: var(--wolf-border); margin: 0 8px; flex: 0 0 auto; }
 
 @media (max-width: 720px) {
     .tb-nav { flex-wrap: nowrap; overflow-x: auto; -webkit-overflow-scrolling: touch; padding-top: 8px; scrollbar-width: none; }
@@ -119,7 +119,7 @@ html { scrollbar-width: thin; scrollbar-color: rgba(255, 255, 255, 0.18) transpa
    just another grey pill. Arrow (▲/▼/◆) carries the meaning too → colourblind-safe. */
 .nav-regime {
     margin-left: auto; display: inline-flex; align-items: center; gap: 6px;
-    font-size: .64rem; font-weight: 800; letter-spacing: .05em;
+    font-size: .6rem; font-weight: 700; letter-spacing: .1em;
     padding: 5px 12px 5px 10px; border-radius: 999px; white-space: nowrap;
     border: 1px solid var(--wolf-border); color: var(--wolf-muted);
     background: rgba(255, 255, 255, 0.03);
@@ -131,18 +131,18 @@ html { scrollbar-width: thin; scrollbar-color: rgba(255, 255, 255, 0.18) transpa
     width: 7px; height: 7px; border-radius: 50%; background: currentColor;
     flex: 0 0 auto; box-shadow: 0 0 6px currentColor;
 }
-/* BULL — green, lit + pulsing */
+/* BULL — green, lit + pulsing (glow softened for the quieter 2026-07 nav) */
 .nav-regime.bull {
-    color: #4ade80; border-color: rgba(34,197,94,.55);
-    background: linear-gradient(180deg, rgba(34,197,94,.22), rgba(34,197,94,.07));
-    box-shadow: 0 0 16px rgba(34,197,94,.30), inset 0 1px 0 rgba(255,255,255,.07);
+    color: #4ade80; border-color: rgba(34,197,94,.4);
+    background: linear-gradient(180deg, rgba(34,197,94,.14), rgba(34,197,94,.04));
+    box-shadow: 0 0 10px rgba(34,197,94,.18), inset 0 1px 0 rgba(255,255,255,.06);
 }
 .nav-regime.bull .nr-dot { animation: nr-pulse-green 1.9s ease-out infinite; }
 /* BEAR — red, lit + pulsing */
 .nav-regime.bear {
-    color: #f87171; border-color: rgba(239,68,68,.55);
-    background: linear-gradient(180deg, rgba(239,68,68,.22), rgba(239,68,68,.07));
-    box-shadow: 0 0 16px rgba(239,68,68,.30), inset 0 1px 0 rgba(255,255,255,.07);
+    color: #f87171; border-color: rgba(239,68,68,.4);
+    background: linear-gradient(180deg, rgba(239,68,68,.14), rgba(239,68,68,.04));
+    box-shadow: 0 0 10px rgba(239,68,68,.18), inset 0 1px 0 rgba(255,255,255,.06);
 }
 .nav-regime.bear .nr-dot { animation: nr-pulse-red 1.9s ease-out infinite; }
 /* NEUTRAL — gold, calm (no pulse: nothing is gating right now) */
@@ -196,9 +196,6 @@ html { scrollbar-width: thin; scrollbar-color: rgba(255, 255, 255, 0.18) transpa
    gauge + a bias chip + a factor breakdown. Reused by the Strategy-2 page and the
    home Strategy-1 summary so both strategies read as parallel scorecards.
    ════════════════════════════════════════════════════════════════════════════ */
-.nav-pill.strat2 { border-color: rgba(0,210,255,.45); color: var(--wolf-blue); }
-.nav-pill.strat2:hover { background: rgba(0,210,255,.14); }
-
 .scorecard {
     background: var(--wolf-card); border: 1px solid var(--wolf-border);
     border-radius: var(--radius); box-shadow: var(--shadow);

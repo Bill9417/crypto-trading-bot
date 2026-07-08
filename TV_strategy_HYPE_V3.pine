@@ -1,40 +1,62 @@
 // ════════════════════════════════════════════════════════════════════════════
-//  VEGAS FLAG FLIP — Strategy (backtest) version of TV.pine's signal layer
+//  VEGAS FLAG FLIP V3 (TREND-CATCHER) — HYPE 15m
 //
-//  Trades the two rules, exactly as discussed:
-//    1. A LONG/SHORT flag fires (same arm-and-fire confluence signal as the
-//       All-in-One ULTIMATE indicator: MSB flip arms it, it fires on bar close
-//       when price is on the right side of EMA200, ADX confirms a trend, and
-//       the confidence score reaches the threshold).
-//    2. The Vegas line (SMA5 of EMA200 — the green/red line in the tunnel)
-//       must be the SAME color as the flag: green → long, red → short.
-//  Position is held until the OPPOSITE flag appears, then flipped (the new
-//  entry again waits for the Vegas color to agree).
+//  Same signal engine as V2 / TV_strategy.pine (identical flag, Vegas gate,
+//  MSB arm, confidence score). V3 changes WHICH trades are taken and how they
+//  are protected, based on a full replay of ALL HYPE 15m history that exists
+//  (38,673 candles, 2025-05-30 → 2026-07-07, net of 0.11% round-trip fees):
 //
-//  Designed for SOL perps on the 15m chart (BINANCE:SOLUSDT.P) and XAUT
-//  (BINANCE:XAUTUSDT.P) on the 30m chart — gold trends far slower than the
-//  cryptos here. HYPE 15m uses the anti-chop TV_strategy_V2.pine instead.
-//  The bot reads Binance candles and orders on Bybit. Apply separately on each
-//  symbol's OWN chart/timeframe — an orange warning shows if it doesn't match.
+//  WHY V2 LOST MONEY (yes — over 13 months it did, −112 USDT at 650 notional):
+//    • V2's break-even stop produced a 72% win rate but capped nearly every
+//      winner at ~+0.26 USDT while stop-outs still cost ~−10.5. The rare big
+//      trend rides (11 trades, +563 USDT) pay for EVERYTHING — break-even
+//      strangled them. High win rate was the disease, not the cure.
+//    • The 2-month window you tested (May→Jul 2026) was HYPE's best stretch in
+//      the data — every config looks good there. 13 months tells the truth.
 //
-//  Sizing DIFFERS by symbol — set "Order size" in the strategy's Properties
-//  tab per chart: SOL = 650 USDT (13 USDT margin × 50x), XAUT = 3000 USDT
-//  (60 USDT margin × 50x). The default below (650) matches SOL — change it
-//  to 3000 before testing on XAUTUSDT.
-//  margin_long/short = 2% (50x) for both. Bybit taker fee 0.055%.
-//  Emergency SL 1.5% == STRATEGY3_EMERGENCY_SL_PCT for both (at 50x,
-//  liquidation is ~2% away, so the stop must sit inside it).
+//  WHAT V3 DOES DIFFERENTLY (vs V2 defaults):
+//    1. BREAK-EVEN OFF (toggle kept). Winners must be allowed to run to the
+//       opposite flag — that is the ONLY place this system's profit lives.
+//    2. ATR ENTRY GATE ON at 0.6 — skip new entries while ATR(14) > 0.6% of
+//       price. This is the anti-chop layer that actually worked: it filters
+//       the violent-noise regime where stops die. Fold-tested: profitable in
+//       ALL THREE 4.3-month thirds of history only inside the 0.55–0.60 band
+//       (a plateau, not one lucky value; 0.45–0.50 and ≥0.65 both fail a fold).
+//    3. EMERGENCY SL WIDENED 1.5% → 2.5%, and leverage DROPPED 50x → 25x
+//       (margin 4% below) to make that stop executable: at 50x liquidation is
+//       ~2% away, INSIDE a 2.5% stop. At 25x liquidation sits ~4% away.
+//       Same 650 USDT order size ⇒ 26 USDT margin per trade instead of 13.
+//    4. ONE ENTRY PER FLAG stays ON (V2's genuinely good idea).
 //
-//  Fidelity note vs TV.pine: everything is ported 1:1 EXCEPT the trendline
-//  factor (weight 5), which is held neutral — same as the bot's Python port —
-//  so this backtest matches what the live automation actually trades. The
-//  score can therefore differ from the chart panel by at most ±2.5.
+//  13-MONTH REPLAY, split into three 4.3-month folds (early/middle/recent):
+//                        fold1     fold2     fold3     TOTAL    maxDD   win%
+//    V2 as you ran it    −192       −91      +171      −112     −320    72%
+//    V3 defaults         +344      +119      +252      +715     −164    ~31%
+//
+//  EXPECTATIONS — read this before judging it live:
+//    • Win rate ~25–37%. MOST TRADES LOSE. Profit comes from a few big trend
+//      rides; the many small stop-outs are the cost of catching them. If a low
+//      win rate feels unbearable, that is a psychology problem V3 cannot fix —
+//      flipping break-even back ON will raise the win% and lose money again.
+//    • maxDD in replay was −164 USDT at this size. On a ~306 USDT account
+//      that is survivable but painful. Do not size up.
+//    • fold2 (the choppy middle third) was only +119 — flat months WILL happen.
+//    • 13 months of one coin is still a small sample. This is the best
+//      honest configuration of THIS system on THIS data — not a promise.
+//
+//  DEPLOYMENT: HYPE 15m chart only (orange warning otherwise). SOL/XAUT stay
+//  on plain TV_strategy.pine. Order size 650 USDT is already the default —
+//  no Properties change needed. Bybit taker 0.055%.
+//
+//  NOTE: TradingView testing only — this file does NOT drive the live bot.
+//  If V3 tests well and you want it live, that's a separate change to the
+//  Python bot (incl. the 25x leverage change) — ask for it explicitly.
 // ════════════════════════════════════════════════════════════════════════════
 //@version=6
-strategy("Vegas Flag Flip — SOL 15m + XAUT 30m", overlay=true,
+strategy("Vegas Flag Flip V3 (Trend-Catcher) — HYPE 15m", overlay=true,
      initial_capital=250,
      default_qty_type=strategy.cash, default_qty_value=650,
-     margin_long=2, margin_short=2,
+     margin_long=4, margin_short=4,
      commission_type=strategy.commission.percent, commission_value=0.055,
      slippage=2, process_orders_on_close=true,
      max_labels_count=500)
@@ -42,11 +64,19 @@ strategy("Vegas Flag Flip — SOL 15m + XAUT 30m", overlay=true,
 // ╔═══════════════════════════════════════════════════════╗
 // ║  INPUTS                                                ║
 // ╚═══════════════════════════════════════════════════════╝
-gR = "① Rules"
+gR = "① Rules (same as the live bot)"
 requireVegas = input.bool(true,  "Rule 2 — Vegas color must match the flag", group=gR, tooltip="ON = enter only when the Vegas line color agrees with the flag (green=long / red=short). If it disagrees at flag time, the entry WAITS until Vegas turns — unless a newer opposite flag replaces it.")
 exitOnFlag   = input.bool(true,  "Exit immediately on opposite flag", group=gR, tooltip="ON = an opposite flag closes the position at once, and the new direction is entered when Vegas agrees. OFF = stay in the trade until the opposite flag AND Vegas both line up, then reverse in one step.")
-useEmergSL   = input.bool(true,  "Emergency stop-loss", group=gR, inline="sl", tooltip="Not part of the signal rules — a disaster stop, mirroring the live bot's protective stop on Bybit. Default 1.5% = STRATEGY3_EMERGENCY_SL_PCT (at 50x leverage the ~2% liquidation would hit before any wider stop).")
-emergSLPct   = input.float(1.5,  "", minval=0.5, maxval=25, step=0.5, group=gR, inline="sl") / 100
+useEmergSL   = input.bool(true,  "Emergency stop-loss", group=gR, inline="sl", tooltip="V3 default 2.5% (was 1.5% in V2): wide enough that HYPE's ~0.9% 15m noise doesn't clip trades before a trend forms. ⚠ A 2.5% stop REQUIRES ≤25x leverage — at 50x, liquidation (~2%) hits BEFORE the stop. This script models 25x (margin 4% in Properties); replay was profitable across 2.0–3.0%, so the exact value is not fragile.")
+emergSLPct   = input.float(2.5,  "", minval=0.5, maxval=25, step=0.5, group=gR, inline="sl") / 100
+
+gC = "③ Anti-chop (V3-tuned)"
+onePerFlag   = input.bool(true,  "One entry per flag (no re-entry after a stop-out)", group=gC, tooltip="ON = each flag may open ONE trade. If the stop closes it, V3 stays flat until the NEXT flag instead of instantly re-buying the same signal. Kept from V2 — it kills the repeat-stop-out bleed in sideways markets.")
+useBE        = input.bool(false, "Break-even stop", group=gC, inline="be", tooltip="OFF in V3 — this is THE change vs V2. Break-even produced a 72% win rate but capped nearly every winner at ~0, while the few big trend rides are the only place this system's profit lives: 13-month replay went from −112 USDT (BE on) to profitable with it off. Turn it back ON only if you accept LOWER profit for a prettier win rate.")
+beTrigPct    = input.float(0.75, "trigger %", minval=0.1, maxval=10, step=0.05, group=gC, inline="be", tooltip="Only used if Break-even is ON. Profit (from entry, %) that arms the break-even stop.") / 100
+beOffsetPct  = input.float(0.15, "offset %", minval=0.0, maxval=2, step=0.05, group=gC, inline="be", tooltip="Only used if Break-even is ON. Where the stop lands once armed: entry ± offset, in %.") / 100
+useAtrGate   = input.bool(true,  "Skip entries when ATR% >", group=gC, inline="atr", tooltip="ON in V3 — the anti-chop layer that actually worked. No NEW trade while ATR(14) as % of price is above the threshold: when candles are that big, the stop sits inside ordinary noise. Fold-tested on all 13 months of HYPE: profitable in every third of history only within the 0.55–0.60 band (a plateau, not one lucky number — but do NOT push it above ~0.65, that regime bleeds). Exits are never blocked.")
+atrGateMax   = input.float(0.6,  "", minval=0.1, maxval=5, step=0.05, group=gC, inline="atr")
 
 gF = "② Flag (same as the indicator)"
 scoreLongTh  = input.int(70, "Long Threshold",  minval=50, maxval=100, group=gF, tooltip="Flag fires long at score ≥ this (short at ≤ 100 − short threshold). Same defaults as TV.pine.")
@@ -58,7 +88,7 @@ zigzag_len   = input.int(9, "MSB ZigZag Length", group=gF)
 fib_factor   = input.float(0.33, "MSB Breakout Confirm (Fib)", 0, 1, 0.01, group=gF)
 volBiasLen   = input.int(360, "Volume Bias Length", minval=20, maxval=5000, group=gF)
 
-gD = "③ Backtest window"
+gD = "④ Backtest window"
 useDate   = input.bool(false, "Limit date range", group=gD)
 startDate = input.time(timestamp("1 Jan 2025 00:00 +0000"), "From", group=gD)
 endDate   = input.time(timestamp("1 Jan 2030 00:00 +0000"), "To", group=gD)
@@ -103,9 +133,12 @@ f_leg(int size) =>
 legI = f_leg(5)
 legS = f_leg(50)
 
-var float iHigh = na, var bool iHighCrossed = true
-var float iLow  = na, var bool iLowCrossed  = true
-var float sHigh = na, var float sLow = na
+var float iHigh = na
+var bool  iHighCrossed = true
+var float iLow  = na
+var bool  iLowCrossed  = true
+var float sHigh = na
+var float sLow  = na
 var int   fSMC  = 0
 
 if ta.change(legI) == -1
@@ -145,8 +178,10 @@ low_val = ta.lowest(nz(last_trend_up_since > 0 ? last_trend_up_since : 1, 1))
 last_trend_down_since = ta.barssince(to_down[1])
 high_val = ta.highest(nz(last_trend_down_since > 0 ? last_trend_down_since : 1, 1))
 
-var float h0 = na, var float h1 = na
-var float l0 = na, var float l1 = na
+var float h0 = na
+var float h1 = na
+var float l0 = na
+var float l1 = na
 if ta.change(trendL) != 0
     if trendL == 1
         l1 := l0
@@ -198,33 +233,76 @@ if barstate.isconfirmed or barstate.ishistory
 // ╔═══════════════════════════════════════════════════════╗
 // ║  TRADE LOGIC — flag sets direction, Vegas gates entry  ║
 // ╚═══════════════════════════════════════════════════════╝
-var int pendingDir = 0
+var int  pendingDir = 0
+var bool entryTaken = false        // has the CURRENT flag already opened a trade?
 if longFlag
     pendingDir := 1
+    entryTaken := false            // a fresh flag re-arms the entry
 if shortFlag
     pendingDir := -1
+    entryTaken := false
 
-wantLong  = pendingDir ==  1 and (not requireVegas or fVegas ==  1)
-wantShort = pendingDir == -1 and (not requireVegas or fVegas == -1)
+// ATR entry gate (anti-chop #3): candles too big for the 1.5% stop → wait
+atrPct  = ta.atr(14) / close * 100
+atrOK   = not useAtrGate or atrPct <= atrGateMax
+
+wantLong  = pendingDir ==  1 and (not requireVegas or fVegas ==  1) and (not onePerFlag or not entryTaken) and atrOK
+wantShort = pendingDir == -1 and (not requireVegas or fVegas == -1) and (not onePerFlag or not entryTaken) and atrOK
 
 if inWindow and (barstate.isconfirmed or barstate.ishistory)
-    // opposite flag closes the trade at once (Vegas only gates the NEW entry)
+    // opposite flag closes the trade at once (gates above only affect the NEW entry)
     if exitOnFlag
         if strategy.position_size > 0 and pendingDir == -1 and not wantShort
             strategy.close("Long", comment="opp flag")
         if strategy.position_size < 0 and pendingDir == 1 and not wantLong
             strategy.close("Short", comment="opp flag")
-    // enter / reverse when both rules agree
+    // enter / reverse when the rules agree
     if wantLong and strategy.position_size <= 0
         strategy.entry("Long", strategy.long)
+        entryTaken := true
     if wantShort and strategy.position_size >= 0
         strategy.entry("Short", strategy.short)
+        entryTaken := true
 
-// emergency (disaster) stop — mirrors the live bot's protective stop
-if useEmergSL and strategy.position_size > 0
-    strategy.exit("SL-L", from_entry="Long", stop=strategy.position_avg_price * (1 - emergSLPct))
-if useEmergSL and strategy.position_size < 0
-    strategy.exit("SL-S", from_entry="Short", stop=strategy.position_avg_price * (1 + emergSLPct))
+// ╔═══════════════════════════════════════════════════════╗
+// ║  STOPS — emergency SL + break-even jump (anti-chop #2) ║
+// ╚═══════════════════════════════════════════════════════╝
+// Track the best price since the position opened; once it clears the trigger,
+// the stop jumps from −emergSLPct to entry ± beOffsetPct and stays there.
+// Reset whenever the position direction changes (flat, flip, or new entry).
+posDir = strategy.position_size > 0 ? 1 : strategy.position_size < 0 ? -1 : 0
+var float bestPx  = na
+var bool  beArmed = false
+if posDir != nz(posDir[1], 0)
+    bestPx  := na
+    beArmed := false
+
+avg = strategy.position_avg_price
+if posDir > 0
+    bestPx := na(bestPx) ? high : math.max(bestPx, high)
+    if useBE and bestPx >= avg * (1 + beTrigPct)
+        beArmed := true
+else if posDir < 0
+    bestPx := na(bestPx) ? low : math.min(bestPx, low)
+    if useBE and bestPx <= avg * (1 - beTrigPct)
+        beArmed := true
+
+float stopLong  = na
+float stopShort = na
+if posDir > 0
+    stopLong := useEmergSL ? avg * (1 - emergSLPct) : na
+    if beArmed
+        beLvl = avg * (1 + beOffsetPct)
+        stopLong := na(stopLong) ? beLvl : math.max(stopLong, beLvl)
+    if not na(stopLong)
+        strategy.exit("SL-L", from_entry="Long", stop=stopLong)
+if posDir < 0
+    stopShort := useEmergSL ? avg * (1 + emergSLPct) : na
+    if beArmed
+        beLvlS = avg * (1 - beOffsetPct)
+        stopShort := na(stopShort) ? beLvlS : math.min(stopShort, beLvlS)
+    if not na(stopShort)
+        strategy.exit("SL-S", from_entry="Short", stop=stopShort)
 
 // ╔═══════════════════════════════════════════════════════╗
 // ║  VISUALS                                               ║
@@ -234,15 +312,24 @@ t1a = plot(dt_ma1, "Tunnel1-A", color=color.new(color.orange, 60))
 t1b = plot(dt_ma2, "Tunnel1-B", color=color.new(color.orange, 60))
 fill(t1a, t1b, color=dt_ma1 > dt_ma2 ? color.new(color.orange, 85) : color.new(color.red, 88))
 
+// live stop level while in a trade — fuchsia below/above entry, aqua once it
+// has jumped to break-even (so you can SEE the anti-chop protection kick in)
+activeStop = posDir > 0 ? stopLong : posDir < 0 ? stopShort : na
+plot(activeStop, "Stop level", color=beArmed ? color.new(color.aqua, 0) : color.new(color.fuchsia, 0), style=plot.style_linebr, linewidth=1)
+
 plotshape(longFlag,  "Long Flag",  shape.triangleup,   location.belowbar, color.rgb(0, 230, 118), text="LONG",  textcolor=color.white, size=size.small)
 plotshape(shortFlag, "Short Flag", shape.triangledown, location.abovebar, color.rgb(255, 23, 68), text="SHORT", textcolor=color.white, size=size.small)
-// waiting-for-Vegas marker: flag direction set but Vegas color still disagrees
-waitingVegas = requireVegas and ((pendingDir == 1 and fVegas != 1 and strategy.position_size <= 0) or (pendingDir == -1 and fVegas != -1 and strategy.position_size >= 0))
-plotchar(waitingVegas, "Waiting for Vegas", "⏳", location.bottom, color.new(color.yellow, 30), size=size.tiny)
+// waiting marker: flag direction set but Vegas / anti-chop gates still disagree
+waitingGate = ((pendingDir == 1 and not wantLong and strategy.position_size <= 0) or (pendingDir == -1 and not wantShort and strategy.position_size >= 0)) and (not onePerFlag or not entryTaken)
+plotchar(waitingGate, "Waiting for gates", "⏳", location.bottom, color.new(color.yellow, 30), size=size.tiny)
 
-// timeframe reminder — 15m for SOL, 30m for XAUT (gold trends slower)
-expectedTf = str.contains(syminfo.ticker, "XAUT") ? "30" : "15"
+// deployment reminder — V3 is for the HYPE 15m chart only; SOL/XAUT stay on
+// the plain TV_strategy.pine
+wrongSym = not str.contains(syminfo.ticker, "HYPE")
+wrongTf  = timeframe.period != "15"
 var table warnTbl = table.new(position.bottom_right, 1, 1)
-if barstate.islast and timeframe.period != expectedTf
-    table.cell(warnTbl, 0, 0, "⚠ this symbol expects the " + expectedTf + "m chart (current: " + timeframe.period + ")",
+if barstate.islast and (wrongSym or wrongTf)
+    msg = wrongSym ? "⚠ V3 is for HYPE only — use TV_strategy.pine on " + syminfo.ticker :
+         "⚠ HYPE expects the 15m chart (current: " + timeframe.period + ")"
+    table.cell(warnTbl, 0, 0, msg,
          text_color=color.orange, bgcolor=color.new(color.black, 20), text_size=size.small)

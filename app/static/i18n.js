@@ -15,15 +15,18 @@
 
   // English (exact visible text) → 繁體中文
   var DICT = {
-    // ── Navigation ─────────────────────────────────────────────
-    "🏠 DASHBOARD": "🏠 儀表板",
-    "💰 ACCOUNT": "💰 帳戶",
-    "📊 PERFORMANCE": "📊 績效",
-    "🔻 FUNNEL": "🔻 漏斗",
-    "🌐 MARKET": "🌐 市場",
-    "📈 STRATEGY 2": "📈 策略二",
-    "⚙ ADMIN": "⚙ 管理",
-    "🚪 LOGOUT": "🚪 登出",
+    // ── Navigation (quiet-luxury nav 2026-07-05 — plain labels, no emoji;
+    //    CSS uppercases them, the DOM text stays as written here) ──────────
+    "Dashboard": "儀表板",
+    "Account": "帳戶",
+    "Bybit": "Bybit",
+    "Performance": "績效",
+    "Funnel": "漏斗",
+    "Market": "市場",
+    "Stocks": "股票",
+    "Strategy 2": "策略二",
+    "Admin": "管理",
+    "Health": "系統健康",
 
     // ── Strategy 2 — confidence meter ─────────────────────────
     "Live mirror of the TradingView indicator": "TradingView 指標的即時鏡像",

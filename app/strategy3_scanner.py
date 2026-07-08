@@ -1,7 +1,7 @@
 """
-Strategy 3 — "Vegas Flag Flip": BTC + SOL + HYPE + XAUT (config.STRATEGY3_SYMBOLS).
+Strategy 3 — "Vegas Flag Flip": SOL + HYPE + XAUT (config.STRATEGY3_SYMBOLS).
 Each symbol trades its own timeframe and position size (config.strategy3_params) —
-BTC/SOL/HYPE on 15m by default, XAUT on 30m (gold trends far slower than crypto).
+SOL/HYPE on 15m by default, XAUT on 30m (gold trends far slower than crypto).
 Signals from BINANCE charts · orders on the user's BYBIT account.
 
 The Python twin of TV_strategy.pine. Two rules, exactly as on the chart:
@@ -18,6 +18,12 @@ The Python twin of TV_strategy.pine. Two rules, exactly as on the chart:
   then enter the new direction once Vegas agrees. There is no take-profit; a
   wide EMERGENCY stop (config.STRATEGY3_EMERGENCY_SL_PCT) rests on Bybit
   purely as crash protection.
+
+  V2 ANTI-CHOP (config.STRATEGY3_BE_SYMBOLS — HYPE by default, mirrors
+  TV_strategy_V2.pine): once the position is BE_TRIGGER_PCT in profit, the
+  stop jumps to entry ± BE_OFFSET_PCT (≈ fees), so sideways chop that pokes
+  into profit and reverses scratches at ~0 instead of −1.5%. Winners are NOT
+  capped — the exit is still the opposite flag. SOL/XAUT keep the plain rules.
 
 Split-exchange design (user's request): candles are fetched from BINANCE
 (identical to the TradingView chart driving the strategy), execution happens
@@ -249,10 +255,51 @@ def _guardian_alert(base: str, detail: str) -> None:
             f"{leverage}x — check Bybit now and set a stop by hand if this repeats.")
 
 
+def breakeven_level(base: str, pos: dict):
+    """Where the stop should sit for `pos` once break-even is armed, or None
+    when this symbol doesn't use the V2 break-even rule (config)."""
+    if base.upper() not in config.STRATEGY3_BE_SYMBOLS or not pos.get("entry"):
+        return None
+    off = config.STRATEGY3_BE_OFFSET_PCT
+    return pos["entry"] * (1 + off) if pos["side"] == "long" else pos["entry"] * (1 - off)
+
+
+def manage_breakeven(sym: str, st: dict, pos: dict) -> None:
+    """V2 anti-chop (HYPE by default): once the position is BE_TRIGGER_PCT in
+    profit (mark vs entry), jump the resting Bybit stop from the wide emergency
+    level to entry ± BE_OFFSET_PCT (≈ fees). Fires ONCE per position
+    (st['be_armed']); a failed move retries on the next ~45s poll. Chop that
+    pokes into profit and reverses now scratches at ~0 instead of −1.5%;
+    winners still run to the opposite flag."""
+    base = sym.split("/")[0]
+    be_lvl = breakeven_level(base, pos)
+    if be_lvl is None or st.get("be_armed"):
+        return
+    entry, mark = pos.get("entry"), pos.get("mark")
+    if not (entry and mark):
+        return
+    trig = config.STRATEGY3_BE_TRIGGER_PCT
+    in_profit = mark >= entry * (1 + trig) if pos["side"] == "long" else mark <= entry * (1 - trig)
+    if not in_profit:
+        return
+    try:
+        X.set_stop(sym, be_lvl)
+    except Exception as exc:  # noqa: BLE001 — retry next poll, stop stays at emergency level
+        print(f"[strategy3] break-even move failed {sym}: {exc}")
+        return
+    st["be_armed"] = True
+    print(f"[strategy3] {base}: break-even armed — stop moved to {be_lvl:.6g} "
+          f"(entry {entry:.6g}, mark {mark:.6g})")
+    _tg(f"🛡️ S3 · {base} is +{trig:.2%} — stop moved to break-even "
+        f"({be_lvl:.6g}). Worst case is now ~0 instead of "
+        f"−{config.STRATEGY3_EMERGENCY_SL_PCT:.1%}.")
+
+
 def reconcile_position(sym: str, st: dict) -> None:
     """EVERY poll (not just on candle closes): notice an emergency-SL hit or a
-    MANUAL close within ~45s and stand down until the next flag, and keep the
-    emergency stop armed on a position we hold. No-op in dry-run.
+    MANUAL close within ~45s and stand down until the next flag, keep the
+    emergency stop armed on a position we hold, and run the break-even jump
+    for the symbols that use it. No-op in dry-run.
 
     A failure to (re-)arm the stop is the single most dangerous failure mode
     here — a naked position at 50x has no floor — so it gets a LOUD, repeating
@@ -273,7 +320,10 @@ def reconcile_position(sym: str, st: dict) -> None:
             f"waiting for the next flag")
         st["pos_dir"] = None
         st["consumed"] = True
+        st["be_armed"] = False
         return
+
+    manage_breakeven(sym, st, pos)
 
     if pos.get("sl"):
         return                                          # protected — nothing to do
@@ -281,8 +331,10 @@ def reconcile_position(sym: str, st: dict) -> None:
     # A stop still missing next cycle (~45s later) re-enters this same path and
     # retries — no separate immediate re-check here, which would risk a false
     # alarm from Bybit's own propagation delay right after a successful set.
+    # If break-even already armed, re-arm at the BE level, not the wide one.
     try:
-        X.ensure_stop(sym, pos=pos)
+        X.ensure_stop(sym, sl_price=breakeven_level(base, pos) if st.get("be_armed") else None,
+                      pos=pos)
         print(f"[strategy3] guardian armed the stop on {sym}")
     except Exception as exc:  # noqa: BLE001
         print(f"[strategy3] GUARDIAN FAILED to arm stop on {sym}: {exc}")
@@ -300,7 +352,8 @@ def step(client, state: dict) -> None:
         params = config.strategy3_params(base)
         tf_sec = timeframe_to_seconds(params["timeframe"])
         st = state.setdefault(sym, {"last_flag": None, "consumed": False,
-                                    "pos_dir": None, "last_candle": 0})
+                                    "pos_dir": None, "last_candle": 0,
+                                    "be_armed": False})
         reconcile_position(sym, st)
 
         try:
@@ -359,6 +412,7 @@ def step(client, state: dict) -> None:
             if outcome == "opened":
                 st["pos_dir"] = open_dir
                 st["consumed"] = True
+                st["be_armed"] = False              # fresh position → fresh break-even
             elif outcome == "retry":
                 st["open_attempts"] = st.get("open_attempts", 0) + 1
                 if st["open_attempts"] >= 3:            # give up after 3 candles
@@ -388,12 +442,14 @@ def mode_string() -> str:
 
 
 def _symbol_breakdown() -> str:
-    """'BTC 15m 1500 USDT×50x · SOL 15m 1500 USDT×50x · ... ' — one clause per
-    symbol, since timeframe/size can now differ (XAUT vs the rest)."""
+    """'SOL 15m 650 USDT×50x · HYPE 15m 650 USDT×50x+BE · ...' — one clause per
+    symbol, since timeframe/size/rules can differ (XAUT's 30m, HYPE's
+    break-even)."""
     parts = []
     for base in config.STRATEGY3_SYMBOLS:
         p = config.strategy3_params(base)
-        parts.append(f"{base} {p['timeframe']} {p['margin'] * p['leverage']:.0f} USDT×{p['leverage']}x")
+        be = "+BE" if base.upper() in config.STRATEGY3_BE_SYMBOLS else ""
+        parts.append(f"{base} {p['timeframe']} {p['margin'] * p['leverage']:.0f} USDT×{p['leverage']}x{be}")
     return " · ".join(parts)
 
 

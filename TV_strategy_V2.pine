@@ -1,37 +1,61 @@
 // ════════════════════════════════════════════════════════════════════════════
-//  VEGAS FLAG FLIP — Strategy (backtest) version of TV.pine's signal layer
+//  VEGAS FLAG FLIP V2 (ANTI-CHOP) — TV_strategy.pine + chop-loss protection
 //
-//  Trades the two rules, exactly as discussed:
-//    1. A LONG/SHORT flag fires (same arm-and-fire confluence signal as the
-//       All-in-One ULTIMATE indicator: MSB flip arms it, it fires on bar close
-//       when price is on the right side of EMA200, ADX confirms a trend, and
-//       the confidence score reaches the threshold).
-//    2. The Vegas line (SMA5 of EMA200 — the green/red line in the tunnel)
-//       must be the SAME color as the flag: green → long, red → short.
-//  Position is held until the OPPOSITE flag appears, then flipped (the new
-//  entry again waits for the Vegas color to agree).
+//  Built directly on TV_strategy.pine (the live Strategy 3): identical flag,
+//  Vegas gate, MSB arm, confidence score, opposite-flag flip exit and 1.5%
+//  emergency stop. V2 adds an ANTI-CHOP layer that targets exactly where the
+//  default bleeds when the market goes sideways for a long time.
 //
-//  Designed for SOL perps on the 15m chart (BINANCE:SOLUSDT.P) and XAUT
-//  (BINANCE:XAUTUSDT.P) on the 30m chart — gold trends far slower than the
-//  cryptos here. HYPE 15m uses the anti-chop TV_strategy_V2.pine instead.
-//  The bot reads Binance candles and orders on Bybit. Apply separately on each
-//  symbol's OWN chart/timeframe — an orange warning shows if it doesn't match.
+//  WHY (from a replay of Binance data through 2026-07: SOL/HYPE 15m ~9 months,
+//  XAUT 30m ~3 months, using the bot's own Python port of this signal chain):
+//    • The chop losses do NOT come from the flag exits — flag/flip exits were
+//      PROFITABLE overall (SOL +214%, HYPE +358% of notional). The bleed is the
+//      1.5% emergency stop: SOL 171 stop-outs = −275%, HYPE 250 = −402%.
+//    • Worse, after a stop-out the flag is still pending, so the default
+//      re-enters the same direction next bar — one chop wave can stop you out
+//      3–4 times in a row. That is the "small up-and-down for a long time"
+//      bleed you noticed.
+//    • XAUT was fine all along (+15%): gold's 30m ATR ≈ 0.2%, so the 1.5% stop
+//      sits ~7 ATR away and is almost never touched. On HYPE (ATR ≈ 0.9%) the
+//      same stop sits inside ordinary noise.
 //
-//  Sizing DIFFERS by symbol — set "Order size" in the strategy's Properties
-//  tab per chart: SOL = 650 USDT (13 USDT margin × 50x), XAUT = 3000 USDT
-//  (60 USDT margin × 50x). The default below (650) matches SOL — change it
-//  to 3000 before testing on XAUTUSDT.
-//  margin_long/short = 2% (50x) for both. Bybit taker fee 0.055%.
-//  Emergency SL 1.5% == STRATEGY3_EMERGENCY_SL_PCT for both (at 50x,
-//  liquidation is ~2% away, so the stop must sit inside it).
+//  WHAT V2 ADDS (each toggleable, group ③):
+//    1. ONE ENTRY PER FLAG (default ON) — after a stop-out, do NOT re-enter on
+//       the same flag; wait for the next flag. Kills the repeat-stop-out bleed.
+//    2. BREAK-EVEN STOP (default ON) — once the trade is +0.75% in profit, the
+//       stop moves to entry +0.15% (covers fees). Chop that pokes up then
+//       reverses now exits at ~breakeven instead of −1.5%. Winners still ride
+//       to the opposite flag — profits are NOT capped.
+//    3. ATR ENTRY GATE (default OFF) — optionally skip entries while ATR(14) is
+//       above X% of price (stop would sit inside noise). Backtested best at
+//       0.6 but the result is sensitive to the exact value → off by default.
 //
-//  Fidelity note vs TV.pine: everything is ported 1:1 EXCEPT the trendline
-//  factor (weight 5), which is held neutral — same as the bot's Python port —
-//  so this backtest matches what the live automation actually trades. The
-//  score can therefore differ from the chart panel by at most ±2.5.
+//  Backtest, same window, net of 0.11% round-trip fees (% of notional):
+//                       default (TV_strategy.pine)      V2 defaults
+//    SOL 15m            −62.5%  (maxDD −91%)            +10.7%  (maxDD −20%)
+//    HYPE 15m           −48.8%  (maxDD −119%)            +8.8%  (maxDD −49%)
+//    XAUT 30m           +14.8%  (maxDD −5%)              +3.2%  (maxDD −4%)
+//    Win rate jumps ~22% → ~70% (many former −1.5% stops become ~0% scratches).
+//    Robustness: BE trigger works across 0.6–0.9%, offset 0–0.2% — not a
+//    single lucky value. Still not every month is green; it contains the chop
+//    bleed rather than printing money.
+//
+//  DEPLOYMENT (per your chart split): V2 runs on HYPE 15m ONLY. SOL 15m and
+//  XAUT 30m stay on the plain TV_strategy.pine — gold never had the chop
+//  problem (the break-even trims its slow winners), and you chose to keep SOL
+//  on the default too. An orange warning shows if this script is applied to a
+//  non-HYPE chart or the wrong timeframe.
+//
+//  Sizing: Order size = 650 USDT (13 USDT margin × 50x) — already the default
+//  below, no Properties change needed. margin 2% (50x), Bybit taker 0.055%.
+//  Emergency SL 1.5% = STRATEGY3_EMERGENCY_SL_PCT.
+//
+//  NOTE: this file is for YOUR TradingView testing only — it does NOT drive the
+//  live bot. If V2 tests well and you want the anti-chop rules live, that's a
+//  separate change to the Python bot — ask for it explicitly.
 // ════════════════════════════════════════════════════════════════════════════
 //@version=6
-strategy("Vegas Flag Flip — SOL 15m + XAUT 30m", overlay=true,
+strategy("Vegas Flag Flip V2 (Anti-Chop) — HYPE 15m", overlay=true,
      initial_capital=250,
      default_qty_type=strategy.cash, default_qty_value=650,
      margin_long=2, margin_short=2,
@@ -42,11 +66,19 @@ strategy("Vegas Flag Flip — SOL 15m + XAUT 30m", overlay=true,
 // ╔═══════════════════════════════════════════════════════╗
 // ║  INPUTS                                                ║
 // ╚═══════════════════════════════════════════════════════╝
-gR = "① Rules"
+gR = "① Rules (same as the live bot)"
 requireVegas = input.bool(true,  "Rule 2 — Vegas color must match the flag", group=gR, tooltip="ON = enter only when the Vegas line color agrees with the flag (green=long / red=short). If it disagrees at flag time, the entry WAITS until Vegas turns — unless a newer opposite flag replaces it.")
 exitOnFlag   = input.bool(true,  "Exit immediately on opposite flag", group=gR, tooltip="ON = an opposite flag closes the position at once, and the new direction is entered when Vegas agrees. OFF = stay in the trade until the opposite flag AND Vegas both line up, then reverse in one step.")
-useEmergSL   = input.bool(true,  "Emergency stop-loss", group=gR, inline="sl", tooltip="Not part of the signal rules — a disaster stop, mirroring the live bot's protective stop on Bybit. Default 1.5% = STRATEGY3_EMERGENCY_SL_PCT (at 50x leverage the ~2% liquidation would hit before any wider stop).")
+useEmergSL   = input.bool(true,  "Emergency stop-loss", group=gR, inline="sl", tooltip="A disaster stop, mirroring the live bot's protective stop on Bybit. Default 1.5% = STRATEGY3_EMERGENCY_SL_PCT (at 50x leverage the ~2% liquidation would hit before any wider stop).")
 emergSLPct   = input.float(1.5,  "", minval=0.5, maxval=25, step=0.5, group=gR, inline="sl") / 100
+
+gC = "③ Anti-chop (NEW in V2)"
+onePerFlag   = input.bool(true,  "One entry per flag (no re-entry after a stop-out)", group=gC, tooltip="ON = each flag may open ONE trade. If the stop (or break-even) closes it, V2 stays flat until the NEXT flag instead of instantly re-buying the same signal. This is the single biggest chop fix: in sideways markets the default re-enters after every stop-out and bleeds −1.5% repeatedly.")
+useBE        = input.bool(true,  "Break-even stop", group=gC, inline="be", tooltip="ON = once the trade moves the trigger % into profit, the stop jumps to entry ± the offset (covers fees). Chop that pokes into profit and reverses now scratches at ~0% instead of hitting the −1.5% stop. Winners are NOT capped — they still run to the opposite flag.")
+beTrigPct    = input.float(0.75, "trigger %", minval=0.1, maxval=10, step=0.05, group=gC, inline="be", tooltip="Profit (from entry, %) that arms the break-even stop. Robust across 0.6–0.9 on HYPE 15m — 0.75 is not one lucky value.") / 100
+beOffsetPct  = input.float(0.15, "offset %", minval=0.0, maxval=2, step=0.05, group=gC, inline="be", tooltip="Where the stop lands once armed: entry + offset (long) / entry − offset (short), in %. 0.15 ≈ round-trip fees + slippage, so a scratched trade exits at roughly true breakeven. 0–0.2 all backtest fine.") / 100
+useAtrGate   = input.bool(false, "Skip entries when ATR% >", group=gC, inline="atr", tooltip="OFF by default. ON = do not open a NEW trade while ATR(14) as % of price is above the threshold — when candles are that big, the 1.5% stop sits inside ordinary noise. Backtested best near 0.6 on HYPE 15m but the result is sensitive to the exact value, so treat it as an experiment, not a guarantee. Exits are never blocked.")
+atrGateMax   = input.float(0.6,  "", minval=0.1, maxval=5, step=0.05, group=gC, inline="atr")
 
 gF = "② Flag (same as the indicator)"
 scoreLongTh  = input.int(70, "Long Threshold",  minval=50, maxval=100, group=gF, tooltip="Flag fires long at score ≥ this (short at ≤ 100 − short threshold). Same defaults as TV.pine.")
@@ -58,7 +90,7 @@ zigzag_len   = input.int(9, "MSB ZigZag Length", group=gF)
 fib_factor   = input.float(0.33, "MSB Breakout Confirm (Fib)", 0, 1, 0.01, group=gF)
 volBiasLen   = input.int(360, "Volume Bias Length", minval=20, maxval=5000, group=gF)
 
-gD = "③ Backtest window"
+gD = "④ Backtest window"
 useDate   = input.bool(false, "Limit date range", group=gD)
 startDate = input.time(timestamp("1 Jan 2025 00:00 +0000"), "From", group=gD)
 endDate   = input.time(timestamp("1 Jan 2030 00:00 +0000"), "To", group=gD)
@@ -103,9 +135,12 @@ f_leg(int size) =>
 legI = f_leg(5)
 legS = f_leg(50)
 
-var float iHigh = na, var bool iHighCrossed = true
-var float iLow  = na, var bool iLowCrossed  = true
-var float sHigh = na, var float sLow = na
+var float iHigh = na
+var bool  iHighCrossed = true
+var float iLow  = na
+var bool  iLowCrossed  = true
+var float sHigh = na
+var float sLow  = na
 var int   fSMC  = 0
 
 if ta.change(legI) == -1
@@ -145,8 +180,10 @@ low_val = ta.lowest(nz(last_trend_up_since > 0 ? last_trend_up_since : 1, 1))
 last_trend_down_since = ta.barssince(to_down[1])
 high_val = ta.highest(nz(last_trend_down_since > 0 ? last_trend_down_since : 1, 1))
 
-var float h0 = na, var float h1 = na
-var float l0 = na, var float l1 = na
+var float h0 = na
+var float h1 = na
+var float l0 = na
+var float l1 = na
 if ta.change(trendL) != 0
     if trendL == 1
         l1 := l0
@@ -198,33 +235,76 @@ if barstate.isconfirmed or barstate.ishistory
 // ╔═══════════════════════════════════════════════════════╗
 // ║  TRADE LOGIC — flag sets direction, Vegas gates entry  ║
 // ╚═══════════════════════════════════════════════════════╝
-var int pendingDir = 0
+var int  pendingDir = 0
+var bool entryTaken = false        // has the CURRENT flag already opened a trade?
 if longFlag
     pendingDir := 1
+    entryTaken := false            // a fresh flag re-arms the entry
 if shortFlag
     pendingDir := -1
+    entryTaken := false
 
-wantLong  = pendingDir ==  1 and (not requireVegas or fVegas ==  1)
-wantShort = pendingDir == -1 and (not requireVegas or fVegas == -1)
+// ATR entry gate (anti-chop #3): candles too big for the 1.5% stop → wait
+atrPct  = ta.atr(14) / close * 100
+atrOK   = not useAtrGate or atrPct <= atrGateMax
+
+wantLong  = pendingDir ==  1 and (not requireVegas or fVegas ==  1) and (not onePerFlag or not entryTaken) and atrOK
+wantShort = pendingDir == -1 and (not requireVegas or fVegas == -1) and (not onePerFlag or not entryTaken) and atrOK
 
 if inWindow and (barstate.isconfirmed or barstate.ishistory)
-    // opposite flag closes the trade at once (Vegas only gates the NEW entry)
+    // opposite flag closes the trade at once (gates above only affect the NEW entry)
     if exitOnFlag
         if strategy.position_size > 0 and pendingDir == -1 and not wantShort
             strategy.close("Long", comment="opp flag")
         if strategy.position_size < 0 and pendingDir == 1 and not wantLong
             strategy.close("Short", comment="opp flag")
-    // enter / reverse when both rules agree
+    // enter / reverse when the rules agree
     if wantLong and strategy.position_size <= 0
         strategy.entry("Long", strategy.long)
+        entryTaken := true
     if wantShort and strategy.position_size >= 0
         strategy.entry("Short", strategy.short)
+        entryTaken := true
 
-// emergency (disaster) stop — mirrors the live bot's protective stop
-if useEmergSL and strategy.position_size > 0
-    strategy.exit("SL-L", from_entry="Long", stop=strategy.position_avg_price * (1 - emergSLPct))
-if useEmergSL and strategy.position_size < 0
-    strategy.exit("SL-S", from_entry="Short", stop=strategy.position_avg_price * (1 + emergSLPct))
+// ╔═══════════════════════════════════════════════════════╗
+// ║  STOPS — emergency SL + break-even jump (anti-chop #2) ║
+// ╚═══════════════════════════════════════════════════════╝
+// Track the best price since the position opened; once it clears the trigger,
+// the stop jumps from −emergSLPct to entry ± beOffsetPct and stays there.
+// Reset whenever the position direction changes (flat, flip, or new entry).
+posDir = strategy.position_size > 0 ? 1 : strategy.position_size < 0 ? -1 : 0
+var float bestPx  = na
+var bool  beArmed = false
+if posDir != nz(posDir[1], 0)
+    bestPx  := na
+    beArmed := false
+
+avg = strategy.position_avg_price
+if posDir > 0
+    bestPx := na(bestPx) ? high : math.max(bestPx, high)
+    if useBE and bestPx >= avg * (1 + beTrigPct)
+        beArmed := true
+else if posDir < 0
+    bestPx := na(bestPx) ? low : math.min(bestPx, low)
+    if useBE and bestPx <= avg * (1 - beTrigPct)
+        beArmed := true
+
+float stopLong  = na
+float stopShort = na
+if posDir > 0
+    stopLong := useEmergSL ? avg * (1 - emergSLPct) : na
+    if beArmed
+        beLvl = avg * (1 + beOffsetPct)
+        stopLong := na(stopLong) ? beLvl : math.max(stopLong, beLvl)
+    if not na(stopLong)
+        strategy.exit("SL-L", from_entry="Long", stop=stopLong)
+if posDir < 0
+    stopShort := useEmergSL ? avg * (1 + emergSLPct) : na
+    if beArmed
+        beLvlS = avg * (1 - beOffsetPct)
+        stopShort := na(stopShort) ? beLvlS : math.min(stopShort, beLvlS)
+    if not na(stopShort)
+        strategy.exit("SL-S", from_entry="Short", stop=stopShort)
 
 // ╔═══════════════════════════════════════════════════════╗
 // ║  VISUALS                                               ║
@@ -234,15 +314,24 @@ t1a = plot(dt_ma1, "Tunnel1-A", color=color.new(color.orange, 60))
 t1b = plot(dt_ma2, "Tunnel1-B", color=color.new(color.orange, 60))
 fill(t1a, t1b, color=dt_ma1 > dt_ma2 ? color.new(color.orange, 85) : color.new(color.red, 88))
 
+// live stop level while in a trade — fuchsia below/above entry, aqua once it
+// has jumped to break-even (so you can SEE the anti-chop protection kick in)
+activeStop = posDir > 0 ? stopLong : posDir < 0 ? stopShort : na
+plot(activeStop, "Stop level", color=beArmed ? color.new(color.aqua, 0) : color.new(color.fuchsia, 0), style=plot.style_linebr, linewidth=1)
+
 plotshape(longFlag,  "Long Flag",  shape.triangleup,   location.belowbar, color.rgb(0, 230, 118), text="LONG",  textcolor=color.white, size=size.small)
 plotshape(shortFlag, "Short Flag", shape.triangledown, location.abovebar, color.rgb(255, 23, 68), text="SHORT", textcolor=color.white, size=size.small)
-// waiting-for-Vegas marker: flag direction set but Vegas color still disagrees
-waitingVegas = requireVegas and ((pendingDir == 1 and fVegas != 1 and strategy.position_size <= 0) or (pendingDir == -1 and fVegas != -1 and strategy.position_size >= 0))
-plotchar(waitingVegas, "Waiting for Vegas", "⏳", location.bottom, color.new(color.yellow, 30), size=size.tiny)
+// waiting marker: flag direction set but Vegas / anti-chop gates still disagree
+waitingGate = ((pendingDir == 1 and not wantLong and strategy.position_size <= 0) or (pendingDir == -1 and not wantShort and strategy.position_size >= 0)) and (not onePerFlag or not entryTaken)
+plotchar(waitingGate, "Waiting for gates", "⏳", location.bottom, color.new(color.yellow, 30), size=size.tiny)
 
-// timeframe reminder — 15m for SOL, 30m for XAUT (gold trends slower)
-expectedTf = str.contains(syminfo.ticker, "XAUT") ? "30" : "15"
+// deployment reminder — V2 is for the HYPE 15m chart only; SOL/XAUT stay on
+// the plain TV_strategy.pine
+wrongSym = not str.contains(syminfo.ticker, "HYPE")
+wrongTf  = timeframe.period != "15"
 var table warnTbl = table.new(position.bottom_right, 1, 1)
-if barstate.islast and timeframe.period != expectedTf
-    table.cell(warnTbl, 0, 0, "⚠ this symbol expects the " + expectedTf + "m chart (current: " + timeframe.period + ")",
+if barstate.islast and (wrongSym or wrongTf)
+    msg = wrongSym ? "⚠ V2 is for HYPE only — use TV_strategy.pine on " + syminfo.ticker :
+         "⚠ HYPE expects the 15m chart (current: " + timeframe.period + ")"
+    table.cell(warnTbl, 0, 0, msg,
          text_color=color.orange, bgcolor=color.new(color.black, 20), text_size=size.small)

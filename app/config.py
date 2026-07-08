@@ -473,6 +473,17 @@ STRATEGY3_OVERRIDES = {
         "margin": float(os.getenv("STRATEGY3_XAUT_MARGIN_USDT", "3")),
     },
 }
+# V2 anti-chop break-even (TV_strategy_V2.pine, backtested 2026-07): once a
+# position is BE_TRIGGER into profit, the resting Bybit stop jumps from the
+# wide emergency level to entry ± BE_OFFSET (≈ fees), so sideways chop that
+# pokes into profit and reverses scratches at ~0 instead of losing the full
+# emergency-SL distance. The exit is STILL the opposite flag — winners are not
+# capped. Applied only to the symbols listed here (HYPE by default; gold's
+# slow trends retrace to entry early, so break-even would trim its winners).
+STRATEGY3_BE_SYMBOLS = [s.strip().upper() for s in
+                        os.getenv("STRATEGY3_BE_SYMBOLS", "HYPE").split(",") if s.strip()]
+STRATEGY3_BE_TRIGGER_PCT = float(os.getenv("STRATEGY3_BE_TRIGGER_PCT", "0.0075"))
+STRATEGY3_BE_OFFSET_PCT = float(os.getenv("STRATEGY3_BE_OFFSET_PCT", "0.0015"))
 
 
 def strategy3_params(base: str) -> dict:

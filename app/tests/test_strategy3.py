@@ -300,10 +300,14 @@ def test_bybit_closed_pnl_summary(monkeypatch):
         def private_get_v5_position_closed_pnl(self, params):
             if params.get("cursor"):
                 return {"result": {"list": [], "nextPageCursor": ""}}
+            # One SOL SHORT scaled out in TWO partial closes (same entry, both
+            # positive) → must count as ONE win, not two; then a separate losing
+            # SOL position at a different entry, and one HYPE win.
             return {"result": {"list": [
-                {"symbol": "SOLUSDT", "closedPnl": "12.5", "updatedTime": "1700000000000"},
-                {"symbol": "SOLUSDT", "closedPnl": "-4.0", "updatedTime": "1700003600000"},
-                {"symbol": "XAUTUSDT", "closedPnl": "8.0", "updatedTime": "1700007200000"},
+                {"symbol": "SOLUSDT", "avgEntryPrice": "80.39", "closedPnl": "3.0", "updatedTime": "1700000000000"},
+                {"symbol": "SOLUSDT", "avgEntryPrice": "80.39", "closedPnl": "1.0", "updatedTime": "1700000600000"},
+                {"symbol": "SOLUSDT", "avgEntryPrice": "81.06", "closedPnl": "-1.6", "updatedTime": "1700003600000"},
+                {"symbol": "HYPEUSDT", "avgEntryPrice": "69.15", "closedPnl": "13.2", "updatedTime": "1700007200000"},
             ], "nextPageCursor": ""}}
 
     monkeypatch.setattr(X, "keys_present", lambda: True)
@@ -311,17 +315,22 @@ def test_bybit_closed_pnl_summary(monkeypatch):
 
     hist = X.closed_pnl_history()
     assert hist["ok"] is True
-    assert len(hist["trades"]) == 3
+    assert len(hist["trades"]) == 4                                # raw ledger, per execution
     assert hist["trades"][0]["time"] >= hist["trades"][1]["time"]   # newest first
 
     summ = X.closed_pnl_summary()
     assert summ["ok"] is True
+    # 4 raw rows but only 3 POSITIONS: the two same-entry SOL closes collapse
     assert summ["n_trades"] == 3
     assert summ["wins"] == 2 and summ["losses"] == 1
-    assert abs(summ["net"] - 16.5) < 1e-9
+    assert abs(summ["net"] - 15.6) < 1e-9                          # 3.0+1.0-1.6+13.2
+    # the collapsed winner nets +4.0 and records that it was 2 partial closes
+    sol_win = next(t for t in summ["trades"]
+                   if t["symbol"] == "SOLUSDT" and abs(t["pnl"] - 4.0) < 1e-9)
+    assert sol_win["parts"] == 2
     assert summ["commission"] == 0.0 and summ["funding"] == 0.0   # not double-counted
     assert len(summ["daily"]) == 14
-    assert {b["symbol"] for b in summ["by_symbol"]} == {"SOLUSDT", "XAUTUSDT"}
+    assert {b["symbol"] for b in summ["by_symbol"]} == {"SOLUSDT", "HYPEUSDT"}
 
 
 def test_bybit_closed_pnl_no_keys(monkeypatch):
@@ -372,6 +381,9 @@ def test_bybit_account_snapshot_success(monkeypatch):
     monkeypatch.setattr(X, "keys_present", lambda: True)
     monkeypatch.setattr(X, "is_live", lambda: True)
     monkeypatch.setattr(X, "client", lambda: FakeEx())
+    # pin the coin list — the user turns symbols on/off in .env, and this test's
+    # fixtures assume SOL is "ours" (same preflight trap as the coin-list tests)
+    monkeypatch.setattr(X.config, "STRATEGY3_SYMBOLS", ["SOL", "HYPE", "XAUT"])
 
     snap = X.account_snapshot()
     assert snap["ok"] is True
@@ -400,6 +412,111 @@ def test_bybit_account_snapshot_error_is_not_fatal(monkeypatch):
     assert snap["ok"] is False
     assert "connection reset" in snap["error"]
     assert snap["positions"] == []
+
+
+# ── V2 anti-chop break-even (HYPE by default) ────────────────────────────────
+# manage_breakeven: once mark is BE_TRIGGER_PCT in profit, the stop jumps to
+# entry ± BE_OFFSET_PCT — ONCE per position, only for STRATEGY3_BE_SYMBOLS.
+
+def _be_setup(monkeypatch):
+    import strategy3_scanner as S3
+    monkeypatch.setattr(S3.config, "STRATEGY3_BE_SYMBOLS", ["HYPE"])
+    monkeypatch.setattr(S3.config, "STRATEGY3_BE_TRIGGER_PCT", 0.0075)
+    monkeypatch.setattr(S3.config, "STRATEGY3_BE_OFFSET_PCT", 0.0015)
+    monkeypatch.setattr(S3, "_tg", lambda *a, **k: None)
+    calls = []
+    monkeypatch.setattr(S3.X, "set_stop", lambda sym, px: calls.append((sym, px)))
+    return S3, calls
+
+
+def test_breakeven_moves_stop_once_when_triggered(monkeypatch):
+    S3, calls = _be_setup(monkeypatch)
+    st = {"pos_dir": "long", "be_armed": False}
+    pos = {"side": "long", "entry": 40.0, "mark": 40.0 * 1.0075, "sl": 39.4}
+    S3.manage_breakeven("HYPE/USDT:USDT", st, pos)
+    assert st["be_armed"] is True
+    assert len(calls) == 1
+    assert abs(calls[0][1] - 40.0 * 1.0015) < 1e-9
+    # armed → never moved again, even deeper in profit
+    pos["mark"] = 41.0
+    S3.manage_breakeven("HYPE/USDT:USDT", st, pos)
+    assert len(calls) == 1
+
+
+def test_breakeven_not_triggered_below_threshold(monkeypatch):
+    S3, calls = _be_setup(monkeypatch)
+    st = {"pos_dir": "long", "be_armed": False}
+    pos = {"side": "long", "entry": 40.0, "mark": 40.0 * 1.005, "sl": 39.4}
+    S3.manage_breakeven("HYPE/USDT:USDT", st, pos)
+    assert st.get("be_armed") is False
+    assert calls == []
+
+
+def test_breakeven_short_side(monkeypatch):
+    S3, calls = _be_setup(monkeypatch)
+    st = {"pos_dir": "short", "be_armed": False}
+    pos = {"side": "short", "entry": 40.0, "mark": 40.0 * (1 - 0.0075), "sl": 40.6}
+    S3.manage_breakeven("HYPE/USDT:USDT", st, pos)
+    assert st["be_armed"] is True
+    assert abs(calls[0][1] - 40.0 * (1 - 0.0015)) < 1e-9
+
+
+def test_breakeven_only_for_configured_symbols(monkeypatch):
+    """SOL/XAUT keep the plain rules — deep in profit must NOT move the stop."""
+    S3, calls = _be_setup(monkeypatch)
+    for sym in ("SOL/USDT:USDT", "XAUT/USDT:USDT"):
+        st = {"pos_dir": "long", "be_armed": False}
+        pos = {"side": "long", "entry": 100.0, "mark": 105.0, "sl": 98.5}
+        S3.manage_breakeven(sym, st, pos)
+        assert st.get("be_armed") is False
+    assert calls == []
+
+
+def test_breakeven_failed_move_retries_next_poll(monkeypatch):
+    """A Bybit blip must leave be_armed False so the next ~45s poll retries —
+    and the emergency stop stays resting in the meantime."""
+    S3, _ = _be_setup(monkeypatch)
+
+    def boom(sym, px):
+        raise RuntimeError("bybit 502")
+    monkeypatch.setattr(S3.X, "set_stop", boom)
+    st = {"pos_dir": "long", "be_armed": False}
+    pos = {"side": "long", "entry": 40.0, "mark": 41.0, "sl": 39.4}
+    S3.manage_breakeven("HYPE/USDT:USDT", st, pos)   # must not raise
+    assert st.get("be_armed") is False
+
+
+def test_guardian_rearms_at_breakeven_level_once_armed(monkeypatch):
+    """If the stop vanishes AFTER the break-even jump, the guardian must
+    re-arm it at the BE level, not fall back to the wide emergency stop."""
+    S3, _ = _be_setup(monkeypatch)
+    monkeypatch.setattr(S3.X, "is_live", lambda: True)
+    pos = {"side": "long", "entry": 40.0, "mark": 40.5, "sl": None}
+    monkeypatch.setattr(S3.X, "get_position", lambda sym: dict(pos))
+    ensured = []
+    monkeypatch.setattr(S3.X, "ensure_stop",
+                        lambda sym, sl_price=None, pos=None: ensured.append(sl_price))
+    st = {"pos_dir": "long", "be_armed": True, "consumed": True}
+    S3.reconcile_position("HYPE/USDT:USDT", st)
+    assert len(ensured) == 1
+    assert abs(ensured[0] - 40.0 * 1.0015) < 1e-9
+    # …but before the BE jump, the guardian passes None (wide emergency stop)
+    ensured.clear()
+    st = {"pos_dir": "long", "be_armed": False, "consumed": True}
+    monkeypatch.setattr(S3.config, "STRATEGY3_BE_TRIGGER_PCT", 9.9)  # keep BE untriggered
+    S3.reconcile_position("HYPE/USDT:USDT", st)
+    assert ensured == [None]
+
+
+def test_position_gone_resets_breakeven(monkeypatch):
+    S3, _ = _be_setup(monkeypatch)
+    monkeypatch.setattr(S3.X, "is_live", lambda: True)
+    monkeypatch.setattr(S3.X, "get_position", lambda sym: None)
+    st = {"pos_dir": "long", "be_armed": True, "consumed": False}
+    S3.reconcile_position("HYPE/USDT:USDT", st)
+    assert st["pos_dir"] is None
+    assert st["consumed"] is True
+    assert st["be_armed"] is False
 
 
 def test_strategy3_retry_gives_up_after_3_attempts(monkeypatch):
