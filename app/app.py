@@ -429,6 +429,27 @@ def build_best_s3_trade() -> dict:
         armed = bool(st.get("last_flag")) and not st.get("consumed") and not holding
         params = config.strategy3_params(base)
 
+        if params.get("engine") == "occ":
+            # OCC symbols have no confluence score/Vegas — describe the
+            # open/close-cross state instead of pretending a flag-flip state.
+            trend = st.get("last_trend")
+            if holding:
+                note = f"OCC engine · holding {holding.upper()} until the opposite cross."
+            elif trend:
+                note = (f"OCC engine · 90m close-MA trend is {trend} — flat until "
+                        f"the next open/close cross (stop-and-reverse).")
+            else:
+                note = "OCC engine · no closed 90m bucket seen yet."
+            rows.append({
+                "symbol": base, "timeframe": params["timeframe"],
+                "notional": params["margin"] * params["leverage"], "leverage": params["leverage"],
+                "score": None, "vegas": None, "msb": None,
+                "armed_flag": st.get("last_flag"), "holding": holding,
+                "lean": None, "dist_to_threshold": None,
+                "vegas_agrees": False, "note": note, "seen": st.get("last_seen"),
+            })
+            continue
+
         lean = dist = None
         if score is not None:
             long_gap = config.STRATEGY3_SCORE_TH - score
@@ -2314,11 +2335,13 @@ def api_bybit():
         status.append({
             "symbol": sym,
             "base": sym.split("/")[0],
+            "engine": st.get("engine") or "flagflip",
             "last_flag": st.get("last_flag"),
             "pos_dir": st.get("pos_dir"),
             "score": st.get("last_score"),
             "vegas": st.get("last_vegas"),
             "msb": st.get("last_msb"),
+            "trend": st.get("last_trend"),
             "seen": st.get("last_seen"),
         })
     snap["status"] = status

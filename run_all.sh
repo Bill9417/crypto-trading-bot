@@ -16,10 +16,12 @@
 #   STRATEGY2_LIVE=true   → web + S2 scanner (LIVE engine) + S1 scan-only + S3 alert-only
 #   STRATEGY3_LIVE=true   → web + S3 flip engine (LIVE) + S1 scan-only + S2 alert-only
 #   BOTH true             → S2 wins; S3 refuses to arm (in code) and stays alert-only
-# S3 = "Vegas Flag Flip" (strategy3_scanner.py): BTC/SOL/HYPE 15m + XAUT 30m
-# (config.STRATEGY3_SYMBOLS / config.strategy3_params — per-symbol timeframe
-# and size), TV.pine flag + Vegas-line agreement, flip on the opposite flag;
-# signals from Binance charts, orders on Bybit (see TV_strategy.pine).
+# S3 (strategy3_scanner.py) runs TWO engines per symbol (config.STRATEGY3_SYMBOLS
+# / config.strategy3_params): "flagflip" — TV.pine flag + Vegas-line agreement,
+# flip on the opposite flag (XAUT 30m; pine/TV_strategy_XAUT_30min.pine) — and
+# "occ" — SMMA8 open/close cross on 90m buckets, stop-and-reverse (ETH+SOL;
+# pine/TV_strategy_ETH_SOL_30min.pine, STRATEGY3_OCC_* in app/.env).
+# Signals from Binance charts, orders on Bybit.
 #
 # Runs the test suite first (the safety gate). Bypass with SKIP_TESTS=1.
 # Safe to re-run: it kills any previous instances and clears stale locks first,

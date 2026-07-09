@@ -1,10 +1,21 @@
 """
-Strategy 3 — "Vegas Flag Flip": SOL + HYPE + XAUT (config.STRATEGY3_SYMBOLS).
-Each symbol trades its own timeframe and position size (config.strategy3_params) —
-SOL/HYPE on 15m by default, XAUT on 30m (gold trends far slower than crypto).
-Signals from BINANCE charts · orders on the user's BYBIT account.
+Strategy 3 — the Bybit auto-trader (config.STRATEGY3_SYMBOLS). Each symbol
+trades its own timeframe, position size, emergency stop AND engine
+(config.strategy3_params). Signals from BINANCE charts · orders on BYBIT.
 
-The Python twin of TV_strategy.pine. Two rules, exactly as on the chart:
+TWO ENGINES share this scanner, its executor, guardian and Telegram plumbing:
+
+  • "flagflip" (default) — the Vegas Flag Flip below, the Python twin of
+    pine/TV_strategy_XAUT_30min.pine. XAUT (gold, 30m) runs this.
+  • "occ" (config.STRATEGY3_OCC_SYMBOLS — ETH+SOL) — JustUncleL's "Open Close
+    Cross": SMMA8 of the open vs close series on 90m buckets resampled from
+    30m candles; close-MA crossing over the open-MA flips long, under flips
+    short. Stop-and-reverse, one entry per cross; signals from
+    strategy3_occ.py, the honest non-repainting port of
+    pine/TV_strategy_ETH_SOL_30min.pine (the TV original repaints with
+    default settings — live entries here fire on CLOSED 90m data only).
+
+The flag-flip rules, exactly as on the chart:
 
   1. FLAG — the TV.pine confluence signal fires (MSB structure flip arms it;
      it fires on a CLOSED 15m bar when price is on the right side of EMA200,
@@ -35,13 +46,13 @@ By DEFAULT alert-only. Arming real orders needs ALL of: STRATEGY3_LIVE=true,
 BYBIT_API_KEY/BYBIT_API_SECRET in app/.env, and LIVE_TRADING=true (the master
 gate — while false, orders are logged as dry-runs).
 
-Signals come from strategy3_signal.py — an EXACT bar-by-bar port of
-TV_strategy.pine (zigzag MSB arm, LuxAlgo internal bias, TV score weights,
-per-bar ADX gate, arm-and-fire flags with alternation), so the TradingView
-backtest and this bot fire the same flags on the same candles. The only
-deliberate divergence, in both: the trendline factor (weight 5) is neutral.
+Flag-flip signals come from strategy3_signal.py — an EXACT bar-by-bar port of
+pine/TV_strategy_XAUT_30min.pine (zigzag MSB arm, LuxAlgo internal bias, TV
+score weights, per-bar ADX gate, arm-and-fire flags with alternation), so the
+TradingView backtest and this bot fire the same flags on the same candles. The
+only deliberate divergence, in both: the trendline factor (weight 5) is neutral.
 
-State (last flag per symbol, consumed marker, our open direction) persists in
+State (last signal per symbol, consumed marker, our open direction) persists in
 strategy3_state.json so a restart never re-enters or loses track of a flip.
 """
 import json
@@ -50,6 +61,7 @@ import time
 
 import config
 import strategy3_exec as X
+import strategy3_occ as OCC
 import strategy3_signal as SIG
 import telegram_utils
 from market_data import SafeBinanceClient, RateLimitCooldownError, timeframe_to_seconds
@@ -85,7 +97,7 @@ def closed_candles(ohlcv, tf_sec=None, now=None) -> list:
 
 def flag_on_last_bar(ohlcv) -> tuple:
     """(flag, snapshot) for the last CLOSED bar, straight from the exact
-    TV_strategy.pine port — flag is 'long'/'short'/None."""
+    TV_strategy_XAUT_30min.pine port — flag is 'long'/'short'/None."""
     snap = SIG.last_bar(ohlcv, config.STRATEGY3_SCORE_TH, config.STRATEGY3_ADX_TH)
     return snap["flag"], snap
 
@@ -149,14 +161,17 @@ def live_blocked() -> str:
     return ""
 
 
-def open_flip(symbol: str, direction: str, price: float, score, margin: float, leverage: int) -> str:
+def open_flip(symbol: str, direction: str, price: float, score, margin: float,
+              leverage: int, sl_pct: float = None, why: str = None) -> str:
     """Enter a flip position on Bybit: market + emergency SL, no TP (the exit
-    is the opposite flag). margin/leverage come from config.strategy3_params
-    for this symbol (XAUT trades a different size/timeframe than the others).
-    Returns an outcome for the flag bookkeeping:
+    is the opposite signal). margin/leverage/sl_pct come from
+    config.strategy3_params for this symbol — sizes, stops and even the engine
+    differ per symbol. `why` is the engine-specific Telegram explanation (the
+    flag-flip default mentions score/Vegas, the OCC engine passes its own).
+    Returns an outcome for the signal bookkeeping:
       'opened' — in a position now (real fill or dry-run)
       'retry'  — transient failure; try again on the next closed candle
-      'skip'   — final for this flag (alert-only mode, manual position, sizing)"""
+      'skip'   — final for this signal (alert-only mode, manual position, sizing)"""
     blocked = live_blocked()
     if blocked:
         print(f"[strategy3] would OPEN {direction.upper()} {symbol} — {blocked}")
@@ -174,7 +189,7 @@ def open_flip(symbol: str, direction: str, price: float, score, margin: float, l
             return "retry"
 
     is_long = direction == "long"
-    slp = config.STRATEGY3_EMERGENCY_SL_PCT
+    slp = sl_pct if sl_pct is not None else config.STRATEGY3_EMERGENCY_SL_PCT
     sl = price * (1 - slp) if is_long else price * (1 + slp)
 
     res = X.open_flip(symbol, direction, price, sl, margin, leverage)
@@ -188,9 +203,9 @@ def open_flip(symbol: str, direction: str, price: float, score, margin: float, l
     tag = "DRY-RUN " if res.get("dry") else ""
     print(f"[strategy3] {tag}OPENED {direction.upper()} {symbol} @ {price:.6g} "
           f"(score {score}, emergency SL {sl:.6g}, qty {res.get('qty')})")
+    why = why or f"score {score}/100 · Vegas agrees · exit = opposite flag"
     _tg(f"🔀 S3 {tag}FLIP · {direction.upper()} {symbol.split('/')[0]} @ {price:.6g} (Bybit)\n"
-        f"score {score}/100 · Vegas agrees · exit = opposite flag "
-        f"(emergency SL {slp:.0%})")
+        f"{why} (emergency SL {slp:.0%})")
     if res.get("leverage_warning"):
         _tg(f"⚠️ S3 · {symbol.split('/')[0]} leverage may not be {leverage}x "
             f"— Bybit said: {res['leverage_warning']}\nSame {price * res.get('qty', 0):.0f} USDT "
@@ -331,22 +346,49 @@ def reconcile_position(sym: str, st: dict) -> None:
     # A stop still missing next cycle (~45s later) re-enters this same path and
     # retries — no separate immediate re-check here, which would risk a false
     # alarm from Bybit's own propagation delay right after a successful set.
-    # If break-even already armed, re-arm at the BE level, not the wide one.
+    # If break-even already armed, re-arm at the BE level; otherwise at THIS
+    # symbol's own emergency distance (the OCC pair runs a wider stop at lower
+    # leverage than the flag-flip symbols — the global default would be wrong).
+    if st.get("be_armed"):
+        sl_price = breakeven_level(base, pos)
+    else:
+        slp = config.strategy3_params(base)["sl_pct"]
+        sl_price = (pos["entry"] * (1 - slp) if pos["side"] == "long"
+                    else pos["entry"] * (1 + slp))
     try:
-        X.ensure_stop(sym, sl_price=breakeven_level(base, pos) if st.get("be_armed") else None,
-                      pos=pos)
+        X.ensure_stop(sym, sl_price=sl_price, pos=pos)
         print(f"[strategy3] guardian armed the stop on {sym}")
     except Exception as exc:  # noqa: BLE001
         print(f"[strategy3] GUARDIAN FAILED to arm stop on {sym}: {exc}")
         _guardian_alert(base, str(exc)[:200])
 
 
+def ensure_engine(st: dict, engine: str) -> None:
+    """Stamp the symbol's engine into its state; on a REAL engine change (e.g.
+    SOL: flag-flip → OCC) wipe the old signal bookkeeping so a stale flag from
+    the previous engine can never trigger an entry under the new rules. The
+    open-position marker survives — an engine change must not orphan a
+    position the bot is holding. Symbols with no engine stamp yet (state
+    written before engines existed) are stamped without a wipe unless they are
+    switching onto the OCC engine, whose fields mean different things."""
+    prev = st.get("engine")
+    if prev == engine:
+        return
+    if prev is not None or engine == "occ":
+        st["last_flag"] = None
+        st["consumed"] = False
+        st["last_candle"] = 0
+        st["last_bucket"] = 0
+        st["open_attempts"] = 0
+    st["engine"] = engine
+
+
 def step(client, state: dict) -> None:
     """One pass over the symbols; trades only on a NEW closed candle FOR THAT
     SYMBOL'S OWN TIMEFRAME (config.strategy3_params — XAUT is 30m, the rest are
-    15m by default), but reconciles positions on every pass regardless. State
-    is saved after each symbol so a mid-pass abort can never lose an opened
-    position."""
+    15m by default; the OCC engine additionally waits for a NEW closed 90m
+    bucket), but reconciles positions on every pass regardless. State is saved
+    after each symbol so a mid-pass abort can never lose an opened position."""
     for sym in symbols():
         base = sym.split("/")[0]
         params = config.strategy3_params(base)
@@ -354,6 +396,7 @@ def step(client, state: dict) -> None:
         st = state.setdefault(sym, {"last_flag": None, "consumed": False,
                                     "pos_dir": None, "last_candle": 0,
                                     "be_armed": False})
+        ensure_engine(st, params.get("engine", "flagflip"))
         reconcile_position(sym, st)
 
         try:
@@ -375,40 +418,86 @@ def step(client, state: dict) -> None:
             continue                                    # no new closed bar yet
         st["last_candle"] = last_ts
 
-        try:
-            flag, snap = flag_on_last_bar(ohlcv)
-        except Exception as exc:  # noqa: BLE001
-            print(f"[strategy3] compute error {sym}: {exc}")
-            continue
-        if snap["insufficient"]:
-            continue
+        if params.get("engine") == "occ":
+            # ── OCC engine: SMMA8 open/close cross on resampled 90m buckets ──
+            try:
+                snap = OCC.snapshot(ohlcv, tf_sec, params["res_mult"], params["ma_len"])
+            except Exception as exc:  # noqa: BLE001
+                print(f"[strategy3] OCC compute error {sym}: {exc}")
+                continue
+            if snap["insufficient"]:
+                continue
+            if snap["bucket_ts"] <= st.get("last_bucket", 0):
+                continue                                # no new closed bucket yet
+            st["last_bucket"] = snap["bucket_ts"]
+            sig = snap["signal"]
+            alt_min = int(tf_sec * params["res_mult"] // 60)
+            print(f"[strategy3] {base} {alt_min}m OCC close · trend {snap['trend']} · "
+                  f"cross {sig or '—'} · pos {st.get('pos_dir') or 'flat'}")
+            # flag-flip display fields don't exist on this engine — clear them
+            # so the web pages describe the OCC state instead of a stale score
+            st["last_score"] = None
+            st["last_vegas"] = None
+            st["last_msb"] = None
+            st["last_trend"] = snap["trend"]
+            st["last_price"] = snap["price"]
+            st["last_seen"] = time.time()
 
-        vegas_txt = "green" if snap["vegas"] > 0 else "red" if snap["vegas"] < 0 else "flat"
-        # heartbeat — one line per closed candle so the log (and /health) show life
-        print(f"[strategy3] {base} {params['timeframe']} close · score {snap['score']:.1f} · "
-              f"vegas {vegas_txt} · msb {snap['msb']} · flag {flag or '—'} · "
-              f"pos {st.get('pos_dir') or 'flat'}")
-        # Persisted so the /bybit web page can show "why" without recomputing
-        # the signal itself — one line per closed candle, not per poll.
-        st["last_score"] = snap["score"]
-        st["last_vegas"] = snap["vegas"]
-        st["last_msb"] = snap["msb"]
-        st["last_price"] = snap["price"]
-        st["last_seen"] = time.time()
+            if sig and sig != st.get("last_flag"):
+                st["open_attempts"] = 0                 # fresh cross → fresh retries
+                _tg(f"🚩 S3 CROSS · {sig.upper()} {base} ({alt_min}m open/close cross, "
+                    f"Binance chart)\nstop-and-reverse — flipping the position now")
+            # the cross IS the whole signal — no Vegas gate on this engine, so
+            # feed decide() an always-agreeing value for the pending direction
+            # to reuse the flip/consumed/manual-close state machine unchanged
+            want = sig or st.get("last_flag")
+            gate = 1 if want == "long" else -1 if want == "short" else 0
+            close, open_dir = decide(st, sig, gate, st.get("pos_dir"))
+            why = (f"{params['ma_len']}-SMMA close crossed "
+                   f"{'over' if open_dir == 'long' else 'under'} open on {alt_min}m · "
+                   f"exit = opposite cross")
+            score = None
+        else:
+            # ── flag-flip engine (the original Vegas Flag Flip rules) ──
+            try:
+                flag, snap = flag_on_last_bar(ohlcv)
+            except Exception as exc:  # noqa: BLE001
+                print(f"[strategy3] compute error {sym}: {exc}")
+                continue
+            if snap["insufficient"]:
+                continue
 
-        if flag and flag != st.get("last_flag"):
-            st["open_attempts"] = 0                     # fresh flag → fresh retries
-            _tg(f"🚩 S3 FLAG · {flag.upper()} {base} ({params['timeframe']}, Binance chart)\n"
-                f"score {snap['score']:.0f}/100 · Vegas "
-                f"{'agrees → entering' if (snap['vegas'] > 0) == (flag == 'long') and snap['vegas'] != 0 else 'disagrees → waiting'}")
+            vegas_txt = "green" if snap["vegas"] > 0 else "red" if snap["vegas"] < 0 else "flat"
+            # heartbeat — one line per closed candle so the log (and /health) show life
+            print(f"[strategy3] {base} {params['timeframe']} close · score {snap['score']:.1f} · "
+                  f"vegas {vegas_txt} · msb {snap['msb']} · flag {flag or '—'} · "
+                  f"pos {st.get('pos_dir') or 'flat'}")
+            # Persisted so the /bybit web page can show "why" without recomputing
+            # the signal itself — one line per closed candle, not per poll.
+            st["last_score"] = snap["score"]
+            st["last_vegas"] = snap["vegas"]
+            st["last_msb"] = snap["msb"]
+            st["last_price"] = snap["price"]
+            st["last_seen"] = time.time()
 
-        close, open_dir = decide(st, flag, snap["vegas"], st.get("pos_dir"))
+            if flag and flag != st.get("last_flag"):
+                st["open_attempts"] = 0                 # fresh flag → fresh retries
+                _tg(f"🚩 S3 FLAG · {flag.upper()} {base} ({params['timeframe']}, Binance chart)\n"
+                    f"score {snap['score']:.0f}/100 · Vegas "
+                    f"{'agrees → entering' if (snap['vegas'] > 0) == (flag == 'long') and snap['vegas'] != 0 else 'disagrees → waiting'}")
+
+            close, open_dir = decide(st, flag, snap["vegas"], st.get("pos_dir"))
+            why = None                                  # open_flip's score/Vegas default
+            score = snap["score"]
+
         if close:
-            if close_flip(sym, f"opposite flag ({st['last_flag']})"):
+            what = "cross" if params.get("engine") == "occ" else "flag"
+            if close_flip(sym, f"opposite {what} ({st['last_flag']})"):
                 st["pos_dir"] = None
         if open_dir and not st.get("pos_dir"):
-            outcome = open_flip(sym, open_dir, snap["price"], snap["score"],
-                                 params["margin"], params["leverage"])
+            outcome = open_flip(sym, open_dir, snap["price"], score,
+                                 params["margin"], params["leverage"],
+                                 sl_pct=params["sl_pct"], why=why)
             if outcome == "opened":
                 st["pos_dir"] = open_dir
                 st["consumed"] = True
@@ -442,27 +531,29 @@ def mode_string() -> str:
 
 
 def _symbol_breakdown() -> str:
-    """'SOL 15m 650 USDT×50x · HYPE 15m 650 USDT×50x+BE · ...' — one clause per
-    symbol, since timeframe/size/rules can differ (XAUT's 30m, HYPE's
-    break-even)."""
+    """'XAUT 30m 3000 USDT×50x · ETH 30m 500 USDT×10x OCC · ...' — one clause
+    per symbol, since timeframe/size/engine/rules can differ (XAUT's flag-flip,
+    the OCC pair's open/close cross, HYPE's break-even)."""
     parts = []
     for base in config.STRATEGY3_SYMBOLS:
         p = config.strategy3_params(base)
         be = "+BE" if base.upper() in config.STRATEGY3_BE_SYMBOLS else ""
-        parts.append(f"{base} {p['timeframe']} {p['margin'] * p['leverage']:.0f} USDT×{p['leverage']}x{be}")
+        occ = " OCC" if p.get("engine") == "occ" else ""
+        parts.append(f"{base} {p['timeframe']} {p['margin'] * p['leverage']:.0f} "
+                     f"USDT×{p['leverage']}x{be}{occ} SL {p['sl_pct']:.1%}")
     return " · ".join(parts)
 
 
 def status_line() -> str:
     return (f"Execution: {mode_string()} | {_symbol_breakdown()} | "
-            f"score ≥{config.STRATEGY3_SCORE_TH} · ADX ≥{config.STRATEGY3_ADX_TH} | "
-            f"emergency SL {config.STRATEGY3_EMERGENCY_SL_PCT:.1%}")
+            f"flag-flip: score ≥{config.STRATEGY3_SCORE_TH} · ADX ≥{config.STRATEGY3_ADX_TH} | "
+            f"OCC: SMMA{config.STRATEGY3_OCC_MA_LEN} ×{config.STRATEGY3_OCC_RES_MULT} res cross")
 
 
 def main() -> None:
     mode = mode_string()
-    print(f"[strategy3] Vegas Flag Flip starting — {_symbol_breakdown()} "
-          f"(Binance charts → Bybit orders) · score ≥{config.STRATEGY3_SCORE_TH} "
+    print(f"[strategy3] starting — {_symbol_breakdown()} "
+          f"(Binance charts → Bybit orders) · flag-flip score ≥{config.STRATEGY3_SCORE_TH} "
           f"· ADX ≥{config.STRATEGY3_ADX_TH} · mode: {mode}")
     client = SafeBinanceClient(
         min_rest_interval=float(os.getenv("STRATEGY3_REST_INTERVAL", "0.35")),

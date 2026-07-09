@@ -55,6 +55,9 @@ def _state(**per_symbol):
 def test_best_s3_trade_armed_ranks_first(monkeypatch):
     import strategy3_scanner as S3
     monkeypatch.setattr(config, "STRATEGY3_SYMBOLS", ["BTC", "SOL"])
+    # flag-flip ranking mechanics — pin the engine; the real .env may route
+    # SOL to the OCC engine, which takes a different note/ranking branch
+    monkeypatch.setattr(config, "STRATEGY3_OCC_SYMBOLS", [])
     monkeypatch.setattr(S3, "load_state", lambda: {
         "BTC/USDT:USDT": {"last_score": 50, "last_vegas": 0, "pos_dir": None,
                            "last_flag": None, "consumed": True},

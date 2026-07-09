@@ -438,7 +438,8 @@ STRATEGY2_LIVE_TOP_N = int(os.getenv("STRATEGY2_LIVE_TOP_N", str(TOP_SYMBOL_LIMI
 # user's BYBIT account (BYBIT_API_KEY / BYBIT_API_SECRET in .env) — a SEPARATE
 # account from the Binance one S1/S2 drive, so the bot.lock / one-Binance-
 # engine rules do not apply to it.
-# Mirrors TV_strategy.pine: a TV.pine confluence flag sets the direction, the
+# Flag-flip engine mirrors pine/TV_strategy_XAUT_30min.pine: a TV.pine
+# confluence flag sets the direction, the
 # Vegas line (SMA5 of EMA200) must agree before entry, and the position is held
 # until the OPPOSITE flag appears, then flipped. Manual closes on Bybit are
 # respected — the scanner stands down for that symbol until the NEXT flag.
@@ -485,13 +486,52 @@ STRATEGY3_BE_SYMBOLS = [s.strip().upper() for s in
 STRATEGY3_BE_TRIGGER_PCT = float(os.getenv("STRATEGY3_BE_TRIGGER_PCT", "0.0075"))
 STRATEGY3_BE_OFFSET_PCT = float(os.getenv("STRATEGY3_BE_OFFSET_PCT", "0.0015"))
 
+# ── Strategy 3 second engine: "OCC" (Open Close Cross) ──────────────────────
+# Port of pine/TV_strategy_ETH_SOL_30min.pine (JustUncleL's "Open Close Cross
+# Strategy R5.1", default settings): an SMMA(MA_LEN) of the OPEN series and of
+# the CLOSE series is computed on an alternate resolution = chart timeframe ×
+# RES_MULT (30m × 3 = 90m bars, resampled from Binance 30m candles); when the
+# close-MA crosses OVER the open-MA → flip long, crosses UNDER → flip short.
+# Stop-and-reverse: always in the market after the first cross, one entry per
+# cross (a stop-out or manual close stands down until the NEXT cross).
+# ⚠ The TradingView original REPAINTS with these defaults (security() with
+# lookahead) — this port acts only on CLOSED 90m data, so live entries lag the
+# too-good default-settings backtest. The pine has NO stop; live adds the
+# emergency SL below as pure disaster protection (not part of the strategy).
+# Symbols listed here are traded with the OCC engine INSTEAD of the flag-flip
+# rules (they must also be in STRATEGY3_SYMBOLS to be scanned at all).
+STRATEGY3_OCC_SYMBOLS = [s.strip().upper() for s in
+                         os.getenv("STRATEGY3_OCC_SYMBOLS", "").split(",") if s.strip()]
+STRATEGY3_OCC_TIMEFRAME = os.getenv("STRATEGY3_OCC_TIMEFRAME", "30m")
+STRATEGY3_OCC_RES_MULT = int(os.getenv("STRATEGY3_OCC_RES_MULT", "3"))
+STRATEGY3_OCC_MA_LEN = int(os.getenv("STRATEGY3_OCC_MA_LEN", "8"))
+STRATEGY3_OCC_MARGIN_USDT = float(os.getenv("STRATEGY3_OCC_MARGIN_USDT", "50"))
+STRATEGY3_OCC_LEVERAGE = int(os.getenv("STRATEGY3_OCC_LEVERAGE", "10"))
+STRATEGY3_OCC_SL_PCT = float(os.getenv("STRATEGY3_OCC_SL_PCT", "0.04"))
+
 
 def strategy3_params(base: str) -> dict:
-    """Effective {timeframe, margin, leverage} for one Strategy 3 symbol —
-    STRATEGY3_OVERRIDES wins per key, otherwise the shared defaults above."""
-    ov = STRATEGY3_OVERRIDES.get(base.upper(), {})
+    """Effective per-symbol settings for one Strategy 3 symbol. OCC symbols get
+    the whole OCC block; everything else runs the flag-flip engine with
+    STRATEGY3_OVERRIDES winning per key over the shared defaults above.
+    'sl_pct' is the emergency stop for THIS symbol (the OCC pair trades at
+    lower leverage with a wider disaster stop than the flag-flip symbols)."""
+    b = base.upper()
+    if b in STRATEGY3_OCC_SYMBOLS:
+        return {
+            "engine": "occ",
+            "timeframe": STRATEGY3_OCC_TIMEFRAME,
+            "margin": STRATEGY3_OCC_MARGIN_USDT,
+            "leverage": STRATEGY3_OCC_LEVERAGE,
+            "sl_pct": STRATEGY3_OCC_SL_PCT,
+            "res_mult": STRATEGY3_OCC_RES_MULT,
+            "ma_len": STRATEGY3_OCC_MA_LEN,
+        }
+    ov = STRATEGY3_OVERRIDES.get(b, {})
     return {
+        "engine": "flagflip",
         "timeframe": ov.get("timeframe", STRATEGY3_TIMEFRAME),
         "margin": ov.get("margin", STRATEGY3_MARGIN_USDT),
         "leverage": ov.get("leverage", STRATEGY3_LEVERAGE),
+        "sl_pct": ov.get("sl_pct", STRATEGY3_EMERGENCY_SL_PCT),
     }

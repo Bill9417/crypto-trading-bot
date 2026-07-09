@@ -11,19 +11,16 @@
 //  Position is held until the OPPOSITE flag appears, then flipped (the new
 //  entry again waits for the Vegas color to agree).
 //
-//  Designed for SOL perps on the 15m chart (BINANCE:SOLUSDT.P) and XAUT
-//  (BINANCE:XAUTUSDT.P) on the 30m chart — gold trends far slower than the
-//  cryptos here. HYPE 15m uses the anti-chop TV_strategy_V2.pine instead.
-//  The bot reads Binance candles and orders on Bybit. Apply separately on each
-//  symbol's OWN chart/timeframe — an orange warning shows if it doesn't match.
+//  This file is for XAUT (gold) ONLY — BINANCE:XAUTUSDT.P on the 30m chart
+//  (gold trends far slower than the cryptos, hence 30m not 15m). SOL and
+//  HYPE will get their own script files later; HYPE testing currently uses
+//  TV_strategy_HYPE_V3.pine. The bot reads Binance candles, orders on Bybit.
+//  An orange warning shows if the chart timeframe isn't 30m.
 //
-//  Sizing DIFFERS by symbol — set "Order size" in the strategy's Properties
-//  tab per chart: SOL = 650 USDT (13 USDT margin × 50x), XAUT = 3000 USDT
-//  (60 USDT margin × 50x). The default below (650) matches SOL — change it
-//  to 3000 before testing on XAUTUSDT.
-//  margin_long/short = 2% (50x) for both. Bybit taker fee 0.055%.
-//  Emergency SL 1.5% == STRATEGY3_EMERGENCY_SL_PCT for both (at 50x,
-//  liquidation is ~2% away, so the stop must sit inside it).
+//  Sizing matches the live bot: order size 3000 USDT (60 USDT margin × 50x,
+//  the default below). margin_long/short = 2% (50x). Bybit taker fee 0.055%.
+//  Emergency SL 1.5% == STRATEGY3_EMERGENCY_SL_PCT (at 50x, liquidation is
+//  ~2% away, so the stop must sit inside it).
 //
 //  Fidelity note vs TV.pine: everything is ported 1:1 EXCEPT the trendline
 //  factor (weight 5), which is held neutral — same as the bot's Python port —
@@ -31,9 +28,9 @@
 //  score can therefore differ from the chart panel by at most ±2.5.
 // ════════════════════════════════════════════════════════════════════════════
 //@version=6
-strategy("Vegas Flag Flip — SOL 15m + XAUT 30m", overlay=true,
+strategy("Vegas Flag Flip — XAUT 30m", overlay=true,
      initial_capital=250,
-     default_qty_type=strategy.cash, default_qty_value=650,
+     default_qty_type=strategy.cash, default_qty_value=3000,
      margin_long=2, margin_short=2,
      commission_type=strategy.commission.percent, commission_value=0.055,
      slippage=2, process_orders_on_close=true,
@@ -240,9 +237,8 @@ plotshape(shortFlag, "Short Flag", shape.triangledown, location.abovebar, color.
 waitingVegas = requireVegas and ((pendingDir == 1 and fVegas != 1 and strategy.position_size <= 0) or (pendingDir == -1 and fVegas != -1 and strategy.position_size >= 0))
 plotchar(waitingVegas, "Waiting for Vegas", "⏳", location.bottom, color.new(color.yellow, 30), size=size.tiny)
 
-// timeframe reminder — 15m for SOL, 30m for XAUT (gold trends slower)
-expectedTf = str.contains(syminfo.ticker, "XAUT") ? "30" : "15"
+// timeframe reminder — this script is XAUT 30m only
 var table warnTbl = table.new(position.bottom_right, 1, 1)
-if barstate.islast and timeframe.period != expectedTf
-    table.cell(warnTbl, 0, 0, "⚠ this symbol expects the " + expectedTf + "m chart (current: " + timeframe.period + ")",
+if barstate.islast and timeframe.period != "30"
+    table.cell(warnTbl, 0, 0, "⚠ XAUT expects the 30m chart (current: " + timeframe.period + ")",
          text_color=color.orange, bgcolor=color.new(color.black, 20), text_size=size.small)

@@ -120,17 +120,41 @@ def test_strategy3_params_per_symbol_override(monkeypatch):
     monkeypatch.setattr(S3.config, "STRATEGY3_TIMEFRAME", "15m")
     monkeypatch.setattr(S3.config, "STRATEGY3_MARGIN_USDT", 30.0)
     monkeypatch.setattr(S3.config, "STRATEGY3_LEVERAGE", 50)
+    monkeypatch.setattr(S3.config, "STRATEGY3_EMERGENCY_SL_PCT", 0.015)
+    monkeypatch.setattr(S3.config, "STRATEGY3_OCC_SYMBOLS", [])
     monkeypatch.setattr(S3.config, "STRATEGY3_OVERRIDES",
                         {"XAUT": {"timeframe": "30m", "margin": 60.0}})
     xaut = S3.config.strategy3_params("XAUT")
     sol = S3.config.strategy3_params("SOL")
-    assert xaut == {"timeframe": "30m", "margin": 60.0, "leverage": 50}
-    assert sol == {"timeframe": "15m", "margin": 30.0, "leverage": 50}
+    assert xaut == {"engine": "flagflip", "timeframe": "30m", "margin": 60.0,
+                    "leverage": 50, "sl_pct": 0.015}
+    assert sol == {"engine": "flagflip", "timeframe": "15m", "margin": 30.0,
+                   "leverage": 50, "sl_pct": 0.015}
     # worst-case total margin lock for the full 4-coin list (a regression a
     # careless merge bug in strategy3_params could easily break silently)
     total = sum(S3.config.strategy3_params(b)["margin"]
                 for b in ["BTC", "SOL", "HYPE", "XAUT"])
     assert total == 150.0
+
+
+def test_strategy3_params_occ_engine(monkeypatch):
+    """Symbols in STRATEGY3_OCC_SYMBOLS get the whole OCC block (engine,
+    timeframe, sizing, their OWN wider stop) regardless of the flag-flip
+    overrides; other symbols keep the flag-flip params untouched."""
+    monkeypatch.setattr(S3.config, "STRATEGY3_OCC_SYMBOLS", ["ETH", "SOL"])
+    monkeypatch.setattr(S3.config, "STRATEGY3_OCC_TIMEFRAME", "30m")
+    monkeypatch.setattr(S3.config, "STRATEGY3_OCC_RES_MULT", 3)
+    monkeypatch.setattr(S3.config, "STRATEGY3_OCC_MA_LEN", 8)
+    monkeypatch.setattr(S3.config, "STRATEGY3_OCC_MARGIN_USDT", 50.0)
+    monkeypatch.setattr(S3.config, "STRATEGY3_OCC_LEVERAGE", 10)
+    monkeypatch.setattr(S3.config, "STRATEGY3_OCC_SL_PCT", 0.04)
+    monkeypatch.setattr(S3.config, "STRATEGY3_EMERGENCY_SL_PCT", 0.015)
+    eth = S3.config.strategy3_params("ETH")
+    assert eth == {"engine": "occ", "timeframe": "30m", "margin": 50.0,
+                   "leverage": 10, "sl_pct": 0.04, "res_mult": 3, "ma_len": 8}
+    assert eth["margin"] * eth["leverage"] == 500.0     # the user's order value
+    assert S3.config.strategy3_params("XAUT")["engine"] == "flagflip"
+    assert S3.config.strategy3_params("XAUT")["sl_pct"] == 0.015
 
 
 def test_status_line_and_banner_mention_every_symbol(monkeypatch):
@@ -500,12 +524,17 @@ def test_guardian_rearms_at_breakeven_level_once_armed(monkeypatch):
     S3.reconcile_position("HYPE/USDT:USDT", st)
     assert len(ensured) == 1
     assert abs(ensured[0] - 40.0 * 1.0015) < 1e-9
-    # …but before the BE jump, the guardian passes None (wide emergency stop)
+    # …but before the BE jump, the guardian re-arms at THIS symbol's own
+    # emergency distance (per-symbol sl_pct — the OCC pair's stop differs from
+    # the flag-flip global, so None/"derive from the global" would be wrong)
     ensured.clear()
     st = {"pos_dir": "long", "be_armed": False, "consumed": True}
     monkeypatch.setattr(S3.config, "STRATEGY3_BE_TRIGGER_PCT", 9.9)  # keep BE untriggered
+    monkeypatch.setattr(S3.config, "STRATEGY3_EMERGENCY_SL_PCT", 0.015)
+    monkeypatch.setattr(S3.config, "STRATEGY3_OCC_SYMBOLS", [])
     S3.reconcile_position("HYPE/USDT:USDT", st)
-    assert ensured == [None]
+    assert len(ensured) == 1
+    assert abs(ensured[0] - 40.0 * 0.985) < 1e-9
 
 
 def test_position_gone_resets_breakeven(monkeypatch):
@@ -555,6 +584,9 @@ def test_strategy3_retry_gives_up_after_3_attempts(monkeypatch):
     monkeypatch.setattr(S3, "flag_on_last_bar", lambda ohlcv: (
         "long", {"score": 90, "vegas": 1, "msb": "bull", "price": 82.0, "insufficient": False}))
     monkeypatch.setattr(S3, "symbols", lambda: ["SOL/USDT:USDT"])
+    # pin the ENGINE too: this tests the flag-flip retry path, and the real
+    # .env may route SOL to the OCC engine (the usual preflight trap)
+    monkeypatch.setattr(S3.config, "STRATEGY3_OCC_SYMBOLS", [])
 
     state = {}
     client = FakeClient()

@@ -1,5 +1,6 @@
 """
-Strategy 3 — EXACT bar-by-bar Python port of TV_strategy.pine's signal chain.
+Strategy 3 — EXACT bar-by-bar Python port of the signal chain in
+pine/TV_strategy_XAUT_30min.pine (the flag-flip engine's chart twin).
 
 Every component is replicated 1:1 against the Pine script so the live bot and
 the TradingView backtest fire the SAME flags on the same candles:

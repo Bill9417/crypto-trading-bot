@@ -97,7 +97,7 @@
             <div class="stat"><div class="stat-label">Available</div><div class="stat-value num" id="s-avail">—</div><div class="stat-note">free margin</div></div>
             <div class="stat"><div class="stat-label">Unrealized P&L</div><div class="stat-value num" id="s-upnl">—</div><div class="stat-note">open positions</div></div>
             <div class="stat"><div class="stat-label">Open positions</div><div class="stat-value num" id="s-pos">—</div><div class="stat-note">of {{ cfg.symbols|length }} tradeable</div></div>
-            <div class="stat"><div class="stat-label">Mode</div><div class="stat-value" id="s-mode" style="font-size:.9rem;">—</div><div class="stat-note">score ≥{{ cfg.score_th }} · ADX ≥{{ cfg.adx_th }} · SL {{ (cfg.emergency_sl_pct*100)|round(1) }}%</div></div>
+            <div class="stat"><div class="stat-label">Mode</div><div class="stat-value" id="s-mode" style="font-size:.9rem;">—</div><div class="stat-note">flag-flip: score ≥{{ cfg.score_th }} · ADX ≥{{ cfg.adx_th }} · SL {{ (cfg.emergency_sl_pct*100)|round(1) }}% — OCC stop per card</div></div>
         </div>
 
         <div class="panel">
@@ -109,12 +109,19 @@
                 {% for s in cfg.symbols %}
                 <div class="sig-card">
                     <div class="sig-head"><span class="sig-sym">{{ s }}</span><span class="pill flat" id="sig-pos-{{ s }}">flat</span></div>
-                    <div class="sig-row"><span>Timeframe</span><b>{{ cfg.per_symbol[s].timeframe }}</b></div>
+                    <div class="sig-row"><span>Engine</span><b>{{ 'OCC 90m cross' if cfg.per_symbol[s].engine == 'occ' else 'Vegas flag flip' }}</b></div>
+                    <div class="sig-row"><span>Timeframe</span><b>{{ cfg.per_symbol[s].timeframe }}{{ ' → 90m' if cfg.per_symbol[s].engine == 'occ' else '' }}</b></div>
                     <div class="sig-row"><span>Size</span><b>{{ cfg.per_symbol[s].notional|round|int }} USDT × {{ cfg.per_symbol[s].leverage }}x</b></div>
+                    {% if cfg.per_symbol[s].engine == 'occ' %}
+                    <div class="sig-row"><span>Last cross</span><b id="sig-flag-{{ s }}">—</b></div>
+                    <div class="sig-row"><span>MA trend</span><b id="sig-trend-{{ s }}">—</b></div>
+                    <div class="sig-row"><span>Stop</span><b>{{ (cfg.per_symbol[s].sl_pct*100)|round(1) }}% disaster SL</b></div>
+                    {% else %}
                     <div class="sig-row"><span>Armed flag</span><b id="sig-flag-{{ s }}">—</b></div>
                     <div class="sig-row"><span>Score</span><b id="sig-score-{{ s }}">—</b></div>
                     <div class="sig-row"><span>Vegas</span><b id="sig-vegas-{{ s }}">—</b></div>
                     <div class="sig-row"><span>MSB trend</span><b id="sig-msb-{{ s }}">—</b></div>
+                    {% endif %}
                     <div class="sig-row"><span>Last closed bar</span><b id="sig-seen-{{ s }}">—</b></div>
                 </div>
                 {% endfor %}
@@ -210,17 +217,21 @@
         }
 
         function renderStatus(rows){
+            // OCC cards have trend instead of score/vegas/msb — set() skips
+            // whichever elements a card doesn't render.
+            const set = (id, fn)=>{ const el = document.getElementById(id); if(el) fn(el); };
             (rows||[]).forEach(s=>{
                 const posEl = document.getElementById('sig-pos-'+s.base);
                 if(!posEl) return;
                 const dir = (s.pos_dir||'').toUpperCase();
                 posEl.className = 'pill ' + (dir==='LONG'?'long':dir==='SHORT'?'short':'flat');
                 posEl.textContent = dir || 'flat';
-                document.getElementById('sig-flag-'+s.base).textContent = s.last_flag ? s.last_flag.toUpperCase() : '—';
-                document.getElementById('sig-score-'+s.base).textContent = s.score!=null ? Number(s.score).toFixed(1)+'/100' : '—';
-                document.getElementById('sig-vegas-'+s.base).innerHTML = s.vegas!=null ? vegasTxt(s.vegas) : '—';
-                document.getElementById('sig-msb-'+s.base).textContent = s.msb || '—';
-                document.getElementById('sig-seen-'+s.base).textContent = ago(s.seen);
+                set('sig-flag-'+s.base,  el=>{ el.textContent = s.last_flag ? s.last_flag.toUpperCase() : '—'; });
+                set('sig-score-'+s.base, el=>{ el.textContent = s.score!=null ? Number(s.score).toFixed(1)+'/100' : '—'; });
+                set('sig-vegas-'+s.base, el=>{ el.innerHTML = s.vegas!=null ? vegasTxt(s.vegas) : '—'; });
+                set('sig-msb-'+s.base,   el=>{ el.textContent = s.msb || '—'; });
+                set('sig-trend-'+s.base, el=>{ el.textContent = s.trend ? (s.trend==='up'?'up ▲':s.trend==='down'?'down ▼':'flat —') : '—'; });
+                set('sig-seen-'+s.base,  el=>{ el.textContent = ago(s.seen); });
             });
         }
 
