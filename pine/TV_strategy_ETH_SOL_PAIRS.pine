@@ -1,0 +1,108 @@
+// ════════════════════════════════════════════════════════════════════════════
+//  ETH/SOL PAIRS HEDGE — market-neutral spread mean-reversion (z-score)
+//
+//  Built 2026-07-09 to REPLACE the repainting "Open Close Cross" script.
+//  This one CANNOT repaint by construction: it uses no security() calls at
+//  all — it runs directly on a RATIO chart and acts only on closed bars.
+//
+//  ── HOW TO USE ──────────────────────────────────────────────────────────
+//  1. In TradingView's symbol box type exactly:
+//         BINANCE:ETHUSDT.P/BINANCE:SOLUSDT.P
+//     (a "spread chart": the candles are ETH's price divided by SOL's).
+//  2. Set the chart timeframe to 2h (the default lookback is tuned for it).
+//  3. Apply this strategy. Order size 500 = 500 USDT PER LEG.
+//
+//  ── WHAT A TRADE MEANS ON A REAL ACCOUNT ────────────────────────────────
+//  LONG the spread  = buy 500 USDT of ETH  + short 500 USDT of SOL
+//  SHORT the spread = short 500 USDT of ETH + buy 500 USDT of SOL
+//  Both legs together are (almost) immune to the whole market pumping or
+//  dumping — you profit only if ETH strengthens/weakens RELATIVE to SOL.
+//  That is the hedge. Commission here is set to 0.11% per fill = the taker
+//  fee of BOTH legs (2 × 0.055%), so the backtest pays honest costs.
+//
+//  ── THE RULES ───────────────────────────────────────────────────────────
+//  z = how stretched the (log) ETH/SOL ratio is vs its own last `len` bars,
+//  measured in standard deviations.
+//    · z ≤ −entryZ → ratio unusually LOW  → LONG spread (ETH cheap vs SOL)
+//    · z ≥ +entryZ → ratio unusually HIGH → SHORT spread
+//    · take profit when z comes back to ±exitZ (the stretch has closed)
+//    · hard stop if z keeps stretching to ±stopZ — the pair is DECOUPLING
+//      (one coin re-rating vs the other); without this stop a decoupling
+//      trade has no floor. This is the pair-trader's biggest risk.
+//
+//  ── HONEST BACKTEST RESULTS (real Binance data, 365 days to 2026-07-09,
+//     500 USDT/leg, all fees, simulated bar-by-bar outside TV first) ──────
+//     2h chart, len 100:  entry 1.5 → +70 net (81 trades, 73% win)
+//                         entry 2.0 → +33 net (52 trades, 69% win)
+//                         entry 2.5 → +113 net (40 trades, 68% win)
+//     BUT split the year into thirds and the LAST ~4 months were NEGATIVE
+//     in EVERY tested configuration (all lookbacks, all thresholds, 30m
+//     through 8h, and ETH/BTC too): the spread has been TRENDING, not
+//     mean-reverting, since ~Mar 2026. Best case is ~+35–110 USDT/year on
+//     1000 USDT of exposure with ~−80 drawdowns — this is NOT "stable
+//     earnings", and right now the regime is against it. Paper-trade it;
+//     do not size up on the full-year number.
+//     Funding fees are NOT modeled (two perp legs pay/receive funding —
+//     roughly cancels on average, but not always).
+//
+//  This script is NOT connected to the live bot. The bot's OCC engine for
+//  ETH/SOL is switched off; wiring a two-leg pairs executor would be a new,
+//  separate build — ask explicitly if the paper results ever justify it.
+// ════════════════════════════════════════════════════════════════════════════
+//@version=6
+strategy("ETH/SOL Pairs Hedge — z-score spread", overlay=false,
+     initial_capital=250,
+     default_qty_type=strategy.cash, default_qty_value=500,
+     commission_type=strategy.commission.percent, commission_value=0.11,
+     slippage=2, process_orders_on_close=true)
+
+// ── inputs ───────────────────────────────────────────────────────────────
+len    = input.int(100, "Z-score lookback (bars)", minval=20,
+     tooltip="How many bars define 'normal' for the ratio. 100 × 2h ≈ 8 days — the most robust region across every timeframe tested.")
+entryZ = input.float(2.0, "Entry |z|", minval=0.5, step=0.25,
+     tooltip="Enter when the ratio is this many standard deviations from its mean. Higher = fewer, better-quality trades.")
+exitZ  = input.float(0.5, "Exit |z| (take profit)", minval=0.0, step=0.25,
+     tooltip="Close when the stretch has reverted to this level. 0 = wait for the full mean.")
+stopZ  = input.float(4.0, "Stop |z| (decoupling)", minval=2.0, step=0.5,
+     tooltip="Hard stop if the spread keeps stretching AGAINST the position — protects against the two coins permanently decoupling.")
+useStop = input.bool(true, "Use decoupling stop", tooltip="OFF looks better in backtests but leaves unlimited tail risk. Keep it ON with real money.")
+
+// ── z-score of the log ratio (chart close IS the ETH/SOL ratio) ──────────
+lr    = math.log(close)
+mean  = ta.sma(lr, len)
+sd    = ta.stdev(lr, len)
+z     = sd > 0 ? (lr - mean) / sd : 0.0
+
+// ── trade logic — closed bars only, entries only from flat ───────────────
+if barstate.isconfirmed or barstate.ishistory
+    if strategy.position_size > 0                    // LONG spread open
+        if z >= -exitZ
+            strategy.close("LongSpread", comment="reverted")
+        else if useStop and z <= -stopZ
+            strategy.close("LongSpread", comment="DECOUPLING STOP")
+    else if strategy.position_size < 0               // SHORT spread open
+        if z <= exitZ
+            strategy.close("ShortSpread", comment="reverted")
+        else if useStop and z >= stopZ
+            strategy.close("ShortSpread", comment="DECOUPLING STOP")
+    else
+        if z <= -entryZ
+            strategy.entry("LongSpread", strategy.long)
+        else if z >= entryZ
+            strategy.entry("ShortSpread", strategy.short)
+
+// ── visuals: the z-score pane ────────────────────────────────────────────
+plot(z, "z-score", color=z > 0 ? color.new(color.red, 0) : color.new(color.teal, 0), linewidth=2)
+hline(0, "mean", color=color.gray)
+hEntryU = hline(entryZ,  "entry+", color=color.new(color.orange, 40))
+hEntryL = hline(-entryZ, "entry-", color=color.new(color.orange, 40))
+hline(stopZ,  "stop+", color=color.new(color.red, 30), linestyle=hline.style_dotted)
+hline(-stopZ, "stop-", color=color.new(color.red, 30), linestyle=hline.style_dotted)
+fill(hEntryU, hEntryL, color=color.new(color.gray, 92))
+
+// warn if this isn't a ratio chart — the whole design assumes A/B candles
+var table warnTbl = table.new(position.bottom_right, 1, 1)
+if barstate.islast and not str.contains(syminfo.ticker, "/")
+    table.cell(warnTbl, 0, 0,
+         "⚠ open the chart as BINANCE:ETHUSDT.P/BINANCE:SOLUSDT.P — this strategy trades the RATIO",
+         text_color=color.orange, bgcolor=color.new(color.black, 20), text_size=size.small)

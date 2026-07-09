@@ -19,8 +19,8 @@
 # S3 (strategy3_scanner.py) runs TWO engines per symbol (config.STRATEGY3_SYMBOLS
 # / config.strategy3_params): "flagflip" — TV.pine flag + Vegas-line agreement,
 # flip on the opposite flag (XAUT 30m; pine/TV_strategy_XAUT_30min.pine) — and
-# "occ" — SMMA8 open/close cross on 90m buckets, stop-and-reverse (ETH+SOL;
-# pine/TV_strategy_ETH_SOL_30min.pine, STRATEGY3_OCC_* in app/.env).
+# "occ" — SMMA8 open/close cross on 90m buckets, stop-and-reverse (currently
+# unused; STRATEGY3_OCC_* in app/.env routes symbols to it).
 # Signals from Binance charts, orders on Bybit.
 #
 # Runs the test suite first (the safety gate). Bypass with SKIP_TESTS=1.

@@ -1,8 +1,11 @@
 """
 Strategy 3 — OCC ("Open Close Cross") signal engine.
 
-Python port of pine/TV_strategy_ETH_SOL_30min.pine — JustUncleL's
-"Open Close Cross Strategy R5.1" with its DEFAULT settings:
+Python port of JustUncleL's "Open Close Cross Strategy R5.1" with its DEFAULT
+settings (the source pine was deleted 2026-07-09 — the user rejected it after
+its 78% TV win rate proved to be lookahead repainting; recover it from git
+history if ever needed). The engine stays for reference but no symbol is
+routed to it. Ported settings:
 
     MA type   SMMA (Wilder smoothing, SMA-seeded)      basisType = "SMMA"
     MA length 8                                        basisLen  = 8

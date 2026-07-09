@@ -7,13 +7,13 @@ TWO ENGINES share this scanner, its executor, guardian and Telegram plumbing:
 
   • "flagflip" (default) — the Vegas Flag Flip below, the Python twin of
     pine/TV_strategy_XAUT_30min.pine. XAUT (gold, 30m) runs this.
-  • "occ" (config.STRATEGY3_OCC_SYMBOLS — ETH+SOL) — JustUncleL's "Open Close
+  • "occ" (config.STRATEGY3_OCC_SYMBOLS) — JustUncleL's "Open Close
     Cross": SMMA8 of the open vs close series on 90m buckets resampled from
     30m candles; close-MA crossing over the open-MA flips long, under flips
     short. Stop-and-reverse, one entry per cross; signals from
-    strategy3_occ.py, the honest non-repainting port of
-    pine/TV_strategy_ETH_SOL_30min.pine (the TV original repaints with
-    default settings — live entries here fire on CLOSED 90m data only).
+    strategy3_occ.py, the honest non-repainting port (the TV original
+    repaints with default settings — its pine was deleted 2026-07-09; this
+    engine stays for reference and no symbol routes to it now).
 
 The flag-flip rules, exactly as on the chart:
 
@@ -30,8 +30,8 @@ The flag-flip rules, exactly as on the chart:
   wide EMERGENCY stop (config.STRATEGY3_EMERGENCY_SL_PCT) rests on Bybit
   purely as crash protection.
 
-  V2 ANTI-CHOP (config.STRATEGY3_BE_SYMBOLS — HYPE by default, mirrors
-  TV_strategy_V2.pine): once the position is BE_TRIGGER_PCT in profit, the
+  V2 ANTI-CHOP (config.STRATEGY3_BE_SYMBOLS — HYPE by default; its pine test
+  script was retired 2026-07-09): once the position is BE_TRIGGER_PCT in profit, the
   stop jumps to entry ± BE_OFFSET_PCT (≈ fees), so sideways chop that pokes
   into profit and reverses scratches at ~0 instead of −1.5%. Winners are NOT
   capped — the exit is still the opposite flag. SOL/XAUT keep the plain rules.

@@ -1,0 +1,73 @@
+// ════════════════════════════════════════════════════════════════════════════
+//  ETH 14-DAY MOMENTUM — 2h chart, one rule, no tricks
+//
+//  Built 2026-07-09 on the user's request for a SIMPLE, honest, ETH-only
+//  system. This is textbook time-series momentum — one parameter:
+//
+//      at every CLOSED 2h bar:
+//        close ABOVE the close 14 days ago (168 bars)  → be LONG
+//        close BELOW it                                → be SHORT
+//      that's the whole strategy (stop-and-reverse, always in the market).
+//
+//  No security(), no lookahead, no repainting — the reference value is just
+//  this chart's own close 168 bars back, and orders fire on bar close.
+//  Commission 0.055% (Bybit taker) + slippage are charged in the backtest.
+//
+//  ── HONEST RESULTS — real Binance data, 2 years to 2026-07-09, 500 USDT
+//     notional, all fees (simulated bar-by-bar outside TV first) ──────────
+//    N=168 (14d): net +770 · max drawdown −278 · 258 trades · win 34%
+//                 ALL 8 quarters positive (+27 … +228 each)
+//    Same 14-day window on 4h bars: +708, 6/8 quarters — the WINDOW is the
+//    real effect, not a lucky bar count.
+//    BUT the neighbors are weaker — the fair expectation, not the headline:
+//      N=120 +188 · N=144 +187 · N=156 +155 · N=180 −8 · N=192 +269
+//    Read that as: "14-day-ish ETH momentum made roughly +150…+770 per
+//    2 years on 500 USDT notional, with −300…−500 drawdowns along the way."
+//    Win rate is ~30%: MOST trades lose small; a few big trend rides pay
+//    for everything. Expect losing streaks of 5-10 trades — that is normal
+//    behavior, not breakage. Not "stable earnings"; nothing simple is.
+//    Funding fees are NOT modeled (perps pay/receive every 8h; roughly
+//    cancels across long/short episodes but not guaranteed).
+//
+//  ── PRACTICAL NOTES ─────────────────────────────────────────────────────
+//  · Chart: BINANCE:ETHUSDT.P (or Bybit ETHUSDT.P — same picture), 2h.
+//  · Order size 500 = 500 USDT notional, matching the tested numbers.
+//  · Trades flip roughly every ~3 days on average.
+//  · NOT connected to the live bot. If TradingView testing convinces you,
+//    porting it to the Bybit bot is a separate, explicit request.
+// ════════════════════════════════════════════════════════════════════════════
+//@version=6
+strategy("ETH 14-Day Momentum — 2h", overlay=true,
+     initial_capital=250,
+     default_qty_type=strategy.cash, default_qty_value=500,
+     commission_type=strategy.commission.percent, commission_value=0.055,
+     slippage=2, process_orders_on_close=true,
+     max_labels_count=500)
+
+N        = input.int(168, "Momentum lookback (2h bars)", minval=12,
+     tooltip="168 × 2h = 14 days. The tested sweet spot; neighbors (120–192) were weaker but mostly still positive — if a small change here flips the result a lot, trust it less, not more.")
+longOnly = input.bool(false, "Long only (no shorts)",
+     tooltip="ON = go flat instead of short when momentum turns down. Tested WORSE over the last 2 years (+327 vs +770, only 3/8 quarters positive) — shorts earned their keep in the bear stretches — but it avoids short-side funding and liquidation risk.")
+
+ref = close[N]
+up  = close > ref
+dn  = close < ref
+
+if (barstate.isconfirmed or barstate.ishistory) and not na(ref)
+    if up and strategy.position_size <= 0
+        strategy.entry("Long", strategy.long)
+    if dn
+        if longOnly
+            strategy.close("Long", comment="momentum down")
+        else if strategy.position_size >= 0
+            strategy.entry("Short", strategy.short)
+
+// ── visuals ──────────────────────────────────────────────────────────────
+plot(ref, "close 14 days ago", color=up ? color.new(color.teal, 0) : color.new(color.red, 0), linewidth=2)
+bgcolor(strategy.position_size > 0 ? color.new(color.teal, 94) :
+     strategy.position_size < 0 ? color.new(color.red, 94) : na)
+
+var table warnTbl = table.new(position.bottom_right, 1, 1)
+if barstate.islast and timeframe.period != "120"
+    table.cell(warnTbl, 0, 0, "⚠ tested on the 2h chart (current: " + timeframe.period + ") — N=168 means 14 days ONLY on 2h",
+         text_color=color.orange, bgcolor=color.new(color.black, 20), text_size=size.small)

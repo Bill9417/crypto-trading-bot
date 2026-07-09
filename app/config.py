@@ -474,7 +474,8 @@ STRATEGY3_OVERRIDES = {
         "margin": float(os.getenv("STRATEGY3_XAUT_MARGIN_USDT", "3")),
     },
 }
-# V2 anti-chop break-even (TV_strategy_V2.pine, backtested 2026-07): once a
+# V2 anti-chop break-even (backtested 2026-07 on HYPE 15m; its pine test
+# script was retired in the 2026-07-09 pine/ cleanup): once a
 # position is BE_TRIGGER into profit, the resting Bybit stop jumps from the
 # wide emergency level to entry ± BE_OFFSET (≈ fees), so sideways chop that
 # pokes into profit and reverses scratches at ~0 instead of losing the full
@@ -487,7 +488,8 @@ STRATEGY3_BE_TRIGGER_PCT = float(os.getenv("STRATEGY3_BE_TRIGGER_PCT", "0.0075")
 STRATEGY3_BE_OFFSET_PCT = float(os.getenv("STRATEGY3_BE_OFFSET_PCT", "0.0015"))
 
 # ── Strategy 3 second engine: "OCC" (Open Close Cross) ──────────────────────
-# Port of pine/TV_strategy_ETH_SOL_30min.pine (JustUncleL's "Open Close Cross
+# Port of JustUncleL's "Open Close Cross (its pine was deleted 2026-07-09 —
+# the TV backtest repaints; engine kept for reference, no symbol uses it)
 # Strategy R5.1", default settings): an SMMA(MA_LEN) of the OPEN series and of
 # the CLOSE series is computed on an alternate resolution = chart timeframe ×
 # RES_MULT (30m × 3 = 90m bars, resampled from Binance 30m candles); when the
