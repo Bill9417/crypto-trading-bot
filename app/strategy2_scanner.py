@@ -23,7 +23,9 @@ import os
 import time
 
 import config
+import event_radar
 import executor
+import tech_news
 import strategy2_live as S2L
 import strategy2_meter as S2
 import telegram_utils
@@ -172,7 +174,7 @@ def _send_digest(sigs: list) -> None:
         lines.append("\n🔴 SHORT")
         lines += [f"  • {s['base']}  ·  {s['score']}/100  ·  {_fmt_price(s['price'])}" for s in shorts]
     try:
-        telegram_utils.send_message("\n".join(lines))
+        telegram_utils.send_message("\n".join(lines), channel="signals")
     except Exception as exc:  # noqa: BLE001 — a failed alert must never kill the loop
         print(f"[strategy2] digest send failed: {exc}")
 
@@ -256,7 +258,7 @@ def scan_once(client, recent: list, last_alert: dict, pending: list) -> list:
                             f"🎯 S2 HIGH CONVICTION · {direction.upper()} {sig['base']}\n"
                             f"score {sig['score']}/100 @ {_fmt_price(sig['price'])} ({TIMEFRAME})\n"
                             f"{sig['tv_url']}",
-                            force=True)
+                            force=True, channel="signals")
                     except Exception as exc:  # noqa: BLE001 — alert must never kill the sweep
                         print(f"[strategy2] HC alert failed {sym}: {exc}")
                 _write(recent, total, i + 1)        # surface on the page immediately
@@ -322,6 +324,18 @@ def main() -> None:
             recent = scan_once(client, recent, last_alert, pending)
         except Exception as exc:  # noqa: BLE001 — keep the loop alive
             print(f"[strategy2] sweep error: {exc}")
+        # 🌍 Event Radar — big-event news / macro-calendar / BTC-ETH shock
+        # alerts into the group's Events topic, once per sweep.
+        try:
+            event_radar.tick(client)
+        except Exception as exc:  # noqa: BLE001 — radar must never kill the loop
+            print(f"[strategy2] event radar error: {exc}")
+        # 💻 Tech digest — 6-hourly tech/AI headlines into the Tech topic
+        # (self-paced: tick() is a no-op until the cadence is due).
+        try:
+            tech_news.tick()
+        except Exception as exc:  # noqa: BLE001 — digest must never kill the loop
+            print(f"[strategy2] tech news error: {exc}")
         # Flush a single grouped Telegram digest on a clean DIGEST_SEC cadence
         # (default every 30 min). Silent when nothing new fired in the window.
         if time.time() - last_digest >= DIGEST_SEC:

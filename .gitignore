@@ -29,6 +29,8 @@ paper_state_*.json
 scan_results.json
 strategy2_signals.json
 strategy3_state.json
+event_radar_state.json
+tech_news_state.json
 
 # ── Large generated caches / data dumps ──
 ohlcv_cache.json

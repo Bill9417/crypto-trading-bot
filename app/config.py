@@ -75,6 +75,39 @@ CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
 # (Parsed inline — _env_bool is defined further down this file.)
 TELEGRAM_QUIET = os.getenv("TELEGRAM_QUIET", "true").strip().lower() in ("1", "true", "yes", "on")
 
+# ── Second bot: "the rest of auto messages" (2026-07-10) ──────────────────
+# The ORIGINAL bot (BOT_TOKEN/CHAT_ID above) is now the "signals" channel —
+# RSI-extreme alerts + every good-entry-chance card (S1 queued/filled, S2
+# high-conviction + digest). This SECOND bot carries everything else the bot
+# sends automatically: trade fills/closes, S3 (XAUT) live trade alerts,
+# naked-position safety, halts, startup/status notices. Leave the two vars
+# below empty and nothing changes — those messages keep following the old
+# TELEGRAM_QUIET/force rules on the signals bot. Fill them in (new bot from
+# @BotFather, chat id from api.telegram.org/bot<token>/getUpdates after you
+# message it once) and the split takes effect immediately, no restart logic
+# needed beyond the normal bot restart.
+ALERTS_BOT_TOKEN = os.getenv("TELEGRAM_ALERTS_BOT_TOKEN", "")
+ALERTS_CHAT_ID = os.getenv("TELEGRAM_ALERTS_CHAT_ID", "")
+
+# ── Topics group (2026-07-10) — supersedes the two-bot split above ────────
+# One forum-enabled Telegram group ("Wolfman_Group"), one bot (the original
+# signals bot), two topic threads inside it: "📊 Signals" and "🔔 Alerts".
+# When GROUP_CHAT_ID is set, send_message() posts here instead of the
+# two-bot setup — same category logic (signals vs alerts), just delivered as
+# threads in one group instead of two separate chats. Leave GROUP_CHAT_ID
+# empty and the two-bot (or single-bot) behaviour above still applies.
+TELEGRAM_GROUP_CHAT_ID = os.getenv("TELEGRAM_GROUP_CHAT_ID", "")
+TELEGRAM_SIGNALS_THREAD_ID = os.getenv("TELEGRAM_SIGNALS_THREAD_ID", "")
+TELEGRAM_ALERTS_THREAD_ID = os.getenv("TELEGRAM_ALERTS_THREAD_ID", "")
+# Third topic thread: "🌍 Events" — big market-moving events (Fed/FOMC, war,
+# regulation, hacks, whale flows, BTC/ETH shock moves) from event_radar.py.
+# Empty = events fall back into the Alerts thread.
+TELEGRAM_EVENTS_THREAD_ID = os.getenv("TELEGRAM_EVENTS_THREAD_ID", "")
+# Fourth topic thread: "💻 Tech" — 6-hourly tech/AI news digest (HN,
+# TechCrunch, The Verge, Ars, Simon Willison) from tech_news.py.
+# Empty = tech digests fall back into the Alerts thread.
+TELEGRAM_TECH_THREAD_ID = os.getenv("TELEGRAM_TECH_THREAD_ID", "")
+
 # ── Live trading (Binance Futures USD-M) ──────────────────────────────────
 # SAFETY: LIVE_TRADING defaults to False. While False the bot is in DRY-RUN —
 # it logs the exact order it WOULD place (and sends a Telegram note) but sends

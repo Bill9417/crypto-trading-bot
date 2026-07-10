@@ -154,10 +154,10 @@ def dir_tag(direction: str) -> str:
     return "🟢 LONG" if str(direction).upper() == "LONG" else "🔴 SHORT"
 
 
-def notify(message: str, parse_mode: str = None) -> None:
+def notify(message: str, parse_mode: str = None, *, channel: str = "alerts") -> None:
     """Fire-and-forget Telegram alert; never let a notification break the bot."""
     try:
-        send_message(message, parse_mode=parse_mode)
+        send_message(message, parse_mode=parse_mode, channel=channel)
     except Exception as exc:  # noqa: BLE001
         print(f"Telegram notify failed: {exc}")
 
@@ -1047,6 +1047,7 @@ def activate_queued_signals():
                     footer="position active &amp; managed",
                 ),
                 parse_mode="HTML",
+                channel="signals",
             )
         else:
             print(f"Queue trigger skipped for {symbol}: {reason}")
@@ -1805,7 +1806,8 @@ def _send_rsi_extreme_alert(extremes: list) -> None:
 
     if not extremes:
         send_message(f"📊 RSI watch ({RSI_ALERT_TIMEFRAME}): no coins "
-                     f"≥{RSI_ALERT_HIGH:g} or ≤{RSI_ALERT_LOW:g} this scan.", force=True)
+                     f"≥{RSI_ALERT_HIGH:g} or ≤{RSI_ALERT_LOW:g} this scan.",
+                     force=True, channel="signals")
         return
 
     over = sorted([e for e in extremes if e["kind"] == "overbought"], key=lambda e: -e["rsi"])
@@ -1818,7 +1820,7 @@ def _send_rsi_extreme_alert(extremes: list) -> None:
         lines.append(f"\n🟢 Oversold (RSI ≤ {RSI_ALERT_LOW:g}):")
         lines += [f"  {e['symbol']}  ·  RSI {e['rsi']:.1f}  ·  {_price(e)}" for e in under]
     try:
-        send_message("\n".join(lines), force=True)   # RSI alert is whitelisted through quiet mode
+        send_message("\n".join(lines), force=True, channel="signals")   # signals bot, whitelisted through quiet mode
     except Exception as exc:  # noqa: BLE001 — an alert must never break the scan
         print(f"[bot] RSI-extreme alert send failed: {exc}")
 
@@ -2419,6 +2421,7 @@ def run_bot() -> None:
                                                 footer="⏳ waiting for entry",
                                             ),
                                             parse_mode="HTML",
+                                            channel="signals",
                                         )
                                 else:
                                     # No order on the book → don't queue, don't alert,

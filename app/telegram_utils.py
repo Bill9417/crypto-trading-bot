@@ -2,27 +2,60 @@ import time
 
 import requests
 
-from config import BOT_TOKEN, CHAT_ID, TELEGRAM_QUIET
+from config import (
+    ALERTS_BOT_TOKEN,
+    ALERTS_CHAT_ID,
+    BOT_TOKEN,
+    CHAT_ID,
+    TELEGRAM_ALERTS_THREAD_ID,
+    TELEGRAM_EVENTS_THREAD_ID,
+    TELEGRAM_GROUP_CHAT_ID,
+    TELEGRAM_QUIET,
+    TELEGRAM_SIGNALS_THREAD_ID,
+    TELEGRAM_TECH_THREAD_ID,
+)
+
+_TOPIC_THREAD = {
+    "signals": TELEGRAM_SIGNALS_THREAD_ID,
+    "alerts": TELEGRAM_ALERTS_THREAD_ID,
+    # 🌍 big-event radar / 💻 tech digest — share the Alerts thread until
+    # their own topics exist
+    "events": TELEGRAM_EVENTS_THREAD_ID or TELEGRAM_ALERTS_THREAD_ID,
+    "tech": TELEGRAM_TECH_THREAD_ID or TELEGRAM_ALERTS_THREAD_ID,
+}
 
 
-def send_message(message, parse_mode=None, *, force=False, retries=2):
-    if not BOT_TOKEN or not CHAT_ID:
-        print("Telegram disabled: missing TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID.")
+def send_message(message, parse_mode=None, *, force=False, retries=2, channel="alerts"):
+    """channel="signals" (RSI extremes + good-entry-chance cards) vs channel=
+    "alerts" (everything else the bot sends automatically). Three ways this can
+    be delivered, tried in order:
+      1. Topics group (TELEGRAM_GROUP_CHAT_ID + a thread id for this channel) —
+         one bot, one group, each channel its own topic thread. Always sends.
+      2. Two-bot split (ALERTS_BOT_TOKEN/CHAT_ID) — "alerts" goes to the
+         dedicated second bot. Always sends.
+      3. Fallback — everything goes to the original bot; "alerts" still obeys
+         the old TELEGRAM_QUIET/force rule so a fresh checkout with none of
+         the above configured behaves exactly as it always has.
+    """
+    thread_id = _TOPIC_THREAD.get(channel)
+    payload = {"text": message}
+
+    if TELEGRAM_GROUP_CHAT_ID and thread_id:
+        token, payload["chat_id"], payload["message_thread_id"] = (
+            BOT_TOKEN, TELEGRAM_GROUP_CHAT_ID, thread_id,
+        )
+    elif channel != "signals" and ALERTS_BOT_TOKEN and ALERTS_CHAT_ID:
+        token, payload["chat_id"] = ALERTS_BOT_TOKEN, ALERTS_CHAT_ID
+    else:
+        token, payload["chat_id"] = BOT_TOKEN, CHAT_ID
+        if channel != "signals" and TELEGRAM_QUIET and not force:
+            return False
+
+    if not token or not payload["chat_id"]:
+        print(f"Telegram disabled ({channel}): missing bot token or chat id.")
         return False
 
-    # Quiet mode: only explicitly-forced messages (the RSI extreme alert, the
-    # naked-position safety alarm, S3 live-engine trade alerts, pump-radar
-    # movers) are delivered. Everything else — S2 signal digests, order fills,
-    # startup/shutdown, halt notices — is muted here so no message source can
-    # leak through. Toggle with TELEGRAM_QUIET in .env.
-    if TELEGRAM_QUIET and not force:
-        return False
-
-    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
-    payload = {
-        "chat_id": CHAT_ID,
-        "text": message,
-    }
+    url = f"https://api.telegram.org/bot{token}/sendMessage"
     if parse_mode:
         payload["parse_mode"] = parse_mode
 
