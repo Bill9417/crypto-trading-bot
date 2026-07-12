@@ -105,3 +105,61 @@ def test_consecutive_sends_are_paced(monkeypatch):
     assert not sleeps                                 # first send: no wait
     assert T.send_message("two", force=True) is True  # same instant → must wait
     assert sleeps and abs(sleeps[0] - T.MIN_GAP_SEC) < 0.1
+
+
+# ── sent-message ledger + /clean ─────────────────────────────────────────────
+def test_send_message_records_message_id(monkeypatch, tmp_path):
+    calls, sleeps = [], []
+    _wire(monkeypatch,
+          [FakeResp(200, {"ok": True, "result": {"message_id": 55}})],
+          calls, sleeps)
+    monkeypatch.setattr(T, "SENT_LOG", str(tmp_path / "ledger.json"))
+    assert T.send_message("hi", force=True) is True
+    log = T._load_sent()
+    assert len(log) == 1
+    assert log[0]["mid"] == 55 and log[0]["chat"] == "-100123"
+
+
+NOW = 1_783_800_000.0     # 2026-07 — realistic epoch
+
+
+def _seed_ledger(monkeypatch, tmp_path):
+    monkeypatch.setattr(T, "SENT_LOG", str(tmp_path / "ledger.json"))
+    monkeypatch.setattr(T.time, "time", lambda: NOW)
+    monkeypatch.setattr(T.time, "sleep", lambda s: None)
+    T._save_sent([
+        {"ts": NOW - 1 * 3600, "chat": 1, "mid": 10, "bot": "main"},    # keep
+        {"ts": NOW - 30 * 3600, "chat": 1, "mid": 11, "bot": "main"},   # delete
+        {"ts": NOW - 60 * 3600, "chat": 1, "mid": 12, "bot": "main"},   # >48h
+    ])
+
+
+def test_clean_deletes_between_24h_and_48h_only(monkeypatch, tmp_path):
+    _seed_ledger(monkeypatch, tmp_path)
+    deletes = []
+
+    def fake_post(url, data=None, timeout=None):
+        deletes.append((url, data))
+        return FakeResp(200, {"ok": True, "result": True})
+
+    monkeypatch.setattr(T.requests, "post", fake_post)
+    summary = T.clean_old_messages(24)
+    assert summary == {"deleted": 1, "too_old": 1, "kept": 1, "failed": 0}
+    assert len(deletes) == 1
+    assert deletes[0][1]["message_id"] == 11
+    assert "deleteMessage" in deletes[0][0]
+    assert [e["mid"] for e in T._load_sent()] == [10]   # only the fresh one kept
+
+
+def test_clean_treats_400_as_gone_but_retries_5xx(monkeypatch, tmp_path):
+    _seed_ledger(monkeypatch, tmp_path)
+    monkeypatch.setattr(T.requests, "post",
+                        lambda *a, **k: FakeResp(400, {"ok": False}))
+    assert T.clean_old_messages(24)["deleted"] == 1     # gone is gone — dropped
+
+    _seed_ledger(monkeypatch, tmp_path)
+    monkeypatch.setattr(T.requests, "post",
+                        lambda *a, **k: FakeResp(500, {"ok": False}))
+    summary = T.clean_old_messages(24)
+    assert summary["failed"] == 1 and summary["deleted"] == 0
+    assert 11 in [e["mid"] for e in T._load_sent()]     # kept for next retry

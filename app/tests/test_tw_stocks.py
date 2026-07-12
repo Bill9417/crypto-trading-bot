@@ -153,3 +153,25 @@ def test_tw_command_no_state_yet(monkeypatch):
     import tg_commands
     monkeypatch.setattr(tw_stocks, "_load_state", lambda: {})
     assert "尚未有台股掃描" in tg_commands.handle("tw")
+
+
+def test_clean_command_parses_hours(monkeypatch):
+    import telegram_utils
+    import tg_commands
+    called = {}
+
+    def fake_clean(hours):
+        called["hours"] = hours
+        return {"deleted": 2, "too_old": 1, "kept": 3, "failed": 0}
+
+    monkeypatch.setattr(telegram_utils, "clean_old_messages", fake_clean)
+    out = tg_commands.handle("clean", "6")
+    assert called["hours"] == 6.0
+    assert "已刪除 2 則" in out and "超過48h" in out and "3 則未到時限" in out
+
+    tg_commands.handle("clean", "")          # default
+    assert called["hours"] == 24.0
+    tg_commands.handle("clean", "999")       # clamped under Telegram's 48h wall
+    assert called["hours"] == 47.0
+    tg_commands.handle("clean", "abc")       # junk → default
+    assert called["hours"] == 24.0

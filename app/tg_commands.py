@@ -13,6 +13,9 @@ the command was typed in:
     /tw         latest 台股 scan (TAIEX regime + TW50 setups)
     /liq        BTC/ETH liquidations: 24h tallies, recent prints with
                 prices, and the estimated 🧲 liquidation map
+    /clean [h]  delete the bot's messages older than h hours (default 24;
+                Telegram forbids deleting anything older than 48h, and only
+                messages sent since the ledger went live are tracked)
     /help       this list
 
 Safety: commands are only honoured from the configured group / owner chats —
@@ -182,13 +185,27 @@ HELP = ("🤖 Commands\n"
         "/report — today's account+market report now\n"
         "/tw — latest 台股 scan (大盤 regime + setups)\n"
         "/liq — BTC/ETH 清算: 24h統計 + 最近清算價 + 🧲清算地圖\n"
+        "/clean [小時] — 刪除 bot 超過N小時的舊訊息 (預設24, 上限47)\n"
         "/help — this list")
 
 
+def fmt_clean(summary: dict, hours: float) -> str:
+    lines = [f"🧹 清理完成 (超過 {hours:g}h 的訊息)",
+             f"已刪除 {summary['deleted']} 則"]
+    if summary["too_old"]:
+        lines.append(f"{summary['too_old']} 則超過48h — Telegram 不允許 bot 刪除，"
+                     f"只能手動清")
+    if summary["failed"]:
+        lines.append(f"{summary['failed']} 則刪除失敗 (下次 /clean 會重試)")
+    lines.append(f"{summary['kept']} 則未到時限，保留")
+    lines.append("(只刪有記錄的訊息 — 此功能上線後 bot 發的訊息才有記錄)")
+    return "\n".join(lines)
+
+
 # ── command dispatch ─────────────────────────────────────────────────────────
-def handle(cmd: str) -> str:
-    """Command name → reply text. Import-inside so one broken dependency
-    degrades that command, not the whole bot."""
+def handle(cmd: str, args: str = "") -> str:
+    """Command name (+ raw args) → reply text. Import-inside so one broken
+    dependency degrades that command, not the whole bot."""
     if cmd in ("winrate", "stats", "wr"):
         import executor
         import strategy3_exec
@@ -221,6 +238,12 @@ def handle(cmd: str) -> str:
         st = tw_stocks._load_state()
         return (st.get("last_digest_text")
                 or "尚未有台股掃描 — 每個交易日 14:00 (台北) 自動發送。")
+    if cmd in ("clean", "clear", "purge"):
+        try:
+            hours = min(max(float(args), 1.0), 47.0) if args.strip() else 24.0
+        except ValueError:
+            hours = 24.0
+        return fmt_clean(telegram_utils.clean_old_messages(hours), hours)
     if cmd in ("help", "start"):
         return HELP
     return None                                   # unknown command → stay silent
@@ -258,6 +281,12 @@ def _reply(chat_id, thread_id, text) -> bool:
                     wait = 5.0
                 time.sleep(min(wait + 0.5, 35.0))
                 continue
+            if r.ok:
+                try:
+                    mid = (r.json().get("result") or {}).get("message_id")
+                except Exception:  # noqa: BLE001
+                    mid = None
+                telegram_utils._record_sent(chat_id, mid, bot="main")
             ok = ok and r.ok
             break
     return ok
@@ -294,9 +323,11 @@ def _poll_loop() -> None:
             parsed = parse_command(msg.get("text") or "")
             if not parsed or not allowed(chat_id):
                 continue
-            cmd, _args = parsed
+            cmd, args = parsed
+            # remember the user's /command message too, so /clean sweeps it
+            telegram_utils._record_sent(chat_id, msg.get("message_id"), bot="main")
             try:
-                reply = handle(cmd)
+                reply = handle(cmd, args)
             except Exception as exc:  # noqa: BLE001 — a broken handler must answer, not die
                 reply = f"⚠ {cmd} failed: {str(exc)[:200]}"
             if reply:

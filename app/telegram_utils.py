@@ -1,3 +1,5 @@
+import json
+import os
 import threading
 import time
 
@@ -46,6 +48,96 @@ MAX_429_WAIT = 35.0
 _send_lock = threading.Lock()
 _last_send_ts = 0.0
 
+# ── sent-message ledger (for /clean) ────────────────────────────────────────
+# Bots can't read chat history, so deleting old messages is only possible for
+# messages whose ids we recorded ourselves. Every successful send below (and
+# every command reply / incoming command seen by tg_commands) is appended
+# here. Telegram refuses deletion of anything older than 48h, so the ledger
+# trims itself past LEDGER_RETAIN_SEC.
+SENT_LOG = os.path.join(os.path.dirname(__file__), "tg_sent_log.json")
+LEDGER_RETAIN_SEC = 72 * 3600
+DELETE_MAX_AGE_H = 48.0          # hard Telegram limit — older is undeletable
+_sent_lock = threading.Lock()
+
+
+def _load_sent() -> list:
+    try:
+        with open(SENT_LOG, "r", encoding="utf-8") as f:
+            return json.load(f) or []
+    except Exception:  # noqa: BLE001 — missing/corrupt ledger = start fresh
+        return []
+
+
+def _save_sent(entries: list) -> None:
+    tmp = SENT_LOG + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(entries, f)
+    os.replace(tmp, SENT_LOG)
+
+
+def _record_sent(chat_id, message_id, bot: str = "main", ts: float = None) -> None:
+    """Remember a message we produced so /clean can delete it later."""
+    if not (chat_id and message_id):
+        return
+    now = ts or time.time()
+    with _sent_lock:
+        entries = [e for e in _load_sent() if now - e.get("ts", 0) < LEDGER_RETAIN_SEC]
+        entries.append({"ts": now, "chat": chat_id, "mid": message_id, "bot": bot})
+        _save_sent(entries)
+
+
+def _delete_one(token: str, chat_id, message_id) -> bool:
+    """deleteMessage with one 429-aware retry. A 400 ('message to delete not
+    found' / already gone / no rights) is treated as gone — retrying is
+    pointless, the ledger entry should be dropped either way."""
+    url = f"https://api.telegram.org/bot{token}/deleteMessage"
+    for attempt in (0, 1):
+        try:
+            r = requests.post(url, data={"chat_id": chat_id,
+                                         "message_id": message_id}, timeout=15)
+        except requests.RequestException:
+            return False                      # network blip — retry next /clean
+        if r.status_code == 429 and attempt == 0:
+            try:
+                wait = float((r.json().get("parameters") or {})
+                             .get("retry_after") or 3)
+            except Exception:  # noqa: BLE001
+                wait = 3.0
+            time.sleep(min(wait + 0.5, MAX_429_WAIT))
+            continue
+        # 200 = deleted; 400 = already gone / undeletable → drop either way.
+        # 5xx = Telegram hiccup → keep the entry and retry on the next /clean.
+        return r.ok or r.status_code == 400
+    return False
+
+
+def clean_old_messages(max_age_hours: float = 24.0) -> dict:
+    """Delete every recorded message older than max_age_hours. Returns
+    {"deleted", "too_old" (>48h, Telegram forbids), "kept", "failed"}."""
+    now = time.time()
+    with _sent_lock:
+        entries = _load_sent()
+    keep, deleted, too_old, failed = [], 0, 0, 0
+    for e in entries:
+        age_h = (now - e.get("ts", 0)) / 3600
+        if age_h < max_age_hours:
+            keep.append(e)
+            continue
+        if age_h >= DELETE_MAX_AGE_H:
+            too_old += 1                      # undeletable forever — drop
+            continue
+        token = ALERTS_BOT_TOKEN if e.get("bot") == "alerts" else BOT_TOKEN
+        if _delete_one(token, e.get("chat"), e.get("mid")):
+            deleted += 1
+        else:
+            failed += 1
+            keep.append(e)                    # network blip — retry next time
+        time.sleep(0.1)                       # deleteMessage is rate-limited too
+    with _sent_lock:
+        _save_sent(keep)
+    return {"deleted": deleted, "too_old": too_old, "kept": len(keep),
+            "failed": failed}
+
 
 def _pace() -> None:
     """Space sends MIN_GAP_SEC apart across ALL threads of this process.
@@ -77,10 +169,11 @@ def _chunks_of(message: str) -> list:
     return parts
 
 
-def _post_one(url: str, payload: dict, retries: int) -> bool:
-    """One paced POST with 429-aware retries. Network failures get the old
-    backoff retries; a 429 sleeps out retry_after and tries again; any other
-    HTTP error response (bad request / blocked bot) is final."""
+def _post_one(url: str, payload: dict, retries: int):
+    """One paced POST with 429-aware retries. Returns (ok, message_id) —
+    message_id may be None when the response body wasn't parseable. Network
+    failures get the old backoff retries; a 429 sleeps out retry_after and
+    tries again; any other HTTP error (bad request / blocked bot) is final."""
     for attempt in range(retries + 1):
         _pace()
         try:
@@ -98,15 +191,19 @@ def _post_one(url: str, payload: dict, retries: int) -> bool:
                     time.sleep(wait)
                 continue
             response.raise_for_status()
-            return True
+            try:
+                mid = (response.json().get("result") or {}).get("message_id")
+            except Exception:  # noqa: BLE001 — sent fine, id just unknown
+                mid = None
+            return True, mid
         except requests.exceptions.HTTPError:
             print(f"Telegram API Error response: {response.text}")
-            return False
+            return False, None
         except requests.RequestException as exc:
             print(f"Telegram send failed (attempt {attempt + 1}/{retries + 1}): {exc}")
             if attempt < retries:
                 time.sleep(2 * (attempt + 1))
-    return False
+    return False, None
 
 
 def send_message(message, parse_mode=None, *, force=False, retries=2, channel="alerts"):
@@ -147,7 +244,11 @@ def send_message(message, parse_mode=None, *, force=False, retries=2, channel="a
         payload["parse_mode"] = parse_mode
 
     ok = True
+    bot = "main" if token == BOT_TOKEN else "alerts"
     for part in _chunks_of(message):
-        if not _post_one(url, {**payload, "text": part}, retries):
+        sent, mid = _post_one(url, {**payload, "text": part}, retries)
+        if sent and mid:
+            _record_sent(payload["chat_id"], mid, bot)   # /clean can find it later
+        if not sent:
             ok = False
     return ok
