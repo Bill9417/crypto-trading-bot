@@ -34,9 +34,9 @@ Wolf Scanner watches the whole Binance perpetuals market on a schedule, scores e
 - 🐻 **BTC regime filter** — "don't fight Bitcoin": only longs in a bull, only shorts in a bear, both in chop.
 - 🎯 **Exchange-side brackets** — resting LIMIT entry + SL + TP placed together (post-only maker fills, optional partial TP).
 - 🛡️ **Risk guards** — fixed/max margin caps, max concurrent positions, daily circuit breaker, isolated leverage.
-- 📊 **Live web dashboard** — scan funnel, market regime, open positions, performance, paper trading & backtester.
-- 🧪 **Backtester + walk-forward** — point-in-time validation so strategies are tested honestly, not curve-fit.
-- 📱 **Telegram alerts** — entries, exits and errors pushed to your phone.
+- 📊 **Live web dashboard** — scan funnel, market regime, both accounts, performance, stocks watch, liquidations, health.
+- 🥇 **Second live engine (S3)** — Vegas flag-flip on XAUT (gold), signals *and* orders on Bybit.
+- 📱 **Telegram topics group** — 📊 signals with Entry/SL/TP plans, 🔔 price alerts, 🌍 event radar, 💻 tech digest, 📈 daily report, 🇹🇼 台股 daily scan, 💥 BTC/ETH liquidation-cascade alerts, plus a command bot (`/winrate /positions /tw /liq …`).
 
 ---
 
@@ -63,14 +63,18 @@ flowchart LR
     Bot -->|alerts| TG[📱 Telegram]
 ```
 
+`./run_all.sh bg` launches **four processes**:
+
 | Process | File | Role |
 |---|---|---|
-| **Scanner / executor bot** | `app/bot.py` | Cron loop: scan → qualify → place/manage live orders |
-| **Order layer** | `app/executor.py` | ccxt calls, resting brackets, SL/TP, position tracking |
-| **Web dashboard** | `app/app.py` | Flask UI + auth, reads the shared DB |
-| **Signals** | `app/indicators.py`, `app/smc.py`, `app/market_intel.py` | Indicators, Smart Money Concepts, market regime |
-| **Config** | `app/config.py` | All thresholds & flags (loaded from `.env` at startup) |
-| **Research** | `app/backtest.py`, `app/walk_forward*.py`, `app/paper_*.py` | Backtest, walk-forward, paper trading |
+| **S1 bot** | `app/bot.py` | Cron loop: scan → qualify → place/manage live Binance orders |
+| **S2 scanner** | `app/strategy2_scanner.py` | 15m TV.pine-confluence sweep + all Telegram topic services (event radar, tech digest, daily report, price alerts, 台股 scan, liquidation alerts, command bot) |
+| **S3 scanner** | `app/strategy3_scanner.py` | Vegas flag-flip signals from Bybit candles → Bybit orders (XAUT) |
+| **Web dashboard** | `app/app.py` | Flask UI + auth |
+| Order layers | `app/executor.py` (Binance), `app/strategy3_exec.py` (Bybit) | ccxt calls, brackets, SL/TP, position tracking |
+| Signals | `app/indicators.py`, `app/smc.py`, `app/market_intel.py` | Indicators, Smart Money Concepts, market regime |
+| Telegram | `app/telegram_utils.py`, `app/tg_commands.py`, `app/event_radar.py`, `app/tech_news.py`, `app/daily_report.py`, `app/price_alerts.py`, `app/tw_stocks.py`, `app/liq_alerts.py` | Topics-group routing, command bot, and every topic's content |
+| Config | `app/config.py` | All thresholds & flags (loaded from `app/.env` at startup) |
 
 ---
 
@@ -80,12 +84,14 @@ The Flask app (default `http://127.0.0.1:4000`) serves a mobile-friendly PWA wit
 
 | Page | What it shows |
 |---|---|
-| **Dashboard** | Live scan results, qualifying setups, BTC regime chip, account strip |
-| **Funnel** | Why each coin passed or was rejected, gate by gate |
-| **Market** | Overall market regime & breadth |
-| **Performance** | Trade history, win rate, P&L |
-| **Paper** | Live paper-trading simulators running alongside the real bot |
-| **Backtester** | Run strategies over historical data from the browser |
+| **Dashboard** | Live scan results, both account strips, price alerts, position-size calculator, 🚀 pump radar |
+| **Funnel** | Why each coin passed or was rejected, gate by gate + best-trade hero |
+| **Strategy 2** | TV.pine confluence meter, EMA chart (Lightweight Charts), score heatmap |
+| **Market** | Market regime, breadth, liquidations, news sentiment, recent big events |
+| **Performance** | Trade history, win rate, P&L (tabbed, real exchange records) |
+| **Bybit** | The S3 sub-account: balance, positions, closed P&L |
+| **Stocks** | TW50 + US100 watchlists with perp-vs-stock gap |
+| **Health** | Process/freshness/log monitor for all four processes |
 | **Account** | Admin: live balance, strategy selection, settings |
 
 ---
@@ -114,7 +120,7 @@ python bot.py
 
 > 💡 **Start safe.** Keep `LIVE_TRADING=false` and `USE_TESTNET=true` until you've watched the scanner and paper trades for a while. Flip to live only when you trust the behaviour.
 
-To run both detached in the background, see `run_all.sh` / `run_web.sh` / `run_bot.sh`.
+To run the whole stack (web + S1 bot + S2/S3 scanners) detached in the background: `./run_all.sh bg` — and `./run_all.sh` alone shows status/stop options.
 
 ---
 
@@ -168,21 +174,32 @@ Covers cost modelling, executor gates, regime detection, live-strategy selection
 
 ```
 crypto/
-├── app/
-│   ├── app.py              # Flask web dashboard + auth
-│   ├── bot.py              # APScheduler scan/execute loop
-│   ├── executor.py         # Order placement, brackets, position mgmt
-│   ├── config.py           # All thresholds & feature flags
-│   ├── indicators.py       # Technical indicators
-│   ├── smc.py              # Smart Money Concepts zones
-│   ├── market_intel.py     # Market regime / breadth
-│   ├── backtest.py         # Strategy backtester + registry
-│   ├── walk_forward*.py    # Point-in-time validation
-│   ├── paper_*.py          # Paper-trading simulators
-│   ├── templates/          # Dashboard pages
-│   ├── static/             # CSS, PWA assets
-│   └── tests/              # pytest suite
-├── run_all.sh / run_web.sh / run_bot.sh
+├── app/                        # ALL Python — flat by design (live imports)
+│   ├── app.py                  #   Flask web dashboard + auth
+│   ├── bot.py                  #   S1: APScheduler scan/execute loop (Binance)
+│   ├── strategy2_scanner.py    #   S2: confluence sweep + Telegram topic services
+│   ├── strategy3_scanner.py    #   S3: Vegas flag-flip loop (Bybit)
+│   ├── executor.py             #   Binance order layer (brackets, SL/TP)
+│   ├── strategy3_exec.py       #   Bybit order layer
+│   ├── strategy3_signal.py     #   flag-flip rules (port of the XAUT pine)
+│   ├── config.py               #   all thresholds & flags (from app/.env)
+│   ├── indicators.py / smc.py / market_intel.py    # signal stack
+│   ├── strategy2_meter.py      #   TV.pine confluence meter (/strategy2)
+│   ├── telegram_utils.py       #   topics-group routing (one bot, 8 topics)
+│   ├── tg_commands.py          #   /winrate /positions /signals /tw /liq …
+│   ├── event_radar.py / tech_news.py / daily_report.py
+│   ├── price_alerts.py / tw_stocks.py / liq_alerts.py / liquidations.py
+│   ├── stocks_data.py          #   TW50 + US100 watchlist fetchers
+│   ├── templates/ + static/    #   dashboard pages, CSS, PWA assets
+│   └── tests/                  #   pytest suite (240 tests)
+├── pine/
+│   ├── strategies/             # backtestable strategy() scripts (live + research)
+│   └── indicators/             # chart indicator() scripts (incl. TV.pine)
+├── docs/                       # USAGE.md, PROJECT_MEMORY.md (historical)
+├── run_all.sh                  # start/stop the whole stack (./run_all.sh bg)
+├── run_web.sh / run_bot.sh / run_strategy2.sh / dev.sh
+├── tunnel.sh                   # Cloudflare quick-tunnel for the dashboard
+├── sync.sh                     # commit+push helper
 └── README.md
 ```
 
