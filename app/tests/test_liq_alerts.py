@@ -6,7 +6,10 @@ def _ev(sym, side, usd, ts_ms, ex="Binance"):
     return {"ts": ts_ms, "ex": ex, "sym": sym, "side": side, "usd": usd}
 
 
-NOW_MS = 1_000_000_000_000
+# A REALISTIC fake clock (2026-07). The original 1_000_000_000_000 (year 2001)
+# made urllib3 warn "system time is way off" whenever a test touched the
+# network — which the tick test accidentally did (see the fetch_klines stub).
+NOW_MS = 1_783_800_000_000
 
 
 # ── window_stats ─────────────────────────────────────────────────────────────
@@ -133,11 +136,16 @@ class _FakeClient:
                 "high": 70_100.0, "low": 66_900.0}
 
 
+def _no_network(*_a, **_k):
+    raise RuntimeError("tests must not fetch klines from the network")
+
+
 def test_tick_sends_on_cascade(monkeypatch):
     import liquidations
     import telegram_utils
     events = [_ev("BTC", "long", 3_000_000, NOW_MS - 60_000)]
     monkeypatch.setattr(liquidations, "events_copy", lambda: events)
+    monkeypatch.setattr(liq_alerts, "fetch_klines", _no_network)  # map is optional
     monkeypatch.setattr(liq_alerts.time, "time", lambda: NOW_MS / 1000)
     sent = []
     monkeypatch.setattr(telegram_utils, "send_message",
@@ -152,6 +160,7 @@ def test_tick_quiet_market_sends_nothing(monkeypatch):
     import liquidations
     events = [_ev("BTC", "long", 100_000, NOW_MS - 60_000)]
     monkeypatch.setattr(liquidations, "events_copy", lambda: events)
+    monkeypatch.setattr(liq_alerts, "fetch_klines", _no_network)
     monkeypatch.setattr(liq_alerts.time, "time", lambda: NOW_MS / 1000)
     monkeypatch.setattr(liq_alerts, "_last_alert", {})
     assert liq_alerts.tick(_FakeClient()) == 0
