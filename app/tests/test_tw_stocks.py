@@ -155,6 +155,35 @@ def test_tw_command_no_state_yet(monkeypatch):
     assert "尚未有台股掃描" in tg_commands.handle("tw")
 
 
+def test_clean_is_admin_only(monkeypatch):
+    import tg_commands
+    monkeypatch.setattr(tg_commands, "OWNER_IDS", {"42"})
+    monkeypatch.setattr(tg_commands, "_group_admin_ids", lambda: {"77"})
+    # /clean: owner ✓, group admin ✓, random member ✗
+    assert tg_commands.authorized("clean", 42)
+    assert tg_commands.authorized("purge", 77)
+    assert not tg_commands.authorized("clean", 12345)
+    # read-only commands stay open to everyone in the allowed chats
+    assert tg_commands.authorized("winrate", 12345)
+    assert tg_commands.authorized("liq", None)
+
+
+def test_group_admin_ids_cached(monkeypatch):
+    import tg_commands
+    calls = []
+
+    def fake_api(method, **params):
+        calls.append(method)
+        return {"result": [{"user": {"id": 77}}, {"user": {"id": 88}}]}
+
+    monkeypatch.setattr(tg_commands, "_api", fake_api)
+    monkeypatch.setattr(tg_commands.config, "TELEGRAM_GROUP_CHAT_ID", "-100123")
+    monkeypatch.setattr(tg_commands, "_admin_cache", {"ts": 0.0, "ids": set()})
+    assert tg_commands._group_admin_ids() == {"77", "88"}
+    assert tg_commands._group_admin_ids() == {"77", "88"}   # served from cache
+    assert len(calls) == 1
+
+
 def test_clean_command_parses_hours(monkeypatch):
     import telegram_utils
     import tg_commands

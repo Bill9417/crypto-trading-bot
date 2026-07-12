@@ -13,9 +13,10 @@ the command was typed in:
     /tw         latest 台股 scan (TAIEX regime + TW50 setups)
     /liq        BTC/ETH liquidations: 24h tallies, recent prints with
                 prices, and the estimated 🧲 liquidation map
-    /clean [h]  delete the bot's messages older than h hours (default 24;
-                Telegram forbids deleting anything older than 48h, and only
-                messages sent since the ledger went live are tracked)
+    /clean [h]  ADMIN-ONLY: delete the bot's messages older than h hours
+                (default 24; Telegram forbids deleting anything older than
+                48h, and only messages sent since the ledger exists are
+                tracked). Sender must be a group admin or the owner.
     /help       this list
 
 Safety: commands are only honoured from the configured group / owner chats —
@@ -47,6 +48,14 @@ POLL_TIMEOUT = int(os.getenv("TG_CMD_POLL_TIMEOUT", "25"))   # long-poll seconds
 ALLOWED_CHATS = {str(c) for c in (config.TELEGRAM_GROUP_CHAT_ID, config.CHAT_ID,
                                   config.ALERTS_CHAT_ID) if c}
 
+# Destructive commands need more than "typed inside the group": the SENDER
+# must be a group admin (checked live via getChatAdministrators, cached) or
+# the owner (the DM chat ids double as the owner's user ids).
+ADMIN_COMMANDS = {"clean", "clear", "purge"}
+OWNER_IDS = {str(c) for c in (config.CHAT_ID, config.ALERTS_CHAT_ID) if c}
+ADMIN_CACHE_SEC = 300
+_admin_cache = {"ts": 0.0, "ids": set()}
+
 
 # ── state ────────────────────────────────────────────────────────────────────
 def _load_state() -> dict:
@@ -77,6 +86,35 @@ def parse_command(text: str):
 
 def allowed(chat_id) -> bool:
     return str(chat_id) in ALLOWED_CHATS
+
+
+def _group_admin_ids() -> set:
+    """User ids of the topics group's admins, cached ADMIN_CACHE_SEC. On an
+    API failure the stale cache keeps serving (owner ids always work)."""
+    if not config.TELEGRAM_GROUP_CHAT_ID:
+        return set()
+    if time.time() - _admin_cache["ts"] < ADMIN_CACHE_SEC:
+        return _admin_cache["ids"]
+    try:
+        res = _api("getChatAdministrators",
+                   chat_id=config.TELEGRAM_GROUP_CHAT_ID)
+        _admin_cache["ids"] = {str((a.get("user") or {}).get("id"))
+                               for a in res.get("result") or []}
+    except Exception as exc:  # noqa: BLE001 — keep the stale set, retry later
+        print(f"[tgcmd] getChatAdministrators failed: {exc}")
+    _admin_cache["ts"] = time.time()
+    return _admin_cache["ids"]
+
+
+def is_admin(user_id) -> bool:
+    uid = str(user_id)
+    return uid in OWNER_IDS or uid in _group_admin_ids()
+
+
+def authorized(cmd: str, user_id) -> bool:
+    """Read-only commands: anyone in an allowed chat. ADMIN_COMMANDS: group
+    admins / the owner only."""
+    return cmd not in ADMIN_COMMANDS or is_admin(user_id)
 
 
 def _n(v, digits=2):
@@ -185,7 +223,7 @@ HELP = ("🤖 Commands\n"
         "/report — today's account+market report now\n"
         "/tw — latest 台股 scan (大盤 regime + setups)\n"
         "/liq — BTC/ETH 清算: 24h統計 + 最近清算價 + 🧲清算地圖\n"
-        "/clean [小時] — 刪除 bot 超過N小時的舊訊息 (預設24, 上限47)\n"
+        "/clean [小時] — 刪除 bot 超過N小時的舊訊息 (預設24, 上限47, 限管理員)\n"
         "/help — this list")
 
 
@@ -326,6 +364,11 @@ def _poll_loop() -> None:
             cmd, args = parsed
             # remember the user's /command message too, so /clean sweeps it
             telegram_utils._record_sent(chat_id, msg.get("message_id"), bot="main")
+            if not authorized(cmd, (msg.get("from") or {}).get("id")):
+                _reply(chat_id, msg.get("message_thread_id"),
+                       f"⛔ /{cmd} 只有群組管理員可以使用")
+                print(f"[tgcmd] denied /{cmd} from non-admin")
+                continue
             try:
                 reply = handle(cmd, args)
             except Exception as exc:  # noqa: BLE001 — a broken handler must answer, not die
