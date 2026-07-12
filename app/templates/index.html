@@ -1495,6 +1495,168 @@
         })();
         </script>
 
+        <!-- 🔔 Price Alerts — user-set levels; the S2 scanner checks them every
+             sweep (~5 min) and pings the Telegram Alerts topic on a cross. -->
+        <section class="analytics-panel" id="palerts-panel">
+            <div class="analytics-head">
+                <div>
+                    <div class="analytics-title">🔔 Price Alerts</div>
+                    <div class="analytics-subtitle">Set a level on any Binance USDT perp — Telegram pings you when it crosses (checked each ~5 min sweep)</div>
+                </div>
+            </div>
+            <form id="pa-form" style="display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-bottom:10px;">
+                <input id="pa-sym" placeholder="ETH" autocomplete="off" spellcheck="false" style="width:92px; background:rgba(255,255,255,.04); border:1px solid rgba(255,255,255,.12); border-radius:10px; color:inherit; padding:8px 11px; font:inherit; font-size:.82rem; text-transform:uppercase;">
+                <input id="pa-price" type="number" step="any" min="0" placeholder="target price" autocomplete="off" style="width:140px; background:rgba(255,255,255,.04); border:1px solid rgba(255,255,255,.12); border-radius:10px; color:inherit; padding:8px 11px; font:inherit; font-size:.82rem;">
+                <button type="submit" id="pa-add" style="background:rgba(255,207,75,.12); border:1px solid rgba(255,207,75,.4); color:var(--wolf-gold, #ffcf4b); border-radius:10px; padding:8px 16px; font:inherit; font-size:.8rem; font-weight:700; cursor:pointer;">Add alert</button>
+                <span id="pa-err" style="color:var(--short, #f87171); font-size:.74rem;"></span>
+            </form>
+            <div id="pa-list" style="display:flex; gap:8px; overflow-x:auto; padding:2px 0 6px; -webkit-overflow-scrolling:touch;">
+                <div class="analytics-subtitle">Loading alerts…</div>
+            </div>
+        </section>
+        <script>
+        (function () {
+            var CSRF = "{{ csrf_token() }}";
+            function fmt(p) {
+                if (p == null) return '—';
+                return p >= 1000 ? p.toLocaleString('en-US', {maximumFractionDigits: 1}) : Number(p.toPrecision(5)).toString();
+            }
+            function chip(a) {
+                var fired = !!a.triggered;
+                var up = a.direction === 'above';
+                var col = up ? 'var(--long, #4ade80)' : 'var(--short, #f87171)';
+                var border = fired ? 'rgba(255,207,75,.55)' : 'rgba(255,255,255,.09)';
+                var status;
+                if (fired) {
+                    status = '<span style="color:var(--wolf-gold, #ffcf4b); font-weight:800;">FIRED</span> @ ' + fmt(a.triggered_price);
+                } else if (a.last != null) {
+                    var dist = (a.price / a.last - 1) * 100;
+                    status = 'now ' + fmt(a.last) + ' · ' + (dist >= 0 ? '+' : '') + dist.toFixed(2) + '% away';
+                } else {
+                    status = 'waiting for scanner';
+                }
+                return '<div style="flex:0 0 auto; min-width:150px; background:rgba(255,255,255,.03); border:1px solid ' + border + '; border-radius:12px; padding:8px 11px; position:relative;">' +
+                    '<div style="font-weight:800; font-size:.82rem;">' + a.base +
+                    ' <span style="color:' + col + ';">' + (up ? '▲' : '▼') + '</span>' +
+                    '<span title="Remove this alert" data-id="' + a.id + '" class="pa-del" style="position:absolute; top:6px; right:9px; cursor:pointer; opacity:.5; font-size:.8rem;">✕</span></div>' +
+                    '<div style="font-size:.95rem; font-weight:800; color:' + col + ';">' + fmt(a.price) + '</div>' +
+                    '<div style="font-size:.66rem; color:var(--wolf-muted, #8a99ad); margin-top:2px;">' + status + '</div></div>';
+            }
+            function load() {
+                fetch('/api/price_alerts')
+                    .then(function (r) { return r.ok ? r.json() : null; })
+                    .then(function (d) {
+                        if (!d) return;
+                        var row = document.getElementById('pa-list');
+                        if (!(d.alerts || []).length) {
+                            row.innerHTML = '<div class="analytics-subtitle">No alerts set — add one above (e.g. ETH @ 3500).</div>';
+                            return;
+                        }
+                        row.innerHTML = d.alerts.map(chip).join('');
+                        row.querySelectorAll('.pa-del').forEach(function (el) {
+                            el.addEventListener('click', function () {
+                                fetch('/api/price_alerts/delete', {
+                                    method: 'POST',
+                                    headers: {'X-CSRFToken': CSRF, 'Content-Type': 'application/json'},
+                                    body: JSON.stringify({id: el.dataset.id})
+                                }).then(load).catch(function () {});
+                            });
+                        });
+                    })
+                    .catch(function () {});
+            }
+            document.getElementById('pa-form').addEventListener('submit', function (e) {
+                e.preventDefault();
+                var sym = document.getElementById('pa-sym').value.trim();
+                var price = document.getElementById('pa-price').value;
+                var err = document.getElementById('pa-err');
+                var btn = document.getElementById('pa-add');
+                err.textContent = '';
+                if (!sym || !price) { err.textContent = 'symbol and price required'; return; }
+                btn.disabled = true;
+                fetch('/api/price_alerts', {
+                    method: 'POST',
+                    headers: {'X-CSRFToken': CSRF, 'Content-Type': 'application/json'},
+                    body: JSON.stringify({symbol: sym, price: parseFloat(price)})
+                }).then(function (r) { return r.json(); }).then(function (d) {
+                    btn.disabled = false;
+                    if (!d.ok) { err.textContent = d.error || 'failed'; return; }
+                    document.getElementById('pa-sym').value = '';
+                    document.getElementById('pa-price').value = '';
+                    load();
+                }).catch(function () { btn.disabled = false; err.textContent = 'network error'; });
+            });
+            load();
+            setInterval(function () { if (!document.hidden) load(); }, 60000);
+        })();
+        </script>
+
+        <!-- 🧮 Position size calculator — pure client-side, risk-first sizing:
+             you pick how much you're willing to LOSE, it tells you the size. -->
+        <section class="analytics-panel" id="psc-panel">
+            <div class="analytics-head">
+                <div>
+                    <div class="analytics-title">🧮 Position Size</div>
+                    <div class="analytics-subtitle">Risk-first sizing — set what you'd lose if the stop hits, get the size · direction auto-detected from stop vs entry</div>
+                </div>
+            </div>
+            <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-bottom:10px;">
+                <label style="font-size:.68rem; color:var(--wolf-muted,#8a99ad);">Account<br>
+                    <input id="psc-acct" type="number" step="any" min="0" value="25" style="width:88px; background:rgba(255,255,255,.04); border:1px solid rgba(255,255,255,.12); border-radius:10px; color:inherit; padding:7px 10px; font:inherit; font-size:.82rem;"></label>
+                <label style="font-size:.68rem; color:var(--wolf-muted,#8a99ad);">Risk %<br>
+                    <input id="psc-risk" type="number" step="any" min="0.1" max="100" value="2" style="width:70px; background:rgba(255,255,255,.04); border:1px solid rgba(255,255,255,.12); border-radius:10px; color:inherit; padding:7px 10px; font:inherit; font-size:.82rem;"></label>
+                <label style="font-size:.68rem; color:var(--wolf-muted,#8a99ad);">Entry<br>
+                    <input id="psc-entry" type="number" step="any" min="0" placeholder="3400" style="width:110px; background:rgba(255,255,255,.04); border:1px solid rgba(255,255,255,.12); border-radius:10px; color:inherit; padding:7px 10px; font:inherit; font-size:.82rem;"></label>
+                <label style="font-size:.68rem; color:var(--wolf-muted,#8a99ad);">Stop<br>
+                    <input id="psc-stop" type="number" step="any" min="0" placeholder="3350" style="width:110px; background:rgba(255,255,255,.04); border:1px solid rgba(255,255,255,.12); border-radius:10px; color:inherit; padding:7px 10px; font:inherit; font-size:.82rem;"></label>
+                <label style="font-size:.68rem; color:var(--wolf-muted,#8a99ad);">Leverage<br>
+                    <input id="psc-lev" type="number" step="1" min="1" max="125" value="4" style="width:70px; background:rgba(255,255,255,.04); border:1px solid rgba(255,255,255,.12); border-radius:10px; color:inherit; padding:7px 10px; font:inherit; font-size:.82rem;"></label>
+            </div>
+            <div id="psc-out" class="analytics-subtitle">Enter an entry and a stop price…</div>
+        </section>
+        <script>
+        (function () {
+            var ids = ['psc-acct', 'psc-risk', 'psc-entry', 'psc-stop', 'psc-lev'];
+            function fmt(v, d) { return Number(v.toFixed(d != null ? d : 2)).toLocaleString('en-US', {maximumFractionDigits: d != null ? d : 2}); }
+            function calc() {
+                var acct  = parseFloat(document.getElementById('psc-acct').value);
+                var riskP = parseFloat(document.getElementById('psc-risk').value);
+                var entry = parseFloat(document.getElementById('psc-entry').value);
+                var stop  = parseFloat(document.getElementById('psc-stop').value);
+                var lev   = parseFloat(document.getElementById('psc-lev').value) || 1;
+                var out = document.getElementById('psc-out');
+                if (!(acct > 0) || !(riskP > 0) || !(entry > 0) || !(stop > 0) || entry === stop) {
+                    out.innerHTML = '<span class="analytics-subtitle">Enter an entry and a stop price…</span>';
+                    return;
+                }
+                var long = stop < entry;
+                var slDist = Math.abs(entry - stop) / entry;
+                var riskUsd = acct * riskP / 100;
+                var notional = riskUsd / slDist;
+                var qty = notional / entry;
+                var margin = notional / lev;
+                var liqDist = 1 / lev;   // rough isolated-margin liquidation distance
+                var rows = [
+                    ['Direction', long ? '<b style="color:var(--long,#4ade80)">LONG</b>' : '<b style="color:var(--short,#f87171)">SHORT</b>'],
+                    ['Risk if stopped', '<b>' + fmt(riskUsd) + ' USDT</b> (' + fmt(riskP, 1) + '% of account)'],
+                    ['Stop distance', fmt(slDist * 100) + '%'],
+                    ['Position size', '<b>' + fmt(qty, 6) + '</b> ≈ ' + fmt(notional) + ' USDT notional'],
+                    ['Margin @ ' + lev + 'x', fmt(margin) + ' USDT' + (margin > acct ? ' <b style="color:var(--short,#f87171)">— more than the account!</b>' : '')],
+                    ['TP 1R / 2R / 3R', [1, 2, 3].map(function (r) {
+                        var px = long ? entry + r * (entry - stop) : entry - r * (stop - entry);
+                        return fmt(px, 4) + ' (+' + fmt(riskUsd * r) + ')';
+                    }).join(' · ')]
+                ];
+                if (slDist >= liqDist) {
+                    rows.push(['⚠ Liquidation', 'at ' + lev + 'x the liq price (~' + fmt(liqDist * 100, 1) + '% away) is CLOSER than your stop — the exchange takes you out first. Lower the leverage or tighten the stop.']);
+                }
+                out.innerHTML = '<div style="display:grid; grid-template-columns:auto 1fr; gap:4px 16px; font-size:.8rem;">' +
+                    rows.map(function (r) { return '<div style="color:var(--wolf-muted,#8a99ad);">' + r[0] + '</div><div>' + r[1] + '</div>'; }).join('') + '</div>';
+            }
+            ids.forEach(function (id) { document.getElementById(id).addEventListener('input', calc); });
+        })();
+        </script>
+
         <!-- Market headlines — same feeds as the Market page (cached server-side) -->
         <section class="analytics-panel">
             <div class="analytics-head">
@@ -1883,6 +2045,9 @@
                     <div class="empty-state"><div class="icon">🌙</div><p>The pack is quiet. No signals yet.</p></div>
                     {% endif %}
                 </div>
+                <!-- The scanner sweeps ~200+ perps; rendering them all makes the page
+                     endless and buries everything below. Top rows only, by default. -->
+                <button id="dash-show-all" style="display:none; width:100%; margin-top:8px; background:rgba(255,255,255,.03); border:1px solid rgba(255,255,255,.1); color:var(--wolf-muted, #8a99ad); border-radius:10px; padding:10px; font:inherit; font-size:.78rem; font-weight:700; letter-spacing:.04em; cursor:pointer;"></button>
             </div>
         </div>
     </div>
@@ -2483,9 +2648,14 @@
         let dashScoreFilter = 'ALL';
         let dashRsiFilter = 'ALL';
         let dashSearch = '';
+        // The sweep covers 200+ perps — show the top rows (list is already
+        // sorted best-first) and let "Show all" expand on demand.
+        const DASH_VISIBLE_CAP = 40;
+        let dashShowAll = false;
 
         function applySignalFilters() {
             const cards = document.querySelectorAll('#signal-cards-body .signal-card');
+            let matched = 0;
             let visible = 0;
             cards.forEach(card => {
                 const dir = card.dataset.dir || '';
@@ -2514,16 +2684,35 @@
                 }
 
                 const show = dirOk && lightsOk && scoreOk && statusOk && searchOk && rsiOk;
-                card.style.display = show ? '' : 'none';
-                if (show) visible++;
+                if (show) {
+                    matched++;
+                    const capped = !dashShowAll && matched > DASH_VISIBLE_CAP;
+                    card.style.display = capped ? 'none' : '';
+                    if (!capped) visible++;
+                } else {
+                    card.style.display = 'none';
+                }
             });
 
             const total = cards.length;
             const label = document.getElementById('dash-signal-count');
             if (label) {
-                label.textContent = total === 0 ? '' : total === visible
+                label.textContent = total === 0 ? '' : matched === visible && matched === total
                     ? `${total} signal${total !== 1 ? 's' : ''}`
-                    : `${visible} / ${total} signals`;
+                    : visible < matched
+                        ? `top ${visible} of ${matched} signals`
+                        : `${matched} / ${total} signals`;
+            }
+            const moreBtn = document.getElementById('dash-show-all');
+            if (moreBtn) {
+                if (matched > DASH_VISIBLE_CAP) {
+                    moreBtn.style.display = '';
+                    moreBtn.textContent = dashShowAll
+                        ? `▲ Show top ${DASH_VISIBLE_CAP} only`
+                        : `▼ Show all ${matched} signals`;
+                } else {
+                    moreBtn.style.display = 'none';
+                }
             }
         }
 
@@ -2576,6 +2765,13 @@
             if (dsearch) {
                 dsearch.addEventListener('input', () => {
                     dashSearch = dsearch.value.trim().toUpperCase();
+                    applySignalFilters();
+                });
+            }
+            const moreBtn = document.getElementById('dash-show-all');
+            if (moreBtn) {
+                moreBtn.addEventListener('click', () => {
+                    dashShowAll = !dashShowAll;
                     applySignalFilters();
                 });
             }

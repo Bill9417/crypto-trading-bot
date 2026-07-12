@@ -78,6 +78,9 @@
 
         /* ── Panels (matches dashboard .analytics-panel) ── */
         .analytics-grid { display: grid; grid-template-columns: 1.55fr 1fr; gap: 12px; align-items: start; }
+        /* grid items default to min-width:auto, so a wide table inside refuses
+           to shrink and blows the track — 0 lets the table scroll in its box */
+        .analytics-grid > div { min-width: 0; }
         .analytics-panel {
             background: var(--wolf-card); border: 1px solid var(--wolf-border);
             border-radius: 14px; box-shadow: 0 10px 28px rgba(0,0,0,.2); padding: 14px;
@@ -208,6 +211,9 @@
             .stats-strip { grid-template-columns: repeat(2, 1fr); }
             .top-actions { width: 100%; }
             .top-actions .btn-wolf, .top-actions .btn-ghost, .top-actions .btn-gold { flex: 1; text-align: center; }
+            /* the liquidations 2-col grid has a 516px minimum — stack it or the
+               whole page scrolls sideways on phones */
+            #liq-body { grid-template-columns: 1fr !important; }
         }
         /* ── Global polish (desktop + phone) ── */
         html { scroll-behavior: smooth; }
@@ -342,12 +348,16 @@
                         <div class="analytics-title">Futures — Volume · OI · Funding</div>
                         <div class="analytics-note">Binance USD-M</div>
                     </div>
+                    <!-- 7 columns ≈ 575px — must scroll inside its own box or the
+                         whole page pans sideways on phones -->
+                    <div style="overflow-x:auto; -webkit-overflow-scrolling:touch;">
                     <table>
                         <thead>
                             <tr><th>Asset</th><th>Price</th><th>24h</th><th>Volume</th><th>Open Interest</th><th title="Open-interest change over 24h vs price direction — the crowding read">OI Δ24h</th><th>Funding</th></tr>
                         </thead>
                         <tbody id="futures-body"><tr><td colspan="7" class="skeleton">Loading…</td></tr></tbody>
                     </table>
+                    </div>
                 </div>
             </div>
 
@@ -381,6 +391,14 @@
                             <div id="stocks"><div class="skeleton">Loading…</div></div>
                         </div>
                     </div>
+                </div>
+
+                <div class="analytics-panel">
+                    <div class="analytics-head">
+                        <div class="analytics-title">🌍 Recent Big Events</div>
+                        <div class="analytics-note">what the Events topic got · 3 days</div>
+                    </div>
+                    <div id="events-feed"><div class="skeleton">Loading…</div></div>
                 </div>
 
                 <div class="analytics-panel">
@@ -682,6 +700,43 @@
         loadLiquidations();
         setInterval(refreshIntel, 60000);
         setInterval(loadLiquidations, 30000);
+
+        // 🌍 Recent Big Events — mirror of what the event radar sent to the
+        // Telegram Events topic (read from the radar's own state file).
+        function loadEvents() {
+            fetch('/api/events_feed').then(r => r.ok ? r.json() : null).then(d => {
+                const el = document.getElementById('events-feed');
+                if (!el || !d) return;
+                const evs = d.events || [];
+                if (!evs.length) {
+                    el.innerHTML = '<div class="analytics-note">No big events detected in the last 3 days — the radar alerts on Fed/macro, war, regulation, hacks, whale flows and BTC/ETH shock moves.</div>';
+                    return;
+                }
+                const ago = ts => {
+                    const m = Math.max(0, Math.round((Date.now() / 1000 - ts) / 60));
+                    return m < 60 ? m + 'm ago' : m < 1440 ? Math.round(m / 60) + 'h ago' : Math.round(m / 1440) + 'd ago';
+                };
+                el.innerHTML = evs.map(ev => {
+                    const lines = (ev.text || '').split('\n');
+                    const head = esc(lines.shift() || '');
+                    const body = lines.map(l => {
+                        const m = l.match(/https?:\S+/);
+                        if (m) {
+                            const pre = esc(l.slice(0, m.index));
+                            return pre + '<a href="' + m[0].replace(/"/g, '') + '" target="_blank" rel="noopener" style="color:var(--wolf-blue,#7fb3ff);">link</a>';
+                        }
+                        return esc(l);
+                    }).filter(Boolean).join('<br>');
+                    return '<div style="padding:8px 0; border-top:1px solid rgba(255,255,255,.045); font-size:.78rem;">' +
+                        '<div style="display:flex; justify-content:space-between; gap:10px;">' +
+                        '<b>' + head + '</b><span class="muted" style="white-space:nowrap;">' + ago(ev.ts) + '</span></div>' +
+                        (body ? '<div class="muted" style="margin-top:2px; line-height:1.45;">' + body + '</div>' : '') +
+                        '</div>';
+                }).join('');
+            }).catch(() => {});
+        }
+        loadEvents();
+        setInterval(loadEvents, 300000);
     </script>
 </body>
 </html>

@@ -24,7 +24,7 @@ Streams:
 
 Every event is normalised to:
     {ts_ms, exchange, symbol (base), side ('long'/'short' = the side that got
-     liquidated), value_usdt}
+     liquidated), value_usdt, px (the price the liquidation printed at)}
 and pushed into one deque trimmed to WINDOW_SEC. aggregate() slices it into
 the long/short totals, largest single event, per-exchange and per-symbol
 breakdowns and an hourly heat series the /api/liquidations route serves.
@@ -52,13 +52,14 @@ _started_at: float = 0.0
 _status = {"binance": "idle", "bybit": "idle", "okx": "idle"}
 
 
-def _push(ts_ms: int, exchange: str, symbol: str, side: str, value_usdt: float) -> None:
+def _push(ts_ms: int, exchange: str, symbol: str, side: str, value_usdt: float,
+          px: float = 0.0) -> None:
     if not symbol or side not in ("long", "short") or value_usdt <= 0:
         return
     base = symbol.replace("USDT", "").replace("-SWAP", "").replace("-", "")
     with _lock:
         _events.append({"ts": ts_ms, "ex": exchange, "sym": base,
-                        "side": side, "usd": value_usdt})
+                        "side": side, "usd": value_usdt, "px": px})
         cutoff = (time.time() - WINDOW_SEC) * 1000
         while _events and _events[0]["ts"] < cutoff:
             _events.popleft()
@@ -77,7 +78,7 @@ def _on_binance(msg: str) -> None:
     px = float(o.get("ap") or o.get("p") or 0)
     # SELL force order closes a LONG position.
     side = "long" if o.get("S") == "SELL" else "short"
-    _push(int(o.get("T") or 0), "Binance", o.get("s") or "", side, qty * px)
+    _push(int(o.get("T") or 0), "Binance", o.get("s") or "", side, qty * px, px)
 
 
 def _on_bybit(msg: str) -> None:
@@ -88,7 +89,7 @@ def _on_bybit(msg: str) -> None:
         qty = float(r.get("v") or 0)
         px = float(r.get("p") or 0)
         side = "long" if r.get("S") == "Sell" else "short"
-        _push(int(r.get("T") or 0), "Bybit", r.get("s") or "", side, qty * px)
+        _push(int(r.get("T") or 0), "Bybit", r.get("s") or "", side, qty * px, px)
 
 
 # OKX reports liquidation size in CONTRACTS, and the multiplier (ctVal, base
@@ -132,7 +133,7 @@ def _on_okx(msg: str) -> None:
             side = det.get("posSide")
             if side not in ("long", "short"):
                 side = "long" if det.get("side") == "sell" else "short"
-            _push(int(det.get("ts") or 0), "OKX", base, side, sz * ct_val * px)
+            _push(int(det.get("ts") or 0), "OKX", base, side, sz * ct_val * px, px)
 
 
 # ── connection management ────────────────────────────────────────────────────
@@ -262,3 +263,9 @@ def snapshot(window_sec: int = WINDOW_SEC) -> dict:
     out["collecting_since"] = _started_at or None
     out["status"] = dict(_status)
     return out
+
+
+def events_copy() -> list:
+    """Thread-safe copy of the raw event buffer (for liq_alerts)."""
+    with _lock:
+        return list(_events)

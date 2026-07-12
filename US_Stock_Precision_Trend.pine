@@ -1,0 +1,296 @@
+// ════════════════════════════════════════════════════════════════════════════
+//  US STOCK PRECISION TREND — swing/intraday strategy for US equities
+//
+//  Your arm-and-fire confluence design (structure break arms → score + gates
+//  fire), rebuilt around what actually matters for STOCKS instead of perps:
+//
+//    • MARKET REGIME — longs only while the benchmark (SPY by default) closes
+//      above its confirmed daily EMA200. Most stocks are beta; fighting the
+//      index is the #1 account killer. (Shorts, if enabled, need a bear bench.)
+//    • RELATIVE STRENGTH — the stock must be OUTPERFORMING the benchmark
+//      (RS line above its own EMA). Score weight 20: buy leaders, not laggards.
+//    • EARNINGS FILTER — no new entry within N days of the next earnings
+//      report, and (optional) positions close the day before. An overnight
+//      earnings gap goes STRAIGHT THROUGH any stop — this is the stock-market
+//      equivalent of your 50x liquidation distance, and it is not tradeable
+//      after the fact.
+//    • LIQUIDITY GATE — 20-day average dollar volume must clear a floor, so a
+//      good-looking backtest on some $3M/day microcap never fools you.
+//    • RTH ONLY (intraday) — no entries in extended hours or (optional) the
+//      first 30 min opening rotation; optional flat-by-close for day trading.
+//
+//  HONESTY RULES (same as your other scripts — no repaint):
+//    • Signals evaluate on CLOSED bars only; process_orders_on_close=true.
+//    • Pivots confirm with 10-bar lag; every request.security uses
+//      lookahead_off and confirmed ([1]) daily data — nothing peeks.
+//    • Costs modeled: 0.03% commission + 2 ticks slippage. NOT modeled: short
+//      borrow fees / hard-to-borrow — treat short results as optimistic.
+//    • Stops fill AT THE OPEN when price gaps through them (TradingView does
+//      this correctly) — expect real losses on gap days to exceed 1R.
+//    • A good-looking backtest is still just a backtest (see: S1, OCC…).
+//      Tune on one date window, then validate on the OTHER window the tuning
+//      never saw (③ below makes that a two-click test) before trusting it.
+//
+//  WHERE TO RUN IT: Daily chart for swing trading (recommended start — AAPL,
+//  NVDA, MSFT, META…), or 30m/65m intraday with the session options on.
+// ════════════════════════════════════════════════════════════════════════════
+//@version=6
+strategy("US Stock Precision Trend", overlay=true,
+     initial_capital=10000,
+     default_qty_type=strategy.percent_of_equity, default_qty_value=95,
+     commission_type=strategy.commission.percent, commission_value=0.03,
+     slippage=2, process_orders_on_close=true,
+     calc_on_every_tick=false, max_labels_count=500)
+
+// ╔═══════════════════════════════════════════════════════╗
+// ║  ① DIRECTION & RISK                                    ║
+// ╚═══════════════════════════════════════════════════════╝
+gR = "① Direction & Risk"
+allowLongs  = input.bool(true,  "Long entries",  group=gR, inline="dir")
+allowShorts = input.bool(false, "Short entries", group=gR, inline="dir", tooltip="OFF by default: equities have a structural long bias and borrow fees are NOT modeled — shorts here always look better in backtest than live.")
+slAtrMult   = input.float(2.0, "Stop = structure, capped at × ATR", minval=0.5, step=0.25, group=gR, tooltip="Initial stop sits at the arming swing low/high, but never further than this many ATRs from entry.")
+tp1R        = input.float(1.5, "TP1 at R multiple", minval=0.5, step=0.25, group=gR)
+tp1Pct      = input.float(50,  "TP1 closes % of position", minval=10, maxval=90, step=5, group=gR)
+bePadPct    = input.float(0.05,"Break-even pad % (after TP1)", minval=0, step=0.05, group=gR) / 100
+trailMult   = input.float(2.5, "Runner trail × ATR", minval=0.5, step=0.25, group=gR, tooltip="Stocks trend longer than crypto chop — a wider trail keeps the runner in the move.")
+
+// ╔═══════════════════════════════════════════════════════╗
+// ║  ② SIGNAL                                              ║
+// ╚═══════════════════════════════════════════════════════╝
+gS = "② Signal"
+scoreTh    = input.int(70, "Score threshold (long ≥ th / short ≤ 100−th)", minval=55, maxval=95, group=gS)
+armBars    = input.int(15, "Structure break stays armed (bars)", minval=3, maxval=60, group=gS)
+pivLen     = input.int(10, "Pivot length (confirm lag = same)", minval=3, maxval=30, group=gS)
+adxTh      = input.int(18, "ADX regime filter ≥", minval=0, maxval=50, group=gS, tooltip="0 disables. Blocks entries in dead chop — same job as on your XAUT script.")
+volMult    = input.float(1.5, "Breakout volume ≥ × 20-bar avg", minval=1.0, step=0.1, group=gS)
+rsLen      = input.int(50, "Relative-strength EMA length", minval=10, maxval=200, group=gS)
+
+gF = "③ Stock filters"
+benchSym   = input.symbol("AMEX:SPY", "Benchmark (market regime + RS)", group=gF)
+hardRegime = input.bool(true, "Hard regime gate (long=bull bench / short=bear bench)", group=gF)
+earnBlock  = input.int(3, "Block entries within N days of earnings", minval=0, maxval=15, group=gF, tooltip="0 disables. Needs earnings data for the symbol (ETFs show none — filter is then inactive).")
+earnExit   = input.bool(true, "Close position the day before earnings", group=gF)
+minDVolM   = input.float(10, "Min avg dollar volume ($M/day)", minval=0, step=5, group=gF)
+rthOnly    = input.bool(true,  "Intraday: regular hours only (no pre/post)", group=gF)
+skipOpen   = input.bool(true,  "Intraday: skip first 30 min", group=gF)
+eodClose   = input.bool(false, "Intraday: flat by session close (day-trade mode)", group=gF)
+
+gD = "④ Walk-forward window"
+useDate   = input.bool(false, "Limit date range", group=gD, tooltip="Tune with one window, then flip to the untouched window to validate. If the edge only exists in the tuning window, there is no edge.")
+startDate = input.time(timestamp("1 Jan 2024 00:00 +0000"), "From", group=gD)
+endDate   = input.time(timestamp("1 Jan 2030 00:00 +0000"), "To", group=gD)
+inWindow  = not useDate or (time >= startDate and time <= endDate)
+
+// ╔═══════════════════════════════════════════════════════╗
+// ║  BENCHMARK, RS, EARNINGS, LIQUIDITY (no-lookahead)     ║
+// ╚═══════════════════════════════════════════════════════╝
+// Confirmed DAILY benchmark data only ([1] + lookahead_off): the regime an
+// intraday bar sees is yesterday's finished daily bar, never today's forming one.
+benchD    = request.security(benchSym, "D", close[1],              lookahead=barmerge.lookahead_off)
+benchEmaD = request.security(benchSym, "D", ta.ema(close, 200)[1], lookahead=barmerge.lookahead_off)
+benchBull = not na(benchD) and not na(benchEmaD) and benchD > benchEmaD
+
+// RS on the chart timeframe — evaluated on confirmed bars only, so same-TF
+// security is already final data at decision time.
+benchC  = request.security(benchSym, timeframe.period, close, lookahead=barmerge.lookahead_off)
+rsLine  = benchC > 0 ? close / benchC : na
+rsEma   = ta.ema(rsLine, rsLen)
+fRS     = na(rsLine) or na(rsEma) ? 0 : rsLine > rsEma ? 1 : -1
+
+// Next earnings timestamp — the built-in series (ms UNIX time), na on ETFs /
+// missing data → the earnings filter simply goes inactive.
+eNext      = earnings.future_time
+daysToEarn = na(eNext) ? na : (eNext - time) / 86400000.0
+earnSoon   = earnBlock > 0 and not na(daysToEarn) and daysToEarn >= 0 and daysToEarn <= earnBlock
+
+// 20-day average dollar volume, confirmed daily data.
+dVolM   = request.security(syminfo.tickerid, "D", ta.sma(close * volume, 20)[1], lookahead=barmerge.lookahead_off) / 1e6
+liquidOK = minDVolM <= 0 or (not na(dVolM) and dVolM >= minDVolM)
+
+// Session filters (intraday charts only).
+inRTH    = not timeframe.isintraday or not rthOnly or not na(time(timeframe.period, "0930-1600", "America/New_York"))
+inOpenRot= timeframe.isintraday and skipOpen and not na(time(timeframe.period, "0930-1000", "America/New_York"))
+sessionOK= inRTH and not inOpenRot
+
+// ╔═══════════════════════════════════════════════════════╗
+// ║  TREND FACTORS & SCORE                                 ║
+// ╚═══════════════════════════════════════════════════════╝
+ema20  = ta.ema(close, 20)
+ema50  = ta.ema(close, 50)
+ema200 = ta.ema(close, 200)
+atr    = ta.atr(14)
+[dmiPlus, dmiMinus, adxVal] = ta.dmi(14, 14)
+
+fStack = ema20 > ema50 and ema50 > ema200 ? 1 : ema20 < ema50 and ema50 < ema200 ? -1 : 0
+fE200  = close > ema200 ? 1 : close < ema200 ? -1 : 0
+fBench = benchBull ? 1 : -1
+volAvg = ta.sma(volume, 20)
+volBig = volAvg > 0 and volume >= volAvg * volMult
+fBkVol = volBig ? (close > open ? 1 : close < open ? -1 : 0) : 0
+vwapR  = math.sum(close * volume, 100) / math.sum(volume, 100)
+fVolB  = na(vwapR) ? 0 : close > vwapR ? 1 : -1
+fMom   = close > close[20] ? 1 : close < close[20] ? -1 : 0
+
+// weights: RS 20 + bench 15 + stack 15 + e200 10 + breakout vol 20 + volbias 10 + momentum 10
+netRaw   = fRS*20 + fBench*15 + fStack*15 + fE200*10 + fBkVol*20 + fVolB*10 + fMom*10
+confScore= math.max(0, math.min(100, 50 + netRaw / 2.0))
+regimeOK = adxTh <= 0 or adxVal >= adxTh
+
+// ╔═══════════════════════════════════════════════════════╗
+// ║  STRUCTURE ARM-AND-FIRE                                ║
+// ╚═══════════════════════════════════════════════════════╝
+ph = ta.pivothigh(pivLen, pivLen)
+pl = ta.pivotlow(pivLen, pivLen)
+var float lastPH = na
+var float lastPL = na
+if not na(ph)
+    lastPH := ph
+if not na(pl)
+    lastPL := pl
+
+bullBreak = not na(lastPH) and close > lastPH and close[1] <= lastPH
+bearBreak = not na(lastPL) and close < lastPL and close[1] >= lastPL
+
+var int armedDir = 0
+var int armedAt  = na
+if bullBreak
+    armedDir := 1
+    armedAt  := bar_index
+if bearBreak
+    armedDir := -1
+    armedAt  := bar_index
+if armedDir != 0 and bar_index - armedAt > armBars
+    armedDir := 0
+
+// ╔═══════════════════════════════════════════════════════╗
+// ║  FIRE                                                  ║
+// ╚═══════════════════════════════════════════════════════╝
+gatesOK  = regimeOK and sessionOK and liquidOK and not earnSoon and inWindow and not na(atr)
+longOK   = allowLongs  and (not hardRegime or benchBull)     and confScore >= scoreTh        and close > ema200
+shortOK  = allowShorts and (not hardRegime or not benchBull) and confScore <= 100 - scoreTh  and close < ema200
+
+fireLong  = barstate.isconfirmed and gatesOK and armedDir == 1  and longOK  and strategy.position_size <= 0
+fireShort = barstate.isconfirmed and gatesOK and armedDir == -1 and shortOK and strategy.position_size >= 0
+
+// ╔═══════════════════════════════════════════════════════╗
+// ║  POSITION MANAGEMENT                                   ║
+// ╚═══════════════════════════════════════════════════════╝
+var float slPx    = na
+var float tp1Px   = na
+var float entryPx = na
+var float riskPx  = na
+var bool  beMoved = false
+
+if fireLong
+    structSL = na(lastPL) ? close - slAtrMult * atr : math.max(lastPL, close - slAtrMult * atr)
+    slPx    := structSL
+    riskPx  := close - slPx
+    tp1Px   := close + tp1R * riskPx
+    entryPx := close
+    beMoved := false
+    armedDir := 0
+    strategy.entry("L", strategy.long)
+    label.new(bar_index, low, "LONG " + str.tostring(close, format.mintick) +
+         "\nscore " + str.tostring(confScore, "#") + " · RS " + (fRS > 0 ? "+" : "−") +
+         "\nSL " + str.tostring(slPx, format.mintick) + " · TP1 " + str.tostring(tp1Px, format.mintick),
+         style=label.style_label_up, color=color.new(color.green, 20), textcolor=color.white, size=size.small)
+
+if fireShort
+    structSL = na(lastPH) ? close + slAtrMult * atr : math.min(lastPH, close + slAtrMult * atr)
+    slPx    := structSL
+    riskPx  := slPx - close
+    tp1Px   := close - tp1R * riskPx
+    entryPx := close
+    beMoved := false
+    armedDir := 0
+    strategy.entry("S", strategy.short)
+    label.new(bar_index, high, "SHORT " + str.tostring(close, format.mintick) +
+         "\nscore " + str.tostring(confScore, "#") + " · RS " + (fRS > 0 ? "+" : "−") +
+         "\nSL " + str.tostring(slPx, format.mintick) + " · TP1 " + str.tostring(tp1Px, format.mintick),
+         style=label.style_label_down, color=color.new(color.red, 20), textcolor=color.white, size=size.small)
+
+inLong  = strategy.position_size > 0
+inShort = strategy.position_size < 0
+
+// TP1 fill detection → stop to break-even (+pad covers commissions).
+// Same-sign check: a reversal (short→long) also shrinks |size| and must NOT
+// count as a TP1 fill on the brand-new position.
+posShrunk = strategy.position_size != 0 and
+     math.sign(strategy.position_size) == math.sign(strategy.position_size[1]) and
+     math.abs(strategy.position_size) < math.abs(strategy.position_size[1])
+if posShrunk and not beMoved
+    beMoved := true
+    slPx := inLong ? entryPx * (1 + bePadPct) : entryPx * (1 - bePadPct)
+
+// Runner trails after break-even; the stop only ever tightens.
+if inLong and beMoved
+    slPx := math.max(slPx, close - trailMult * atr)
+if inShort and beMoved
+    slPx := math.min(slPx, close + trailMult * atr)
+
+// TP1 is only re-issued while unfilled — otherwise a later re-touch of the
+// TP1 price would scale ANOTHER 50% out of the runner.
+if inLong
+    if not beMoved
+        strategy.exit("TP1-L", "L", qty_percent=tp1Pct, limit=tp1Px, stop=slPx)
+    strategy.exit("RUN-L", "L", stop=slPx)
+if inShort
+    if not beMoved
+        strategy.exit("TP1-S", "S", qty_percent=tp1Pct, limit=tp1Px, stop=slPx)
+    strategy.exit("RUN-S", "S", stop=slPx)
+
+// Opposite structure break = the thesis died → out, don't wait for the stop.
+if barstate.isconfirmed and inLong and bearBreak
+    strategy.close("L", comment="structure flip")
+if barstate.isconfirmed and inShort and bullBreak
+    strategy.close("S", comment="structure flip")
+
+// Earnings defense: flat before the report (a gap ignores every stop).
+if earnExit and strategy.position_size != 0 and not na(daysToEarn) and daysToEarn >= 0 and daysToEarn <= 1
+    strategy.close_all(comment="earnings tomorrow")
+
+// Day-trade mode: flat into the close, no overnight gap risk at all.
+if eodClose and timeframe.isintraday and session.islastbar_regular and strategy.position_size != 0
+    strategy.close_all(comment="EOD")
+
+// ╔═══════════════════════════════════════════════════════╗
+// ║  VISUALS                                               ║
+// ╚═══════════════════════════════════════════════════════╝
+plot(ema20,  "EMA20",  color=color.new(color.aqua, 55))
+plot(ema50,  "EMA50",  color=color.new(color.orange, 55))
+plot(ema200, "EMA200", color=fE200 >= 0 ? color.new(color.green, 25) : color.new(color.red, 25), linewidth=2)
+plot(strategy.position_size != 0 ? slPx : na,    "Stop",  color=color.new(color.red, 0),    style=plot.style_linebr, linewidth=2)
+plot(strategy.position_size != 0 and not beMoved ? tp1Px : na, "TP1", color=color.new(color.green, 0), style=plot.style_linebr)
+plot(strategy.position_size != 0 ? entryPx : na, "Entry", color=color.new(color.gray, 30),  style=plot.style_linebr)
+bgcolor(armedDir == 1 ? color.new(color.green, 92) : armedDir == -1 ? color.new(color.red, 92) : na)
+plotshape(earnSoon, "Earnings window", shape.xcross, location.bottom, color.new(color.yellow, 30), size=size.tiny)
+
+// status table
+var table tbl = table.new(position.top_right, 2, 8, bgcolor=color.new(color.black, 25), border_width=1, border_color=color.new(color.gray, 80))
+if barstate.islast
+    posR = strategy.position_size != 0 and riskPx > 0 ?
+         (inLong ? (close - entryPx) : (entryPx - close)) / riskPx : na
+    table.cell(tbl, 0, 0, "Score",     text_color=color.gray,  text_size=size.small)
+    table.cell(tbl, 1, 0, str.tostring(confScore, "#") + " / 100", text_color=confScore >= scoreTh ? color.lime : confScore <= 100 - scoreTh ? color.red : color.white, text_size=size.small)
+    table.cell(tbl, 0, 1, "Market (" + str.replace(benchSym, "AMEX:", "") + ")", text_color=color.gray, text_size=size.small)
+    table.cell(tbl, 1, 1, benchBull ? "BULL ▲" : "BEAR ▼", text_color=benchBull ? color.lime : color.red, text_size=size.small)
+    table.cell(tbl, 0, 2, "Rel strength", text_color=color.gray, text_size=size.small)
+    table.cell(tbl, 1, 2, fRS > 0 ? "LEADER ▲" : fRS < 0 ? "LAGGARD ▼" : "—", text_color=fRS > 0 ? color.lime : fRS < 0 ? color.red : color.gray, text_size=size.small)
+    table.cell(tbl, 0, 3, "ADX", text_color=color.gray, text_size=size.small)
+    table.cell(tbl, 1, 3, str.tostring(adxVal, "#.#") + (regimeOK ? " trend" : " CHOP"), text_color=regimeOK ? color.white : color.orange, text_size=size.small)
+    table.cell(tbl, 0, 4, "Earnings", text_color=color.gray, text_size=size.small)
+    table.cell(tbl, 1, 4, na(daysToEarn) ? "no data" : daysToEarn < 0 ? "passed" : str.tostring(daysToEarn, "#.#") + "d" + (earnSoon ? " ⛔" : ""), text_color=earnSoon ? color.yellow : color.white, text_size=size.small)
+    table.cell(tbl, 0, 5, "Liquidity", text_color=color.gray, text_size=size.small)
+    table.cell(tbl, 1, 5, na(dVolM) ? "—" : "$" + str.tostring(dVolM, "#") + "M/d" + (liquidOK ? "" : " ⛔"), text_color=liquidOK ? color.white : color.orange, text_size=size.small)
+    table.cell(tbl, 0, 6, "Structure", text_color=color.gray, text_size=size.small)
+    table.cell(tbl, 1, 6, armedDir == 1 ? "ARMED LONG" : armedDir == -1 ? "ARMED SHORT" : "waiting", text_color=armedDir == 1 ? color.lime : armedDir == -1 ? color.red : color.gray, text_size=size.small)
+    table.cell(tbl, 0, 7, "Position", text_color=color.gray, text_size=size.small)
+    table.cell(tbl, 1, 7, strategy.position_size == 0 ? "flat" : (inLong ? "LONG " : "SHORT ") + (na(posR) ? "" : str.tostring(posR, "#.##") + "R") + (beMoved ? " · BE✓" : ""), text_color=strategy.position_size == 0 ? color.gray : inLong ? color.lime : color.red, text_size=size.small)
+
+// ╔═══════════════════════════════════════════════════════╗
+// ║  ALERTS                                                ║
+// ╚═══════════════════════════════════════════════════════╝
+alertcondition(fireLong,  "Long entry",  "US Stock Precision: LONG {{ticker}} @ {{close}}")
+alertcondition(fireShort, "Short entry", "US Stock Precision: SHORT {{ticker}} @ {{close}}")
+alertcondition(bullBreak, "Bullish structure break (armed)", "{{ticker}} broke above its pivot high — long armed")
+alertcondition(bearBreak, "Bearish structure break (armed)", "{{ticker}} broke below its pivot low — short armed")

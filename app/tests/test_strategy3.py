@@ -121,15 +121,16 @@ def test_strategy3_params_per_symbol_override(monkeypatch):
     monkeypatch.setattr(S3.config, "STRATEGY3_MARGIN_USDT", 30.0)
     monkeypatch.setattr(S3.config, "STRATEGY3_LEVERAGE", 50)
     monkeypatch.setattr(S3.config, "STRATEGY3_EMERGENCY_SL_PCT", 0.015)
+    monkeypatch.setattr(S3.config, "STRATEGY3_FEED", "binance")
     monkeypatch.setattr(S3.config, "STRATEGY3_OCC_SYMBOLS", [])
     monkeypatch.setattr(S3.config, "STRATEGY3_OVERRIDES",
                         {"XAUT": {"timeframe": "30m", "margin": 60.0}})
     xaut = S3.config.strategy3_params("XAUT")
     sol = S3.config.strategy3_params("SOL")
     assert xaut == {"engine": "flagflip", "timeframe": "30m", "margin": 60.0,
-                    "leverage": 50, "sl_pct": 0.015}
+                    "leverage": 50, "sl_pct": 0.015, "feed": "binance"}
     assert sol == {"engine": "flagflip", "timeframe": "15m", "margin": 30.0,
-                   "leverage": 50, "sl_pct": 0.015}
+                   "leverage": 50, "sl_pct": 0.015, "feed": "binance"}
     # worst-case total margin lock for the full 4-coin list (a regression a
     # careless merge bug in strategy3_params could easily break silently)
     total = sum(S3.config.strategy3_params(b)["margin"]
@@ -149,12 +150,53 @@ def test_strategy3_params_occ_engine(monkeypatch):
     monkeypatch.setattr(S3.config, "STRATEGY3_OCC_LEVERAGE", 10)
     monkeypatch.setattr(S3.config, "STRATEGY3_OCC_SL_PCT", 0.04)
     monkeypatch.setattr(S3.config, "STRATEGY3_EMERGENCY_SL_PCT", 0.015)
+    monkeypatch.setattr(S3.config, "STRATEGY3_FEED", "binance")
     eth = S3.config.strategy3_params("ETH")
     assert eth == {"engine": "occ", "timeframe": "30m", "margin": 50.0,
-                   "leverage": 10, "sl_pct": 0.04, "res_mult": 3, "ma_len": 8}
+                   "leverage": 10, "sl_pct": 0.04, "res_mult": 3, "ma_len": 8,
+                   "feed": "binance"}
     assert eth["margin"] * eth["leverage"] == 500.0     # the user's order value
     assert S3.config.strategy3_params("XAUT")["engine"] == "flagflip"
     assert S3.config.strategy3_params("XAUT")["sl_pct"] == 0.015
+
+
+def test_strategy3_params_feed_override(monkeypatch):
+    """Per-symbol candle feed: XAUT reads Bybit candles (the venue the orders
+    fill on — added 2026-07-10 after the ADX gate split across venues on a
+    thin market); everyone else stays on the Binance default. An UNSET env
+    override is stored as None and must still fall back to the shared feed."""
+    monkeypatch.setattr(S3.config, "STRATEGY3_FEED", "binance")
+    monkeypatch.setattr(S3.config, "STRATEGY3_OCC_SYMBOLS", [])
+    monkeypatch.setattr(S3.config, "STRATEGY3_OVERRIDES",
+                        {"XAUT": {"timeframe": "30m", "feed": "bybit"},
+                         "SOL": {"feed": None}})
+    assert S3.config.strategy3_params("XAUT")["feed"] == "bybit"
+    assert S3.config.strategy3_params("SOL")["feed"] == "binance"   # None → default
+    assert S3.config.strategy3_params("HYPE")["feed"] == "binance"  # no override
+
+
+def test_fetch_candles_routes_by_feed(monkeypatch):
+    """'binance' goes through the shared SafeBinanceClient wrapper; 'bybit'
+    hits strategy3_exec.client() (the execution venue) — and never vice versa."""
+    calls = []
+
+    class _Binance:
+        def call(self, method, *a):
+            calls.append(("binance", method, a))
+            return [[1, 1, 1, 1, 1, 1]]
+
+    class _Bybit:
+        def fetch_ohlcv(self, *a):
+            calls.append(("bybit", "fetch_ohlcv", a))
+            return [[2, 2, 2, 2, 2, 2]]
+
+    monkeypatch.setattr(S3.X, "client", lambda: _Bybit())
+    assert S3.fetch_candles(_Binance(), "XAUT/USDT:USDT", "30m", "bybit")[0][0] == 2
+    assert S3.fetch_candles(_Binance(), "SOL/USDT:USDT", "15m", "binance")[0][0] == 1
+    assert [c[0] for c in calls] == ["bybit", "binance"]
+    # both fetch the full replay depth (arm/alternation needs deep history)
+    assert calls[0][2] == ("XAUT/USDT:USDT", "30m", None, S3.CANDLES)
+    assert calls[1][2] == ("SOL/USDT:USDT", "15m", None, S3.CANDLES)
 
 
 def test_status_line_and_banner_mention_every_symbol(monkeypatch):
@@ -587,6 +629,10 @@ def test_strategy3_retry_gives_up_after_3_attempts(monkeypatch):
     # pin the ENGINE too: this tests the flag-flip retry path, and the real
     # .env may route SOL to the OCC engine (the usual preflight trap)
     monkeypatch.setattr(S3.config, "STRATEGY3_OCC_SYMBOLS", [])
+    # …and the FEED: the real .env defaults S3 to Bybit candles (2026-07-11),
+    # which would route the fetch past FakeClient to the real Bybit client
+    monkeypatch.setattr(S3.config, "STRATEGY3_FEED", "binance")
+    monkeypatch.setattr(S3.config, "STRATEGY3_OVERRIDES", {})
 
     state = {}
     client = FakeClient()

@@ -37,6 +37,7 @@ from market_data import SafeBinanceClient, RateLimitCooldownError
 import liquidations
 import market_intel
 import executor
+import price_alerts
 import strategy3_exec
 import strategy3_scanner
 
@@ -710,7 +711,7 @@ def sync_record_states_in_scan_data() -> None:
 # this ONE value whenever app.css / i18n.js change and every template busts its
 # cache — no more hunting down 10 hardcoded copies (which once shipped an
 # unstyled page to users). Templates reference it as ?v={{ asset_ver }}.
-ASSET_VER = "20260705"
+ASSET_VER = "20260711"
 
 
 @app.context_processor
@@ -2744,6 +2745,66 @@ def api_strategy2_live_status():
         return jsonify(strategy2_live.status())
     except Exception as exc:  # noqa: BLE001 — never 500 the dashboard
         return jsonify({"error": str(exc), "enabled": False})
+
+
+@app.route("/api/price_alerts")
+@login_required
+def api_price_alerts():
+    """The dashboard's 🔔 Price Alerts card — user-set levels the S2 scanner
+    watches. Active alerts are enriched with a live price so the card can show
+    distance-to-target without another endpoint."""
+    alerts = sorted(price_alerts.load_alerts(),
+                    key=lambda a: a.get("created") or 0, reverse=True)
+    active_syms = [a["symbol"] for a in alerts if not a.get("triggered")]
+    tickers = fetch_live_tickers(active_syms) if active_syms else {}
+    for a in alerts:
+        t = tickers.get(a.get("symbol")) or {}
+        last = t.get("last") or t.get("close")
+        a["last"] = float(last) if last else None
+    return jsonify({"alerts": alerts})
+
+
+@app.route("/api/price_alerts", methods=["POST"])
+@login_required
+def api_price_alerts_add():
+    """Create one alert. Body: {symbol: "ETH" (base or full), price: 3500}.
+    Direction (above/below) is fixed from the live price at creation."""
+    body = request.get_json(silent=True) or {}
+    base = str(body.get("symbol") or "").strip().upper().split("/")[0].split(":")[0]
+    if not base or not base.isalnum():
+        return jsonify({"ok": False, "error": "bad symbol"}), 400
+    try:
+        target = float(body.get("price"))
+    except (TypeError, ValueError):
+        return jsonify({"ok": False, "error": "bad price"}), 400
+    symbol = f"{base}/{QUOTE_ASSET}:{QUOTE_ASSET}"
+    t = fetch_live_tickers([symbol]).get(symbol) or {}
+    last = t.get("last") or t.get("close")
+    if not last:
+        return jsonify({"ok": False, "error": f"no live price for {base} — "
+                        "is it a Binance USDT perp?"}), 400
+    try:
+        alert = price_alerts.add_alert(symbol, target, float(last))
+    except ValueError as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 400
+    return jsonify({"ok": True, "alert": alert})
+
+
+@app.route("/api/price_alerts/delete", methods=["POST"])
+@login_required
+def api_price_alerts_delete():
+    body = request.get_json(silent=True) or {}
+    return jsonify({"ok": price_alerts.remove_alert(str(body.get("id") or ""))})
+
+
+@app.route("/api/events_feed")
+@login_required
+def api_events_feed():
+    """Recent big-event alerts the 🌍 event radar sent to Telegram — mirrored
+    on the /market page. Read-only view over the radar's own state file."""
+    import event_radar
+    recent = (event_radar._load_state().get("recent") or [])[:30]
+    return jsonify({"events": recent})
 
 
 @app.route("/market")

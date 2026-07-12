@@ -98,6 +98,12 @@ html { scrollbar-width: thin; scrollbar-color: rgba(255, 255, 255, 0.18) transpa
     .tb-nav { flex-wrap: nowrap; overflow-x: auto; -webkit-overflow-scrolling: touch; padding-top: 8px; scrollbar-width: none; }
     .tb-nav::-webkit-scrollbar { display: none; }
     .tb-nav .nav-pill { flex: 0 0 auto; white-space: nowrap; }
+    /* right-edge fade = "there's more, swipe" — without it the cut-off pills
+       read as a rendering bug and nobody finds the regime chips at the end */
+    .tb-nav {
+        mask-image: linear-gradient(90deg, #000 88%, transparent 99%);
+        -webkit-mask-image: linear-gradient(90deg, #000 88%, transparent 99%);
+    }
 }
 
 /* Standalone wrapper so the nav looks right on pages that don't have index's

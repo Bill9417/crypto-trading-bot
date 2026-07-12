@@ -1,0 +1,146 @@
+// ════════════════════════════════════════════════════════════════════════════
+//  REACTIVE S/R ZONES — original support/resistance engine
+//
+//  Rename this to your own title before publishing — it's 100% original code,
+//  no borrowed modules, so you can release it under your own name and license.
+//
+//  METHOD
+//  · Every confirmed swing high/low spawns a ZONE sized by ATR (adapts to
+//    volatility at formation) — an area, not a line.
+//  · A new swing landing near an existing zone MERGES into it instead of
+//    cluttering the chart, and the zone re-anchors to the VOLUME-WEIGHTED
+//    average of all its swings — zones learn their true level from where
+//    volume actually traded.
+//  · STRENGTH is earned: 2 points per merged swing + 1 per successful test.
+//    Strength renders as opacity, so battle-tested zones stand out and weak
+//    ones stay faint.
+//  · Zones are never deleted on a break. Their ROLE is dynamic: green support
+//    while price is above the anchor, red resistance while below — automatic
+//    polarity flipping, the way real S/R behaves.
+//  · A zone retires only when SPENT (N clean breaks — closes that jump fully
+//    through it) or STALE (untouched too long). Only the strongest N zones
+//    are kept; the weakest is retired when a new one is born.
+// ════════════════════════════════════════════════════════════════════════════
+//@version=6
+indicator("Reactive S/R Zones", overlay=true, max_boxes_count=100, max_labels_count=100)
+
+gSR = "Reactive S/R Zones"
+srLen        = input.int(15, "Pivot Length", minval=5, maxval=50, group=gSR, tooltip="Bars on each side to confirm a swing point. Larger = fewer, more important zones.")
+srHeightMult = input.float(0.50, "Zone Height (× ATR50)", minval=0.1, maxval=2.0, step=0.05, group=gSR, tooltip="Zone thickness adapts to the volatility at formation.")
+srMergeMult  = input.float(1.00, "Merge Distance (× ATR50)", minval=0.25, maxval=3.0, step=0.25, group=gSR, tooltip="A new swing landing this close to an existing zone STRENGTHENS it instead of creating a new one, and the zone re-anchors to the volume-weighted average of its swings.")
+srMaxZones   = input.int(6, "Max Zones", minval=2, maxval=12, group=gSR, tooltip="Only the strongest N zones are kept — the weakest is retired when a new one is born.")
+srDecayBars  = input.int(600, "Retire After (bars untouched)", minval=100, maxval=5000, group=gSR)
+srMaxBreaks  = input.int(2, "Retire After (clean breaks)", minval=1, maxval=5, group=gSR, tooltip="A clean break = a close jumping fully through the zone to the other side. After this many, the level is considered spent.")
+srSupCol     = input.color(color.new(#26a69a, 0), "Support / Resistance", inline="src", group=gSR)
+srResCol     = input.color(color.new(#ef5350, 0), "", inline="src", group=gSR)
+srShowLabels = input.bool(true, "Show Strength Labels", group=gSR, tooltip="Small 'S ×7' / 'R ×4' tag at the right edge of each zone.")
+srAlerts     = input.bool(true, "Zone Alerts", group=gSR)
+
+type SRZone
+    box    bx
+    label  lb
+    float  anchor
+    float  halfH
+    float  volSum
+    int    pivots
+    int    touches
+    int    breaks
+    int    lastActive
+
+var array<SRZone> srZones = array.new<SRZone>()
+srAtr = ta.atr(50)
+
+f_srStrength(SRZone z) => z.pivots * 2 + z.touches
+
+f_srRetireWeakest() =>
+    if srZones.size() >= srMaxZones
+        wIdx = 0
+        wVal = 1000000
+        for [i, z] in srZones
+            s = f_srStrength(z)
+            if s < wVal
+                wVal := s
+                wIdx := i
+        SRZone w = srZones.get(wIdx)
+        box.delete(w.bx)
+        label.delete(w.lb)
+        srZones.remove(wIdx)
+
+f_srAbsorb(float price, float vol) =>
+    merged = false
+    for z in srZones
+        if math.abs(price - z.anchor) <= srMergeMult * srAtr
+            z.anchor := (z.anchor * z.volSum + price * vol) / (z.volSum + vol)
+            z.volSum += vol
+            z.pivots += 1
+            z.lastActive := bar_index
+            merged := true
+            break
+    merged
+
+f_srSpawn(float price, float vol) =>
+    f_srRetireWeakest()
+    float halfH = srHeightMult * srAtr / 2
+    box bx = box.new(bar_index - srLen, price + halfH, bar_index + 15, price - halfH, border_width=1, bgcolor=color.new(color.gray, 85), border_color=color.new(color.gray, 60))
+    label lb = srShowLabels ? label.new(bar_index + 15, price, "", style=label.style_label_left, color=color.new(color.black, 100), textcolor=color.gray, size=size.tiny) : label(na)
+    srZones.push(SRZone.new(bx, lb, price, halfH, vol, 1, 0, 0, bar_index))
+
+srPh = ta.pivothigh(srLen, srLen)
+srPl = ta.pivotlow(srLen, srLen)
+
+srTouch   = false
+srBreakUp = false
+srBreakDn = false
+
+if not na(srPh)
+    if not f_srAbsorb(srPh, nz(volume[srLen], 1))
+        f_srSpawn(srPh, nz(volume[srLen], 1))
+if not na(srPl)
+    if not f_srAbsorb(srPl, nz(volume[srLen], 1))
+        f_srSpawn(srPl, nz(volume[srLen], 1))
+
+// touches, clean breaks, decay, rendering
+int zi = 0
+while zi < srZones.size()
+    SRZone z = srZones.get(zi)
+    float zTop = z.anchor + z.halfH
+    float zBot = z.anchor - z.halfH
+    int prevSide = close[1] > z.anchor ? 1 : -1
+    int currSide = close    > z.anchor ? 1 : -1
+    bool closedOutside = close > zTop or close < zBot
+    if currSide != prevSide and closedOutside
+        // clean break: close flipped sides and ended fully beyond the zone
+        z.breaks += 1
+        z.lastActive := bar_index
+        if currSide == 1
+            srBreakUp := true
+        else
+            srBreakDn := true
+    else if high >= zBot and low <= zTop and currSide == prevSide and closedOutside
+        // touch: the bar entered the zone but closed back out on the same side — the zone held
+        z.touches += 1
+        z.lastActive := bar_index
+        srTouch := true
+    if z.breaks >= srMaxBreaks or bar_index - z.lastActive > srDecayBars
+        box.delete(z.bx)
+        label.delete(z.lb)
+        srZones.remove(zi)
+    else
+        bool isSup = currSide == 1
+        color baseCol = isSup ? srSupCol : srResCol
+        int s = f_srStrength(z)
+        int tr = math.max(55, 88 - s * 4)   // stronger zone → more opaque
+        box.set_top(z.bx, zTop)
+        box.set_bottom(z.bx, zBot)
+        box.set_right(z.bx, bar_index + 15)
+        box.set_bgcolor(z.bx, color.new(baseCol, tr))
+        box.set_border_color(z.bx, color.new(baseCol, math.max(25, tr - 25)))
+        if not na(z.lb)
+            label.set_xy(z.lb, bar_index + 15, z.anchor)
+            label.set_text(z.lb, (isSup ? "S ×" : "R ×") + str.tostring(s))
+            label.set_textcolor(z.lb, baseCol)
+        zi += 1
+
+alertcondition(srAlerts and srTouch,   "S/R Zone Touch",      "Price tested a reactive S/R zone and it held")
+alertcondition(srAlerts and srBreakUp, "S/R Zone Break Up",   "Price broke up through a reactive S/R zone")
+alertcondition(srAlerts and srBreakDn, "S/R Zone Break Down", "Price broke down through a reactive S/R zone")

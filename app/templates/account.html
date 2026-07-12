@@ -123,8 +123,8 @@
             <div class="meta-row" style="align-items:center;">
                 <span>Saved: <b id="ls-saved">{{ live_strategy.saved_name }}</b></span>
                 <span>Running: <b id="ls-running">{{ live_strategy.running_name or '—' }}</b></span>
-                <label style="display:flex;align-items:center;gap:8px;margin-left:auto;">
-                    <select id="ls-select" style="background:rgba(255,255,255,.04);border:1px solid var(--wolf-border);color:var(--wolf-text);font-size:.82rem;font-weight:600;padding:8px 10px;border-radius:9px;cursor:pointer;">
+                <label style="display:flex;align-items:center;gap:8px;margin-left:auto;max-width:100%;min-width:0;">
+                    <select id="ls-select" style="background:rgba(255,255,255,.04);border:1px solid var(--wolf-border);color:var(--wolf-text);font-size:.82rem;font-weight:600;padding:8px 10px;border-radius:9px;cursor:pointer;min-width:0;flex:1 1 auto;">
                         {% for s in live_strategy.strategies %}
                         <option value="{{ s.key }}" data-manage="{{ s.manage }}" data-desc="{{ s.desc }}" {% if s.key == live_strategy.saved %}selected{% endif %}>{{ s.name }}</option>
                         {% endfor %}

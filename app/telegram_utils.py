@@ -10,18 +10,24 @@ from config import (
     TELEGRAM_ALERTS_THREAD_ID,
     TELEGRAM_EVENTS_THREAD_ID,
     TELEGRAM_GROUP_CHAT_ID,
+    TELEGRAM_LIQ_THREAD_ID,
     TELEGRAM_QUIET,
+    TELEGRAM_REPORT_THREAD_ID,
     TELEGRAM_SIGNALS_THREAD_ID,
     TELEGRAM_TECH_THREAD_ID,
+    TELEGRAM_TWSTOCKS_THREAD_ID,
 )
 
 _TOPIC_THREAD = {
     "signals": TELEGRAM_SIGNALS_THREAD_ID,
     "alerts": TELEGRAM_ALERTS_THREAD_ID,
-    # 🌍 big-event radar / 💻 tech digest — share the Alerts thread until
-    # their own topics exist
+    # 🌍 big-event radar / 💻 tech digest / 📈 daily report — each falls back
+    # to the Alerts thread until its own topic exists
     "events": TELEGRAM_EVENTS_THREAD_ID or TELEGRAM_ALERTS_THREAD_ID,
     "tech": TELEGRAM_TECH_THREAD_ID or TELEGRAM_ALERTS_THREAD_ID,
+    "report": TELEGRAM_REPORT_THREAD_ID or TELEGRAM_ALERTS_THREAD_ID,
+    "twstocks": TELEGRAM_TWSTOCKS_THREAD_ID or TELEGRAM_ALERTS_THREAD_ID,
+    "liq": TELEGRAM_LIQ_THREAD_ID or TELEGRAM_ALERTS_THREAD_ID,
 }
 
 

@@ -1,0 +1,307 @@
+// ════════════════════════════════════════════════════════════════════════════
+//  ETH PRECISION CONFLUENCE — strategy() port of your two indicators
+//  Sources: All-in-One ULTIMATE (confidence meter + MSB arm-and-fire)
+//         + Whale Flow & Macro (volume delta, whale bias, OI positioning)
+//
+//  DESIGNED FOR: ETH perp, 15m or 30m chart (BINANCE:ETHUSDT.P / BYBIT).
+//  Defaults are 15m-tuned; on 30m the bar-count windows simply cover 2× the
+//  time, which is fine — or halve them in the inputs if you want parity.
+//
+//  ENTRY MODEL (arm → confirm → fire, all on CLOSED bars):
+//   1. ARM    — price closes through the last confirmed swing high (long) or
+//               swing low (short): a market-structure break, like the MSB
+//               flip in the All-in-One. The arm stays live for N bars.
+//   2. CONFIRM— confluence score (0-100, 7 weighted factors incl. whale flow)
+//               must reach the threshold, ADX must show a trending regime,
+//               whale bias must lean the trade's way, and OI must not show
+//               aggressive positioning AGAINST the trade.
+//   3. FIRE   — enter on that bar's close. SL = structure (arming swing) with
+//               an ATR cap; TP1 takes half at +1.5R and moves the stop to
+//               breakeven; the runner trails an ATR stop until structure or
+//               the trail takes it out.
+//
+//  HONESTY (why the backtest can be trusted as far as any TV backtest can):
+//   • process_orders_on_close + closed-bar signals — nothing repaints.
+//   • Volume delta uses the close-position-in-range ESTIMATE on every bar.
+//     The 1m intrabar split (Whale Flow panel) only exists for recent bars —
+//     mixing it in would make history behave differently from live.
+//   • Pivots confirm with `pivotLen` bars of lag — the break level is always
+//     a level that existed BEFORE the bar that breaks it. No lookahead.
+//   • Fees (0.055% taker) + 2-tick slippage are in the header. Change them
+//     to your venue's real numbers before believing any result.
+//   ⚠ A good-looking backtest is still just a backtest (see: S1, OCC…).
+//     Walk it forward on data the tuning never saw before trusting it.
+// ════════════════════════════════════════════════════════════════════════════
+//@version=6
+strategy("ETH Precision Confluence [15m/30m]", overlay=true,
+     initial_capital=1000,
+     default_qty_type=strategy.percent_of_equity, default_qty_value=95,
+     commission_type=strategy.commission.percent, commission_value=0.055,
+     slippage=2, process_orders_on_close=true, calc_on_every_tick=false,
+     max_labels_count=500, max_lines_count=500)
+
+// ╔═══════════════════════════════════════════════════════╗
+// ║  INPUTS                                                ║
+// ╚═══════════════════════════════════════════════════════╝
+gS = "① Structure (arm trigger)"
+pivotLen  = input.int(10, "Pivot Length", minval=3, maxval=30, group=gS, tooltip="Bars each side to confirm a swing. The strategy arms when close breaks the last confirmed swing high/low.")
+armBars   = input.int(24, "Arm Window (bars)", minval=5, maxval=100, group=gS, tooltip="How long a structure break stays 'armed' waiting for confluence. 24 bars = 6h on 15m.")
+
+gW = "② Whale Flow"
+whalePct  = input.int(90, "Whale Percentile", minval=70, maxval=99, group=gW, tooltip="A bar is a whale bar when its volume is at/above this percentile of the lookback. Same definition as the Whale Flow panel.")
+pctLen    = input.int(200, "Percentile Lookback", minval=50, maxval=1000, group=gW)
+biasLen   = input.int(96, "Whale Bias Window", minval=20, maxval=500, group=gW, tooltip="96 bars = 1 day on 15m.")
+whaleGate = input.int(10, "Whale Bias Gate (±)", minval=0, maxval=60, group=gW, tooltip="HARD gate: longs need whale bias ≥ +this, shorts ≤ −this. 0 disables the gate (score still counts whale factors).")
+deltaGate = input.int(15, "Delta Factor Threshold (±%)", minval=0, maxval=60, group=gW, tooltip="Bar delta must exceed ±this % of volume before the delta factor counts as directional in the score.")
+paintWhale= input.bool(true, "Color Whale Bars on Chart", group=gW)
+
+gO = "③ Open Interest veto"
+useOI      = input.bool(true, "Block Entries Against Aggressive OI", group=gO, tooltip="Longs are blocked while OI rises with price falling (new shorts piling in); shorts blocked on the mirror. Auto-bypassed when the chart has no OI feed.")
+oiOverride = input.symbol("", "OI Symbol Override", group=gO)
+
+gC = "④ Confluence score"
+scoreTh   = input.int(70, "Score Threshold", minval=50, maxval=95, group=gC, tooltip="Long fires at score ≥ this; short at score ≤ (100 − this).")
+volBiasLen= input.int(360, "Volume-Mean Length", minval=50, maxval=2000, group=gC)
+adxTh     = input.int(20, "ADX Regime ≥", minval=10, maxval=40, group=gC)
+adxLen    = input.int(14, "ADX Length", minval=5, maxval=50, group=gC)
+
+gR = "⑤ Risk"
+slAtrMult = input.float(1.8, "Max SL Distance (× ATR)", minval=0.5, maxval=5, step=0.1, group=gR, tooltip="SL sits at the arming swing, but never further than this many ATRs from entry.")
+tp1R      = input.float(1.5, "TP1 (R multiple)", minval=0.5, maxval=5, step=0.25, group=gR)
+tp1Pct    = input.int(50, "TP1 Size (%)", minval=10, maxval=90, group=gR)
+trailMult = input.float(2.0, "Runner Trail (× ATR)", minval=0.5, maxval=6, step=0.25, group=gR)
+bePadPct  = input.float(0.10, "Breakeven Pad (%)", minval=0.0, maxval=0.5, step=0.05, group=gR, tooltip="After TP1 the stop moves to entry + this % (long) — covers fees so a runner that retraces scratches green, not red.")
+gT = "⑥ Display"
+showTable = input.bool(true, "Status Table", group=gT)
+showLines = input.bool(true, "Live SL/TP Lines", group=gT)
+
+BUY  = #26a69a
+SELL = #ef5350
+
+// ╔═══════════════════════════════════════════════════════╗
+// ║  TREND STACK (from All-in-One)                         ║
+// ╚═══════════════════════════════════════════════════════╝
+emaFast  = ta.ema(close, 20)
+emaMed   = ta.ema(close, 50)
+emaSlow  = ta.ema(close, 100)
+emaTrend = ta.ema(close, 200)
+vegas    = ta.sma(ta.ema(close, 200), 5)
+tun1a    = ta.ema(close, 144)
+tun1b    = ta.ema(close, 169)
+
+plot(emaFast,  "EMA20",  color.new(color.yellow, 60))
+plot(emaTrend, "EMA200", color.new(color.blue, 20), linewidth=2)
+plot(vegas,    "Vegas",  ta.change(vegas) > 0 ? color.new(color.green, 0) : color.new(color.red, 0), linewidth=2)
+pT1 = plot(tun1a, "Tunnel A", color.new(color.orange, 70))
+pT2 = plot(tun1b, "Tunnel B", color.new(color.orange, 70))
+fill(pT1, pT2, color=tun1a > tun1b ? color.new(color.orange, 88) : color.new(color.red, 90), title="Tunnel")
+
+// ╔═══════════════════════════════════════════════════════╗
+// ║  WHALE FLOW (from Whale Flow & Macro — estimate mode)  ║
+// ╚═══════════════════════════════════════════════════════╝
+// Close-position-in-range estimate on EVERY bar (uniform across history —
+// see HONESTY note in the header). −vol … +vol.
+float rawDelta = high == low ? 0.0 : nz(volume) * (2 * (close - low) / (high - low) - 1)
+float deltaPct = nz(volume) > 0 ? rawDelta / volume * 100 : 0.0
+
+whaleThr = ta.percentile_nearest_rank(volume, pctLen, whalePct)
+isWhale  = not na(whaleThr) and nz(volume) >= whaleThr
+whaleSigned = isWhale ? rawDelta : 0.0
+whaleAbs    = isWhale ? math.abs(rawDelta) : 0.0
+biasDen     = math.sum(whaleAbs, biasLen)
+whaleBias   = biasDen > 0 ? math.sum(whaleSigned, biasLen) / biasDen * 100 : 0.0
+
+barcolor(paintWhale and isWhale ? (rawDelta >= 0 ? color.new(BUY, 0) : color.new(SELL, 0)) : na, title="Whale Bars")
+
+// ╔═══════════════════════════════════════════════════════╗
+// ║  OPEN INTEREST VETO                                    ║
+// ╚═══════════════════════════════════════════════════════╝
+oiTicker = oiOverride != "" ? oiOverride : syminfo.tickerid + "_OI"
+oiClose  = request.security(oiTicker, timeframe.period, close, ignore_invalid_symbol=true, lookahead=barmerge.lookahead_off)
+oiOk     = not na(oiClose)
+oiDelta  = oiOk ? oiClose - nz(oiClose[1], oiClose) : na
+priceUp  = close >= nz(close[1], close)
+// 1 longs opening · 2 shorts opening · 3 shorts closing · 4 longs closing
+int oiState = not oiOk or na(oiDelta) or oiDelta == 0 ? 0 : oiDelta > 0 ? (priceUp ? 1 : 2) : (priceUp ? 3 : 4)
+oiBlocksLong  = useOI and oiState == 2      // new shorts piling in
+oiBlocksShort = useOI and oiState == 1      // new longs piling in
+
+// ╔═══════════════════════════════════════════════════════╗
+// ║  CONFLUENCE SCORE (0–100) — whale-flow-heavy remix     ║
+// ╚═══════════════════════════════════════════════════════╝
+volMean = math.sum(close * volume, volBiasLen) / math.sum(volume, volBiasLen)
+
+fEMAstack = emaFast > emaMed and emaMed > emaSlow and emaSlow > emaTrend ? 1 : emaFast < emaMed and emaMed < emaSlow and emaSlow < emaTrend ? -1 : 0
+fEMA200   = close > emaTrend ? 1 : -1
+fVegas    = ta.change(vegas) > 0 ? 1 : ta.change(vegas) < 0 ? -1 : 0
+fTunnel   = close > tun1a and close > tun1b ? 1 : close < tun1a and close < tun1b ? -1 : 0
+fVolMean  = na(volMean) ? 0 : close > volMean ? 1 : -1
+fWhale    = whaleBias >= 20 ? 1 : whaleBias <= -20 ? -1 : 0
+fDelta    = deltaPct >= deltaGate ? 1 : deltaPct <= -deltaGate ? -1 : 0
+
+// weights sum to 100 — whale flow carries 40 (the "precision" edge claimed
+// by this remix: trend can be stacked all day, entries only fire when the
+// tape's aggressive flow agrees).
+netRaw = fEMAstack*15 + fEMA200*10 + fVegas*10 + fTunnel*10 + fVolMean*10 + fWhale*25 + fDelta*20
+confScore = math.max(0.0, math.min(100.0, 50 + netRaw / 2.0))
+
+[dmiPlus, dmiMinus, adxVal] = ta.dmi(adxLen, adxLen)
+regimeOK = adxVal >= adxTh
+
+// ╔═══════════════════════════════════════════════════════╗
+// ║  STRUCTURE ARM (simplified MSB)                        ║
+// ╚═══════════════════════════════════════════════════════╝
+ph = ta.pivothigh(pivotLen, pivotLen)
+pl = ta.pivotlow(pivotLen, pivotLen)
+var float lastPH = na
+var float lastPL = na
+var float armSwingLow  = na      // structure stop anchors
+var float armSwingHigh = na
+if not na(ph)
+    lastPH := ph
+if not na(pl)
+    lastPL := pl
+
+bullBreak = not na(lastPH) and close > lastPH and close[1] <= lastPH
+bearBreak = not na(lastPL) and close < lastPL and close[1] >= lastPL
+
+var int armedLongUntil  = na
+var int armedShortUntil = na
+if bullBreak
+    armedLongUntil  := bar_index + armBars
+    armedShortUntil := na
+    armSwingLow := lastPL
+if bearBreak
+    armedShortUntil := bar_index + armBars
+    armedLongUntil  := na
+    armSwingHigh := lastPH
+
+armedLong  = not na(armedLongUntil)  and bar_index <= armedLongUntil
+armedShort = not na(armedShortUntil) and bar_index <= armedShortUntil
+
+// ╔═══════════════════════════════════════════════════════╗
+// ║  FIRE                                                  ║
+// ╚═══════════════════════════════════════════════════════╝
+atr = ta.atr(14)
+
+longFire = armedLong and barstate.isconfirmed and
+     confScore >= scoreTh and regimeOK and
+     (whaleGate == 0 or whaleBias >= whaleGate) and
+     close > emaTrend and not oiBlocksLong and
+     strategy.position_size <= 0
+
+shortFire = armedShort and barstate.isconfirmed and
+     confScore <= 100 - scoreTh and regimeOK and
+     (whaleGate == 0 or whaleBias <= -whaleGate) and
+     close < emaTrend and not oiBlocksShort and
+     strategy.position_size >= 0
+
+// ╔═══════════════════════════════════════════════════════╗
+// ║  POSITION MANAGEMENT                                   ║
+// ╚═══════════════════════════════════════════════════════╝
+var float entryPx = na
+var float slPx    = na
+var float tp1Px   = na
+var float riskPx  = na          // initial 1R distance, frozen at entry
+var bool  beMoved = false
+
+f_stopLong() =>
+    structSL = nz(armSwingLow, close - slAtrMult * atr)
+    math.max(structSL, close - slAtrMult * atr)   // never wider than the ATR cap
+f_stopShort() =>
+    structSL = nz(armSwingHigh, close + slAtrMult * atr)
+    math.min(structSL, close + slAtrMult * atr)
+
+if longFire
+    entryPx := close
+    slPx    := f_stopLong()
+    riskPx  := close - slPx
+    tp1Px   := close + tp1R * (close - slPx)
+    beMoved := false
+    armedLongUntil := na
+    strategy.entry("L", strategy.long)
+    label.new(bar_index, low, "LONG " + str.tostring(close, format.mintick) +
+         "\nscore " + str.tostring(math.round(confScore)) + " · whale " + str.tostring(math.round(whaleBias)) +
+         "\nSL " + str.tostring(slPx, format.mintick) + " · TP1 " + str.tostring(tp1Px, format.mintick),
+         style=label.style_label_up, color=color.new(BUY, 15), textcolor=color.white, size=size.small)
+
+if shortFire
+    entryPx := close
+    slPx    := f_stopShort()
+    riskPx  := slPx - close
+    tp1Px   := close - tp1R * (slPx - close)
+    beMoved := false
+    armedShortUntil := na
+    strategy.entry("S", strategy.short)
+    label.new(bar_index, high, "SHORT " + str.tostring(close, format.mintick) +
+         "\nscore " + str.tostring(math.round(confScore)) + " · whale " + str.tostring(math.round(whaleBias)) +
+         "\nSL " + str.tostring(slPx, format.mintick) + " · TP1 " + str.tostring(tp1Px, format.mintick),
+         style=label.style_label_down, color=color.new(SELL, 15), textcolor=color.white, size=size.small)
+
+// TP1 fill detection → breakeven; then ATR-trail the runner
+posShrunk = math.abs(strategy.position_size) < math.abs(strategy.position_size[1]) and strategy.position_size != 0
+if strategy.position_size > 0
+    if posShrunk and not beMoved
+        beMoved := true
+        slPx := entryPx * (1 + bePadPct / 100)
+    if beMoved
+        slPx := math.max(slPx, close - trailMult * atr)
+    strategy.exit("TP1-L", "L", qty_percent=tp1Pct, limit=tp1Px, stop=slPx)
+    strategy.exit("RUN-L", "L", stop=slPx)
+    if bearBreak
+        strategy.close("L", comment="structure flip")
+if strategy.position_size < 0
+    if posShrunk and not beMoved
+        beMoved := true
+        slPx := entryPx * (1 - bePadPct / 100)
+    if beMoved
+        slPx := math.min(slPx, close + trailMult * atr)
+    strategy.exit("TP1-S", "S", qty_percent=tp1Pct, limit=tp1Px, stop=slPx)
+    strategy.exit("RUN-S", "S", stop=slPx)
+    if bullBreak
+        strategy.close("S", comment="structure flip")
+
+// ╔═══════════════════════════════════════════════════════╗
+// ║  CHART INFO                                            ║
+// ╚═══════════════════════════════════════════════════════╝
+inPos = strategy.position_size != 0
+plot(showLines and inPos ? slPx : na, "SL", color.new(SELL, 0), 2, plot.style_linebr)
+plot(showLines and inPos and not beMoved ? tp1Px : na, "TP1", color.new(BUY, 0), 2, plot.style_linebr)
+plot(showLines and inPos ? entryPx : na, "Entry", color.new(color.gray, 30), 1, plot.style_linebr)
+
+bgcolor(armedLong and not inPos ? color.new(BUY, 92) : armedShort and not inPos ? color.new(SELL, 92) : na, title="Armed Window")
+plotshape(longFire, "Long Fire", shape.triangleup, location.belowbar, BUY, size=size.small)
+plotshape(shortFire, "Short Fire", shape.triangledown, location.abovebar, SELL, size=size.small)
+
+var table tbl = table.new(position.top_right, 2, 7, bgcolor=color.new(#0d0d12, 15), border_color=color.new(color.gray, 65), border_width=1)
+if barstate.islast and showTable
+    scoreC = confScore >= scoreTh ? BUY : confScore <= 100 - scoreTh ? SELL : color.silver
+    whaleC = whaleBias >= whaleGate ? BUY : whaleBias <= -whaleGate ? SELL : color.silver
+    oiTxt  = oiState == 1 ? "Longs opening" : oiState == 2 ? "Shorts opening" : oiState == 3 ? "Shorts closing" : oiState == 4 ? "Longs closing" : oiOk ? "Flat" : "n/a"
+    oiC    = oiState == 1 ? BUY : oiState == 2 ? SELL : oiState == 3 ? color.new(#4dd0e1, 0) : oiState == 4 ? color.new(#ff9800, 0) : color.gray
+    armTxt = armedLong ? "LONG armed (" + str.tostring(armedLongUntil - bar_index) + " bars)" : armedShort ? "SHORT armed (" + str.tostring(armedShortUntil - bar_index) + " bars)" : "waiting for break"
+    posR   = inPos and riskPx > 0 ? (strategy.position_size > 0 ? close - entryPx : entryPx - close) / riskPx : na
+    posTxt = not inPos ? "FLAT" : (strategy.position_size > 0 ? "LONG " : "SHORT ") + str.tostring(entryPx, format.mintick) + " · " + str.tostring(posR, "#.##") + "R" + (beMoved ? " · BE✓" : "")
+
+    table.cell(tbl, 0, 0, "PRECISION CONFLUENCE", text_color=color.white, text_size=size.small, text_halign=text.align_left, bgcolor=color.new(#1c1c28, 0))
+    table.cell(tbl, 1, 0, "", bgcolor=color.new(#1c1c28, 0))
+    table.cell(tbl, 0, 1, " Score", text_color=color.silver, text_size=size.small, text_halign=text.align_left)
+    table.cell(tbl, 1, 1, str.tostring(math.round(confScore)) + " / 100 ", text_color=scoreC, text_size=size.small, text_halign=text.align_right)
+    table.cell(tbl, 0, 2, " Whale Bias", text_color=color.silver, text_size=size.small, text_halign=text.align_left)
+    table.cell(tbl, 1, 2, str.tostring(math.round(whaleBias)) + " · Δ " + str.tostring(deltaPct, "#") + "% ", text_color=whaleC, text_size=size.small, text_halign=text.align_right)
+    table.cell(tbl, 0, 3, " OI Read", text_color=color.silver, text_size=size.small, text_halign=text.align_left)
+    table.cell(tbl, 1, 3, oiTxt + " ", text_color=oiC, text_size=size.small, text_halign=text.align_right)
+    table.cell(tbl, 0, 4, " Regime", text_color=color.silver, text_size=size.small, text_halign=text.align_left)
+    table.cell(tbl, 1, 4, "ADX " + str.tostring(adxVal, "#") + (regimeOK ? " trending " : " chop ✗ "), text_color=regimeOK ? BUY : color.new(#ffb300, 0), text_size=size.small, text_halign=text.align_right)
+    table.cell(tbl, 0, 5, " Structure", text_color=color.silver, text_size=size.small, text_halign=text.align_left)
+    table.cell(tbl, 1, 5, armTxt + " ", text_color=armedLong ? BUY : armedShort ? SELL : color.gray, text_size=size.small, text_halign=text.align_right)
+    table.cell(tbl, 0, 6, " Position", text_color=color.silver, text_size=size.small, text_halign=text.align_left)
+    table.cell(tbl, 1, 6, posTxt + " ", text_color=not inPos ? color.gray : strategy.position_size > 0 ? BUY : SELL, text_size=size.small, text_halign=text.align_right)
+
+// ╔═══════════════════════════════════════════════════════╗
+// ║  ALERTS                                                ║
+// ╚═══════════════════════════════════════════════════════╝
+alertcondition(longFire,  "Precision LONG",  "Structure break + whale flow + confluence LONG fired")
+alertcondition(shortFire, "Precision SHORT", "Structure break + whale flow + confluence SHORT fired")
+alertcondition(bullBreak, "Structure Break UP (armed)",   "Close broke the last swing high — LONG armed")
+alertcondition(bearBreak, "Structure Break DOWN (armed)", "Close broke the last swing low — SHORT armed")

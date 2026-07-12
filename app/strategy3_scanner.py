@@ -1,7 +1,8 @@
 """
 Strategy 3 — the Bybit auto-trader (config.STRATEGY3_SYMBOLS). Each symbol
-trades its own timeframe, position size, emergency stop AND engine
-(config.strategy3_params). Signals from BINANCE charts · orders on BYBIT.
+trades its own timeframe, position size, emergency stop, engine AND candle
+feed (config.strategy3_params). Signals from Binance charts by default
+(per-symbol 'feed' can switch to Bybit) · orders on BYBIT.
 
 TWO ENGINES share this scanner, its executor, guardian and Telegram plumbing:
 
@@ -36,9 +37,14 @@ The flag-flip rules, exactly as on the chart:
   into profit and reverses scratches at ~0 instead of −1.5%. Winners are NOT
   capped — the exit is still the opposite flag. SOL/XAUT keep the plain rules.
 
-Split-exchange design (user's request): candles are fetched from BINANCE
-(identical to the TradingView chart driving the strategy), execution happens
-on BYBIT via strategy3_exec. MANUAL intervention is expected and respected —
+Split-exchange design (user's request): candles are fetched from BINANCE by
+default (identical to the TradingView chart driving the strategy), execution
+happens on BYBIT via strategy3_exec. Per-symbol override: config
+strategy3_params 'feed' can point a symbol's SIGNAL candles at Bybit instead
+(STRATEGY3_XAUT_FEED=bybit) — XAUT is thin enough that the two venues print
+different candles, and 2026-07-10 the same 30m bar read ADX 19.7 on Binance
+(gate blocked) vs 22.5 on Bybit (short fired). Chart the feed you trade.
+MANUAL intervention is expected and respected —
 close a position by hand on Bybit and the scanner stands down for that symbol
 until the NEXT flag; a position it did not open is never touched.
 
@@ -100,6 +106,18 @@ def flag_on_last_bar(ohlcv) -> tuple:
     TV_strategy_XAUT_30min.pine port — flag is 'long'/'short'/None."""
     snap = SIG.last_bar(ohlcv, config.STRATEGY3_SCORE_TH, config.STRATEGY3_ADX_TH)
     return snap["flag"], snap
+
+
+def fetch_candles(client, sym: str, timeframe: str, feed: str) -> list:
+    """Candles for the SIGNAL computation, from this symbol's configured feed
+    (config.strategy3_params 'feed'). "binance" (default) uses the shared
+    SafeBinanceClient; "bybit" reads the same market from the venue the orders
+    actually fill on. Why it matters: XAUT is thin — 2026-07-10 the two venues
+    printed the same 30m bar with ADX 19.7 (Binance, gate blocked) vs 22.5
+    (Bybit, short fired). On thin symbols, chart the feed you trade."""
+    if feed == "bybit":
+        return X.client().fetch_ohlcv(sym, timeframe, None, CANDLES)
+    return client.call("fetch_ohlcv", sym, timeframe, None, CANDLES)
 
 
 # ── flip decision (pure — unit-tested) ───────────────────────────────────────
@@ -399,15 +417,16 @@ def step(client, state: dict) -> None:
         ensure_engine(st, params.get("engine", "flagflip"))
         reconcile_position(sym, st)
 
+        feed = params.get("feed", "binance")
         try:
-            raw = client.call("fetch_ohlcv", sym, params["timeframe"], None, CANDLES)
+            raw = fetch_candles(client, sym, params["timeframe"], feed)
         except RateLimitCooldownError as exc:
             print(f"[strategy3] cooldown: {exc}; pausing 30s")
             save_state(state)
             time.sleep(30)
             return
         except Exception as exc:  # noqa: BLE001
-            print(f"[strategy3] Binance fetch error {sym}: {exc}")
+            print(f"[strategy3] {feed} fetch error {sym}: {exc}")
             continue
 
         ohlcv = closed_candles(raw, tf_sec)
@@ -433,7 +452,8 @@ def step(client, state: dict) -> None:
             sig = snap["signal"]
             alt_min = int(tf_sec * params["res_mult"] // 60)
             print(f"[strategy3] {base} {alt_min}m OCC close · trend {snap['trend']} · "
-                  f"cross {sig or '—'} · pos {st.get('pos_dir') or 'flat'}")
+                  f"cross {sig or '—'} · pos {st.get('pos_dir') or 'flat'}"
+                  + (f" · feed {feed}" if feed != "binance" else ""))
             # flag-flip display fields don't exist on this engine — clear them
             # so the web pages describe the OCC state instead of a stale score
             st["last_score"] = None
@@ -446,7 +466,7 @@ def step(client, state: dict) -> None:
             if sig and sig != st.get("last_flag"):
                 st["open_attempts"] = 0                 # fresh cross → fresh retries
                 _tg(f"🚩 S3 CROSS · {sig.upper()} {base} ({alt_min}m open/close cross, "
-                    f"Binance chart)\nstop-and-reverse — flipping the position now")
+                    f"{feed.capitalize()} chart)\nstop-and-reverse — flipping the position now")
             # the cross IS the whole signal — no Vegas gate on this engine, so
             # feed decide() an always-agreeing value for the pending direction
             # to reuse the flip/consumed/manual-close state machine unchanged
@@ -471,7 +491,8 @@ def step(client, state: dict) -> None:
             # heartbeat — one line per closed candle so the log (and /health) show life
             print(f"[strategy3] {base} {params['timeframe']} close · score {snap['score']:.1f} · "
                   f"vegas {vegas_txt} · msb {snap['msb']} · flag {flag or '—'} · "
-                  f"pos {st.get('pos_dir') or 'flat'}")
+                  f"pos {st.get('pos_dir') or 'flat'}"
+                  + (f" · feed {feed}" if feed != "binance" else ""))
             # Persisted so the /bybit web page can show "why" without recomputing
             # the signal itself — one line per closed candle, not per poll.
             st["last_score"] = snap["score"]
@@ -482,7 +503,8 @@ def step(client, state: dict) -> None:
 
             if flag and flag != st.get("last_flag"):
                 st["open_attempts"] = 0                 # fresh flag → fresh retries
-                _tg(f"🚩 S3 FLAG · {flag.upper()} {base} ({params['timeframe']}, Binance chart)\n"
+                _tg(f"🚩 S3 FLAG · {flag.upper()} {base} ({params['timeframe']}, "
+                    f"{feed.capitalize()} chart)\n"
                     f"score {snap['score']:.0f}/100 · Vegas "
                     f"{'agrees → entering' if (snap['vegas'] > 0) == (flag == 'long') and snap['vegas'] != 0 else 'disagrees → waiting'}")
 
@@ -539,8 +561,9 @@ def _symbol_breakdown() -> str:
         p = config.strategy3_params(base)
         be = "+BE" if base.upper() in config.STRATEGY3_BE_SYMBOLS else ""
         occ = " OCC" if p.get("engine") == "occ" else ""
+        feed = f" [{p['feed']} feed]" if p.get("feed", "binance") != "binance" else ""
         parts.append(f"{base} {p['timeframe']} {p['margin'] * p['leverage']:.0f} "
-                     f"USDT×{p['leverage']}x{be}{occ} SL {p['sl_pct']:.1%}")
+                     f"USDT×{p['leverage']}x{be}{occ} SL {p['sl_pct']:.1%}{feed}")
     return " · ".join(parts)
 
 
@@ -553,7 +576,7 @@ def status_line() -> str:
 def main() -> None:
     mode = mode_string()
     print(f"[strategy3] starting — {_symbol_breakdown()} "
-          f"(Binance charts → Bybit orders) · flag-flip score ≥{config.STRATEGY3_SCORE_TH} "
+          f"(per-symbol chart feed → Bybit orders) · flag-flip score ≥{config.STRATEGY3_SCORE_TH} "
           f"· ADX ≥{config.STRATEGY3_ADX_TH} · mode: {mode}")
     client = SafeBinanceClient(
         min_rest_interval=float(os.getenv("STRATEGY3_REST_INTERVAL", "0.35")),

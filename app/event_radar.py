@@ -99,6 +99,10 @@ def _save_state(state: dict) -> None:
     cutoff = time.time() - SEEN_RETAIN_SEC
     state["seen"] = {k: v for k, v in (state.get("seen") or {}).items() if v >= cutoff}
     state["cal"] = {k: v for k, v in (state.get("cal") or {}).items() if v >= cutoff}
+    # Sent alerts, newest first — the /market page's "Recent events" card
+    # mirrors these so the web shows what Telegram got.
+    state["recent"] = [r for r in (state.get("recent") or [])
+                       if r.get("ts", 0) >= cutoff][:30]
     tmp = STATE_FILE + ".tmp"
     with open(tmp, "w", encoding="utf-8") as f:
         json.dump(state, f)
@@ -227,5 +231,6 @@ def tick(client) -> int:
             print(f"[events] {msg.splitlines()[0]}")
         except Exception as exc:  # noqa: BLE001 — an alert must never kill the loop
             print(f"[events] send failed: {exc}")
+        state.setdefault("recent", []).insert(0, {"ts": now, "text": msg})
     _save_state(state)
     return sent

@@ -1,0 +1,107 @@
+// ════════════════════════════════════════════════════════════════════════════
+//  ETH HIGH WIN-RATE — RSI-2 DIP BUY (mean reversion)  ·  read this first
+//
+//  You asked for a high win-rate strategy. This is the best one I found — and
+//  I tested it before giving it to you: 48 configurations (RSI-2, Bollinger
+//  revert, EMA50-pullback brackets) on 400 days of REAL Binance ETH perp data
+//  (30m/1h/2h/daily) with 0.05% taker fees + slippage, tune/validation split.
+//
+//  THE HONEST RESULT — high win rate was EASY, profit was not:
+//    · every family scored 55–78% winners …and 46 of 48 configs LOST money
+//    · the asymmetric bracket (TP 0.5×ATR / SL 1.5×ATR) hit 78.7% WR with
+//      profit factor 0.85 — a money-losing machine that wins most trades
+//    · THIS config (2h, RSI2<5, trend-gated) was the least bad:
+//        tune window   69% WR · net −7.1% · PF 0.87
+//        validation    67% WR · net +3.5% · PF 1.49   (long-only: 77% / +3.9%)
+//      ≈ breakeven over 400 days. High WR, no real edge after fees.
+//
+//  WHY: win rate and expectancy are different numbers. Mean reversion books
+//  many small wins and rare big losses — the skew eats the win rate. Your own
+//  Bybit account is live proof: 57.5% winners, avg win +2.3 vs avg loss −9.3,
+//  net −104 USDT. A 90% win rate loses money if the 10% are big enough.
+//
+//  The only ETH system that made money over 2 years in my testing is the one
+//  already in your repo — pine/TV_strategy_ETH_MOM_2h.pine (14-day momentum):
+//  +770 USDT/2yr on 500 notional, 8/8 quarters positive… with a 34% win rate.
+//  That is the trade-off, and it is not negotiable: pick expectancy, not WR.
+//
+//  Use this file to SEE it on your own chart (ETHUSDT.P · 2h recommended),
+//  not to trade it. Signals close-confirmed, no repaint, fees modeled.
+// ════════════════════════════════════════════════════════════════════════════
+//@version=6
+strategy("ETH High Win-Rate RSI-2 [read the header]", overlay=true,
+     initial_capital=1000,
+     default_qty_type=strategy.percent_of_equity, default_qty_value=95,
+     commission_type=strategy.commission.percent, commission_value=0.05,
+     slippage=2, process_orders_on_close=true, max_labels_count=500)
+
+// ── inputs ───────────────────────────────────────────────────────────────────
+gS = "① Signal"
+rsiLen    = input.int(2,  "RSI length", minval=2, maxval=14, group=gS)
+buyTh     = input.int(5,  "Dip: enter long when RSI ≤", minval=2, maxval=30, group=gS)
+exitTh    = input.int(60, "Exit long when RSI ≥", minval=40, maxval=90, group=gS)
+useTrend  = input.bool(true, "Trend gate: longs only above EMA200 (shorts below)", group=gS)
+allowShorts = input.bool(false, "Also short spikes (RSI ≥ 100−dip) in downtrends", group=gS, tooltip="Adds the mirrored short side. In testing it made results slightly WORSE on ETH.")
+
+gR = "② Risk"
+useStop   = input.bool(false, "Disaster stop", group=gR, inline="sl", tooltip="Mean reversion 'works' by NOT stopping out of noise — but that is exactly how the rare -15% trade happens. In testing the 5% stop changed little either way. Your call; know what you are choosing.")
+stopPct   = input.float(5.0, "", minval=1, maxval=25, step=0.5, group=gR, inline="sl") / 100
+timeBars  = input.int(60, "Give-up time exit (bars in trade)", minval=5, maxval=500, group=gR)
+
+gD = "③ Walk-forward window"
+useDate   = input.bool(false, "Limit date range", group=gD, tooltip="Tune in one window, validate in the other. This script already failed that test at ~breakeven — see the header.")
+startDate = input.time(timestamp("1 Jan 2025 00:00 +0000"), "From", group=gD)
+endDate   = input.time(timestamp("1 Jan 2030 00:00 +0000"), "To", group=gD)
+inWindow  = not useDate or (time >= startDate and time <= endDate)
+
+// ── signal ───────────────────────────────────────────────────────────────────
+r = ta.rsi(close, rsiLen)
+ema200 = ta.ema(close, 200)
+longGate  = not useTrend or close > ema200
+shortGate = not useTrend or close < ema200
+
+enterLong  = longGate and r <= buyTh
+exitLong   = r >= exitTh
+enterShort = allowShorts and shortGate and r >= 100 - buyTh
+exitShort  = r <= 100 - exitTh
+
+var int barsIn = 0
+barsIn := strategy.position_size != 0 ? barsIn + 1 : 0
+
+if inWindow and (barstate.isconfirmed or barstate.ishistory)
+    if enterLong and strategy.position_size <= 0
+        strategy.entry("L", strategy.long)
+    if enterShort and strategy.position_size >= 0
+        strategy.entry("S", strategy.short)
+    if strategy.position_size > 0 and (exitLong or barsIn >= timeBars)
+        strategy.close("L", comment=barsIn >= timeBars ? "time" : "rsi exit")
+    if strategy.position_size < 0 and (exitShort or barsIn >= timeBars)
+        strategy.close("S", comment=barsIn >= timeBars ? "time" : "rsi exit")
+
+if useStop and strategy.position_size > 0
+    strategy.exit("SL-L", from_entry="L", stop=strategy.position_avg_price * (1 - stopPct))
+if useStop and strategy.position_size < 0
+    strategy.exit("SL-S", from_entry="S", stop=strategy.position_avg_price * (1 + stopPct))
+
+// ── visuals ──────────────────────────────────────────────────────────────────
+plot(ema200, "EMA200", color=close > ema200 ? color.new(color.green, 30) : color.new(color.red, 30), linewidth=2)
+plotshape(enterLong and strategy.position_size <= 0,  "dip buy",   shape.triangleup,   location.belowbar, color.new(color.green, 0), size=size.tiny)
+plotshape(enterShort and strategy.position_size >= 0, "spike sell", shape.triangledown, location.abovebar, color.new(color.red, 0),  size=size.tiny)
+bgcolor(r <= buyTh ? color.new(color.green, 90) : allowShorts and r >= 100 - buyTh ? color.new(color.red, 90) : na)
+
+// live reminder of what the win rate is NOT telling you
+var table tbl = table.new(position.top_right, 2, 4, bgcolor=color.new(color.black, 25), border_width=1, border_color=color.new(color.gray, 80))
+if barstate.islast and strategy.closedtrades > 0
+    wr = 100.0 * strategy.wintrades / strategy.closedtrades
+    pf = strategy.grossprofit / math.max(strategy.grossloss, 1e-9)
+    table.cell(tbl, 0, 0, "Win rate", text_color=color.gray, text_size=size.small)
+    table.cell(tbl, 1, 0, str.tostring(wr, "#.#") + "%", text_color=color.lime, text_size=size.small)
+    table.cell(tbl, 0, 1, "Profit factor", text_color=color.gray, text_size=size.small)
+    table.cell(tbl, 1, 1, str.tostring(pf, "#.##"), text_color=pf >= 1 ? color.lime : color.red, text_size=size.small)
+    table.cell(tbl, 0, 2, "Net profit", text_color=color.gray, text_size=size.small)
+    table.cell(tbl, 1, 2, str.tostring(strategy.netprofit, "#.##"), text_color=strategy.netprofit >= 0 ? color.lime : color.red, text_size=size.small)
+    table.cell(tbl, 0, 3, "The lesson", text_color=color.gray, text_size=size.small)
+    table.cell(tbl, 1, 3, pf < 1 and wr > 55 ? "high WR, still losing" : "—", text_color=color.orange, text_size=size.small)
+
+alertcondition(enterLong,  "RSI2 dip (long)",   "ETH RSI2 dip buy signal @ {{close}}")
+alertcondition(enterShort, "RSI2 spike (short)", "ETH RSI2 spike short signal @ {{close}}")

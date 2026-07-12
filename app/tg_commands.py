@@ -1,0 +1,307 @@
+"""
+Telegram command bot — ask the group for stats and it answers.
+
+A daemon thread inside the Strategy-2 scanner long-polls getUpdates on the
+main bot token and answers slash-commands, replying in whatever topic thread
+the command was typed in:
+
+    /winrate    win-rate report from REAL exchange records (Binance + Bybit)
+    /positions  open positions on both accounts, with unrealized P&L
+    /signals    last fired S2 signals with their Entry/SL/TP plans
+    /alerts     price alerts currently armed (dashboard 🔔 card)
+    /report     today's daily report, on demand
+    /tw         latest 台股 scan (TAIEX regime + TW50 setups)
+    /liq        BTC/ETH liquidations: 24h tallies, recent prints with
+                prices, and the estimated 🧲 liquidation map
+    /help       this list
+
+Safety: commands are only honoured from the configured group / owner chats —
+anything else is silently ignored. The bot only ever READS (exchange
+snapshots, state files); no command places or closes an order. First run
+seeds the update offset silently so a backlog of old messages never triggers
+a reply storm (same pattern as event_radar's first-run seeding).
+
+No webhook needed: getUpdates long-polling works from behind NAT and nothing
+else consumes this bot's update queue.
+"""
+import json
+import os
+import threading
+import time
+from datetime import datetime
+
+import requests
+
+import config
+
+STATE_FILE = os.path.join(os.path.dirname(__file__), "tg_commands_state.json")
+SIGNALS_FILE = os.path.join(os.path.dirname(__file__), "strategy2_signals.json")
+
+POLL_TIMEOUT = int(os.getenv("TG_CMD_POLL_TIMEOUT", "25"))   # long-poll seconds
+
+# Chats allowed to command the bot: the topics group + the owner's DMs.
+ALLOWED_CHATS = {str(c) for c in (config.TELEGRAM_GROUP_CHAT_ID, config.CHAT_ID,
+                                  config.ALERTS_CHAT_ID) if c}
+
+
+# ── state ────────────────────────────────────────────────────────────────────
+def _load_state() -> dict:
+    try:
+        with open(STATE_FILE, "r", encoding="utf-8") as f:
+            return json.load(f) or {}
+    except Exception:  # noqa: BLE001 — missing/corrupt = fresh start
+        return {}
+
+
+def _save_state(state: dict) -> None:
+    tmp = STATE_FILE + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(state, f)
+    os.replace(tmp, STATE_FILE)
+
+
+# ── pure helpers (unit-testable) ─────────────────────────────────────────────
+def parse_command(text: str):
+    """'/winrate@WolfBot btc' → ('winrate', 'btc'); None for non-commands."""
+    text = (text or "").strip()
+    if not text.startswith("/"):
+        return None
+    head, _, args = text.partition(" ")
+    cmd = head[1:].split("@")[0].lower()
+    return (cmd, args.strip()) if cmd else None
+
+
+def allowed(chat_id) -> bool:
+    return str(chat_id) in ALLOWED_CHATS
+
+
+def _n(v, digits=2):
+    try:
+        return f"{float(v):,.{digits}f}"
+    except (TypeError, ValueError):
+        return "?"
+
+
+def _pnl(v):
+    try:
+        return f"{float(v):+,.2f}"
+    except (TypeError, ValueError):
+        return "?"
+
+
+def fmt_winrate(binance: dict, bybit: dict) -> str:
+    """The /winrate report — REAL exchange records, fees included, not the
+    simulated tracker. Sections degrade to the error text on an API blip."""
+    lines = ["🎯 WIN RATE — real account trades\n"]
+    for icon, name, s in (("🟨", "Binance (S1/S2)", binance),
+                          ("🟧", "Bybit (S3)", bybit)):
+        lines.append(f"{icon} {name}")
+        if not (s or {}).get("ok"):
+            lines.append(f"  unavailable ({(s or {}).get('error', 'no data')})\n")
+            continue
+        n = s.get("n_trades") or 0
+        if not n:
+            lines.append("  no closed trades yet\n")
+            continue
+        pf = s.get("profit_factor")
+        streak = f"{s.get('streak_type') or ''}{s.get('streak') or 0}"
+        week = sum(d.get("net") or 0.0 for d in (s.get("daily") or [])[-7:])
+        lines += [
+            f"  trades {n} · {s.get('wins')}W / {s.get('losses')}L → "
+            f"{_n(s.get('win_rate'), 1)}%",
+            f"  net {_pnl(s.get('net'))} USDT (fees in) · "
+            f"PF {pf if pf is not None else '—'}",
+            f"  avg win {_pnl(s.get('avg_win'))} · avg loss {_pnl(s.get('avg_loss'))}",
+            f"  7d {_pnl(week)} · max DD {_pnl(s.get('max_drawdown'))} · "
+            f"streak {streak}",
+            "",
+        ]
+    lines.append("⚠ win rate alone means nothing — a 90% strategy loses money "
+                 "when the 10% are big. Read it WITH profit factor and net.")
+    return "\n".join(lines)
+
+
+def fmt_positions(binance: dict, bybit: dict) -> str:
+    lines = ["📌 OPEN POSITIONS\n"]
+    for icon, name, snap in (("🟨", "Binance", binance), ("🟧", "Bybit", bybit)):
+        lines.append(f"{icon} {name}")
+        if not (snap or {}).get("ok", True) and not (snap or {}).get("positions"):
+            lines.append(f"  unavailable ({(snap or {}).get('error', 'no data')})\n")
+            continue
+        poss = (snap or {}).get("positions") or []
+        if not poss:
+            lines.append("  flat\n")
+            continue
+        for p in poss[:10]:
+            base = (p.get("symbol") or "?").split("/")[0]
+            pct = p.get("pnl_pct")
+            lines.append(f"  ▸ {base} {p.get('side')} · entry {_n(p.get('entry'))} "
+                         f"· uPnL {_pnl(p.get('unrealized_pnl'))}"
+                         + (f" ({_pnl(pct)}%)" if pct is not None else ""))
+        lines.append("")
+    return "\n".join(lines).rstrip()
+
+
+def fmt_signals(payload: dict, limit: int = 5) -> str:
+    sigs = (payload or {}).get("signals") or []
+    if not sigs:
+        return "No S2 signals fired in the last 24h."
+    lines = [f"📊 LAST {min(limit, len(sigs))} S2 SIGNALS ({payload.get('timeframe', '15m')})\n"]
+    for s in sigs[:limit]:
+        age_min = int((time.time() - (s.get("ts") or 0)) / 60)
+        age = f"{age_min}m" if age_min < 120 else f"{age_min // 60}h"
+        arrow = "🟢" if s.get("direction") == "long" else "🔴"
+        lines.append(f"{arrow} {s.get('base')} {str(s.get('direction', '')).upper()} · "
+                     f"{s.get('score')}/100 · {age} ago")
+        if s.get("entry") and s.get("sl") and s.get("tp2"):
+            lines.append(f"   entry {s['entry']:,.6g} · SL {s['sl']:,.6g} · "
+                         f"TP1 {s.get('tp1', 0):,.6g} · TP2 {s['tp2']:,.6g}")
+    return "\n".join(lines)
+
+
+def fmt_alerts(alerts: list) -> str:
+    active = [a for a in alerts if not a.get("triggered")]
+    fired = [a for a in alerts if a.get("triggered")]
+    if not alerts:
+        return "🔔 No price alerts set — add them on the dashboard."
+    lines = ["🔔 PRICE ALERTS\n"]
+    for a in active:
+        lines.append(f"  ▸ {a['base']} {'▲ above' if a['direction'] == 'above' else '▼ below'} "
+                     f"{a['price']:,.6g}")
+    for a in fired[:5]:
+        lines.append(f"  ✓ {a['base']} fired @ {a.get('triggered_price', 0):,.6g}")
+    return "\n".join(lines)
+
+
+HELP = ("🤖 Commands\n"
+        "/winrate — win-rate report from real Binance + Bybit records\n"
+        "/positions — open positions on both accounts\n"
+        "/signals — last fired S2 signals with Entry/SL/TP\n"
+        "/alerts — price alerts currently armed\n"
+        "/report — today's account+market report now\n"
+        "/tw — latest 台股 scan (大盤 regime + setups)\n"
+        "/liq — BTC/ETH 清算: 24h統計 + 最近清算價 + 🧲清算地圖\n"
+        "/help — this list")
+
+
+# ── command dispatch ─────────────────────────────────────────────────────────
+def handle(cmd: str) -> str:
+    """Command name → reply text. Import-inside so one broken dependency
+    degrades that command, not the whole bot."""
+    if cmd in ("winrate", "stats", "wr"):
+        import executor
+        import strategy3_exec
+        return fmt_winrate(executor.realized_pnl_summary(),
+                           strategy3_exec.closed_pnl_summary())
+    if cmd in ("positions", "pos"):
+        import executor
+        import strategy3_exec
+        return fmt_positions(executor.account_snapshot(),
+                             strategy3_exec.account_snapshot())
+    if cmd in ("signals", "sig"):
+        try:
+            with open(SIGNALS_FILE, "r", encoding="utf-8") as f:
+                payload = json.load(f)
+        except Exception:  # noqa: BLE001
+            payload = {}
+        return fmt_signals(payload)
+    if cmd == "alerts":
+        import price_alerts
+        return fmt_alerts(price_alerts.load_alerts())
+    if cmd == "report":
+        import daily_report
+        return daily_report.build_report(daily_report._gather(),
+                                         datetime.now(daily_report.TZ))
+    if cmd in ("liq", "liquidations"):
+        import liq_alerts
+        return liq_alerts.build_report()
+    if cmd in ("tw", "twstocks"):
+        import tw_stocks
+        st = tw_stocks._load_state()
+        return (st.get("last_digest_text")
+                or "尚未有台股掃描 — 每個交易日 14:00 (台北) 自動發送。")
+    if cmd in ("help", "start"):
+        return HELP
+    return None                                   # unknown command → stay silent
+
+
+# ── Telegram plumbing ────────────────────────────────────────────────────────
+def _api(method: str, *, http_timeout: float = 30, **params):
+    """Telegram's getUpdates has its OWN `timeout` param (long-poll seconds),
+    so the HTTP timeout must live under a different, keyword-only name — a
+    positional `timeout` here collided with params['timeout'] and broke every
+    poll (caught live 2026-07-11)."""
+    r = requests.post(f"https://api.telegram.org/bot{config.BOT_TOKEN}/{method}",
+                      data=params, timeout=http_timeout)
+    r.raise_for_status()
+    return r.json()
+
+
+def _reply(chat_id, thread_id, text) -> None:
+    payload = {"chat_id": chat_id, "text": text}
+    if thread_id:
+        payload["message_thread_id"] = thread_id
+    requests.post(f"https://api.telegram.org/bot{config.BOT_TOKEN}/sendMessage",
+                  data=payload, timeout=15)
+
+
+def _poll_loop() -> None:
+    state = _load_state()
+    offset = state.get("offset")
+    if offset is None:
+        # First ever run: skip any backlog silently (old /commands must not
+        # trigger a reply storm months later).
+        try:
+            updates = _api("getUpdates", http_timeout=20, timeout=0).get("result") or []
+            offset = (updates[-1]["update_id"] + 1) if updates else 0
+        except Exception:  # noqa: BLE001
+            offset = 0
+        state["offset"] = offset
+        _save_state(state)
+        print(f"[tgcmd] seeded update offset {offset}")
+
+    while True:
+        try:
+            updates = _api("getUpdates", http_timeout=POLL_TIMEOUT + 20,
+                           offset=offset, timeout=POLL_TIMEOUT,
+                           allowed_updates='["message"]').get("result") or []
+        except Exception as exc:  # noqa: BLE001 — network blip: back off, retry
+            print(f"[tgcmd] poll error: {exc}")
+            time.sleep(10)
+            continue
+        for up in updates:
+            offset = up["update_id"] + 1
+            msg = up.get("message") or {}
+            chat_id = (msg.get("chat") or {}).get("id")
+            parsed = parse_command(msg.get("text") or "")
+            if not parsed or not allowed(chat_id):
+                continue
+            cmd, _args = parsed
+            try:
+                reply = handle(cmd)
+            except Exception as exc:  # noqa: BLE001 — a broken handler must answer, not die
+                reply = f"⚠ {cmd} failed: {str(exc)[:200]}"
+            if reply:
+                try:
+                    _reply(chat_id, msg.get("message_thread_id"), reply)
+                    print(f"[tgcmd] answered /{cmd}")
+                except Exception as exc:  # noqa: BLE001
+                    print(f"[tgcmd] reply failed: {exc}")
+        if updates:
+            state["offset"] = offset
+            _save_state(state)
+
+
+_started = False
+
+
+def start() -> bool:
+    """Spawn the polling thread once. No-op without a bot token."""
+    global _started
+    if _started or not config.BOT_TOKEN:
+        return False
+    _started = True
+    t = threading.Thread(target=_poll_loop, name="tg-commands", daemon=True)
+    t.start()
+    print(f"[tgcmd] command bot listening — chats {sorted(ALLOWED_CHATS)}")
+    return True

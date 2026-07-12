@@ -107,6 +107,17 @@ TELEGRAM_EVENTS_THREAD_ID = os.getenv("TELEGRAM_EVENTS_THREAD_ID", "")
 # TechCrunch, The Verge, Ars, Simon Willison) from tech_news.py.
 # Empty = tech digests fall back into the Alerts thread.
 TELEGRAM_TECH_THREAD_ID = os.getenv("TELEGRAM_TECH_THREAD_ID", "")
+# Fifth topic thread: "📈 Daily Report" — one morning message per day with
+# both live accounts (Binance + Bybit), realized P&L, and the day's market
+# context, from daily_report.py. Empty = reports fall back into Alerts.
+TELEGRAM_REPORT_THREAD_ID = os.getenv("TELEGRAM_REPORT_THREAD_ID", "")
+# Sixth topic thread: "🇹🇼 台股" — one message per TWSE trading day after the
+# 13:30 close: TAIEX regime (enter / stand aside) + TW50 pullback setups with
+# entry/SL/TP, from tw_stocks.py. Empty = falls back into Alerts.
+TELEGRAM_TWSTOCKS_THREAD_ID = os.getenv("TELEGRAM_TWSTOCKS_THREAD_ID", "")
+# Seventh topic thread: "💥 清算" — BTC/ETH liquidation-cascade (stop-run)
+# alerts from liq_alerts.py. Empty = falls back into Alerts.
+TELEGRAM_LIQ_THREAD_ID = os.getenv("TELEGRAM_LIQ_THREAD_ID", "")
 
 # ── Live trading (Binance Futures USD-M) ──────────────────────────────────
 # SAFETY: LIVE_TRADING defaults to False. While False the bot is in DRY-RUN —
@@ -497,6 +508,14 @@ STRATEGY3_EMERGENCY_SL_PCT = float(os.getenv("STRATEGY3_EMERGENCY_SL_PCT", "0.04
 STRATEGY3_TIMEFRAME = os.getenv("STRATEGY3_TIMEFRAME", "15m")
 STRATEGY3_MARGIN_USDT = float(os.getenv("STRATEGY3_MARGIN_USDT", "3"))
 STRATEGY3_LEVERAGE = int(os.getenv("STRATEGY3_LEVERAGE", str(LEVERAGE)))
+# Candle feed for the signal computation: "binance" (the original split-
+# exchange spec) or "bybit" (the venue the orders fill on). 2026-07-10 lesson:
+# XAUT is a THIN market — Binance and Bybit print visibly different candles,
+# and a near-threshold gate split on the same 30m bar (ADX 19.7 on Binance vs
+# 22.5 on Bybit): the short fired on the Bybit feed only. For thin symbols,
+# reading candles from the execution venue keeps chart, signal and fills on
+# one tape. Shared default + per-symbol override below.
+STRATEGY3_FEED = os.getenv("STRATEGY3_FEED", "binance").strip().lower()
 # Per-symbol overrides. Gold (XAUT) trends far slower than the cryptos here, so
 # it trades a 30m chart (vs the others' 15m) at a bigger size — the same
 # emergency-SL %, score/ADX thresholds and leverage still apply to it unless
@@ -505,6 +524,7 @@ STRATEGY3_OVERRIDES = {
     "XAUT": {
         "timeframe": os.getenv("STRATEGY3_XAUT_TIMEFRAME", "30m"),
         "margin": float(os.getenv("STRATEGY3_XAUT_MARGIN_USDT", "3")),
+        "feed": os.getenv("STRATEGY3_XAUT_FEED", "").strip().lower() or None,
     },
 }
 # V2 anti-chop break-even (backtested 2026-07 on HYPE 15m; its pine test
@@ -561,6 +581,7 @@ def strategy3_params(base: str) -> dict:
             "sl_pct": STRATEGY3_OCC_SL_PCT,
             "res_mult": STRATEGY3_OCC_RES_MULT,
             "ma_len": STRATEGY3_OCC_MA_LEN,
+            "feed": STRATEGY3_FEED,
         }
     ov = STRATEGY3_OVERRIDES.get(b, {})
     return {
@@ -569,4 +590,7 @@ def strategy3_params(base: str) -> dict:
         "margin": ov.get("margin", STRATEGY3_MARGIN_USDT),
         "leverage": ov.get("leverage", STRATEGY3_LEVERAGE),
         "sl_pct": ov.get("sl_pct", STRATEGY3_EMERGENCY_SL_PCT),
+        # `or` (not a get-default): an unset env override stores None and must
+        # still fall back to the shared feed
+        "feed": ov.get("feed") or STRATEGY3_FEED,
     }

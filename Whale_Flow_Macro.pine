@@ -1,0 +1,173 @@
+// ════════════════════════════════════════════════════════════════════════════
+//  WHALE FLOW & MACRO — lower-pane companion (separate panel under the candles)
+//
+//  WHAT IT ACTUALLY MEASURES (honest version):
+//  TradingView cannot see whale wallets, order books, or exchange long/short
+//  account ratios — no Pine script can. This panel uses the three best proxies
+//  that TV data really provides:
+//
+//  ① VOLUME DELTA — each 15m bar is split into 1m intrabars; up-closing minute
+//    volume counts as aggressive buying, down-closing as selling. Plotted as
+//    columns in % of bar volume (−100…+100).
+//  ② WHALE BARS — bars whose volume is in the top percentile of the lookback.
+//    Those columns render bright; normal bars stay dim. The WHALE BIAS line
+//    (−100…+100) is the net direction of ONLY the whale bars over a rolling
+//    window: whales' recent flow lean.
+//  ③ OPEN INTEREST READ — the closest thing to "opening long or short":
+//       OI ↑ + price ↑  = new LONGS opening        (green strip)
+//       OI ↑ + price ↓  = new SHORTS opening       (red strip)
+//       OI ↓ + price ↑  = shorts CLOSING (squeeze) (teal strip)
+//       OI ↓ + price ↓  = longs CLOSING (flush)    (orange strip)
+//    Uses TradingView's perp OI feed (<tickerid>_OI, e.g. BINANCE:BTCUSDT.P_OI).
+//    Works on perp charts of supported exchanges; shows "n/a" elsewhere.
+//    Remember OI alone can't say WHO is opening — every long has a short on
+//    the other side — which is why it's paired with the delta above.
+//  ④ DXY LINK — rolling correlation (× 100, orange line) between this symbol's
+//    moves and the US Dollar Index, plus DXY trend in the table. Crypto/DXY
+//    correlation is TYPICALLY inverse but unstable — treat it as context, not
+//    a rule. DXY doesn't trade weekends, so the line goes quiet then.
+//
+//  Defaults are tuned for the 15m chart (BTC/SOL/HYPE perps).
+// ════════════════════════════════════════════════════════════════════════════
+//@version=6
+indicator("Whale Flow & Macro", overlay=false, format=format.price, precision=1)
+
+// ╔═══════════════════════════════════════════════════════╗
+// ║  INPUTS                                                ║
+// ╚═══════════════════════════════════════════════════════╝
+gW = "① Whale Flow"
+ltfInput  = input.timeframe("1", "Intrabar Timeframe", group=gW, tooltip="Lower timeframe used to split each chart bar into buy/sell volume. 1m is right for a 15m chart. Note: TradingView limits intrabar history — old bars automatically fall back to a close-position estimate.")
+whalePct  = input.int(90, "Whale Percentile", minval=70, maxval=99, group=gW, tooltip="A bar is a 'whale bar' when its volume is at or above this percentile of the lookback window. 90 = top 10% of bars.")
+pctLen    = input.int(200, "Percentile Lookback (bars)", minval=50, maxval=1000, group=gW, tooltip="200 bars ≈ 2 days on 15m.")
+biasLen   = input.int(96, "Whale Bias Window (bars)", minval=20, maxval=500, group=gW, tooltip="Rolling window for the Whale Bias line. 96 bars = 1 day on 15m.")
+biasTh    = input.int(40, "Bias Flip Threshold (±)", minval=10, maxval=90, group=gW, tooltip="Whale Bias crossing above +threshold / below −threshold fires the flip alerts and colors the table state.")
+
+gO = "② Open Interest"
+showOI     = input.bool(true, "Show OI Positioning Strip", group=gO, tooltip="Colored squares along the top of the pane: green = new longs, red = new shorts, teal = shorts closing, orange = longs closing.")
+oiOverride = input.symbol("", "OI Symbol Override", group=gO, tooltip="Leave empty to auto-build <chart ticker>_OI (works on Binance/Bybit/OKX etc. perp charts). Set manually if you chart one exchange but want another's OI feed.")
+
+gD = "③ DXY Link"
+showDxy    = input.bool(true, "Show DXY Correlation Line", group=gD)
+dxySym     = input.symbol("TVC:DXY", "Dollar Index Symbol", group=gD)
+corrLen    = input.int(200, "Correlation Length (bars)", minval=30, maxval=1000, group=gD, tooltip="Rolling correlation of bar-to-bar changes. 200 bars ≈ 2 days on 15m. Crypto/DXY correlation is unstable — expect it to wander.")
+dxyTrendLen= input.int(50, "DXY Trend EMA", minval=10, maxval=200, group=gD)
+
+gP = "④ Panel"
+showTbl   = input.bool(true, "Show Summary Table", group=gP)
+tblPos    = input.string("Top Right", "Position", ["Top Right","Top Left","Bottom Right","Bottom Left"], group=gP)
+tblSize   = input.string(size.small, "Text Size", [size.tiny, size.small, size.normal], group=gP)
+
+// colors (match the All-in-One palette)
+BUY  = #26a69a
+SELL = #ef5350
+AMBR = #ffb300
+TEAL = #4dd0e1
+ORNG = #ff9800
+
+// ╔═══════════════════════════════════════════════════════╗
+// ║  ① VOLUME DELTA + WHALE BARS                           ║
+// ╚═══════════════════════════════════════════════════════╝
+// intrabar signed volume: up-closing minute = buy, down-closing = sell
+f_delta() =>
+    close > open ? volume : close < open ? -volume : close >= nz(close[1], close) ? volume : -volume
+
+deltaArr = request.security_lower_tf(syminfo.tickerid, ltfInput, f_delta())
+
+// fallback for bars beyond the intrabar history limit: estimate the buy share
+// from where the bar closed inside its own range
+float rawDelta = deltaArr.size() > 0 ? deltaArr.sum() : (high == low ? 0.0 : nz(volume) * (2 * (close - low) / (high - low) - 1))
+float deltaPct = nz(volume) > 0 ? rawDelta / volume * 100 : 0.0
+
+whaleThr = ta.percentile_nearest_rank(volume, pctLen, whalePct)
+isWhale  = not na(whaleThr) and nz(volume) >= whaleThr
+
+whaleSigned = isWhale ? rawDelta : 0.0
+whaleAbs    = isWhale ? math.abs(rawDelta) : 0.0
+biasNum     = math.sum(whaleSigned, biasLen)
+biasDen     = math.sum(whaleAbs, biasLen)
+whaleBias   = biasDen > 0 ? biasNum / biasDen * 100 : 0.0
+
+var int lastWhaleBar = na
+var int lastWhaleDir = 0
+if isWhale
+    lastWhaleBar := bar_index
+    lastWhaleDir := rawDelta >= 0 ? 1 : -1
+
+// ╔═══════════════════════════════════════════════════════╗
+// ║  ② OPEN INTEREST POSITIONING                           ║
+// ╚═══════════════════════════════════════════════════════╝
+oiTicker = oiOverride != "" ? oiOverride : syminfo.tickerid + "_OI"
+oiClose  = request.security(oiTicker, timeframe.period, close, ignore_invalid_symbol=true)
+oiOk     = not na(oiClose)
+oiDelta  = oiOk ? oiClose - nz(oiClose[1], oiClose) : na
+oiDeltaPct = oiOk and nz(oiClose[1]) > 0 ? oiDelta / oiClose[1] * 100 : na
+priceUp  = close >= nz(close[1], close)
+
+// 1 = longs opening, 2 = shorts opening, 3 = shorts closing, 4 = longs closing
+int oiState = not oiOk or na(oiDelta) or oiDelta == 0 ? 0 : oiDelta > 0 ? (priceUp ? 1 : 2) : (priceUp ? 3 : 4)
+color oiCol = oiState == 1 ? BUY : oiState == 2 ? SELL : oiState == 3 ? TEAL : oiState == 4 ? ORNG : color.new(color.gray, 60)
+string oiTxt = oiState == 1 ? "Longs opening" : oiState == 2 ? "Shorts opening" : oiState == 3 ? "Shorts closing" : oiState == 4 ? "Longs closing" : oiOk ? "Flat" : "n/a on this chart"
+
+// ╔═══════════════════════════════════════════════════════╗
+// ║  ③ DXY LINK                                            ║
+// ╚═══════════════════════════════════════════════════════╝
+dxy    = request.security(dxySym, timeframe.period, close, ignore_invalid_symbol=true)
+dxyOk  = not na(dxy)
+corr   = dxyOk ? ta.correlation(ta.change(close), ta.change(dxy), corrLen) * 100 : na
+dxyEma = ta.ema(dxy, dxyTrendLen)
+dxyUp  = dxyOk and dxy > dxyEma
+
+// ╔═══════════════════════════════════════════════════════╗
+// ║  PLOTS                                                 ║
+// ╚═══════════════════════════════════════════════════════╝
+colDelta = isWhale ? (rawDelta >= 0 ? color.new(BUY, 0) : color.new(SELL, 0)) : (rawDelta >= 0 ? color.new(BUY, 72) : color.new(SELL, 72))
+plot(deltaPct, "Delta % of Volume", style=plot.style_columns, color=colDelta)
+
+biasCol = whaleBias >= biasTh ? color.new(BUY, 0) : whaleBias <= -biasTh ? color.new(SELL, 0) : color.new(color.silver, 20)
+plot(whaleBias, "Whale Bias", color=biasCol, linewidth=2)
+
+plot(showDxy ? corr : na, "DXY Correlation ×100", color=color.new(ORNG, 20), linewidth=1)
+
+hline(0, "Zero", color=color.new(color.gray, 60))
+hline(40, "", color=color.new(color.gray, 80), linestyle=hline.style_dotted)
+hline(-40, "", color=color.new(color.gray, 80), linestyle=hline.style_dotted)
+
+plotshape(showOI and oiOk, "OI State Strip", shape.square, location.top, color=oiCol, size=size.tiny)
+
+// ╔═══════════════════════════════════════════════════════╗
+// ║  SUMMARY TABLE                                         ║
+// ╚═══════════════════════════════════════════════════════╝
+f_pos(p) => p == "Top Left" ? position.top_left : p == "Bottom Right" ? position.bottom_right : p == "Bottom Left" ? position.bottom_left : position.top_right
+
+var table tbl = table.new(f_pos(tblPos), 2, 6, bgcolor=color.new(#0d0d12, 15), border_color=color.new(color.gray, 65), border_width=1, frame_color=color.new(color.gray, 45), frame_width=1)
+
+if barstate.islast and showTbl
+    biasTxt = whaleBias >= biasTh ? "LONG lean" : whaleBias <= -biasTh ? "SHORT lean" : "Neutral"
+    biasC   = whaleBias >= biasTh ? BUY : whaleBias <= -biasTh ? SELL : AMBR
+    whaleAgoTxt = na(lastWhaleBar) ? "—" : str.tostring(bar_index - lastWhaleBar) + " bars ago " + (lastWhaleDir > 0 ? "▲" : "▼")
+    whaleAgoCol = na(lastWhaleBar) ? color.gray : lastWhaleDir > 0 ? BUY : SELL
+    dxyTxt  = dxyOk ? (dxyUp ? "Rising" : "Falling") + " · corr " + str.tostring(corr, "#") : "n/a"
+    dxyC    = dxyOk ? (dxyUp ? SELL : BUY) : color.gray   // rising dollar = usual crypto headwind
+
+    table.cell(tbl, 0, 0, "WHALE & MACRO", text_color=color.white, text_size=tblSize, text_halign=text.align_left, bgcolor=color.new(#1c1c28, 0))
+    table.cell(tbl, 1, 0, "", bgcolor=color.new(#1c1c28, 0))
+    table.cell(tbl, 0, 1, " Whale Bias", text_color=color.silver, text_size=tblSize, text_halign=text.align_left)
+    table.cell(tbl, 1, 1, str.tostring(math.round(whaleBias)) + " · " + biasTxt + " ", text_color=biasC, text_size=tblSize, text_halign=text.align_right)
+    table.cell(tbl, 0, 2, " Last Whale Bar", text_color=color.silver, text_size=tblSize, text_halign=text.align_left)
+    table.cell(tbl, 1, 2, whaleAgoTxt + " ", text_color=whaleAgoCol, text_size=tblSize, text_halign=text.align_right)
+    table.cell(tbl, 0, 3, " OI Read", text_color=color.silver, text_size=tblSize, text_halign=text.align_left)
+    table.cell(tbl, 1, 3, oiTxt + " ", text_color=oiCol, text_size=tblSize, text_halign=text.align_right)
+    table.cell(tbl, 0, 4, " OI Δ (bar)", text_color=color.silver, text_size=tblSize, text_halign=text.align_left)
+    table.cell(tbl, 1, 4, (na(oiDeltaPct) ? "—" : str.tostring(oiDeltaPct, "#.###") + "%") + " ", text_color=oiCol, text_size=tblSize, text_halign=text.align_right)
+    table.cell(tbl, 0, 5, " DXY", text_color=color.silver, text_size=tblSize, text_halign=text.align_left)
+    table.cell(tbl, 1, 5, dxyTxt + " ", text_color=dxyC, text_size=tblSize, text_halign=text.align_right)
+
+// ╔═══════════════════════════════════════════════════════╗
+// ║  ALERTS                                                ║
+// ╚═══════════════════════════════════════════════════════╝
+alertcondition(isWhale and rawDelta > 0, "Whale Buy Bar",  "Top-percentile volume bar hit the BUY side")
+alertcondition(isWhale and rawDelta < 0, "Whale Sell Bar", "Top-percentile volume bar hit the SELL side")
+alertcondition(ta.crossover(whaleBias, biasTh),   "Whale Bias Flip Long",  "Whale flow bias crossed above the long threshold")
+alertcondition(ta.crossunder(whaleBias, -biasTh), "Whale Bias Flip Short", "Whale flow bias crossed below the short threshold")
+alertcondition(oiState == 1 and oiState[1] != 1, "New Longs Opening",  "OI rising with price rising — new longs entering")
+alertcondition(oiState == 2 and oiState[1] != 2, "New Shorts Opening", "OI rising with price falling — new shorts entering")

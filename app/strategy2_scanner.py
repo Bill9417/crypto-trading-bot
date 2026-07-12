@@ -23,9 +23,14 @@ import os
 import time
 
 import config
+import daily_report
 import event_radar
 import executor
+import price_alerts
+import liq_alerts
 import tech_news
+import tg_commands
+import tw_stocks
 import strategy2_live as S2L
 import strategy2_meter as S2
 import telegram_utils
@@ -156,6 +161,29 @@ def _fmt_price(p) -> str:
         return str(p)
 
 
+def _plan_block(sig: dict) -> str:
+    """Multi-line Entry/SL/TP plan for a Telegram alert — % distances and R
+    multiples included so the risk is readable at a glance. Empty string when
+    the signal carries no plan (ATR calc failed)."""
+    entry, sl, tp1, tp2 = (sig.get(k) for k in ("entry", "sl", "tp1", "tp2"))
+    if not all((entry, sl, tp1, tp2)) or entry == sl:
+        return ""
+    return (f"Entry  {_fmt_price(entry)}\n"
+            f"SL     {_fmt_price(sl)}  ({(sl / entry - 1) * 100:+.2f}%)\n"
+            f"TP1    {_fmt_price(tp1)}  ({(tp1 / entry - 1) * 100:+.2f}%, "
+            f"{abs((tp1 - entry) / (entry - sl)):.0f}R)\n"
+            f"TP2    {_fmt_price(tp2)}  ({(tp2 / entry - 1) * 100:+.2f}%, "
+            f"{abs((tp2 - entry) / (entry - sl)):.0f}R)\n")
+
+
+def _plan_suffix(sig: dict) -> str:
+    """One-line ' · SL x · TP y' tail for digest rows (TP = final target)."""
+    sl, tp2 = sig.get("sl"), sig.get("tp2")
+    if not (sl and tp2):
+        return ""
+    return f"  ·  SL {_fmt_price(sl)} · TP {_fmt_price(tp2)}"
+
+
 def _send_digest(sigs: list) -> None:
     """Send ONE clean Strategy-2 Telegram digest for the signals collected since
     the last one — grouped by direction, highest conviction first. Called on the
@@ -169,10 +197,12 @@ def _send_digest(sigs: list) -> None:
              f"— last {DIGEST_SEC // 60} min · {len(sigs)} new —"]
     if longs:
         lines.append("\n🟢 LONG")
-        lines += [f"  • {s['base']}  ·  {s['score']}/100  ·  {_fmt_price(s['price'])}" for s in longs]
+        lines += [f"  • {s['base']}  ·  {s['score']}/100  ·  {_fmt_price(s['price'])}"
+                  f"{_plan_suffix(s)}" for s in longs]
     if shorts:
         lines.append("\n🔴 SHORT")
-        lines += [f"  • {s['base']}  ·  {s['score']}/100  ·  {_fmt_price(s['price'])}" for s in shorts]
+        lines += [f"  • {s['base']}  ·  {s['score']}/100  ·  {_fmt_price(s['price'])}"
+                  f"{_plan_suffix(s)}" for s in shorts]
     try:
         telegram_utils.send_message("\n".join(lines), channel="signals")
     except Exception as exc:  # noqa: BLE001 — a failed alert must never kill the loop
@@ -245,6 +275,16 @@ def scan_once(client, recent: list, last_alert: dict, pending: list) -> list:
                     "ts": now,
                     "tv_url": _tv_url(sym),
                 }
+                # Trade plan attached to every fired signal — the same ATR
+                # bracket live execution would use (S2L.trade_levels), so the
+                # Telegram alert/digest and the /strategy2 page can show a
+                # complete Entry/SL/TP plan, not just a naked price.
+                try:
+                    entry, sl, tp1, tp2 = S2L.trade_levels(
+                        res["price"], direction == "long", S2L._atr(ohlcv))
+                    sig.update({"entry": entry, "sl": sl, "tp1": tp1, "tp2": tp2})
+                except Exception as exc:  # noqa: BLE001 — plan is a bonus, never blocks
+                    print(f"[strategy2] plan calc failed {sym}: {exc}")
                 recent.insert(0, sig)
                 pending.append(sig)                  # buffered → next 30-min digest
                 print(f"[strategy2] SIGNAL {direction.upper()} {sig['base']} score {sig['score']}")
@@ -256,8 +296,9 @@ def scan_once(client, recent: list, last_alert: dict, pending: list) -> list:
                     try:
                         telegram_utils.send_message(
                             f"🎯 S2 HIGH CONVICTION · {direction.upper()} {sig['base']}\n"
-                            f"score {sig['score']}/100 @ {_fmt_price(sig['price'])} ({TIMEFRAME})\n"
-                            f"{sig['tv_url']}",
+                            f"score {sig['score']}/100 · {TIMEFRAME}\n"
+                            + _plan_block(sig)
+                            + f"{sig['tv_url']}",
                             force=True, channel="signals")
                     except Exception as exc:  # noqa: BLE001 — alert must never kill the sweep
                         print(f"[strategy2] HC alert failed {sym}: {exc}")
@@ -316,6 +357,20 @@ def main() -> None:
         except Exception as exc:  # noqa: BLE001 — protection must never kill the loop
             print(f"[strategy2] guardian error: {exc}")
 
+    # 🤖 Telegram command bot — /winrate /positions /signals /alerts /report,
+    # answered from a daemon thread (long-polls getUpdates; read-only).
+    try:
+        tg_commands.start()
+    except Exception as exc:  # noqa: BLE001 — the command bot is optional
+        print(f"[strategy2] tg command bot failed to start: {exc}")
+
+    # 💥 Liquidation collector — Binance+Bybit+OKX WebSockets feeding the
+    # BTC/ETH cascade alerts (this process keeps its own rolling buffer).
+    try:
+        liq_alerts.start()
+    except Exception as exc:  # noqa: BLE001 — the collector is optional
+        print(f"[strategy2] liq collector failed to start: {exc}")
+
     _guard()                                   # protect immediately on startup
     while True:
         start = time.time()
@@ -336,6 +391,30 @@ def main() -> None:
             tech_news.tick()
         except Exception as exc:  # noqa: BLE001 — digest must never kill the loop
             print(f"[strategy2] tech news error: {exc}")
+        # 📈 Daily report — one account+market summary per local day into the
+        # Report topic (self-paced: no-op until DAILY_REPORT_HOUR has passed).
+        try:
+            daily_report.tick()
+        except Exception as exc:  # noqa: BLE001 — report must never kill the loop
+            print(f"[strategy2] daily report error: {exc}")
+        # 🔔 Price alerts — user-set levels from the dashboard, checked against
+        # live tickers each sweep (one bulk fetch_tickers call).
+        try:
+            price_alerts.tick(client)
+        except Exception as exc:  # noqa: BLE001 — alerts must never kill the loop
+            print(f"[strategy2] price alerts error: {exc}")
+        # 🇹🇼 台股 scan — TW50 pullback setups into the twstocks topic, once
+        # per TWSE trading day after the 13:30 close (self-paced no-op else).
+        try:
+            tw_stocks.tick()
+        except Exception as exc:  # noqa: BLE001 — scan must never kill the loop
+            print(f"[strategy2] tw stocks error: {exc}")
+        # 💥 Liquidation cascades — BTC/ETH stop-run bursts into the liq topic
+        # (thresholded + cooled down; a quiet market sends nothing).
+        try:
+            liq_alerts.tick(client)
+        except Exception as exc:  # noqa: BLE001 — alerts must never kill the loop
+            print(f"[strategy2] liq alerts error: {exc}")
         # Flush a single grouped Telegram digest on a clean DIGEST_SEC cadence
         # (default every 30 min). Silent when nothing new fired in the window.
         if time.time() - last_digest >= DIGEST_SEC:

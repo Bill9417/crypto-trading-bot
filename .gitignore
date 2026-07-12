@@ -31,6 +31,10 @@ strategy2_signals.json
 strategy3_state.json
 event_radar_state.json
 tech_news_state.json
+daily_report_state.json
+price_alerts.json
+tg_commands_state.json
+tw_stocks_state.json
 
 # ── Large generated caches / data dumps ──
 ohlcv_cache.json
