@@ -33,6 +33,7 @@ from datetime import datetime
 import requests
 
 import config
+import telegram_utils
 
 STATE_FILE = os.path.join(os.path.dirname(__file__), "tg_commands_state.json")
 SIGNALS_FILE = os.path.join(os.path.dirname(__file__), "strategy2_signals.json")
@@ -237,12 +238,29 @@ def _api(method: str, *, http_timeout: float = 30, **params):
     return r.json()
 
 
-def _reply(chat_id, thread_id, text) -> None:
-    payload = {"chat_id": chat_id, "text": text}
+def _reply(chat_id, thread_id, text) -> bool:
+    """Chunked, 429-aware reply. Returns whether every part was delivered —
+    a rate-limited reply used to be dropped silently while the log said
+    'answered' (the same trap fixed in telegram_utils on 2026-07-12)."""
+    payload = {"chat_id": chat_id}
     if thread_id:
         payload["message_thread_id"] = thread_id
-    requests.post(f"https://api.telegram.org/bot{config.BOT_TOKEN}/sendMessage",
-                  data=payload, timeout=15)
+    url = f"https://api.telegram.org/bot{config.BOT_TOKEN}/sendMessage"
+    ok = True
+    for part in telegram_utils._chunks_of(text):
+        for attempt in (0, 1):
+            r = requests.post(url, data={**payload, "text": part}, timeout=15)
+            if r.status_code == 429 and attempt == 0:
+                try:
+                    wait = float((r.json().get("parameters") or {})
+                                 .get("retry_after") or 5)
+                except Exception:  # noqa: BLE001
+                    wait = 5.0
+                time.sleep(min(wait + 0.5, 35.0))
+                continue
+            ok = ok and r.ok
+            break
+    return ok
 
 
 def _poll_loop() -> None:
@@ -283,8 +301,8 @@ def _poll_loop() -> None:
                 reply = f"⚠ {cmd} failed: {str(exc)[:200]}"
             if reply:
                 try:
-                    _reply(chat_id, msg.get("message_thread_id"), reply)
-                    print(f"[tgcmd] answered /{cmd}")
+                    delivered = _reply(chat_id, msg.get("message_thread_id"), reply)
+                    print(f"[tgcmd] {'answered' if delivered else 'REPLY DROPPED'} /{cmd}")
                 except Exception as exc:  # noqa: BLE001
                     print(f"[tgcmd] reply failed: {exc}")
         if updates:

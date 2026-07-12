@@ -176,7 +176,7 @@ def build_digest(now, reg: dict, setups: list, pattern_blocked: int = 0,
                 lines += [
                     "",
                     f"▫️ {code} {name}",
-                    f"   進場參考 {_px(s['ref'])} (明日開盤)",
+                    f"   進場參考 {_px(s['ref'])} (下一交易日開盤)",
                     f"   停損 {_px(s['sl'])} (−{risk:.1f}%, 3×ATR)",
                     f"   目標 {_px(s['tp'])} (+{gain:.1f}%, 5×ATR)",
                 ]
@@ -229,10 +229,14 @@ def tick() -> bool:
         _save_state(state)
         return False
     if not taiex or datetime.fromtimestamp(taiex[-1][0], TZ).strftime("%Y-%m-%d") != today:
-        # weekday holiday (bar date isn't today) — done for the day, no message
-        state["last_run_date"] = today
+        # Today's bar is missing. Before 15:00 that might just be Yahoo lag —
+        # keep retrying (RETRY_SEC-paced); after 15:00 call it a TWSE holiday.
+        if now.hour >= SEND_HOUR + 1:
+            state["last_run_date"] = today
+            print(f"[twstocks] {today}: TWSE holiday, skipped")
+        else:
+            print(f"[twstocks] {today}: no bar for today yet, will retry")
         _save_state(state)
-        print(f"[twstocks] {today}: TWSE holiday, skipped")
         return False
 
     reg = regime(taiex)
@@ -246,6 +250,7 @@ def tick() -> bool:
         except Exception:  # noqa: BLE001 — one dead symbol must not kill the scan
             failures += 1
             continue
+        time.sleep(0.12)          # polite spacing for EVERY Yahoo request
         if not s:
             continue
         if not reg["ok"]:
@@ -256,7 +261,6 @@ def tick() -> bool:
             skipped += 1
             continue
         setups.append((code, names.get(code) or name_en, s))
-        time.sleep(0.15)
     if failures > 20:
         print(f"[twstocks] aborted — {failures} symbol fetches failed")
         _save_state(state)

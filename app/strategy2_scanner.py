@@ -184,29 +184,42 @@ def _plan_suffix(sig: dict) -> str:
     return f"  ·  SL {_fmt_price(sl)} · TP {_fmt_price(tp2)}"
 
 
-def _send_digest(sigs: list) -> None:
-    """Send ONE clean Strategy-2 Telegram digest for the signals collected since
-    the last one — grouped by direction, highest conviction first. Called on the
-    DIGEST_SEC cadence (default every 30 min) instead of a message per signal, so
-    the channel gets a single tidy summary rather than a stream of alerts."""
-    if not sigs:
-        return
+DIGEST_MAX_ROWS = int(os.getenv("STRATEGY2_DIGEST_MAX_ROWS", "12"))   # per side
+
+
+def _digest_text(sigs: list) -> str:
+    """ONE clean Strategy-2 digest — grouped by direction, highest conviction
+    first, capped at DIGEST_MAX_ROWS per side (a raw 80-signal chop-day list
+    once blew Telegram's 4096-char limit and the whole digest was lost)."""
     longs = sorted([s for s in sigs if s["direction"] == "long"], key=lambda s: -s["score"])
     shorts = sorted([s for s in sigs if s["direction"] == "short"], key=lambda s: s["score"])
     lines = [f"📊 STRATEGY 2 · {TIMEFRAME} signals",
              f"— last {DIGEST_SEC // 60} min · {len(sigs)} new —"]
-    if longs:
-        lines.append("\n🟢 LONG")
-        lines += [f"  • {s['base']}  ·  {s['score']}/100  ·  {_fmt_price(s['price'])}"
-                  f"{_plan_suffix(s)}" for s in longs]
-    if shorts:
-        lines.append("\n🔴 SHORT")
-        lines += [f"  • {s['base']}  ·  {s['score']}/100  ·  {_fmt_price(s['price'])}"
-                  f"{_plan_suffix(s)}" for s in shorts]
+
+    def _side(title, rows):
+        if not rows:
+            return
+        lines.append(f"\n{title}")
+        lines.extend(f"  • {s['base']}  ·  {s['score']}/100  ·  {_fmt_price(s['price'])}"
+                     f"{_plan_suffix(s)}" for s in rows[:DIGEST_MAX_ROWS])
+        if len(rows) > DIGEST_MAX_ROWS:
+            lines.append(f"  …+{len(rows) - DIGEST_MAX_ROWS} more (dashboard has all)")
+
+    _side("🟢 LONG", longs)
+    _side("🔴 SHORT", shorts)
+    return "\n".join(lines)
+
+
+def _send_digest(sigs: list) -> bool:
+    """Send the digest on the DIGEST_SEC cadence (default every 30 min) instead
+    of a message per signal. Returns whether Telegram accepted it."""
+    if not sigs:
+        return False
     try:
-        telegram_utils.send_message("\n".join(lines), channel="signals")
+        return bool(telegram_utils.send_message(_digest_text(sigs), channel="signals"))
     except Exception as exc:  # noqa: BLE001 — a failed alert must never kill the loop
         print(f"[strategy2] digest send failed: {exc}")
+        return False
 
 
 def scan_once(client, recent: list, last_alert: dict, pending: list) -> list:
@@ -419,8 +432,9 @@ def main() -> None:
         # (default every 30 min). Silent when nothing new fired in the window.
         if time.time() - last_digest >= DIGEST_SEC:
             if pending:
-                _send_digest(pending)
-                print(f"[strategy2] sent digest of {len(pending)} signal(s)")
+                ok = _send_digest(pending)
+                print(f"[strategy2] digest of {len(pending)} signal(s) "
+                      f"{'sent' if ok else 'FAILED'}")
                 pending.clear()
             last_digest = time.time()
         elapsed = time.time() - start

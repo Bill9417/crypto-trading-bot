@@ -273,6 +273,8 @@ def analyze_smc(ohlcv: list) -> dict:
             "swing_high": None,
             "swing_low": None,
             "trend": "neutral",
+            "dist_to_high_pct": None,
+            "dist_to_low_pct": None,
             "liquidity_sweep_bullish": False,
             "liquidity_sweep_bearish": False,
             "choch_bullish": False,
