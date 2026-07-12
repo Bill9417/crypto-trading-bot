@@ -163,9 +163,34 @@ def test_clean_is_admin_only(monkeypatch):
     assert tg_commands.authorized("clean", 42)
     assert tg_commands.authorized("purge", 77)
     assert not tg_commands.authorized("clean", 12345)
+    assert not tg_commands.authorized("cleanall", 12345)
     # read-only commands stay open to everyone in the allowed chats
     assert tg_commands.authorized("winrate", 12345)
     assert tg_commands.authorized("liq", None)
+
+
+def test_cleanall_needs_confirmation_then_sweeps(monkeypatch):
+    import telegram_utils
+    import tg_commands
+    # without the explicit "yes" it only warns — nothing is deleted
+    out = tg_commands.handle("cleanall", "")
+    assert "cleanall yes" in out
+    # with "yes": sweeps below the FIRST ledger-recorded id of the group chat
+    monkeypatch.setattr(tg_commands.config, "TELEGRAM_GROUP_CHAT_ID", "-100123")
+    monkeypatch.setattr(telegram_utils, "_load_sent",
+                        lambda: [{"chat": "-100123", "mid": 750},
+                                 {"chat": "-100123", "mid": 700},
+                                 {"chat": "999", "mid": 5}])      # other chat ignored
+    swept = {}
+
+    def fake_deep_clean(chat, upto):
+        swept["chat"], swept["upto"] = chat, upto
+        return {"deleted": 42, "skipped": 10, "tried": 699}
+
+    monkeypatch.setattr(telegram_utils, "deep_clean", fake_deep_clean)
+    out = tg_commands.handle("cleanall", "yes")
+    assert swept == {"chat": "-100123", "upto": 700}
+    assert "已刪除 42 則" in out
 
 
 def test_group_admin_ids_cached(monkeypatch):

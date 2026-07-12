@@ -111,6 +111,43 @@ def _delete_one(token: str, chat_id, message_id) -> bool:
     return False
 
 
+def deep_clean(chat_id, upto_mid: int, limit: int = 3000) -> dict:
+    """Pre-ledger backfill sweep. Bots can't LIST chat history, but group
+    message ids are sequential — so try deleteMessage on every id below the
+    first ledger-recorded one (newest first, capped at `limit` ids). Deletes
+    whatever Telegram permits: anything younger than 48h the bot may remove;
+    ids that are already gone, service messages, or past the 48h wall are
+    skipped. Ages are unknowable without history access, so this is
+    all-or-nothing by design — use it once to clear the pre-ledger era."""
+    deleted = skipped = 0
+    start = max(1, int(upto_mid) - limit)
+    for mid in range(int(upto_mid) - 1, start - 1, -1):
+        try:
+            r = requests.post(
+                f"https://api.telegram.org/bot{BOT_TOKEN}/deleteMessage",
+                data={"chat_id": chat_id, "message_id": mid}, timeout=15)
+            if r.status_code == 429:
+                try:
+                    wait = float((r.json().get("parameters") or {})
+                                 .get("retry_after") or 3)
+                except Exception:  # noqa: BLE001
+                    wait = 3.0
+                time.sleep(min(wait + 0.5, MAX_429_WAIT))
+                r = requests.post(
+                    f"https://api.telegram.org/bot{BOT_TOKEN}/deleteMessage",
+                    data={"chat_id": chat_id, "message_id": mid}, timeout=15)
+        except requests.RequestException:
+            skipped += 1
+            continue
+        if r.ok:
+            deleted += 1
+        else:
+            skipped += 1
+        time.sleep(0.05)
+    return {"deleted": deleted, "skipped": skipped,
+            "tried": int(upto_mid) - start}
+
+
 def clean_old_messages(max_age_hours: float = 24.0) -> dict:
     """Delete every recorded message older than max_age_hours. Returns
     {"deleted", "too_old" (>48h, Telegram forbids), "kept", "failed"}."""

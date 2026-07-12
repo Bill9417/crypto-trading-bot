@@ -151,6 +151,23 @@ def test_clean_deletes_between_24h_and_48h_only(monkeypatch, tmp_path):
     assert [e["mid"] for e in T._load_sent()] == [10]   # only the fresh one kept
 
 
+def test_deep_clean_sweeps_ids_below_first_ledger_entry(monkeypatch):
+    monkeypatch.setattr(T.time, "sleep", lambda s: None)
+    monkeypatch.setattr(T, "BOT_TOKEN", "tok")
+    tried = []
+
+    def fake_post(url, data=None, timeout=None):
+        tried.append(data["message_id"])
+        # mid 2 is "too old / already gone" → 400; the rest delete fine
+        return FakeResp(400 if data["message_id"] == 2 else 200,
+                        {"ok": data["message_id"] != 2})
+
+    monkeypatch.setattr(T.requests, "post", fake_post)
+    s = T.deep_clean("-100123", upto_mid=5, limit=3)
+    assert tried == [4, 3, 2]                 # newest-first, capped, below upto
+    assert s == {"deleted": 2, "skipped": 1, "tried": 3}
+
+
 def test_clean_treats_400_as_gone_but_retries_5xx(monkeypatch, tmp_path):
     _seed_ledger(monkeypatch, tmp_path)
     monkeypatch.setattr(T.requests, "post",

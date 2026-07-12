@@ -17,6 +17,9 @@ the command was typed in:
                 (default 24; Telegram forbids deleting anything older than
                 48h, and only messages sent since the ledger exists are
                 tracked). Sender must be a group admin or the owner.
+    /cleanall   ADMIN-ONLY, needs "/cleanall yes": one-time backfill sweep of
+                everything sent BEFORE the ledger existed (sequential-id brute
+                force below the first recorded message; 48h wall still applies)
     /help       this list
 
 Safety: commands are only honoured from the configured group / owner chats —
@@ -51,7 +54,7 @@ ALLOWED_CHATS = {str(c) for c in (config.TELEGRAM_GROUP_CHAT_ID, config.CHAT_ID,
 # Destructive commands need more than "typed inside the group": the SENDER
 # must be a group admin (checked live via getChatAdministrators, cached) or
 # the owner (the DM chat ids double as the owner's user ids).
-ADMIN_COMMANDS = {"clean", "clear", "purge"}
+ADMIN_COMMANDS = {"clean", "clear", "purge", "cleanall"}
 OWNER_IDS = {str(c) for c in (config.CHAT_ID, config.ALERTS_CHAT_ID) if c}
 ADMIN_CACHE_SEC = 300
 _admin_cache = {"ts": 0.0, "ids": set()}
@@ -224,6 +227,7 @@ HELP = ("🤖 Commands\n"
         "/tw — latest 台股 scan (大盤 regime + setups)\n"
         "/liq — BTC/ETH 清算: 24h統計 + 最近清算價 + 🧲清算地圖\n"
         "/clean [小時] — 刪除 bot 超過N小時的舊訊息 (預設24, 上限47, 限管理員)\n"
+        "/cleanall — 一次清掉記錄功能上線前的全部舊訊息 (限管理員, 需確認)\n"
         "/help — this list")
 
 
@@ -282,6 +286,23 @@ def handle(cmd: str, args: str = "") -> str:
         except ValueError:
             hours = 24.0
         return fmt_clean(telegram_utils.clean_old_messages(hours), hours)
+    if cmd == "cleanall":
+        # Pre-ledger backfill: /clean can only see recorded messages, so the
+        # backlog from before the ledger existed needs this one-time sweep.
+        if args.strip().lower() != "yes":
+            return ("⚠️ /cleanall 會把『記錄功能上線前』的舊訊息全部刪除 — "
+                    "不分幾小時、包含群組成員的訊息 (Telegram 只允許刪 48h 內的，"
+                    "更舊的會自動略過)。\n確定請輸入: /cleanall yes")
+        chat = config.TELEGRAM_GROUP_CHAT_ID
+        mids = [e["mid"] for e in telegram_utils._load_sent()
+                if str(e.get("chat")) == str(chat)]
+        if not mids:
+            return "ledger 是空的，找不到基準訊息 id — 先讓 bot 發過訊息再試。"
+        s = telegram_utils.deep_clean(chat, min(mids))
+        return (f"🧹 深度清理完成\n已刪除 {s['deleted']} 則舊訊息\n"
+                f"略過 {s['skipped']} (不存在 / 超過48h / 無權限)\n"
+                f"共掃描 {s['tried']} 個訊息 id\n"
+                f"之後用 /clean 24 做日常清理即可。")
     if cmd in ("help", "start"):
         return HELP
     return None                                   # unknown command → stay silent
