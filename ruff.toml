@@ -1,0 +1,20 @@
+# Lint config — bug-catching first, style-churn last.
+# Run:  python -m ruff check app/          (run_all.sh pre-flight does this)
+line-length = 120
+target-version = "py312"
+extend-exclude = ["_archive", "app/instance"]
+
+[lint]
+# F  = pyflakes (real bugs: undefined names, unused imports/vars, f-string slips)
+# E9 = syntax/indentation errors
+# B  = bugbear (mutable defaults, useless expressions, loop-var capture…)
+# PLE = pylint errors
+select = ["F", "E9", "B", "PLE"]
+# B008: function call in default arg — used deliberately (config reads at import)
+# B007: unused loop-unpack names — the (t, o, h, l, c, v) OHLCV destructuring
+#       idiom is intentional; renaming fields to _t hurts readability
+ignore = ["B008", "B007"]
+
+[lint.per-file-ignores]
+# tests use asserts, fixtures and intentional shadowing freely
+"app/tests/*" = ["B011"]

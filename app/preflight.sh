@@ -11,6 +11,16 @@ if [ "${SKIP_TESTS:-0}" = "1" ]; then
   exit 0
 fi
 
+# Lint first (fast): catches undefined names / dead code before they run live.
+# Only blocks when ruff is installed — a machine without it still launches.
+if /Users/wolfman/miniforge3/bin/python -m ruff --version >/dev/null 2>&1; then
+  echo "Pre-flight: lint (ruff)…"
+  if ! /Users/wolfman/miniforge3/bin/python -m ruff check ..; then
+    echo "✗  LINT FAILED — launch aborted. Fix the finding above, or bypass with SKIP_TESTS=1." >&2
+    exit 1
+  fi
+fi
+
 echo "Pre-flight: running strategy tests…"
 if /Users/wolfman/miniforge3/bin/python -m pytest -q; then
   echo "✓  tests green — continuing launch."

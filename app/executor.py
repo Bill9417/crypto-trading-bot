@@ -793,7 +793,6 @@ def place_resting_order(symbol, direction, entry, sl, tp1, tp2, lights_count, al
     # ── LIVE PATH ─────────────────────────────────────────────────────────
     ex = _get_exchange()
     entry_side = "buy" if plan["is_long"] else "sell"
-    close_side = "sell" if plan["is_long"] else "buy"
     amount = plan["amount"]
     orders = []
     try:

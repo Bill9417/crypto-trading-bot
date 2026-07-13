@@ -59,7 +59,6 @@ from config import (
     TIMEFRAMES,
     TOP_SYMBOL_LIMIT,
     SCAN_SYMBOL_LIMIT,
-    TIMEZONE,
     WS_READY_TIMEOUT_SECONDS,
     WS_STALE_AFTER_SECONDS,
     ENABLE_4H_TREND_FILTER,
@@ -68,9 +67,6 @@ from config import (
     ATR_SL_MULTIPLIER,
     ATR_TP1_MULTIPLIER,
     ATR_TP_MULTIPLIER,
-    RUNNER_TRAIL_ENABLED,
-    RUNNER_TRAIL_R_MULT,
-    RUNNER_LOCK_R,
     MAX_SL_PCT,
     ATR_OFFSET_MULTIPLIER_MIN,
     ATR_OFFSET_MULTIPLIER_MAX,
@@ -81,7 +77,6 @@ from config import (
     DAILY_MAX_LOSSES,
     DAILY_MAX_DRAWDOWN_PCT,
     MAX_CONCURRENT_POSITIONS,
-    LIVE_STRATEGY,
     ENABLE_ADX_FILTER,
     ADX_PERIOD,
     ADX_MIN_THRESHOLD,
@@ -269,7 +264,7 @@ def acquire_bot_lock() -> None:
     except BlockingIOError:
         handle.close()
         print("Another bot.py process is already running. Exiting to prevent duplicate scans and Telegram alerts.")
-        raise SystemExit(0)
+        raise SystemExit(0) from None
 
     handle.seek(0)
     handle.truncate()
@@ -1893,7 +1888,6 @@ def run_bot() -> None:
             price_stream.wait_until_ready(timeout=2)
             ws_prices = price_stream.get_prices(symbols)
 
-        alerts_sent = 0
         collected_alerts = []
         rsi_extremes = []          # coins at an RSI blow-off extreme → one Telegram digest per scan
 
@@ -1960,12 +1954,6 @@ def run_bot() -> None:
                     if stoch_rsi_detail:
                         details.append(stoch_rsi_detail)
 
-                    trigger = None
-                    if strat_1:
-                        if stoch_rsi_hint is True:
-                            trigger = "oversold"
-                        elif stoch_rsi_hint is False:
-                            trigger = "overbought"
                     strat_2 = bull_score >= STRATEGY_SCORE_LIGHT_THRESHOLD or bear_score >= STRATEGY_SCORE_LIGHT_THRESHOLD
                     
                     ema_9 = calculate_ema(closed_prices, 9)
@@ -2563,7 +2551,7 @@ def run_bot() -> None:
                     print(f"Error scanning {symbol} {timeframe}: {e}")
         
         # Send batch alerts after all symbols are scanned
-        alerts_sent = send_batch_alerts(collected_alerts)
+        send_batch_alerts(collected_alerts)
         # One RSI-extreme digest per scan (coins ≥90 / ≤10 RSI). Alert-only.
         _send_rsi_extreme_alert(rsi_extremes)
     finally:

@@ -25,7 +25,7 @@ import bot
 import smc as smc_mod
 from indicators import (
     check_tsi_signal, check_macd_signal, check_volume_gate,
-    check_rsi_cross_after_extreme, check_hidden_divergence, check_stoch_rsi_signal,
+    check_stoch_rsi_signal,
     calculate_ema, calculate_vwap,
     calculate_volume_profile, calculate_order_flow,
 )
@@ -517,7 +517,7 @@ def _run_backtest_impl(days, symbols, timeframe="15m", strategy="default", progr
         try:
             ohlcv = fetch_ohlcv(sym, timeframe, days)
             oh4h = fetch_ohlcv(sym, "4h", days + 10)
-        except Exception as e:  # noqa: BLE001
+        except Exception:  # noqa: BLE001
             if progress:
                 progress(si, total, f"{sym}: fetch failed")
             continue

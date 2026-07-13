@@ -1,0 +1,31 @@
+name: lint + tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          pip install -r app/requirements.txt ruff
+
+      - name: Lint (ruff)
+        run: python -m ruff check .
+
+      # No .env in CI: config.py falls back to safe defaults
+      # (LIVE_TRADING=false), and tests pin what they depend on.
+      - name: Tests
+        working-directory: app
+        run: python -m pytest -q -W "error::Warning"

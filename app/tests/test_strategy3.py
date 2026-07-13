@@ -246,7 +246,7 @@ def test_signal_port_invariants():
     flags, scores = res["flags"], res["scores"]
 
     fired = [int(f) for f in flags if f != 0]
-    for a, b in zip(fired, fired[1:]):
+    for a, b in zip(fired, fired[1:], strict=False):
         assert a != b, "same-direction flags must never repeat (lastSig rule)"
 
     closes = pd.Series([float(c[4]) for c in ohlcv])

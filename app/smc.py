@@ -174,7 +174,6 @@ def check_choch(highs, lows, swing_highs, swing_lows, closes):
     :param closes: np.array of closes
     :return: tuple (bullish_choch, bearish_choch)
     """
-    lookback = 20
     if len(swing_highs) <2 or len(swing_lows)<2:
         return False, False
     bullish_choch = False
