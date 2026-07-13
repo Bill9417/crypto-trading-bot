@@ -382,6 +382,42 @@
                 </div>
             </div>
 
+            <div class="panel">
+                <div class="panel-title"><span>📈 Equity curve — real account totals</span><span class="hint" id="eq-meta" style="text-transform:none;letter-spacing:0;">one snapshot per day at the morning report</span></div>
+                <div style="height:220px;"><canvas id="equityChart"></canvas></div>
+            </div>
+            <script>
+            window.addEventListener('load', async () => {
+                try {
+                    const r = await fetch('/api/balance_history');
+                    const rows = ((await r.json()).history) || [];
+                    const meta = document.getElementById('eq-meta');
+                    if (rows.length < 2 || typeof Chart === 'undefined') {
+                        meta.textContent = rows.length
+                            ? 'first point recorded — the curve appears from day 2'
+                            : 'no snapshots yet — first point lands with tomorrow\'s daily report';
+                        return;
+                    }
+                    meta.textContent = rows.length + ' days · balances, not simulated P&L';
+                    const ds = (label, key, color) => ({
+                        label, data: rows.map(x => x[key]), borderColor: color,
+                        backgroundColor: 'transparent', borderWidth: 2,
+                        pointRadius: rows.length > 60 ? 0 : 2, tension: .25, spanGaps: true,
+                    });
+                    new Chart(document.getElementById('equityChart').getContext('2d'), {
+                        type: 'line',
+                        data: { labels: rows.map(x => x.date.slice(5)), datasets: [
+                            ds('Total', 'total', '#e8c268'),
+                            ds('Binance', 'binance', '#f0b90b55'),
+                            ds('Bybit', 'bybit', '#f7a35c55'),
+                        ]},
+                        options: { maintainAspectRatio: false, plugins: { legend: { labels: { boxWidth: 10 } } },
+                                   scales: { y: { ticks: { callback: v => v + ' U' } } } },
+                    });
+                } catch (e) { /* the panel is decoration — never break the page */ }
+            });
+            </script>
+
             <div class="panel sim">
                 <div class="panel-title"><span>🤖 Strategy 1 tracked signals — quick read</span><span class="hint" style="text-transform:none;letter-spacing:0;">simulation · full detail in the Signals tab</span></div>
                 <div class="sim-chips">

@@ -194,6 +194,17 @@ def open_flip(symbol: str, direction: str, price: float, score, margin: float,
     if blocked:
         print(f"[strategy3] would OPEN {direction.upper()} {symbol} — {blocked}")
         return "skip"
+    # 🛑 Daily circuit breaker — refuses NEW entries after a bad day (real
+    # Bybit closed-P&L, 24h window). Exits are never blocked. /resume clears.
+    try:
+        import strategy3_risk
+        halt = strategy3_risk.entry_blocked()
+    except Exception as exc:  # noqa: BLE001 — the breaker itself fails open
+        print(f"[strategy3] risk gate error ({exc}) — allowing entry")
+        halt = ""
+    if halt:
+        print(f"[strategy3] entry blocked by circuit breaker: {halt}")
+        return "skip"
     if X.is_live():
         try:
             if X.get_position(symbol):
@@ -592,6 +603,12 @@ def main() -> None:
             step(client, state)
         except Exception as exc:  # noqa: BLE001 — keep the loop alive
             print(f"[strategy3] step error: {exc}")
+        # 🚨 Watchdog — S3 watches the rest of the stack (S2 watches us back).
+        try:
+            import watchdog
+            watchdog.tick("strategy3_scanner.py")
+        except Exception as exc:  # noqa: BLE001
+            print(f"[strategy3] watchdog error: {exc}")
         time.sleep(max(10, POLL_SEC - (time.time() - start)))
 
 

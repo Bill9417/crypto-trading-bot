@@ -55,7 +55,7 @@ ALLOWED_CHATS = {str(c) for c in (config.TELEGRAM_GROUP_CHAT_ID, config.CHAT_ID,
 # Destructive commands need more than "typed inside the group": the SENDER
 # must be a group admin (checked live via getChatAdministrators, cached) or
 # the owner (the DM chat ids double as the owner's user ids).
-ADMIN_COMMANDS = {"clean", "clear", "purge", "cleanall"}
+ADMIN_COMMANDS = {"clean", "clear", "purge", "cleanall", "resume", "halt"}
 OWNER_IDS = {str(c) for c in (config.CHAT_ID, config.ALERTS_CHAT_ID) if c}
 ADMIN_CACHE_SEC = 300
 _admin_cache = {"ts": 0.0, "ids": set()}
@@ -228,6 +228,9 @@ HELP = ("🤖 Commands\n"
         "/tw — latest 台股 scan (大盤 regime + setups)\n"
         "/twnow — 台股即時: TAIEX + 漲跌幅前三 + 追蹤設定現價\n"
         "/liq — BTC/ETH 清算: 24h統計 + 最近清算價 + 🧲清算地圖\n"
+        "/outcomes — 訊號成績單: 每個訊號48h後的真實結果\n"
+        "/mom — ETH 14d動能紙上前測戰績\n"
+        "/resume — 解除 S3 熔斷 (限管理員) · /halt [原因] — 手動熔斷\n"
         "/clean [小時] — 刪除 bot 超過N小時的舊訊息 (預設24, 上限47, 限管理員)\n"
         "/cleanall — 一次清掉記錄功能上線前的全部舊訊息 (限管理員, 需確認)\n"
         "/help — this list")
@@ -285,6 +288,21 @@ def handle(cmd: str, args: str = "") -> str:
     if cmd in ("twnow", "twlive"):
         import tw_intraday
         return tw_intraday.snapshot_text()
+    if cmd == "outcomes":
+        import signal_outcomes
+        return signal_outcomes.report()
+    if cmd == "mom":
+        import eth_mom
+        return eth_mom.report()
+    if cmd == "resume":
+        import strategy3_risk
+        if strategy3_risk.clear_halt():
+            return "▶️ S3 circuit breaker 已解除 — 下一個訊號恢復進場。"
+        return "S3 沒有被熔斷，不需要解除。"
+    if cmd == "halt":
+        import strategy3_risk
+        strategy3_risk.set_halt(args.strip() or "manual halt via /halt")
+        return "🛑 S3 已手動熔斷 — 停止新倉 (已開倉位照常管理)。/resume 解除。"
     if cmd in ("clean", "clear", "purge"):
         try:
             hours = min(max(float(args), 1.0), 47.0) if args.strip() else 24.0

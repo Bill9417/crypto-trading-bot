@@ -148,6 +148,42 @@ def deep_clean(chat_id, upto_mid: int, limit: int = 3000) -> dict:
             "tried": int(upto_mid) - start}
 
 
+# ── auto-clean (scheduled /clean) ────────────────────────────────────────────
+# Telegram forbids deleting messages older than 48h, so waiting for a manual
+# /clean risks messages ageing past the wall forever. Once per day at a quiet
+# hour the scanner sweeps the >24h ledger automatically.
+AUTO_CLEAN = os.getenv("TG_AUTO_CLEAN", "true").strip().lower() in ("1", "true", "yes", "on")
+AUTO_CLEAN_HOUR = int(os.getenv("TG_AUTO_CLEAN_HOUR", "4"))
+_AC_STATE = os.path.join(os.path.dirname(__file__), "tg_autoclean_state.json")
+
+
+def auto_clean_tick(now=None) -> bool:
+    """Scanner hook: one automatic clean_old_messages(24) per local day after
+    AUTO_CLEAN_HOUR. Returns True when a sweep ran."""
+    if not (AUTO_CLEAN and TELEGRAM_GROUP_CHAT_ID):
+        return False
+    from datetime import datetime
+    now = now or datetime.now()
+    if now.hour < AUTO_CLEAN_HOUR:
+        return False
+    today = now.strftime("%Y-%m-%d")
+    try:
+        with open(_AC_STATE, "r", encoding="utf-8") as f:
+            state = json.load(f) or {}
+    except Exception:  # noqa: BLE001
+        state = {}
+    if state.get("last") == today:
+        return False
+    summary = clean_old_messages(24)
+    state["last"] = today
+    tmp = _AC_STATE + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(state, f)
+    os.replace(tmp, _AC_STATE)
+    print(f"[tg] auto-clean: {summary}")
+    return True
+
+
 def clean_old_messages(max_age_hours: float = 24.0) -> dict:
     """Delete every recorded message older than max_age_hours. Returns
     {"deleted", "too_old" (>48h, Telegram forbids), "kept", "failed"}."""

@@ -37,6 +37,13 @@ tg_commands_state.json
 tw_stocks_state.json
 tw_intraday_state.json
 tg_sent_log.json
+tg_autoclean_state.json
+watchdog_state.json
+s3_halt.json
+signal_outcomes.json
+eth_mom_state.json
+balance_history.json
+app/backups/
 
 # ── Large generated caches / data dumps ──
 ohlcv_cache.json

@@ -2811,6 +2811,20 @@ def api_events_feed():
     return jsonify({"events": recent})
 
 
+@app.route("/api/balance_history")
+@login_required
+def api_balance_history():
+    """Daily real-balance snapshots (both venues) — the equity curve the
+    /performance overview draws. Written by daily_report.record_balance."""
+    import daily_report
+    try:
+        with open(daily_report.BALANCE_FILE, "r", encoding="utf-8") as f:
+            hist = json.load(f) or []
+    except Exception:  # noqa: BLE001 — no snapshots yet
+        hist = []
+    return jsonify({"history": hist})
+
+
 @app.route("/market")
 @login_required
 def market():

@@ -27,11 +27,15 @@ import daily_report
 import event_radar
 import executor
 import price_alerts
+import backup_state
+import eth_mom
 import liq_alerts
+import signal_outcomes
 import tech_news
 import tg_commands
 import tw_intraday
 import tw_stocks
+import watchdog
 import strategy2_live as S2L
 import strategy2_meter as S2
 import telegram_utils
@@ -497,6 +501,31 @@ def main() -> None:
             liq_alerts.tick(client)
         except Exception as exc:  # noqa: BLE001 — alerts must never kill the loop
             print(f"[strategy2] liq alerts error: {exc}")
+        # 🚨 Watchdog — bark on Telegram if a stack process died (S3 watches us).
+        try:
+            watchdog.tick("strategy2_scanner.py")
+        except Exception as exc:  # noqa: BLE001
+            print(f"[strategy2] watchdog error: {exc}")
+        # 📋 Signal outcomes — replay 48h-old signals against real candles;
+        # Sunday scorecard closes the honesty loop.
+        try:
+            signal_outcomes.tick(client)
+        except Exception as exc:  # noqa: BLE001
+            print(f"[strategy2] outcomes error: {exc}")
+        # 📐 ETH 14d momentum — paper forward-test of the honest backtest winner.
+        try:
+            eth_mom.tick(client)
+        except Exception as exc:  # noqa: BLE001
+            print(f"[strategy2] eth-mom error: {exc}")
+        # 💾 Daily state backup + 🧹 scheduled message clean (both self-paced).
+        try:
+            backup_state.tick()
+        except Exception as exc:  # noqa: BLE001
+            print(f"[strategy2] backup error: {exc}")
+        try:
+            telegram_utils.auto_clean_tick()
+        except Exception as exc:  # noqa: BLE001
+            print(f"[strategy2] auto-clean error: {exc}")
         # Flush a single grouped Telegram digest on a clean DIGEST_SEC cadence
         # (default every 30 min). Silent when nothing new fired in the window.
         if time.time() - last_digest >= DIGEST_SEC:

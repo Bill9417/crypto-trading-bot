@@ -135,7 +135,60 @@ def build_report(data: dict, now: datetime) -> str:
     cal = _today_events(data.get("calendar") or [], now)
     lines += ["", "🗓 Today (high-impact US)"]
     lines += cal if cal else ["  none — quiet macro day"]
+
+    # Monday: each live engine must justify its slot with REAL numbers.
+    if now.weekday() == 0:
+        lines += ["", "🧪 引擎週檢 — 策略要持續賺到它的位置"]
+        lines += _engine_verdict("Binance S1/S2", data.get("binance_pnl"))
+        lines += _engine_verdict("Bybit S3", data.get("bybit_pnl"))
     return "\n".join(lines)
+
+
+def _engine_verdict(name: str, s: dict) -> list:
+    """One engine's weekly verdict from its real closed-trade summary."""
+    if not (s or {}).get("ok") or not s.get("n_trades"):
+        return [f"  {name}: 無成交紀錄"]
+    pf = s.get("profit_factor")
+    week = sum(d.get("net") or 0.0 for d in (s.get("daily") or [])[-7:])
+    line = (f"  {name}: {s['n_trades']} 筆 · PF "
+            f"{pf if pf is not None else '—'} · 7d {_pnl(week)} USDT")
+    if s["n_trades"] >= 10 and pf is not None and pf < 1.0:
+        line += "\n    ⚠️ 沒有支付它的風險 (PF<1) — 考慮暫停或縮小"
+    elif pf is not None and pf >= 1.2:
+        line += "\n    ✅ 有在賺它的位置"
+    return [line]
+
+
+# ── balance history (the real equity curve) ──────────────────────────────────
+BALANCE_FILE = os.path.join(os.path.dirname(__file__), "balance_history.json")
+
+
+def record_balance(data: dict, now: datetime) -> bool:
+    """One row per day: both venues' real account totals. This file IS the
+    equity curve — trades lie (phantom records), balances don't."""
+    def _total(snap):
+        try:
+            return round(float(((snap or {}).get("balance") or {}).get("total")), 2)
+        except (TypeError, ValueError):
+            return None
+
+    b, y = _total(data.get("binance_snap")), _total(data.get("bybit_snap"))
+    if b is None and y is None:
+        return False
+    try:
+        with open(BALANCE_FILE, "r", encoding="utf-8") as f:
+            hist = json.load(f) or []
+    except Exception:  # noqa: BLE001 — first run
+        hist = []
+    today = now.strftime("%Y-%m-%d")
+    hist = [r for r in hist if r.get("date") != today][-399:]
+    hist.append({"date": today, "binance": b, "bybit": y,
+                 "total": round((b or 0) + (y or 0), 2)})
+    tmp = BALANCE_FILE + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(hist, f)
+    os.replace(tmp, BALANCE_FILE)
+    return True
 
 
 # ── data gathering (each piece optional) ─────────────────────────────────────
@@ -173,7 +226,12 @@ def tick() -> bool:
     state = _load_state()
     if not _due(state, now):
         return False
-    msg = build_report(_gather(), now)
+    data = _gather()
+    msg = build_report(data, now)
+    try:
+        record_balance(data, now)             # daily equity-curve point
+    except Exception as exc:  # noqa: BLE001 — history must never block the report
+        print(f"[report] balance record failed: {exc}")
     ok = telegram_utils.send_message(msg, force=True, channel="report")
     if ok:
         # Only mark done on a confirmed send — a Telegram blip retries next sweep.
