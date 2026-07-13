@@ -106,7 +106,7 @@ def _tv_url(symbol: str) -> str:
     return f"https://www.tradingview.com/chart/?symbol=BINANCE:{base}{config.QUOTE_ASSET}.P"
 
 
-def universe(client) -> list:
+def universe(client, tickers: dict = None) -> list:
     """All active USDT-margined perps, most-liquid first (so hot coins scan first).
     TradFi stock perps are dropped (EXCLUDE_TRADFI_PERPS) — the account can't
     trade them, so a signal there is a guaranteed -4411 at entry."""
@@ -116,7 +116,8 @@ def universe(client) -> list:
             and s.endswith(":" + config.QUOTE_ASSET)
             and not (config.EXCLUDE_TRADFI_PERPS and is_tradfi_market(m))]
     try:
-        tickers = client.call("fetch_tickers")
+        if tickers is None:
+            tickers = client.call("fetch_tickers")
         syms.sort(key=lambda s: (tickers.get(s, {}) or {}).get("quoteVolume") or 0, reverse=True)
     except Exception as exc:  # noqa: BLE001 — sorting is a nicety, not required
         print(f"[strategy2] ticker sort skipped: {exc}")
@@ -223,13 +224,72 @@ def _send_digest(sigs: list) -> bool:
         return False
 
 
+# ── candle cache ─────────────────────────────────────────────────────────────
+# Closed 15m candles only change once per 15-min bucket, but the sweep runs
+# every ~5 min — so 2 of every 3 sweeps used to re-download identical data
+# for ~530 symbols (measured 172s/sweep, all of it Binance rate-limit
+# spacing). Now a symbol is re-fetched only when a NEW bucket has started;
+# in between, the cached rows are reused with just the forming candle
+# refreshed from the bulk ticker the sweep already fetches for volume
+# sorting. Signal semantics are unchanged (closed bars identical, live
+# price fresher than the old snapshot). Kill switch: STRATEGY2_OHLCV_CACHE.
+OHLCV_CACHE_ON = os.getenv("STRATEGY2_OHLCV_CACHE", "true").strip().lower() \
+    in ("1", "true", "yes", "on")
+_TF_SEC = 900                       # matches TIMEFRAME (15m)
+_ohlcv_cache: dict = {}             # sym -> {"bucket": int, "rows": list}
+
+
+def _bucket(ts: float) -> int:
+    return int(ts // _TF_SEC)
+
+
+def _patch_forming(rows: list, px, now: float) -> list:
+    """Refresh cached rows' forming candle with the live ticker price: update
+    close, stretch high/low. Appends a synthetic forming candle when the
+    cache snapshot ended exactly on a bucket boundary. Mutates in place so
+    the intra-bucket high/low keeps accumulating across sweeps."""
+    if not px:
+        return rows
+    cur_open_ms = _bucket(now) * _TF_SEC * 1000
+    if rows and int(rows[-1][0]) >= cur_open_ms:
+        last = rows[-1]
+        last[2] = max(last[2], px)
+        last[3] = min(last[3], px)
+        last[4] = px
+    else:
+        rows.append([cur_open_ms, px, px, px, px, 0.0])
+    return rows
+
+
+def _get_ohlcv(client, sym: str, tickers: dict, now: float = None):
+    """Cache-aware candle fetch (see the cache note above)."""
+    now = now or time.time()
+    if OHLCV_CACHE_ON:
+        slot = _ohlcv_cache.get(sym)
+        if slot and slot["bucket"] == _bucket(now):
+            px = (tickers.get(sym) or {}).get("last")
+            return _patch_forming(slot["rows"], px, now), True
+    rows = client.call("fetch_ohlcv", sym, TIMEFRAME, None, CANDLES)
+    if OHLCV_CACHE_ON and rows:
+        _ohlcv_cache[sym] = {"bucket": _bucket(now), "rows": rows}
+    return rows, False
+
+
 def scan_once(client, recent: list, last_alert: dict, pending: list) -> list:
-    syms = universe(client)
+    try:
+        tickers = client.call("fetch_tickers") or {}
+    except Exception:  # noqa: BLE001 — tickers are reused for sort + cache
+        tickers = {}
+    syms = universe(client, tickers)
     total = len(syms)
+    hits = 0
+    for stale in [s for s in _ohlcv_cache if s not in set(syms)]:
+        del _ohlcv_cache[stale]                 # delisted symbols leave the cache
     print(f"[strategy2] scanning {total} {TIMEFRAME} perps…")
     for i, sym in enumerate(syms):
         try:
-            ohlcv = client.call("fetch_ohlcv", sym, TIMEFRAME, None, CANDLES)
+            ohlcv, cached = _get_ohlcv(client, sym, tickers)
+            hits += cached
         except RateLimitCooldownError as exc:
             print(f"[strategy2] cooldown: {exc}; pausing 30s")
             time.sleep(30)
@@ -329,6 +389,8 @@ def scan_once(client, recent: list, last_alert: dict, pending: list) -> list:
             _write(recent, total, i + 1)            # progress for the page
 
     _write(recent, total, total)
+    if OHLCV_CACHE_ON:
+        print(f"[strategy2] candle cache: {hits} reused / {total - hits} fetched")
     return recent
 
 
