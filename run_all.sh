@@ -131,6 +131,14 @@ sleep 1
 HOST="$(grep -E '^FLASK_HOST=' .env 2>/dev/null | cut -d= -f2)"; HOST="${HOST:-127.0.0.1}"
 PORT="$(grep -E '^FLASK_PORT=' .env 2>/dev/null | cut -d= -f2)"; PORT="${PORT:-4000}"
 
+# --- log rotation: keep files bounded (one .1 generation, >10MB rotates) ----
+for f in "$LOG_DIR"/*.log; do
+  if [ -f "$f" ] && [ "$(stat -f%z "$f" 2>/dev/null || echo 0)" -gt 10485760 ]; then
+    mv "$f" "$f.1"
+    echo "  (rotated $(basename "$f") — was over 10MB)"
+  fi
+done
+
 # --- DETACHED mode: launch with nohup + disown, print status, exit ---------
 # These processes have no controlling terminal, so closing the terminal or
 # pressing Ctrl+C cannot stop them. Stop them explicitly with: ./run_all.sh stop

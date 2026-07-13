@@ -77,6 +77,10 @@ app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 # Re-read templates from disk on each request so HTML/CSS/JS edits show up on a
 # plain browser refresh — no server restart needed (cheap; this app is local).
 app.config['TEMPLATES_AUTO_RELOAD'] = True
+# Static assets cache for 7 days in the browser — safe because every template
+# links them with ?v=ASSET_VER (bump it on any css/js edit). Without this the
+# browser revalidates each file per page load, which drags over the tunnel.
+app.config['SEND_FILE_MAX_AGE_DEFAULT'] = 7 * 24 * 3600
 app.config['SESSION_COOKIE_HTTPONLY'] = True
 app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
 app.config['SESSION_COOKIE_SECURE'] = os.getenv('FLASK_SESSION_COOKIE_SECURE', 'false').lower() == 'true'
