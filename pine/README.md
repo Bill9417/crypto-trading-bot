@@ -37,7 +37,7 @@ win-rate backtest was lookahead repainting). All remain in git history
 | `TV.pine` | **"All-in-One ULTIMATE"** — the main confluence indicator (the user's own chart tool). Source of the Strategy-2 meter: `app/strategy2_meter.py` mirrors its lights on the `/strategy2` page. Treated as read-only in this repo. |
 | `All-in-One_ULTIMATE.pine` | A newer, larger copy of the same "All-in-One ULTIMATE" indicator (2026-07-09 snapshot). ⚠ Two copies of one indicator — worth reconciling someday. |
 | `Reactive_SR_Zones.pine` | Reactive support/resistance zone boxes. |
-| `Whale_Flow_Macro.pine` | Whale flow + macro context panel (separate pane). |
+| `Whale_Flow_Macro.pine` | **v2** whale flow + macro panel (separate pane). Honest proxies only: intrabar volume delta (auto lower-TF), strict whale PRINTS (top-percentile volume **and** ≥55% one-sided delta), 🧲 absorption bars (huge volume, bottom-percentile range), whale-vs-crowd split (distribution/accumulation verdict), noise-gated OI read + Δ24h, DXY link. Closed-bar signal mode ON by default — alerts/verdict never repaint. |
 
 ## Testing notes
 
