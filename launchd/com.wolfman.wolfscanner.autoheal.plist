@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+    "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Auto-heal agent for the Wolf Scanner stack.
+     Install:  cp launchd/com.wolfman.wolfscanner.autoheal.plist ~/Library/LaunchAgents/
+               launchctl load ~/Library/LaunchAgents/com.wolfman.wolfscanner.autoheal.plist
+     Remove:   launchctl unload ~/Library/LaunchAgents/com.wolfman.wolfscanner.autoheal.plist
+     Runs autoheal.sh at login and every 5 minutes. NOTE: LaunchAgents run
+     after LOGIN — enable automatic login on a headless Mac mini so a power
+     cut fully self-recovers. -->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.wolfman.wolfscanner.autoheal</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>/Users/wolfman/Desktop/交易/crypto/autoheal.sh</string>
+    </array>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>StartInterval</key>
+    <integer>300</integer>
+    <key>StandardOutPath</key>
+    <string>/Users/wolfman/Desktop/交易/crypto/app/logs/autoheal.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/wolfman/Desktop/交易/crypto/app/logs/autoheal.log</string>
+</dict>
+</plist>

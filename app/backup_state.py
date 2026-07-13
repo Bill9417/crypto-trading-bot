@@ -15,6 +15,13 @@ from datetime import datetime
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
 BACKUP_DIR = os.path.join(APP_DIR, "backups")
 KEEP = 14
+# Second copy OFF this disk (a dead disk otherwise takes the data AND all 14
+# local backups with it). Default: the Mac's iCloud Drive folder — synced to
+# Apple's servers automatically, no extra accounts. Empty = local-only.
+OFFSITE_DIR = os.getenv(
+    "BACKUP_OFFSITE_DIR",
+    os.path.expanduser("~/Library/Mobile Documents/com~apple~CloudDocs/"
+                       "WolfScannerBackups")).strip()
 
 
 def _targets() -> list:
@@ -52,6 +59,28 @@ def make_backup(dest_dir: str, files: list, date_str: str) -> str:
     return path
 
 
+def offsite_copy(zip_path: str, offsite_dir: str) -> bool:
+    """Mirror one zip into the offsite dir and prune it to KEEP. The parent
+    (e.g. iCloud Drive) must already exist — we only create our subfolder,
+    never a fake iCloud path on a machine without it."""
+    if not (zip_path and offsite_dir):
+        return False
+    parent = os.path.dirname(offsite_dir.rstrip("/"))
+    if not os.path.isdir(parent):
+        return False
+    os.makedirs(offsite_dir, exist_ok=True)
+    dest = os.path.join(offsite_dir, os.path.basename(zip_path))
+    if not os.path.exists(dest):
+        import shutil
+        shutil.copy2(zip_path, dest)
+    for old in sorted(glob.glob(os.path.join(offsite_dir, "state-*.zip")))[:-KEEP]:
+        try:
+            os.remove(old)
+        except OSError:
+            pass
+    return True
+
+
 def tick() -> bool:
     """Scanner hook: one backup per calendar day; True when one was written."""
     date_str = datetime.now().strftime("%Y-%m-%d")
@@ -61,4 +90,9 @@ def tick() -> bool:
     made = make_backup(BACKUP_DIR, _targets(), date_str)
     if made:
         print(f"[backup] wrote {os.path.basename(made)}")
+        try:
+            if offsite_copy(made, OFFSITE_DIR):
+                print(f"[backup] offsite copy → {OFFSITE_DIR}")
+        except Exception as exc:  # noqa: BLE001 — offsite is best-effort
+            print(f"[backup] offsite copy failed: {exc}")
     return bool(made)

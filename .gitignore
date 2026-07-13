@@ -76,3 +76,4 @@ ENV/
 *~
 .idea/
 .vscode/
+.stack_stopped

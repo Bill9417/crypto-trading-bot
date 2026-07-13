@@ -128,6 +128,29 @@ def test_backup_writes_zip_and_prunes(tmp_path):
         assert sorted(z.namelist()) == ["state0.json", "state1.json", "state2.json"]
 
 
+def test_offsite_copy_mirrors_and_prunes(tmp_path):
+    src = tmp_path / "local"
+    f = tmp_path / "a.json"
+    f.write_text("{}")
+    offsite = tmp_path / "cloud" / "WolfScannerBackups"
+    (tmp_path / "cloud").mkdir()                        # the "iCloud" parent
+    for day in range(1, 17):
+        z = backup_state.make_backup(str(src), [str(f)], f"2026-07-{day:02d}")
+        assert backup_state.offsite_copy(z, str(offsite)) is True
+    zips = sorted(os.listdir(offsite))
+    assert len(zips) == backup_state.KEEP               # pruned offsite too
+    assert zips[-1] == "state-2026-07-16.zip"
+
+
+def test_offsite_copy_refuses_missing_parent(tmp_path):
+    f = tmp_path / "a.json"
+    f.write_text("{}")
+    z = backup_state.make_backup(str(tmp_path / "l"), [str(f)], "2026-07-13")
+    ghost = str(tmp_path / "no-icloud-here" / "sub")    # parent doesn't exist
+    assert backup_state.offsite_copy(z, ghost) is False
+    assert not os.path.exists(ghost)                    # never fabricated
+
+
 def test_backup_is_idempotent_per_day(tmp_path):
     f = tmp_path / "a.json"
     f.write_text("{}")

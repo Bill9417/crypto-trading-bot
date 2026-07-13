@@ -19,6 +19,8 @@
 
 ---
 
+> 📖 **Engineering deep-dive:** [docs/CASE_STUDY.md](docs/CASE_STUDY.md) — architecture, the honest-measurement philosophy, and four investigations that killed bad strategies before they cost money.
+
 > ## ⚠️ Risk Disclaimer
 > This software places **real orders with real money** on leveraged futures. Crypto futures can lose more than your margin. Nothing here is financial advice. Run in **dry-run** (`LIVE_TRADING=false`) until you fully understand the behaviour, and never trade size you can't afford to lose. **You are solely responsible for your own funds.**
 

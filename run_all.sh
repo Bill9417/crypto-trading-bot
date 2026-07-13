@@ -57,6 +57,10 @@ stop_all() {
     pkill -f "[p]ython.*strategy3_scanner.py"  2>/dev/null && echo "  • S3 flip stopped"    || echo "  • S3 flip not running"
     pkill -f "[t]ail -n 5 -f .*logs/" 2>/dev/null   # kill any stray log tail from a prior run
     rm -f "$APP/bot.lock" 2>/dev/null
+    # Tell the auto-heal launchd agent this stop is INTENTIONAL — without the
+    # flag it would relaunch everything within 5 minutes.
+    touch "$DIR/.stack_stopped"
+    echo "  • auto-heal paused (.stack_stopped) — next './run_all.sh bg' resumes it"
 }
 
 status_all() {
@@ -117,6 +121,9 @@ fi
 
 # --- pre-flight tests (safety gate) ---------------------------------------
 ./preflight.sh || { echo "Launch aborted — tests failed (bypass with SKIP_TESTS=1)."; exit 1; }
+
+# A deliberate launch re-arms the auto-heal agent.
+rm -f "$DIR/.stack_stopped"
 
 # --- clean slate -----------------------------------------------------------
 echo "Clearing any previous instances..."
