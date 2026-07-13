@@ -30,6 +30,7 @@ import price_alerts
 import liq_alerts
 import tech_news
 import tg_commands
+import tw_intraday
 import tw_stocks
 import strategy2_live as S2L
 import strategy2_meter as S2
@@ -422,6 +423,12 @@ def main() -> None:
             tw_stocks.tick()
         except Exception as exc:  # noqa: BLE001 — scan must never kill the loop
             print(f"[strategy2] tw stocks error: {exc}")
+        # 🇹🇼 台股盤中 — live session updates (opening bell, movers, TAIEX
+        # shock, setup SL/TP touches); no-op outside 09:00–13:35 台北.
+        try:
+            tw_intraday.tick()
+        except Exception as exc:  # noqa: BLE001 — intraday must never kill the loop
+            print(f"[strategy2] tw intraday error: {exc}")
         # 💥 Liquidation cascades — BTC/ETH stop-run bursts into the liq topic
         # (thresholded + cooled down; a quiet market sends nothing).
         try:

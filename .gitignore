@@ -35,6 +35,7 @@ daily_report_state.json
 price_alerts.json
 tg_commands_state.json
 tw_stocks_state.json
+tw_intraday_state.json
 tg_sent_log.json
 
 # ── Large generated caches / data dumps ──

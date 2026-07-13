@@ -279,6 +279,14 @@ def tick() -> bool:
     cutoff = now.date()
     state["alerted"] = {c: d for c, d in alerted.items()
                         if (cutoff - datetime.strptime(d, "%Y-%m-%d").date()).days <= 60}
+    # Structured copy of today's setups for the intraday watcher (tw_intraday
+    # alerts when price hits a setup's SL/TP during the session).
+    active = [s for s in (state.get("active_setups") or [])
+              if (cutoff - datetime.strptime(s["date"], "%Y-%m-%d").date()).days <= 30]
+    active += [{"code": code, "name": name, "date": today,
+                "ref": s["ref"], "sl": s["sl"], "tp": s["tp"]}
+               for code, name, s in setups]
+    state["active_setups"] = active
     state["last_run_date"] = today
     state["last_digest_text"] = msg
     _save_state(state)

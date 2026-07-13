@@ -11,6 +11,7 @@ the command was typed in:
     /alerts     price alerts currently armed (dashboard 🔔 card)
     /report     today's daily report, on demand
     /tw         latest 台股 scan (TAIEX regime + TW50 setups)
+    /twnow      live 台股 snapshot: TAIEX, TW50 leaders, tracked setups
     /liq        BTC/ETH liquidations: 24h tallies, recent prints with
                 prices, and the estimated 🧲 liquidation map
     /clean [h]  ADMIN-ONLY: delete the bot's messages older than h hours
@@ -225,6 +226,7 @@ HELP = ("🤖 Commands\n"
         "/alerts — price alerts currently armed\n"
         "/report — today's account+market report now\n"
         "/tw — latest 台股 scan (大盤 regime + setups)\n"
+        "/twnow — 台股即時: TAIEX + 漲跌幅前三 + 追蹤設定現價\n"
         "/liq — BTC/ETH 清算: 24h統計 + 最近清算價 + 🧲清算地圖\n"
         "/clean [小時] — 刪除 bot 超過N小時的舊訊息 (預設24, 上限47, 限管理員)\n"
         "/cleanall — 一次清掉記錄功能上線前的全部舊訊息 (限管理員, 需確認)\n"
@@ -280,6 +282,9 @@ def handle(cmd: str, args: str = "") -> str:
         st = tw_stocks._load_state()
         return (st.get("last_digest_text")
                 or "尚未有台股掃描 — 每個交易日 14:00 (台北) 自動發送。")
+    if cmd in ("twnow", "twlive"):
+        import tw_intraday
+        return tw_intraday.snapshot_text()
     if cmd in ("clean", "clear", "purge"):
         try:
             hours = min(max(float(args), 1.0), 47.0) if args.strip() else 24.0
