@@ -1,5 +1,6 @@
 """watchdog + S3 circuit breaker + state backup — the protection batch."""
 import os
+import time
 import zipfile
 
 import backup_state
@@ -52,8 +53,9 @@ def test_watchdog_alerts_and_recovers(monkeypatch, tmp_path):
 NOW_MS = 1_783_900_000_000
 
 
-def _trade(pnl, hours_ago):
-    return {"pnl": pnl, "time": NOW_MS - int(hours_ago * 3600 * 1000)}
+def _trade(pnl, hours_ago, symbol="XAUTUSDT", now_ms=NOW_MS):
+    return {"pnl": pnl, "time": now_ms - int(hours_ago * 3600 * 1000),
+            "symbol": symbol}
 
 
 def test_losses_in_window_counts_and_nets():
@@ -71,6 +73,22 @@ def test_breach_on_stop_count_and_loss_depth():
     assert R.breach(99, -999.0, max_stops=0, max_loss=0) == ""   # disabled
 
 
+def test_losses_ignore_symbols_s3_does_not_trade():
+    """Regression 2026-07-14: two tiny MANUAL ETH losses (−1.8 USDT total, on
+    a +24 USDT day) halted the gold engine — the breaker must judge S3's own
+    symbols only. Manual trades on the SAME symbol still count (no author on
+    Bybit's closed-P&L rows)."""
+    trades = [_trade(-0.71, 1, symbol="ETHUSDT"),
+              _trade(-1.07, 2, symbol="ETHUSDT"),
+              _trade(+2.41, 3, symbol="SKHYNIXUSDT"),
+              _trade(-22.0, 4, symbol="XAUTUSDT")]
+    n, net = R.losses_in_window(trades, NOW_MS, bases={"XAUT"})
+    assert n == 1                       # only the XAUT stop-out counts
+    assert abs(net - (-22.0)) < 1e-9
+    n_all, _ = R.losses_in_window(trades, NOW_MS)     # bases=None → everything
+    assert n_all == 3
+
+
 def test_halt_file_cycle(monkeypatch, tmp_path):
     monkeypatch.setattr(R, "HALT_FILE", str(tmp_path / "halt.json"))
     assert R.halted() is None
@@ -85,10 +103,17 @@ def test_entry_blocked_trips_and_alerts(monkeypatch, tmp_path):
     monkeypatch.setattr(R, "HALT_FILE", str(tmp_path / "halt.json"))
     monkeypatch.setattr(R, "MAX_DAILY_STOPS", 2)
     monkeypatch.setattr(R, "MAX_DAILY_LOSS_USDT", 45.0)
+    monkeypatch.setattr(R, "S3_BASES", {"XAUT"})
+    # entry_blocked() windows against the REAL clock — the fixture trades must
+    # be stamped relative to it, not the fixed NOW_MS (a NOW_MS-stamped trade
+    # aged out of the 24h window a day after this test was written and the
+    # suite went red overnight).
+    real_now = int(time.time() * 1000)
     import strategy3_exec
     monkeypatch.setattr(strategy3_exec, "closed_pnl_history",
                         lambda limit=30: {"ok": True, "trades":
-                                          [_trade(-30.0, 1), _trade(-31.0, 3)]})
+                                          [_trade(-30.0, 1, now_ms=real_now),
+                                           _trade(-31.0, 3, now_ms=real_now)]})
     sent = []
     import telegram_utils
     monkeypatch.setattr(telegram_utils, "send_message",
@@ -100,6 +125,21 @@ def test_entry_blocked_trips_and_alerts(monkeypatch, tmp_path):
     monkeypatch.setattr(strategy3_exec, "closed_pnl_history",
                         lambda limit=30: (_ for _ in ()).throw(RuntimeError("no api")))
     assert R.entry_blocked() == reason
+
+
+def test_entry_blocked_ignores_manual_trades_on_other_symbols(monkeypatch, tmp_path):
+    """The 2026-07-14 live false-trip, end to end: manual ETH losses on the
+    same sub-account must NOT halt the gold engine."""
+    monkeypatch.setattr(R, "HALT_FILE", str(tmp_path / "halt.json"))
+    monkeypatch.setattr(R, "S3_BASES", {"XAUT"})
+    real_now = int(time.time() * 1000)
+    import strategy3_exec
+    monkeypatch.setattr(strategy3_exec, "closed_pnl_history",
+                        lambda limit=30: {"ok": True, "trades":
+                                          [_trade(-0.71, 1, symbol="ETHUSDT", now_ms=real_now),
+                                           _trade(-1.07, 2, symbol="ETHUSDT", now_ms=real_now)]})
+    assert R.entry_blocked() == ""
+    assert R.halted() is None                          # and no halt file written
 
 
 def test_entry_blocked_fails_open_on_api_error(monkeypatch, tmp_path):

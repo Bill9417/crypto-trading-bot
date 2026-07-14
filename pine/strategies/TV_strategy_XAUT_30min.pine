@@ -14,11 +14,13 @@
 //  This file is for XAUT (gold) ONLY — BINANCE:XAUTUSDT.P on the 30m chart
 //  (gold trends far slower than the cryptos, hence 30m not 15m). The other
 //  scripts in pine/ cover ETH+SOL (OCC) and HYPE (15m trend-catcher) — see
-//  pine/README.md. The bot reads Binance candles, orders on Bybit.
+//  pine/README.md. The bot reads BYBIT candles and orders on Bybit (data
+//  follows execution since 2026-07-10) — chart BYBIT:XAUTUSDT.P to match.
 //  An orange warning shows if the chart timeframe isn't 30m.
 //
-//  Sizing matches the live bot: order size 2000 USDT (40 USDT margin × 50x,
-//  the default below). margin_long/short = 2% (50x). Bybit taker fee 0.055%.
+//  Sizing matches the live bot: order size 1500 USDT (30 USDT margin × 50x,
+//  the default below — lowered from 2000 on 2026-07-14). margin_long/short
+//  = 2% (50x). Bybit taker fee 0.055%.
 //  Emergency SL 1.5% == STRATEGY3_EMERGENCY_SL_PCT (at 50x, liquidation is
 //  ~2% away, so the stop must sit inside it).
 //
@@ -30,7 +32,7 @@
 //@version=6
 strategy("Vegas Flag Flip — XAUT 30m", overlay=true,
      initial_capital=250,
-     default_qty_type=strategy.cash, default_qty_value=2000,
+     default_qty_type=strategy.cash, default_qty_value=1500,
      margin_long=2, margin_short=2,
      commission_type=strategy.commission.percent, commission_value=0.055,
      slippage=2, process_orders_on_close=true,

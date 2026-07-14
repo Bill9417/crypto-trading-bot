@@ -61,3 +61,24 @@ def downtrend():
 def flat():
     """Sideways OHLCV — no breakout, no signal."""
     return _flat()
+
+
+# ── live-side-effect guard ────────────────────────────────────────────────────
+# 2026-07-14 incident: a test reached strategy3_scanner.open_flip with the real
+# strategy3_risk in place — it called the REAL Bybit closed-P&L endpoint, wrote
+# the REAL app/s3_halt.json (halting the live engine until /resume) and sent a
+# real 🛑 alert to the Telegram group. This autouse fixture makes that
+# impossible for every test, whatever an individual test forgets to patch:
+# the halt file is redirected into tmp_path, and telegram_utils' single
+# network choke-point is stubbed (send_message still returns True and its
+# chunking logic still runs — nothing leaves the process). test_telegram_utils
+# is exempt from the stub: it tests _post_one's own retry/ledger behaviour
+# against a patched requests layer.
+@pytest.fixture(autouse=True)
+def _no_live_side_effects(request, monkeypatch, tmp_path):
+    import strategy3_risk
+    monkeypatch.setattr(strategy3_risk, "HALT_FILE", str(tmp_path / "s3_halt.json"))
+    if request.module.__name__ != "test_telegram_utils":
+        import telegram_utils
+        monkeypatch.setattr(telegram_utils, "_post_one",
+                            lambda url, payload, retries: (True, None))

@@ -16,15 +16,23 @@ Streams:
       A SELL force-order means a LONG position was liquidated.
   • Bybit linear   wss://stream.bybit.com/v5/public/linear
       allLiquidation.{symbol}, per-symbol subscription → we cover the majors
-      (BYBIT_SYMBOLS). Side "Sell" = long liquidated (order side is the
-      closing side, same convention as Binance).
+      (BYBIT_SYMBOLS). ⚠ OPPOSITE convention from Binance: "S" is the
+      POSITION side (docs: a "Buy" update means a LONG was liquidated).
+      "p" is the BANKRUPTCY price, not the traded price.
   • OKX            wss://ws.okx.com:8443/ws/v5/public
       liquidation-orders channel, instType=SWAP → ALL swaps in one stream.
-      Rows carry posSide directly. Needs an app-level "ping" every <30s.
+      Rows carry posSide directly. "bkPx" is the bankruptcy price too.
+      Needs an app-level "ping" every <30s.
 
 Every event is normalised to:
     {ts_ms, exchange, symbol (base), side ('long'/'short' = the side that got
      liquidated), value_usdt, px (the price the liquidation printed at)}
+px is only attached when it is a REAL traded price — Binance's `ap` (average
+fill). Bybit/OKX report bankruptcy prices, which sit beyond where the tape
+actually printed (visibly so at low leverage), so those events carry px=0 and
+the price displays (recent prints, price band) show Binance fills only. The
+bankruptcy price is still used for the USD value estimate — at the high
+leverage typical of liquidations it is within a couple percent of the fill.
 and pushed into one deque trimmed to WINDOW_SEC. aggregate() slices it into
 the long/short totals, largest single event, per-exchange and per-symbol
 breakdowns and an hourly heat series the /api/liquidations route serves.
@@ -87,9 +95,11 @@ def _on_bybit(msg: str) -> None:
         return
     for r in d.get("data") or []:
         qty = float(r.get("v") or 0)
-        px = float(r.get("p") or 0)
-        side = "long" if r.get("S") == "Sell" else "short"
-        _push(int(r.get("T") or 0), "Bybit", r.get("s") or "", side, qty * px, px)
+        px = float(r.get("p") or 0)          # bankruptcy price — value only, never displayed
+        # Bybit's S is the POSITION side ("Buy" = a long was liquidated) —
+        # the opposite convention from Binance's order side.
+        side = "long" if r.get("S") == "Buy" else "short"
+        _push(int(r.get("T") or 0), "Bybit", r.get("s") or "", side, qty * px, 0.0)
 
 
 # OKX reports liquidation size in CONTRACTS, and the multiplier (ctVal, base
@@ -127,13 +137,13 @@ def _on_okx(msg: str) -> None:
         for det in row.get("details") or []:
             try:
                 sz = float(det.get("sz") or 0)
-                px = float(det.get("bkPx") or 0)
+                px = float(det.get("bkPx") or 0)   # bankruptcy price — value only, never displayed
             except (TypeError, ValueError):
                 continue
             side = det.get("posSide")
             if side not in ("long", "short"):
                 side = "long" if det.get("side") == "sell" else "short"
-            _push(int(det.get("ts") or 0), "OKX", base, side, sz * ct_val * px, px)
+            _push(int(det.get("ts") or 0), "OKX", base, side, sz * ct_val * px, 0.0)
 
 
 # ── connection management ────────────────────────────────────────────────────

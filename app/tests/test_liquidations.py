@@ -36,7 +36,11 @@ def test_binance_parser_sell_order_is_long_liquidation():
     assert abs(ev["usd"] - 0.5 * 60100) < 1e-6
 
 
-def test_bybit_parser_buy_order_is_short_liquidation():
+def test_bybit_parser_S_is_position_side_and_px_never_displayed():
+    # Bybit docs (allLiquidation): "S — Position side. When you receive a Buy
+    # update, this means that a LONG position has been liquidated." This is
+    # the OPPOSITE of Binance's order-side convention — the 2026-07-14 fix
+    # (every Bybit event was counted on the wrong side before).
     _clear()
     msg = json.dumps({"topic": "allLiquidation.SOLUSDT", "data": [
         {"s": "SOLUSDT", "S": "Buy", "v": "10", "p": "82.5", "T": NOW_MS}]})
@@ -44,8 +48,16 @@ def test_bybit_parser_buy_order_is_short_liquidation():
     with L._lock:
         ev = L._events[-1]
     assert ev["sym"] == "SOL"
-    assert ev["side"] == "short"
-    assert abs(ev["usd"] - 825.0) < 1e-6
+    assert ev["side"] == "long"            # Buy update = a LONG died
+    assert abs(ev["usd"] - 825.0) < 1e-6   # bankruptcy px still sizes the value
+    assert ev["px"] == 0.0                 # …but is never shown as a print price
+
+    msg2 = json.dumps({"topic": "allLiquidation.SOLUSDT", "data": [
+        {"s": "SOLUSDT", "S": "Sell", "v": "4", "p": "83.0", "T": NOW_MS}]})
+    L._on_bybit(msg2)
+    with L._lock:
+        ev2 = L._events[-1]
+    assert ev2["side"] == "short"          # Sell update = a SHORT died
 
 
 def test_okx_parser_uses_ctval_and_skips_unknown_instruments():
@@ -61,6 +73,7 @@ def test_okx_parser_uses_ctval_and_skips_unknown_instruments():
     # 100 contracts × 0.01 BTC × 60000 = 60,000 USDT (NOT 6,000,000 — the
     # exact 100× bug the ctVal cache exists to prevent)
     assert abs(ev["usd"] - 60000.0) < 1e-6
+    assert ev["px"] == 0.0    # bkPx = bankruptcy price, not a real fill — never displayed
     # unknown instrument (no ctVal loaded) must be skipped, never guessed
     n_before = len(L._events)
     msg2 = json.dumps({"arg": {"channel": "liquidation-orders", "instType": "SWAP"},

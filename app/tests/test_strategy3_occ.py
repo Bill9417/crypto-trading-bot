@@ -194,6 +194,8 @@ def test_open_flip_uses_the_per_symbol_sl_pct(monkeypatch):
     monkeypatch.setattr(S3.X, "is_live", lambda: False)
     monkeypatch.setattr(S3.X, "open_flip", fake_exec_open)
     monkeypatch.setattr(S3, "_tg", sent.append)
+    import strategy3_risk
+    monkeypatch.setattr(strategy3_risk, "entry_blocked", lambda: "")
     out = S3.open_flip("ETH/USDT:USDT", "long", 2500.0, None, 50.0, 10,
                        sl_pct=0.04, why="8-SMMA close crossed over open on 90m")
     assert out == "opened"

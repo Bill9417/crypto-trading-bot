@@ -341,6 +341,11 @@ def test_strategy3_open_flip_outcomes(monkeypatch):
 
     monkeypatch.setattr(S3.config, "STRATEGY3_LIVE", True)
     monkeypatch.setattr(S3.X, "is_live", lambda: False)   # skip the Bybit position check
+    monkeypatch.setattr(S3, "_tg", lambda m: None)
+    # never let the circuit breaker query the real account from a test — on
+    # 2026-07-14 this exact test halted the LIVE engine mid-run
+    import strategy3_risk
+    monkeypatch.setattr(strategy3_risk, "entry_blocked", lambda: "")
 
     monkeypatch.setattr(S3.X, "open_flip", lambda *a, **k: {
         "ok": False, "error": "Read timed out", "dry": False})

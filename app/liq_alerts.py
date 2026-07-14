@@ -23,7 +23,9 @@ totals still cross only on genuine cascades:
   LIQ_ALERT_BTC_USD=2000000   LIQ_ALERT_ETH_USD=1500000
 
 /liq additionally shows the MOST RECENT liquidation prints (side, size and the
-exact PRICE they executed at) and a 🧲 liquidation MAP — an estimate of where
+exact PRICE they executed at — Binance fills only: Bybit/OKX report bankruptcy
+prices, which sit beyond the real tape, so they carry no px) and a 🧲
+liquidation MAP — an estimate of where
 the un-swept liquidation/stop clusters sit. The map is honest modelling, not
 data: real cluster maps (Coinglass heatmaps) are paid, so we approximate the
 standard way — every 1h candle of the last 7 days is treated as positions

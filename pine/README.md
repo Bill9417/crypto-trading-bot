@@ -15,7 +15,7 @@ live; porting a change into the bot is a separate, explicit step.
 
 | File | What it is | Status |
 |------|-----------|--------|
-| `TV_strategy_XAUT_30min.pine` | **"Vegas Flag Flip — XAUT 30m"** — the exact rules the live bot runs on gold (flag + Vegas entry, exit on opposite flag, emergency SL 1.5%, 50x, 2000 USDT order size). | **LIVE — XAUT trades this on Bybit.** Since 2026-07-11 the bot also *reads* Bybit candles (data follows execution), so a `BYBIT:XAUTUSDT.P` chart matches the bot exactly. |
+| `TV_strategy_XAUT_30min.pine` | **"Vegas Flag Flip — XAUT 30m"** — the exact rules the live bot runs on gold (flag + Vegas entry, exit on opposite flag, emergency SL 1.5%, 50x, 1500 USDT order size). | **LIVE — XAUT trades this on Bybit.** Since 2026-07-11 the bot also *reads* Bybit candles (data follows execution), so a `BYBIT:XAUTUSDT.P` chart matches the bot exactly. |
 | `TV_strategy_HYPE_15min.pine` | HYPE 15m trend-catcher (formerly "V3"): break-even OFF, ATR chop-gate 0.6, SL 2.5%, **25x max** (a 2.5% stop at 50x sits outside liquidation). Walk-forward tested +715 USDT / 13 months, ~31% win rate. | Testing only — NOT live. |
 | `TV_strategy_ETH_MOM_2h.pine` | **ETH 14-day momentum** — one rule: long above the close 14 days ago, short below, checked every closed 2h bar. Non-repainting, fees modeled. 2-year test: +770 on 500 USDT notional, all 8 quarters positive at N=168 (neighbors +150–300 — expect those, not the headline); ~30% win rate, trend-style. | Testing only — NOT live. The only ETH system we've tested that made honest money. |
 | `TV_strategy_ETH_SOL_PAIRS.pine` | **Pairs hedge** — market-neutral ETH/SOL spread mean-reversion (z-score of the log ratio; long the cheap leg, short the rich one, both 500 USDT). Non-repainting by construction. | Testing only — NOT live. ⚠ Honest 1-year sim: ~+35–110 USDT/yr best case, last 4 months negative in every config. |
@@ -42,7 +42,7 @@ win-rate backtest was lookahead repainting). All remain in git history
 ## Testing notes
 
 - **XAUT**: `strategies/TV_strategy_XAUT_30min.pine` on `BYBIT:XAUTUSDT.P`
-  **30m** — defaults are already correct (2000 USDT order = live 40 × 50x).
+  **30m** — defaults are already correct (1500 USDT order = live 30 × 50x).
 - **ETH / SOL pairs**: chart symbol `BINANCE:ETHUSDT.P/BINANCE:SOLUSDT.P` on
   **2h**, defaults tuned (500 USDT per leg). The strategy trades the RATIO;
   a real "long spread" = long ETH + short SOL, 500 USDT each.
