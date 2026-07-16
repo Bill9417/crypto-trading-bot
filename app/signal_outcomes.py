@@ -15,6 +15,12 @@ same candle) and records the outcome:
 A weekly scorecard (Sunday evening) goes to the Signals topic, and /outcomes
 answers on demand. This is the honesty loop: if the scorecard says the
 high-conviction alerts stop out more than they pay, believe it.
+
+2026-07-16 fix: strategy2_signals.json only RETAINS signals for 24h (it is
+the /strategy2 page feed), but evaluation waits 48h — so nothing was EVER
+evaluated (signal_outcomes.json didn't exist after 3 days live). Every tick
+now SNAPSHOTS new signals into this module's own state first; evaluation
+reads the snapshot, not the page feed, so page retention can't starve it.
 """
 import json
 import os
@@ -102,20 +108,44 @@ def summarize(outcomes: list, title: str = "📋 訊號成績單 (7天)") -> str
         hw = sum(1 for o in hc if o["outcome"] == "tp2")
         lines.append(f"  其中高信心(HC) {len(hc)} 個 → TP2 {hw} 個 "
                      f"({100 * hw / len(hc):.0f}%)")
+    prem = [o for o in outcomes if o.get("premium")]
+    if prem:
+        pw = sum(1 for o in prem
+                 if o["outcome"] in ("tp2", "tp1", "tp1→sl"))
+        lines.append(f"  ⭐ 精選訊號 {len(prem)} 個 → 先到TP1 {pw} 個 "
+                     f"({100 * pw / len(prem):.0f}%)")
     if n < 20:
         lines.append(f"(樣本只有 {n} 個 — 先當參考，別當結論)")
     return "\n".join(lines)
 
 
 # ── orchestration ────────────────────────────────────────────────────────────
-def _pending(signals: list, evaluated: dict, now: float) -> list:
-    out = []
+_SNAP_KEYS = ("symbol", "base", "direction", "score", "ts",
+              "entry", "sl", "tp1", "tp2", "premium")
+
+
+def _snapshot(state: dict, signals: list, now: float) -> None:
+    """Copy new signals into our OWN state so the page feed's 24h retention
+    can never starve the 48h evaluation window. Prunes snapshots that are
+    already evaluated or too old to ever evaluate."""
+    snaps = state.setdefault("signals", {})
+    evaluated = state.get("evaluated") or {}
     for s in signals:
         ts = s.get("ts") or 0
         key = f"{s.get('symbol')}:{int(ts)}"
+        if key not in snaps and key not in evaluated and s.get("sl"):
+            snaps[key] = {k: s.get(k) for k in _SNAP_KEYS if s.get(k) is not None}
+    cutoff = now - MAX_AGE_D * 86400
+    state["signals"] = {k: v for k, v in snaps.items()
+                        if k not in evaluated and (v.get("ts") or 0) >= cutoff}
+
+
+def _pending(snaps: dict, evaluated: dict, now: float) -> list:
+    out = []
+    for key, s in snaps.items():
         if key in evaluated or not s.get("sl"):
             continue
-        age_h = (now - ts) / 3600
+        age_h = (now - (s.get("ts") or 0)) / 3600
         if MIN_AGE_H <= age_h <= MAX_AGE_D * 24:
             out.append((key, s))
     return out
@@ -131,9 +161,12 @@ def tick(client) -> int:
             signals = (json.load(f) or {}).get("signals") or []
     except Exception:  # noqa: BLE001 — no signal file yet
         signals = []
+    before = set(state.get("signals") or {})
+    _snapshot(state, signals, now)
+    snapped = set(state["signals"]) != before   # new/pruned snaps must persist
 
     done = 0
-    for key, sig in _pending(signals, evaluated, now)[:EVAL_PER_TICK]:
+    for key, sig in _pending(state["signals"], evaluated, now)[:EVAL_PER_TICK]:
         try:
             candles = client.call("fetch_ohlcv", sig["symbol"], "15m",
                                   int(sig["ts"] * 1000), 250)
@@ -149,6 +182,7 @@ def tick(client) -> int:
                   and (sig.get("score") or 100) <= 100 - config.STRATEGY2_LIVE_MIN_SCORE))
         evaluated[key] = {**res, "base": sig.get("base"), "score": sig.get("score"),
                           "direction": sig.get("direction"), "hc": hc,
+                          "premium": bool(sig.get("premium")),
                           "sig_ts": sig.get("ts"), "eval_ts": now}
         done += 1
         print(f"[outcomes] {sig.get('base')} {sig.get('direction')} → {res['outcome']}")
@@ -168,7 +202,7 @@ def tick(client) -> int:
         telegram_utils.send_message(summarize(recent), force=True, channel="signals")
         print(f"[outcomes] weekly scorecard sent ({len(recent)} signals)")
 
-    if done or state.get("last_weekly") == today:
+    if done or snapped or state.get("last_weekly") == today:
         _save_state(state)
     return done
 

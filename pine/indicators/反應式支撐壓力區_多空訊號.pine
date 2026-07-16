@@ -1,0 +1,238 @@
+// ════════════════════════════════════════════════════════════════════════════
+//  反應式支撐壓力區 + 多空訊號 (Reactive S/R Zones — 中文訊號版)
+//
+//  發佈前可改成你自己的名稱——本腳本為 100% 原創程式碼,無任何借用模組,
+//  可用你自己的名義與授權發佈。
+//
+//  【區域引擎原理】
+//  · 每個確認的擺動高/低點會生成一個「區域」(依 ATR 自動調整厚度,是面不是線)
+//  · 新擺動點落在既有區域附近時會「合併」進去,區域錨點重新計算為所有擺動點的
+//    成交量加權平均——區域會從成交量學到真正的價位
+//  · 強度靠累積:每個擺動點 +2、每守住一次測試 +1;強度以不透明度呈現,
+//    久經考驗的區域醒目、弱區域淡出
+//  · 突破不會刪除區域:角色隨價格自動翻轉——價格在錨點上方=綠色支撐、
+//    下方=紅色壓力(支撐壓力互換,和真實市場一致)
+//  · 區域只在「打穿 N 次」(耗盡)或「太久沒被觸碰」(過期)時淘汰;
+//    只保留最強的 N 個區域
+//
+//  【多空訊號】(本版新增)
+//  · 反彈訊號「多/空」:價格刺入強力區域但收盤守住 → 順反彈方向
+//  · 突破訊號「破多/破空」:收盤乾淨跳過強力區域 → 順突破方向
+//  · 五層過濾:區域強度門檻、EMA200 順勢、K棒方向、成交量(選用)、
+//    訊號冷卻期;並可設定收盤確認 → 訊號不重繪
+//  · 誠實提醒:過濾越多訊號越少越乾淨,但沒有任何指標能保證勝率;
+//    請先在歷史圖上目視驗證再決定是否納入你的交易流程
+// ════════════════════════════════════════════════════════════════════════════
+//@version=6
+indicator("反應式支撐壓力區 + 多空訊號", overlay=true, max_boxes_count=100, max_labels_count=100)
+
+gSR = "① 支撐壓力區"
+srLen        = input.int(15, "擺動點確認長度", minval=5, maxval=50, group=gSR, tooltip="左右各需 N 根 K 棒確認擺動高低點。越大 = 區域越少、越重要。")
+srHeightMult = input.float(0.50, "區域高度 (× ATR50)", minval=0.1, maxval=2.0, step=0.05, group=gSR, tooltip="區域厚度依形成當下的波動率自動調整。")
+srMergeMult  = input.float(1.00, "合併距離 (× ATR50)", minval=0.25, maxval=3.0, step=0.25, group=gSR, tooltip="新擺動點落在既有區域這個距離內時,會「強化」該區域而不是新增一個;區域錨點重新計算為所有擺動點的成交量加權平均。")
+srMaxZones   = input.int(6, "最多區域數", minval=2, maxval=12, group=gSR, tooltip="只保留最強的 N 個區域——新區域誕生時淘汰最弱的一個。")
+srDecayBars  = input.int(600, "淘汰:未觸碰 N 根後", minval=100, maxval=5000, group=gSR)
+srMaxBreaks  = input.int(2, "淘汰:被打穿 N 次後", minval=1, maxval=5, group=gSR, tooltip="「乾淨突破」= 收盤完整跳過整個區域到另一側。累積 N 次後該價位視為耗盡。")
+srSupCol     = input.color(color.new(#26a69a, 0), "支撐 / 壓力", inline="src", group=gSR)
+srResCol     = input.color(color.new(#ef5350, 0), "", inline="src", group=gSR)
+srShowLabels = input.bool(true, "顯示強度標籤", group=gSR, tooltip="區域右緣的小標籤,例如「支撐×7」/「壓力×4」。")
+srAlerts     = input.bool(true, "區域警報", group=gSR)
+labelLang    = input.string("English", "圖表標籤語言 Chart Labels", options=["English", "中文"], group=gSR, tooltip="圖表上的文字(多空訊號、支撐壓力標籤)使用的語言;設定選單維持中文。警報名稱不在圖上,維持中文。")
+
+gSG = "② 多空訊號"
+showSignals = input.bool(true, "顯示 多/空 訊號", group=gSG)
+showBounce  = input.bool(true, "反彈訊號", inline="st", group=gSG)
+showBreak   = input.bool(true, "突破訊號", inline="st", group=gSG, tooltip="反彈 = 強力區域守住後順反彈方向(▲多 / ▼空)。突破 = 收盤乾淨跳過強力區域(◆破多 / ◆破空)。")
+sigMinStr   = input.int(4, "最低區域強度", minval=2, maxval=20, group=gSG, tooltip="只有「有戰績」的區域(強度 ≥ 此值)才能發出訊號。新區域強度 = 2;每合併一個擺動點 +2、每守住一次 +1。預設 4 = 至少被驗證過一次。")
+useTrend    = input.bool(true, "順勢過濾 (EMA200)", group=gSG, tooltip="做多僅在價格位於 EMA200 之上、做空僅在之下。開啟 = 訊號更少但更順勢,可大幅減少盤整期的逆勢訊號。")
+useCandle   = input.bool(true, "K棒方向確認", group=gSG, tooltip="反彈做多需收陽(收盤 > 開盤)、做空需收陰;突破訊號同理。")
+useVolume   = input.bool(false, "成交量確認 (> 20SMA)", group=gSG, tooltip="訊號 K 棒的成交量需高於 20 期均量。開啟 = 更嚴格。")
+sigCooldown = input.int(10, "訊號冷卻 (K棒數)", minval=0, maxval=100, group=gSG, tooltip="兩個訊號之間至少間隔 N 根 K 棒,防止盤整期連環觸發。0 = 關閉。")
+confirmClose= input.bool(true, "收盤確認 (不重繪)", group=gSG, tooltip="開啟 = 訊號只在 K 棒收盤時定案,盤中不會出現又消失。關閉 = 盤中即時但可能重繪。")
+
+gVT = "③ Vegas 通道"
+showTunnel  = input.bool(true,  "顯示通道 1 (EMA 144/169)", group=gVT, tooltip="與你的主指標同款:通道向上時橘色填色、走弱時紅色。")
+showTunnel2 = input.bool(false, "顯示通道 2 (EMA 288/338)", group=gVT, tooltip="外層慢速通道,預設關閉保持圖面乾淨。")
+showVegas   = input.bool(true,  "顯示 Vegas EMA200 趨勢線", group=gVT, tooltip="EMA200 經 SMA5 平滑——上升綠色、下降紅色。")
+
+useEng = labelLang == "English"
+
+type SRZone
+    box    bx
+    label  lb
+    float  anchor
+    float  halfH
+    float  volSum
+    int    pivots
+    int    touches
+    int    breaks
+    int    lastActive
+
+var array<SRZone> srZones = array.new<SRZone>()
+srAtr = ta.atr(50)
+
+f_srStrength(SRZone z) => z.pivots * 2 + z.touches
+
+f_srRetireWeakest() =>
+    if srZones.size() >= srMaxZones
+        wIdx = 0
+        wVal = 1000000
+        for [i, z] in srZones
+            s = f_srStrength(z)
+            if s < wVal
+                wVal := s
+                wIdx := i
+        SRZone w = srZones.get(wIdx)
+        box.delete(w.bx)
+        label.delete(w.lb)
+        srZones.remove(wIdx)
+
+f_srAbsorb(float price, float vol) =>
+    merged = false
+    for z in srZones
+        if math.abs(price - z.anchor) <= srMergeMult * srAtr
+            z.anchor := (z.anchor * z.volSum + price * vol) / (z.volSum + vol)
+            z.volSum += vol
+            z.pivots += 1
+            z.lastActive := bar_index
+            merged := true
+            break
+    merged
+
+f_srSpawn(float price, float vol) =>
+    f_srRetireWeakest()
+    float halfH = srHeightMult * srAtr / 2
+    box bx = box.new(bar_index - srLen, price + halfH, bar_index + 15, price - halfH, border_width=1, bgcolor=color.new(color.gray, 85), border_color=color.new(color.gray, 60))
+    label lb = srShowLabels ? label.new(bar_index + 15, price, "", style=label.style_label_left, color=color.new(color.black, 100), textcolor=color.gray, size=size.tiny) : label(na)
+    srZones.push(SRZone.new(bx, lb, price, halfH, vol, 1, 0, 0, bar_index))
+
+srPh = ta.pivothigh(srLen, srLen)
+srPl = ta.pivotlow(srLen, srLen)
+
+srTouch   = false
+srBreakUp = false
+srBreakDn = false
+// 訊號候選旗標(之後再套用全域過濾)
+sigBL  = false   // 反彈做多候選
+sigBS  = false   // 反彈做空候選
+sigBkU = false   // 突破做多候選
+sigBkD = false   // 突破做空候選
+
+if not na(srPh)
+    if not f_srAbsorb(srPh, nz(volume[srLen], 1))
+        f_srSpawn(srPh, nz(volume[srLen], 1))
+if not na(srPl)
+    if not f_srAbsorb(srPl, nz(volume[srLen], 1))
+        f_srSpawn(srPl, nz(volume[srLen], 1))
+
+// 觸碰、乾淨突破、淘汰、繪製
+int zi = 0
+while zi < srZones.size()
+    SRZone z = srZones.get(zi)
+    int   s0   = f_srStrength(z)          // 事件發生「前」的強度,供訊號門檻使用
+    float zTop = z.anchor + z.halfH
+    float zBot = z.anchor - z.halfH
+    int prevSide = close[1] > z.anchor ? 1 : -1
+    int currSide = close    > z.anchor ? 1 : -1
+    bool closedOutside = close > zTop or close < zBot
+    if currSide != prevSide and closedOutside
+        // 乾淨突破:收盤翻越錨點且完整跳出區域另一側
+        z.breaks += 1
+        z.lastActive := bar_index
+        if currSide == 1
+            srBreakUp := true
+            if s0 >= sigMinStr
+                sigBkU := true
+        else
+            srBreakDn := true
+            if s0 >= sigMinStr
+                sigBkD := true
+    else if high >= zBot and low <= zTop and currSide == prevSide and closedOutside
+        // 觸碰:K 棒刺入區域但收盤守回原側 — 區域守住了
+        z.touches += 1
+        z.lastActive := bar_index
+        srTouch := true
+        if s0 >= sigMinStr
+            if currSide == 1
+                sigBL := true    // 支撐守住 → 反彈做多候選
+            else
+                sigBS := true    // 壓力守住 → 反彈做空候選
+    if z.breaks >= srMaxBreaks or bar_index - z.lastActive > srDecayBars
+        box.delete(z.bx)
+        label.delete(z.lb)
+        srZones.remove(zi)
+    else
+        bool isSup = currSide == 1
+        color baseCol = isSup ? srSupCol : srResCol
+        int s = f_srStrength(z)
+        int tr = math.max(55, 88 - s * 4)   // 越強 → 越不透明
+        box.set_top(z.bx, zTop)
+        box.set_bottom(z.bx, zBot)
+        box.set_right(z.bx, bar_index + 15)
+        box.set_bgcolor(z.bx, color.new(baseCol, tr))
+        box.set_border_color(z.bx, color.new(baseCol, math.max(25, tr - 25)))
+        if not na(z.lb)
+            label.set_xy(z.lb, bar_index + 15, z.anchor)
+            label.set_text(z.lb, (isSup ? (useEng ? "S ×" : "支撐×") : (useEng ? "R ×" : "壓力×")) + str.tostring(s))
+            label.set_textcolor(z.lb, baseCol)
+        zi += 1
+
+// ── 全域訊號過濾:順勢 / K棒方向 / 成交量 / 冷卻 / 收盤確認 ──
+emaT   = ta.ema(close, 200)
+volSma = ta.sma(volume, 20)
+volOK  = not useVolume or nz(volume) > volSma
+sigWin = not confirmClose or barstate.isconfirmed   // 歷史 K 棒一律視為已收盤
+
+var int lastSigBar = na
+cdOK = sigCooldown == 0 or na(lastSigBar) or bar_index - lastSigBar >= sigCooldown
+
+longBounce  = showSignals and showBounce and sigWin and sigBL  and (not useTrend or close > emaT) and (not useCandle or close > open) and volOK and cdOK
+shortBounce = showSignals and showBounce and sigWin and sigBS  and (not useTrend or close < emaT) and (not useCandle or close < open) and volOK and cdOK
+breakUpSig  = showSignals and showBreak  and sigWin and sigBkU and (not useCandle or close > open) and volOK and cdOK
+breakDnSig  = showSignals and showBreak  and sigWin and sigBkD and (not useCandle or close < open) and volOK and cdOK
+
+if longBounce or shortBounce or breakUpSig or breakDnSig
+    lastSigBar := bar_index
+
+// ── 訊號繪製 ──
+// plotshape 的文字必須是常數,因此中英文各一組,依「圖表標籤語言」設定顯示
+LONGCOL  = color.rgb(0, 230, 118)
+SHORTCOL = color.rgb(255, 23, 68)
+plotshape(longBounce and useEng,      "反彈做多 EN", shape.triangleup,   location.belowbar, LONGCOL,  text="LONG",  textcolor=color.white, size=size.small)
+plotshape(shortBounce and useEng,     "反彈做空 EN", shape.triangledown, location.abovebar, SHORTCOL, text="SHORT", textcolor=color.white, size=size.small)
+plotshape(breakUpSig and useEng,      "突破做多 EN", shape.diamond,      location.belowbar, LONGCOL,  text="BRK▲",  textcolor=color.white, size=size.tiny)
+plotshape(breakDnSig and useEng,      "突破做空 EN", shape.diamond,      location.abovebar, SHORTCOL, text="BRK▼",  textcolor=color.white, size=size.tiny)
+plotshape(longBounce and not useEng,  "反彈做多",    shape.triangleup,   location.belowbar, LONGCOL,  text="多",    textcolor=color.white, size=size.small)
+plotshape(shortBounce and not useEng, "反彈做空",    shape.triangledown, location.abovebar, SHORTCOL, text="空",    textcolor=color.white, size=size.small)
+plotshape(breakUpSig and not useEng,  "突破做多",    shape.diamond,      location.belowbar, LONGCOL,  text="破多",  textcolor=color.white, size=size.tiny)
+plotshape(breakDnSig and not useEng,  "突破做空",    shape.diamond,      location.abovebar, SHORTCOL, text="破空",  textcolor=color.white, size=size.tiny)
+bgcolor(longBounce or breakUpSig ? color.new(LONGCOL, 88) : shortBounce or breakDnSig ? color.new(SHORTCOL, 88) : na)
+
+// ════════════════════════════════════════════════════════════════════════════
+//  ③ VEGAS 通道 — 與主指標同款外觀
+//  說明:144 / 169 / 288 / 338 / 200 均為公開的標準 Vegas 參數,此處為自行
+//  重新實作(幾行標準 EMA 繪圖),不影響本腳本的原創聲明。
+// ════════════════════════════════════════════════════════════════════════════
+vt_ma1 = ta.ema(close, 144)
+vt_ma2 = ta.ema(close, 169)
+vt_ma3 = ta.ema(close, 288)
+vt_ma4 = ta.ema(close, 338)
+vegasEMA200 = ta.sma(ta.ema(close, 200), 5)
+vegasCol    = ta.change(vegasEMA200) > 0 ? color.new(color.green, 0) : color.new(color.red, 0)
+
+vt_l1 = plot(showTunnel  ? vt_ma1 : na, "通道1-A (EMA144)", color=color.new(color.orange, 50), linewidth=1)
+vt_l2 = plot(showTunnel  ? vt_ma2 : na, "通道1-B (EMA169)", color=color.new(color.orange, 50), linewidth=1)
+vt_l3 = plot(showTunnel2 ? vt_ma3 : na, "通道2-A (EMA288)", color=color.new(color.lime,   70), linewidth=1)
+vt_l4 = plot(showTunnel2 ? vt_ma4 : na, "通道2-B (EMA338)", color=color.new(color.lime,   70), linewidth=1)
+fill(vt_l1, vt_l2, color=showTunnel  ? (vt_ma1 > vt_ma2 and vt_ma1 >= vt_ma1[1] ? color.new(color.orange, 60) : color.new(color.red,  80)) : na, title="通道1填色")
+fill(vt_l3, vt_l4, color=showTunnel2 ? (vt_ma3 > vt_ma4 and vt_ma3 >= vt_ma3[1] ? color.new(color.lime,   90) : color.new(color.gray, 85)) : na, title="通道2填色")
+plot(showVegas ? vegasEMA200 : na, "Vegas EMA200", color=vegasCol, linewidth=2)
+
+// ── 警報 ──
+alertcondition(srAlerts and srTouch,   "區域觸碰",   "價格測試支撐壓力區且守住")
+alertcondition(srAlerts and srBreakUp, "區域向上突破", "價格向上打穿支撐壓力區")
+alertcondition(srAlerts and srBreakDn, "區域向下突破", "價格向下打穿支撐壓力區")
+alertcondition(longBounce,  "反彈做多訊號", "強力支撐區守住 + 全部條件確認 → 多")
+alertcondition(shortBounce, "反彈做空訊號", "強力壓力區守住 + 全部條件確認 → 空")
+alertcondition(breakUpSig,  "突破做多訊號", "強力區域被向上乾淨突破 → 破多")
+alertcondition(breakDnSig,  "突破做空訊號", "強力區域被向下乾淨突破 → 破空")

@@ -196,8 +196,8 @@ def test_strategy2_digest_is_grouped_and_sorted(monkeypatch):
     ])
     assert len(sent) == 1                      # ONE message, not three
     msg = sent[0]
-    assert "STRATEGY 2" in msg and "3 new" in msg
-    assert "🟢 LONG" in msg and "🔴 SHORT" in msg
+    assert "STRATEGY 2" in msg and "3 個新訊號" in msg
+    assert "🟢 做多 LONG" in msg and "🔴 做空 SHORT" in msg
     assert msg.index("CCC") < msg.index("AAA")   # longs highest-conviction first
 
 

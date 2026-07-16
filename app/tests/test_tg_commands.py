@@ -87,14 +87,15 @@ def test_fmt_positions():
 def test_fmt_signals_with_plan():
     payload = {"timeframe": "15m", "signals": [
         {"base": "ETH", "direction": "long", "score": 85, "ts": time.time() - 300,
-         "entry": 1800.0, "sl": 1782.0, "tp1": 1818.0, "tp2": 1836.0}]}
+         "entry": 1800.0, "sl": 1782.0, "tp1": 1818.0, "tp2": 1836.0,
+         "premium": True}]}
     msg = TG.fmt_signals(payload)
-    assert "ETH LONG" in msg and "85/100" in msg
-    assert "SL 1,782" in msg and "TP2 1,836" in msg
+    assert "ETH 做多 ⭐" in msg and "85/100" in msg
+    assert "停損 1,782" in msg and "目標2 1,836" in msg
 
 
 def test_fmt_signals_empty():
-    assert "No S2 signals" in TG.fmt_signals({"signals": []})
+    assert "沒有 S2 訊號" in TG.fmt_signals({"signals": []})
 
 
 def test_fmt_alerts():

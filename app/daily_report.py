@@ -1,6 +1,9 @@
 """
-Daily Report — one morning message per day → the Telegram "report" channel
-(📈 Daily Report topic in the group).
+Daily Report — one morning message per day → the OWNER'S PRIVATE CHAT with
+the bot (channel="private"). It carries real account balances and P&L, so
+since 2026-07-16 it deliberately does NOT go to the group's 📈 Daily Report
+topic — group members should never see the owner's account numbers. The
+/report command is owner-only for the same reason (see tg_commands).
 
 Sent once per local (Asia/Taipei) calendar day, the first Strategy-2 sweep
 after DAILY_REPORT_HOUR (default 08:00). One glance answers: what did both
@@ -232,7 +235,7 @@ def tick() -> bool:
         record_balance(data, now)             # daily equity-curve point
     except Exception as exc:  # noqa: BLE001 — history must never block the report
         print(f"[report] balance record failed: {exc}")
-    ok = telegram_utils.send_message(msg, force=True, channel="report")
+    ok = telegram_utils.send_message(msg, force=True, channel="private")
     if ok:
         # Only mark done on a confirmed send — a Telegram blip retries next sweep.
         state["last_report"] = now.strftime("%Y-%m-%d")

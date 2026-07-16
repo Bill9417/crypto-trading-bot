@@ -57,6 +57,11 @@ ALLOWED_CHATS = {str(c) for c in (config.TELEGRAM_GROUP_CHAT_ID, config.CHAT_ID,
 # the owner (the DM chat ids double as the owner's user ids).
 ADMIN_COMMANDS = {"clean", "clear", "purge", "cleanall", "resume", "halt"}
 OWNER_IDS = {str(c) for c in (config.CHAT_ID, config.ALERTS_CHAT_ID) if c}
+# The daily report carries REAL account balances/P&L → strictly the owner's.
+# Not even group admins may read it, and the answer always goes to the
+# owner's DM (never into the group), no matter where it was typed.
+OWNER_ONLY_COMMANDS = {"report"}
+PRIVATE_REPLY_COMMANDS = {"report"}
 ADMIN_CACHE_SEC = 300
 _admin_cache = {"ts": 0.0, "ids": set()}
 
@@ -117,7 +122,9 @@ def is_admin(user_id) -> bool:
 
 def authorized(cmd: str, user_id) -> bool:
     """Read-only commands: anyone in an allowed chat. ADMIN_COMMANDS: group
-    admins / the owner only."""
+    admins / the owner only. OWNER_ONLY_COMMANDS: strictly the owner."""
+    if cmd in OWNER_ONLY_COMMANDS:
+        return str(user_id) in OWNER_IDS
     return cmd not in ADMIN_COMMANDS or is_admin(user_id)
 
 
@@ -191,17 +198,21 @@ def fmt_positions(binance: dict, bybit: dict) -> str:
 def fmt_signals(payload: dict, limit: int = 5) -> str:
     sigs = (payload or {}).get("signals") or []
     if not sigs:
-        return "No S2 signals fired in the last 24h."
-    lines = [f"📊 LAST {min(limit, len(sigs))} S2 SIGNALS ({payload.get('timeframe', '15m')})\n"]
+        return "過去24小時沒有 S2 訊號。"
+    lines = [f"📊 最近 {min(limit, len(sigs))} 個 S2 訊號 "
+             f"({payload.get('timeframe', '15m')})\n"]
     for s in sigs[:limit]:
         age_min = int((time.time() - (s.get("ts") or 0)) / 60)
-        age = f"{age_min}m" if age_min < 120 else f"{age_min // 60}h"
+        age = f"{age_min}分" if age_min < 120 else f"{age_min // 60}小時"
         arrow = "🟢" if s.get("direction") == "long" else "🔴"
-        lines.append(f"{arrow} {s.get('base')} {str(s.get('direction', '')).upper()} · "
-                     f"{s.get('score')}/100 · {age} ago")
+        star = " ⭐" if s.get("premium") else ""
+        dir_zh = "做多" if s.get("direction") == "long" else "做空"
+        lines.append(f"{arrow} {s.get('base')} {dir_zh}{star} · "
+                     f"信心 {s.get('score')}/100 · {age}前")
         if s.get("entry") and s.get("sl") and s.get("tp2"):
-            lines.append(f"   entry {s['entry']:,.6g} · SL {s['sl']:,.6g} · "
-                         f"TP1 {s.get('tp1', 0):,.6g} · TP2 {s['tp2']:,.6g}")
+            lines.append(f"   進場 {s['entry']:,.6g} · 停損 {s['sl']:,.6g} · "
+                         f"目標1 {s.get('tp1', 0):,.6g} · 目標2 {s['tp2']:,.6g}")
+    lines.append("\n⭐ = 精選訊號 (信心+BTC同向+趨勢確認)")
     return "\n".join(lines)
 
 
@@ -224,7 +235,7 @@ HELP = ("🤖 Commands\n"
         "/positions — open positions on both accounts\n"
         "/signals — last fired S2 signals with Entry/SL/TP\n"
         "/alerts — price alerts currently armed\n"
-        "/report — today's account+market report now\n"
+        "/report — 今日帳戶+市場日報 (擁有者專用, 只私訊回覆)\n"
         "/tw — latest 台股 scan (大盤 regime + setups)\n"
         "/twnow — 台股即時: TAIEX + 漲跌幅前三 + 追蹤設定現價\n"
         "/liq — BTC/ETH 清算: 24h統計 + 最近清算價 + 🧲清算地圖\n"
@@ -409,8 +420,10 @@ def _poll_loop() -> None:
             # remember the user's /command message too, so /clean sweeps it
             telegram_utils._record_sent(chat_id, msg.get("message_id"), bot="main")
             if not authorized(cmd, (msg.get("from") or {}).get("id")):
-                _reply(chat_id, msg.get("message_thread_id"),
-                       f"⛔ /{cmd} 只有群組管理員可以使用")
+                denial = (f"⛔ /{cmd} 是擁有者專用的私人指令"
+                          if cmd in OWNER_ONLY_COMMANDS
+                          else f"⛔ /{cmd} 只有群組管理員可以使用")
+                _reply(chat_id, msg.get("message_thread_id"), denial)
                 print(f"[tgcmd] denied /{cmd} from non-admin")
                 continue
             try:
@@ -418,8 +431,16 @@ def _poll_loop() -> None:
             except Exception as exc:  # noqa: BLE001 — a broken handler must answer, not die
                 reply = f"⚠ {cmd} failed: {str(exc)[:200]}"
             if reply:
+                # Private-reply commands answer in the owner's DM, never in
+                # the group — the report holds real balances/P&L.
+                dest_chat, dest_thread = chat_id, msg.get("message_thread_id")
+                if cmd in PRIVATE_REPLY_COMMANDS and config.CHAT_ID:
+                    dest_chat, dest_thread = config.CHAT_ID, None
+                    if str(chat_id) != str(config.CHAT_ID):
+                        _reply(chat_id, msg.get("message_thread_id"),
+                               "📈 日報是私人資訊 — 已私訊給你")
                 try:
-                    delivered = _reply(chat_id, msg.get("message_thread_id"), reply)
+                    delivered = _reply(dest_chat, dest_thread, reply)
                     print(f"[tgcmd] {'answered' if delivered else 'REPLY DROPPED'} /{cmd}")
                 except Exception as exc:  # noqa: BLE001
                     print(f"[tgcmd] reply failed: {exc}")

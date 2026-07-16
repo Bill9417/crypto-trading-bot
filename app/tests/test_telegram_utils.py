@@ -180,3 +180,26 @@ def test_clean_treats_400_as_gone_but_retries_5xx(monkeypatch, tmp_path):
     summary = T.clean_old_messages(24)
     assert summary["failed"] == 1 and summary["deleted"] == 0
     assert 11 in [e["mid"] for e in T._load_sent()]     # kept for next retry
+
+
+# ── private channel (owner DM) ───────────────────────────────────────────────
+def test_private_channel_goes_to_owner_dm_not_group(monkeypatch, tmp_path):
+    calls, sleeps = [], []
+    _wire(monkeypatch, [FakeResp(200, {"ok": True, "result": {"message_id": 1}})],
+          calls, sleeps)
+    monkeypatch.setattr(T, "CHAT_ID", "777")
+    monkeypatch.setattr(T, "SENT_LOG", str(tmp_path / "sent.json"))
+    assert T.send_message("secret report", channel="private")
+    assert calls[0]["chat_id"] == "777"
+    assert "message_thread_id" not in calls[0]
+
+
+def test_report_channel_still_goes_to_group_topic(monkeypatch, tmp_path):
+    calls, sleeps = [], []
+    _wire(monkeypatch, [FakeResp(200, {"ok": True, "result": {"message_id": 2}})],
+          calls, sleeps)
+    monkeypatch.setitem(T._TOPIC_THREAD, "report", "214")
+    monkeypatch.setattr(T, "SENT_LOG", str(tmp_path / "sent.json"))
+    assert T.send_message("group stuff", channel="report")
+    assert calls[0]["chat_id"] == "-100123"
+    assert calls[0]["message_thread_id"] == "214"

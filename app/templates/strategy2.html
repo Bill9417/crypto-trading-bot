@@ -530,7 +530,7 @@
             sigList.innerHTML = sigs.map(function (s) {
                 return '<div class="sig-row ' + s.direction + '" data-sym="' + s.symbol + '">' +
                     '<span class="sig-dir ' + s.direction + '">' + (s.direction === 'long' ? '▲ LONG' : '▼ SHORT') + '</span>' +
-                    '<span class="sig-sym">' + s.base + '</span>' +
+                    '<span class="sig-sym">' + s.base + (s.premium ? ' ⭐' : '') + '</span>' +
                     '<span class="sig-score">' + s.score + '</span>' +
                     '<span class="sig-age">' + ago(s.ts) + '</span>' +
                     '<a class="sig-tv" href="' + s.tv_url + '" target="_blank" rel="noopener">TV ↗</a>' +

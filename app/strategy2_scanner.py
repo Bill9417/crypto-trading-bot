@@ -22,10 +22,12 @@ import json
 import os
 import time
 
+import bybit_data
 import config
 import daily_report
 import event_radar
 import executor
+import indicators
 import price_alerts
 import backup_state
 import eth_mom
@@ -110,6 +112,66 @@ def _tv_url(symbol: str) -> str:
     return f"https://www.tradingview.com/chart/?symbol=BINANCE:{base}{config.QUOTE_ASSET}.P"
 
 
+# ── BTC regime (once per sweep) ──────────────────────────────────────────────
+# Mirrors bot.check_btc_regime: 1h EMA50, price above a RISING ema = bull,
+# below a FALLING ema = bear, else neutral. Measured on 120 real fired
+# signals + a 60d replay: trading WITH this regime was the single biggest
+# win-rate lever, so it gates the ⭐ premium tier below.
+def _btc_regime(client) -> str:
+    import pandas as pd
+    try:
+        need = config.BTC_REGIME_EMA + config.BTC_REGIME_SLOPE_LOOKBACK + 5
+        rows = client.call("fetch_ohlcv", config.BTC_REGIME_SYMBOL,
+                           config.BTC_REGIME_TIMEFRAME, None, need)
+        closes = [float(r[4]) for r in rows or []]
+        if len(closes) < config.BTC_REGIME_EMA + config.BTC_REGIME_SLOPE_LOOKBACK:
+            return "neutral"
+        ema = pd.Series(closes).ewm(span=config.BTC_REGIME_EMA, adjust=False).mean()
+        ema_now = ema.iloc[-1]
+        ema_prev = ema.iloc[-1 - config.BTC_REGIME_SLOPE_LOOKBACK]
+        if closes[-1] > ema_now and ema_now > ema_prev:
+            return "bull"
+        if closes[-1] < ema_now and ema_now < ema_prev:
+            return "bear"
+    except Exception as exc:  # noqa: BLE001 — regime is a filter, not a dependency
+        print(f"[strategy2] BTC regime check failed: {exc}")
+    return "neutral"
+
+
+def _conviction(direction: str, score) -> int:
+    """Score distance from neutral: long 85 ⇒ 85, short 15 ⇒ 85. Robust to a
+    literal 0 score (a maximally-bearish short is conviction 100, not 0) —
+    `score or 100` would mis-handle it if the trendline factor were ever
+    un-pinned and pushed a score to exactly 0."""
+    s = 0 if score is None else int(score)
+    return s if direction == "long" else 100 - s
+
+
+def classify_signal(direction: str, score, adx, regime: str) -> dict:
+    """Tiering for one fired signal — pure, unit-testable.
+    aligned = trades WITH the BTC regime; premium = the measured best gate
+    (conviction + alignment + a real trend per ADX)."""
+    aligned = (direction == "long" and regime == "bull") or \
+              (direction == "short" and regime == "bear")
+    against = (direction == "long" and regime == "bear") or \
+              (direction == "short" and regime == "bull")
+    conv = _conviction(direction, score)
+    premium = (conv >= config.STRATEGY2_PREMIUM_MIN_SCORE
+               and (aligned or not config.STRATEGY2_PREMIUM_REQUIRE_ALIGNED)
+               and (adx or 0) >= config.STRATEGY2_PREMIUM_MIN_ADX)
+    return {"aligned": aligned, "against": against, "conviction": conv,
+            "premium": bool(premium)}
+
+
+def digest_worthy(sig: dict) -> bool:
+    """Does this signal clear the topic's digest bar? (Everything still
+    shows on the /strategy2 page — this only limits Telegram noise.)"""
+    if sig.get("against") and config.STRATEGY2_DIGEST_SKIP_COUNTER_BTC:
+        return False
+    return _conviction(sig.get("direction"), sig.get("score")) >= \
+        config.STRATEGY2_DIGEST_MIN_CONV
+
+
 def universe(client, tickers: dict = None) -> list:
     """All active USDT-margined perps, most-liquid first (so hot coins scan first).
     TradFi stock perps are dropped (EXCLUDE_TRADFI_PERPS) — the account can't
@@ -168,61 +230,105 @@ def _fmt_price(p) -> str:
 
 
 def _plan_block(sig: dict) -> str:
-    """Multi-line Entry/SL/TP plan for a Telegram alert — % distances and R
-    multiples included so the risk is readable at a glance. Empty string when
-    the signal carries no plan (ATR calc failed)."""
+    """Multi-line 中文+EN Entry/SL/TP plan — % distances and R multiples so
+    the risk is readable at a glance. Empty when the signal carries no plan
+    (ATR calc failed)."""
     entry, sl, tp1, tp2 = (sig.get(k) for k in ("entry", "sl", "tp1", "tp2"))
     if not all((entry, sl, tp1, tp2)) or entry == sl:
         return ""
-    return (f"Entry  {_fmt_price(entry)}\n"
-            f"SL     {_fmt_price(sl)}  ({(sl / entry - 1) * 100:+.2f}%)\n"
-            f"TP1    {_fmt_price(tp1)}  ({(tp1 / entry - 1) * 100:+.2f}%, "
-            f"{abs((tp1 - entry) / (entry - sl)):.0f}R)\n"
-            f"TP2    {_fmt_price(tp2)}  ({(tp2 / entry - 1) * 100:+.2f}%, "
-            f"{abs((tp2 - entry) / (entry - sl)):.0f}R)\n")
+    return (f"進場 Entry   {_fmt_price(entry)}\n"
+            f"停損 SL      {_fmt_price(sl)}  ({(sl / entry - 1) * 100:+.2f}%)\n"
+            f"目標1 TP1    {_fmt_price(tp1)}  ({(tp1 / entry - 1) * 100:+.2f}% · "
+            f"{abs((tp1 - entry) / (entry - sl)):.2g}R)\n"
+            f"目標2 TP2    {_fmt_price(tp2)}  ({(tp2 / entry - 1) * 100:+.2f}% · "
+            f"{abs((tp2 - entry) / (entry - sl)):.2g}R)\n"
+            f"到 TP1 建議先平一半、停損移到進場價\n")
+
+
+def premium_alert_text(sig: dict) -> str:
+    """The ⭐ premium alert — 中文為主 (Bybit 現價+連結), compact English tags
+    kept so the terms stay chart-recognisable. Only signals that passed the
+    measured premium gate ever reach this."""
+    direction = sig.get("direction")
+    dir_zh = "做多" if direction == "long" else "做空"
+    arrow = "🟢" if direction == "long" else "🔴"
+    align_zh = "BTC趨勢同向 ✓" if sig.get("aligned") else "BTC盤整中"
+    adx = sig.get("adx")
+    lines = [
+        f"⭐ 精選訊號 PREMIUM · {arrow} {dir_zh} {str(direction).upper()} · {sig['base']}",
+        f"信心 {sig.get('score')}/100 · {TIMEFRAME} · {align_zh}"
+        + (f" · ADX {adx:.0f}" if adx else ""),
+    ]
+    plan = _plan_block(sig)
+    if plan:
+        lines += ["──────────", plan.rstrip()]
+    lines.append("──────────")
+    bybit_line = bybit_data.price_line(sig["base"], fallback_price=sig.get("price"))
+    if bybit_line:
+        lines.append(bybit_line)
+    lines.append(bybit_data.trade_url(sig["base"]) or sig.get("tv_url") or "")
+    lines.append("⚠️ 訊號僅供參考，非投資建議 · 倉位風險請自行控管")
+    return "\n".join(x for x in lines if x)
 
 
 def _plan_suffix(sig: dict) -> str:
-    """One-line ' · SL x · TP y' tail for digest rows (TP = final target)."""
+    """One-line ' · 停損 x · 目標 y' tail for digest rows (目標 = final TP)."""
     sl, tp2 = sig.get("sl"), sig.get("tp2")
     if not (sl and tp2):
         return ""
-    return f"  ·  SL {_fmt_price(sl)} · TP {_fmt_price(tp2)}"
+    return f" · 停損 {_fmt_price(sl)} · 目標 {_fmt_price(tp2)}"
 
 
 DIGEST_MAX_ROWS = int(os.getenv("STRATEGY2_DIGEST_MAX_ROWS", "12"))   # per side
 
 
 def _digest_text(sigs: list) -> str:
-    """ONE clean Strategy-2 digest — grouped by direction, highest conviction
-    first, capped at DIGEST_MAX_ROWS per side (a raw 80-signal chop-day list
-    once blew Telegram's 4096-char limit and the whole digest was lost)."""
+    """ONE clean Strategy-2 digest, 中文為主 — grouped by direction, highest
+    conviction first, capped at DIGEST_MAX_ROWS per side (a raw 80-signal
+    chop-day list once blew Telegram's 4096-char limit and was lost).
+    Row price = live BYBIT price when the coin trades there (one cached bulk
+    ticker call), otherwise the Binance signal price."""
     longs = sorted([s for s in sigs if s["direction"] == "long"], key=lambda s: -s["score"])
     shorts = sorted([s for s in sigs if s["direction"] == "short"], key=lambda s: s["score"])
-    lines = [f"📊 STRATEGY 2 · {TIMEFRAME} signals",
-             f"— last {DIGEST_SEC // 60} min · {len(sigs)} new —"]
+    lines = [f"📊 策略2 訊號榜 STRATEGY 2 · {TIMEFRAME}",
+             f"— 最近 {DIGEST_SEC // 60} 分鐘 · {len(sigs)} 個新訊號 —"]
+
+    def _price_part(s):
+        px = bybit_data.last_price(s["base"])
+        return f"Bybit {_fmt_price(px)}" if px is not None else _fmt_price(s.get("price"))
 
     def _side(title, rows):
         if not rows:
             return
         lines.append(f"\n{title}")
-        lines.extend(f"  • {s['base']}  ·  {s['score']}/100  ·  {_fmt_price(s['price'])}"
+        lines.extend(f"  {'⭐' if s.get('premium') else '•'} {s['base']} · "
+                     f"信心 {s['score']}/100 · {_price_part(s)}"
                      f"{_plan_suffix(s)}" for s in rows[:DIGEST_MAX_ROWS])
         if len(rows) > DIGEST_MAX_ROWS:
-            lines.append(f"  …+{len(rows) - DIGEST_MAX_ROWS} more (dashboard has all)")
+            lines.append(f"  …還有 {len(rows) - DIGEST_MAX_ROWS} 個 (完整清單見網頁)")
 
-    _side("🟢 LONG", longs)
-    _side("🔴 SHORT", shorts)
+    _side("🟢 做多 LONG", longs)
+    _side("🔴 做空 SHORT", shorts)
+    lines.append("\n⭐ = 精選 (信心+BTC同向+趨勢確認) · 僅供參考，非投資建議")
     return "\n".join(lines)
 
 
 def _send_digest(sigs: list) -> bool:
     """Send the digest on the DIGEST_SEC cadence (default every 30 min) instead
-    of a message per signal. Returns whether Telegram accepted it."""
-    if not sigs:
+    of a message per signal. Only signals clearing the digest bar (conviction
+    ≥ STRATEGY2_DIGEST_MIN_CONV, not counter-BTC) reach Telegram — the raw
+    70/30 firehose measured ~49% TP1-first / 65% eventual-SL, and sending
+    coin-flips is what made the topic's win rate feel awful. Everything still
+    shows on the /strategy2 page. Returns whether Telegram accepted it."""
+    rows = [s for s in sigs if digest_worthy(s)]
+    if not rows:
+        if sigs:
+            print(f"[strategy2] digest: all {len(sigs)} signal(s) below the "
+                  f"topic bar (conv<{config.STRATEGY2_DIGEST_MIN_CONV} or "
+                  f"counter-BTC) — nothing sent")
         return False
     try:
-        return bool(telegram_utils.send_message(_digest_text(sigs), channel="signals"))
+        return bool(telegram_utils.send_message(_digest_text(rows), channel="signals"))
     except Exception as exc:  # noqa: BLE001 — a failed alert must never kill the loop
         print(f"[strategy2] digest send failed: {exc}")
         return False
@@ -280,6 +386,8 @@ def _get_ohlcv(client, sym: str, tickers: dict, now: float = None):
 
 
 def scan_once(client, recent: list, last_alert: dict, pending: list) -> list:
+    btc_regime = _btc_regime(client)              # once per sweep, for the ⭐ gate
+    premium_alerts_sent = 0                        # burst cap (per-sweep)
     try:
         tickers = client.call("fetch_tickers") or {}
     except Exception:  # noqa: BLE001 — tickers are reused for sort + cache
@@ -327,13 +435,17 @@ def scan_once(client, recent: list, last_alert: dict, pending: list) -> list:
             if hot and now_ts - last_alert.get(key, 0) >= MOVER_ALERT_COOLDOWN_SEC:
                 last_alert[key] = now_ts
                 arrow = "🚀" if mv["chg_1h"] > 0 else "📉"
-                print(f"[strategy2] MOVER {sym.split('/')[0]} {mv['chg_1h']:+.1f}% 1h "
+                zh = "急拉" if mv["chg_1h"] > 0 else "急殺"
+                base_ = sym.split("/")[0]
+                print(f"[strategy2] MOVER {base_} {mv['chg_1h']:+.1f}% 1h "
                       f"vol {mv['vol_mult']:.1f}x")
                 try:
+                    by_line = bybit_data.price_line(base_, fallback_price=mv["price"])
                     telegram_utils.send_message(
-                        f"{arrow} MOVER · {sym.split('/')[0]} {mv['chg_1h']:+.1f}% in 1h\n"
-                        f"volume {mv['vol_mult']:.1f}× normal · 24h {mv['chg_24h']:+.1f}% "
-                        f"@ {_fmt_price(mv['price'])}\n{_tv_url(sym)}",
+                        f"{arrow} {zh} MOVER · {base_} 一小時 {mv['chg_1h']:+.1f}%\n"
+                        f"成交量 {mv['vol_mult']:.1f}× 平常 · 24h {mv['chg_24h']:+.1f}%"
+                        + (f"\n{by_line}" if by_line else "")
+                        + f"\n{bybit_data.trade_url(base_) or _tv_url(sym)}",
                         force=True)
                 except Exception as exc:  # noqa: BLE001 — alert must never kill the sweep
                     print(f"[strategy2] mover alert failed {sym}: {exc}")
@@ -353,33 +465,62 @@ def scan_once(client, recent: list, last_alert: dict, pending: list) -> list:
                     "ts": now,
                     "tv_url": _tv_url(sym),
                 }
-                # Trade plan attached to every fired signal — the same ATR
-                # bracket live execution would use (S2L.trade_levels), so the
-                # Telegram alert/digest and the /strategy2 page can show a
-                # complete Entry/SL/TP plan, not just a naked price.
+                # ⭐ premium tiering — the measured win-rate gate (see config):
+                # conviction + BTC-regime alignment + ADX trend confirmation.
                 try:
-                    entry, sl, tp1, tp2 = S2L.trade_levels(
+                    adx = indicators.calculate_adx(ohlcv)
+                except Exception:  # noqa: BLE001
+                    adx = None
+                tier = classify_signal(direction, sig["score"], adx, btc_regime)
+                sig.update({"adx": round(adx, 1) if adx is not None else None,
+                            "btc_regime": btc_regime, "aligned": tier["aligned"],
+                            "against": tier["against"], "premium": tier["premium"]})
+                # Trade plan attached to every fired signal, so the Telegram
+                # alert/digest and the /strategy2 page show a complete
+                # Entry/SL/TP plan, not just a naked price. ⭐ signals publish
+                # the measured premium geometry; the rest keep the classic
+                # 1.5×ATR / 1R / 2R plan (which live execution also uses).
+                try:
+                    levels_fn = (S2L.premium_trade_levels if sig["premium"]
+                                 else S2L.trade_levels)
+                    entry, sl, tp1, tp2 = levels_fn(
                         res["price"], direction == "long", S2L._atr(ohlcv))
                     sig.update({"entry": entry, "sl": sl, "tp1": tp1, "tp2": tp2})
                 except Exception as exc:  # noqa: BLE001 — plan is a bonus, never blocks
                     print(f"[strategy2] plan calc failed {sym}: {exc}")
+                # Fee-burn guard: a stop closer than STRATEGY2_MIN_STOP_PCT of
+                # price is untradeable noise (USDC once fired 82 signals in 60d
+                # with a 0.002% stop — fees alone ≈ 55R). Drop it entirely.
+                if sig.get("sl") and sig.get("entry"):
+                    stop_pct = abs(sig["entry"] - sig["sl"]) / sig["entry"]
+                    if stop_pct < config.STRATEGY2_MIN_STOP_PCT:
+                        print(f"[strategy2] drop {sig['base']} {direction}: stop "
+                              f"{stop_pct * 100:.3f}% < "
+                              f"{config.STRATEGY2_MIN_STOP_PCT * 100:.1f}% floor "
+                              f"(fee-burn)")
+                        continue
                 recent.insert(0, sig)
                 pending.append(sig)                  # buffered → next 30-min digest
-                print(f"[strategy2] SIGNAL {direction.upper()} {sig['base']} score {sig['score']}")
-                # High-conviction (live-entry-grade) signals alert IMMEDIATELY and
-                # punch through quiet mode. Deduped by the same 4h cooldown above.
-                hc = (direction == "long" and sig["score"] >= config.STRATEGY2_LIVE_MIN_SCORE) or \
-                     (direction == "short" and sig["score"] <= 100 - config.STRATEGY2_LIVE_MIN_SCORE)
-                if HC_ALERT and hc:
+                print(f"[strategy2] SIGNAL {direction.upper()} {sig['base']} "
+                      f"score {sig['score']}"
+                      f"{' ⭐PREMIUM' if sig['premium'] else ''}")
+                # ⭐ premium signals alert IMMEDIATELY (bilingual, Bybit data)
+                # and punch through quiet mode. Deduped by the 4h cooldown
+                # above. This replaces the old score-only HC alert — measured
+                # on real fires, score alone did NOT raise the win rate. Burst-
+                # capped per sweep (STRATEGY2_PREMIUM_ALERTS_PER_SWEEP): extras
+                # still ride the 30-min digest + the page, just no instant push.
+                cap = config.STRATEGY2_PREMIUM_ALERTS_PER_SWEEP
+                if HC_ALERT and sig["premium"] and (cap <= 0 or premium_alerts_sent < cap):
+                    premium_alerts_sent += 1
                     try:
                         telegram_utils.send_message(
-                            f"🎯 S2 HIGH CONVICTION · {direction.upper()} {sig['base']}\n"
-                            f"score {sig['score']}/100 · {TIMEFRAME}\n"
-                            + _plan_block(sig)
-                            + f"{sig['tv_url']}",
-                            force=True, channel="signals")
+                            premium_alert_text(sig), force=True, channel="signals")
                     except Exception as exc:  # noqa: BLE001 — alert must never kill the sweep
-                        print(f"[strategy2] HC alert failed {sym}: {exc}")
+                        print(f"[strategy2] premium alert failed {sym}: {exc}")
+                elif HC_ALERT and sig["premium"]:
+                    print(f"[strategy2] ⭐ {sig['base']} over per-sweep alert cap "
+                          f"({cap}) — digest only")
                 _write(recent, total, i + 1)        # surface on the page immediately
                 # Opt-in LIVE execution — a no-op unless STRATEGY2_LIVE is on. The
                 # best-plan filter + all safety gates live inside maybe_trade; `i`

@@ -16,6 +16,7 @@ from config import (
     TELEGRAM_LIQ_THREAD_ID,
     TELEGRAM_QUIET,
     TELEGRAM_REPORT_THREAD_ID,
+    TELEGRAM_S1SIGNALS_THREAD_ID,
     TELEGRAM_SIGNALS_THREAD_ID,
     TELEGRAM_TECH_THREAD_ID,
     TELEGRAM_TWSTOCKS_THREAD_ID,
@@ -31,6 +32,8 @@ _TOPIC_THREAD = {
     "report": TELEGRAM_REPORT_THREAD_ID or TELEGRAM_ALERTS_THREAD_ID,
     "twstocks": TELEGRAM_TWSTOCKS_THREAD_ID or TELEGRAM_ALERTS_THREAD_ID,
     "liq": TELEGRAM_LIQ_THREAD_ID or TELEGRAM_ALERTS_THREAD_ID,
+    # 📈 S1 copy-trade feed — falls back to the Signals thread until provisioned
+    "s1signals": TELEGRAM_S1SIGNALS_THREAD_ID or TELEGRAM_SIGNALS_THREAD_ID,
 }
 
 # Telegram hard limits (observed live 2026-07-12): ~20 messages/minute to the
@@ -291,13 +294,19 @@ def send_message(message, parse_mode=None, *, force=False, retries=2, channel="a
          the old TELEGRAM_QUIET/force rule so a fresh checkout with none of
          the above configured behaves exactly as it always has.
 
+    channel="private" is special: it ALWAYS goes to the owner's DM with the
+    main bot (TELEGRAM_CHAT_ID) — never to the group. Account balances and
+    P&L (the daily report) are the owner's business, not the group's.
+
     Long messages are split on line boundaries and sent as in-order chunks;
     returns True only when EVERY chunk was delivered.
     """
     thread_id = _TOPIC_THREAD.get(channel)
     payload = {}
 
-    if TELEGRAM_GROUP_CHAT_ID and thread_id:
+    if channel == "private":
+        token, payload["chat_id"] = BOT_TOKEN, CHAT_ID
+    elif TELEGRAM_GROUP_CHAT_ID and thread_id:
         token, payload["chat_id"], payload["message_thread_id"] = (
             BOT_TOKEN, TELEGRAM_GROUP_CHAT_ID, thread_id,
         )

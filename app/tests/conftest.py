@@ -82,3 +82,13 @@ def _no_live_side_effects(request, monkeypatch, tmp_path):
         import telegram_utils
         monkeypatch.setattr(telegram_utils, "_post_one",
                             lambda url, payload, retries: (True, None))
+    # bybit_data is the Chinese alerts' price source — its ccxt client would
+    # happily reach the real Bybit API from a formatting test. Kill the
+    # exchange factory; every helper is failure-safe and degrades to its
+    # Binance fallback, which is exactly the offline behaviour tests want.
+    import bybit_data
+    def _no_exchange():
+        raise RuntimeError("no network in tests")
+    monkeypatch.setattr(bybit_data, "_exchange", _no_exchange)
+    monkeypatch.setattr(bybit_data, "_bases", {})
+    monkeypatch.setattr(bybit_data, "_tickers", {})

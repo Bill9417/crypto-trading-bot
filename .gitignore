@@ -77,3 +77,4 @@ ENV/
 .idea/
 .vscode/
 .stack_stopped
+app/research_cache/

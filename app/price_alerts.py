@@ -104,8 +104,9 @@ def check_alerts(alerts: list, prices: dict, now: float) -> list:
         a["triggered"] = now
         a["triggered_price"] = last
         arrow = "📈" if a["direction"] == "above" else "📉"
-        msgs.append(f"🔔 PRICE ALERT · {arrow} {a['base']} crossed {a['direction']} "
-                    f"{a['price']:,.6g}\nnow {last:,.6g} · level set "
+        dir_zh = "向上突破" if a["direction"] == "above" else "向下跌破"
+        msgs.append(f"🔔 到價提醒 PRICE ALERT · {arrow} {a['base']} {dir_zh} "
+                    f"{a['price']:,.6g}\n現價 {last:,.6g} · 設定於 "
                     f"{time.strftime('%m-%d %H:%M', time.localtime(a['created']))} "
                     f"@ {a['ref_price']:,.6g}")
     return msgs

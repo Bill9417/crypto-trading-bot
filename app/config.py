@@ -118,6 +118,11 @@ TELEGRAM_TWSTOCKS_THREAD_ID = os.getenv("TELEGRAM_TWSTOCKS_THREAD_ID", "")
 # Seventh topic thread: "💥 清算" — BTC/ETH liquidation-cascade (stop-run)
 # alerts from liq_alerts.py. Empty = falls back into Alerts.
 TELEGRAM_LIQ_THREAD_ID = os.getenv("TELEGRAM_LIQ_THREAD_ID", "")
+# Eighth topic thread: "📈 S1 交易訊號" — the Strategy-1 copy-trade feed. The
+# full live trade lifecycle (掛單 → 進場成交 → TP1/停損/止盈/保本 → 取消) in
+# 中文 with Bybit prices/links, so followers can mirror the trades. Empty =
+# falls back into the Signals thread. Provision it with create_s1_topic.py.
+TELEGRAM_S1SIGNALS_THREAD_ID = os.getenv("TELEGRAM_S1SIGNALS_THREAD_ID", "")
 
 # ── Live trading (Binance Futures USD-M) ──────────────────────────────────
 # SAFETY: LIVE_TRADING defaults to False. While False the bot is in DRY-RUN —
@@ -475,6 +480,49 @@ STRATEGY2_LIVE_LIGHTS = int(os.getenv("STRATEGY2_LIVE_LIGHTS", "5"))
 # order. Defaults to the same tradeable tier S1 uses; pairs outside it stay
 # alert-only no matter how strong the signal.
 STRATEGY2_LIVE_TOP_N = int(os.getenv("STRATEGY2_LIVE_TOP_N", str(TOP_SYMBOL_LIMIT)))
+
+# ── Strategy 2 ⭐ PREMIUM signal gate (2026-07-16) ───────────────────────────
+# The Signals topic's real win rate was finally MEASURED (research_s2_winrate:
+# 120 real fired signals from the state backups + a 60-day replay of the
+# exact production signal code over the top-60 perps). Findings:
+#   • the raw feed (score 70/30 bar) reached TP1 before SL only ~49% of the
+#     time and 65% eventually stopped out — the user's "win rate is low" was
+#     real, not felt;
+#   • the score alone did NOT help (conviction ≥80 was no better than the
+#     firehose on real signals);
+#   • BTC-regime ALIGNMENT was the big honest lever (aligned 57% vs
+#     counter-BTC 41% TP1-first on real fires), consistent with S1's
+#     "don't fight Bitcoin" backtests.
+# So public alerts now carry a ⭐ PREMIUM tier: conviction ≥ MIN_SCORE AND
+# BTC-aligned AND ADX ≥ MIN_ADX (trend, not chop). Only ⭐ signals send the
+# immediate bilingual alert; the digest keeps a wider bar (below) so the
+# topic stays alive without drowning readers in coin-flip signals.
+STRATEGY2_PREMIUM_MIN_SCORE = int(os.getenv("STRATEGY2_PREMIUM_MIN_SCORE", "80"))
+STRATEGY2_PREMIUM_REQUIRE_ALIGNED = _env_bool("STRATEGY2_PREMIUM_REQUIRE_ALIGNED", True)
+STRATEGY2_PREMIUM_MIN_ADX = float(os.getenv("STRATEGY2_PREMIUM_MIN_ADX", "20"))
+# Cap immediate ⭐ alerts per sweep so a market-wide pump (many alts aligning
+# with BTC at once) can't fire a 20-message burst into the promo channel. Any
+# premium signal beyond the cap still lands in the 30-min digest and on the
+# /strategy2 page — it just doesn't get its own instant push. 0 = unlimited.
+STRATEGY2_PREMIUM_ALERTS_PER_SWEEP = int(os.getenv("STRATEGY2_PREMIUM_ALERTS_PER_SWEEP", "5"))
+# Digest bar: minimum conviction (score distance from neutral: long score ≥ X,
+# short score ≤ 100−X) AND not fighting the BTC regime. Signals below the bar
+# still show on the /strategy2 page — they just don't spam the topic.
+STRATEGY2_DIGEST_MIN_CONV = int(os.getenv("STRATEGY2_DIGEST_MIN_CONV", "75"))
+STRATEGY2_DIGEST_SKIP_COUNTER_BTC = _env_bool("STRATEGY2_DIGEST_SKIP_COUNTER_BTC", True)
+# Minimum stop distance as a fraction of price. The replay caught USDC firing
+# 82 signals in 60 days with a 0.002%-of-price stop — fees alone were ~55R on
+# that plan. A stop tighter than this floor is a fee-burn, not a trade: the
+# signal is dropped entirely (not alerted, not listed, not recorded).
+STRATEGY2_MIN_STOP_PCT = float(os.getenv("STRATEGY2_MIN_STOP_PCT", "0.003"))
+# ⭐ premium plan geometry — measured on the 60d replay (6,545 fires, fees in):
+# SL 2×ATR + TP1 at 0.75R was the best win-rate/expectancy balance for the
+# gate above (58.7% of premium signals reached TP1 before the stop; the old
+# 1R TP1 on a 1.5×ATR stop was ~50%). TP2 stays a 2R runner. These knobs
+# shape ONLY the published ⭐ plan; live execution keeps its own levels.
+STRATEGY2_PREMIUM_SL_MULT = float(os.getenv("STRATEGY2_PREMIUM_SL_MULT", "2.0"))
+STRATEGY2_PREMIUM_TP1_R = float(os.getenv("STRATEGY2_PREMIUM_TP1_R", "0.75"))
+STRATEGY2_PREMIUM_TP2_R = float(os.getenv("STRATEGY2_PREMIUM_TP2_R", "2.0"))
 
 # ── Strategy 3 — "Vegas Flag Flip" (opt-in, OFF by default) ──────────────────
 # BTC + SOL + HYPE + XAUT by default (STRATEGY3_SYMBOLS). Signals come from

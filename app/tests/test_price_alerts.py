@@ -44,7 +44,7 @@ def test_fires_on_cross_only():
     alerts = PA.load_alerts()
     assert PA.check_alerts(alerts, {SYM: 3499.0}, now) == []      # not there yet
     msgs = PA.check_alerts(alerts, {SYM: 3501.0}, now)
-    assert len(msgs) == 1 and "ETH crossed above 3,500" in msgs[0]
+    assert len(msgs) == 1 and "ETH 向上突破 3,500" in msgs[0]
     assert alerts[0]["triggered"] == now
     # a triggered alert never fires again
     assert PA.check_alerts(alerts, {SYM: 4000.0}, now) == []

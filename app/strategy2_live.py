@@ -88,13 +88,18 @@ def _atr(ohlcv, period: int = ATR_PERIOD):
     return sum(trs[-period:]) / period
 
 
-def trade_levels(price, is_long: bool, atr):
+def trade_levels(price, is_long: bool, atr, *, sl_mult=None, tp1_r=None, tp2_r=None):
     """entry / sl / tp1 / tp2 for a market S2 entry. ATR stop (config.ATR_SL_MULTIPLIER)
     capped at config.MAX_SL_PCT, targets at 1R / 2R — mirrors the S1 trade plan so the
-    risk:reward is genuine per coin. entry is the signal price (filled at market)."""
+    risk:reward is genuine per coin. entry is the signal price (filled at market).
+    The keyword overrides exist for premium_trade_levels below; live execution
+    always calls this with the plain defaults."""
     entry = float(price)
+    sl_mult = sl_mult if sl_mult is not None else config.ATR_SL_MULTIPLIER
+    tp1_r = tp1_r if tp1_r is not None else config.ATR_TP1_MULTIPLIER
+    tp2_r = tp2_r if tp2_r is not None else config.ATR_TP_MULTIPLIER
     if atr:
-        sl_distance = atr * config.ATR_SL_MULTIPLIER
+        sl_distance = atr * sl_mult
         sl = entry - sl_distance if is_long else entry + sl_distance
     else:
         sl = entry * (1 - config.FIXED_SL_PCT) if is_long else entry * (1 + config.FIXED_SL_PCT)
@@ -113,12 +118,24 @@ def trade_levels(price, is_long: bool, atr):
 
     risk = abs(entry - sl)
     if is_long:
-        tp1 = entry + risk * config.ATR_TP1_MULTIPLIER
-        tp2 = entry + risk * config.ATR_TP_MULTIPLIER
+        tp1 = entry + risk * tp1_r
+        tp2 = entry + risk * tp2_r
     else:
-        tp1 = entry - risk * config.ATR_TP1_MULTIPLIER
-        tp2 = entry - risk * config.ATR_TP_MULTIPLIER
+        tp1 = entry - risk * tp1_r
+        tp2 = entry - risk * tp2_r
     return entry, sl, tp1, tp2
+
+
+def premium_trade_levels(price, is_long: bool, atr):
+    """The ⭐ premium plan published to the Signals topic — SL 2×ATR, TP1 at
+    0.75R, TP2 2R runner (config-tunable). Chosen from the 60d replay grid:
+    58.7% of gate-passing signals reached this TP1 before the stop, vs ~50%
+    for the old 1R-on-1.5×ATR plan. Alert/page/outcome-tracker only — live
+    execution keeps the plain trade_levels above."""
+    return trade_levels(price, is_long, atr,
+                        sl_mult=config.STRATEGY2_PREMIUM_SL_MULT,
+                        tp1_r=config.STRATEGY2_PREMIUM_TP1_R,
+                        tp2_r=config.STRATEGY2_PREMIUM_TP2_R)
 
 
 def passes_filter(direction: str, score: int, rank=None) -> tuple[bool, str]:

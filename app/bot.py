@@ -67,6 +67,7 @@ from config import (
     ATR_SL_MULTIPLIER,
     ATR_TP1_MULTIPLIER,
     ATR_TP_MULTIPLIER,
+    LEVERAGE,
     MAX_SL_PCT,
     ATR_OFFSET_MULTIPLIER_MIN,
     ATR_OFFSET_MULTIPLIER_MAX,
@@ -758,10 +759,10 @@ def update_pending_signals():
                             sl=entry,  # Trailing stop at entry price
                             exit_price=tp1,
                         )
-                        notify(
-                            f"🎯 TP1 HIT  {dir_tag(direction)} · {pair_name(signal.symbol)}  +{tp1_pct:.1f}%\n"
-                            f"50% banked · stop → breakeven · runner → TP2"
-                        )
+                        notify_s1_follow(s1_follow_exit(
+                            "tp1", signal.symbol, direction, tp1_pct,
+                            note="先平一半 · 停損移到進場價 · 剩餘續抱到 TP2",
+                        ))
                         continue
 
                     # SL (also reached here when TP1+SL hit the same candle → SL wins)
@@ -783,10 +784,10 @@ def update_pending_signals():
                             sl=sl,
                             exit_price=sl,
                         )
-                        notify(
-                            f"🛑 SL HIT  {dir_tag(direction)} · {pair_name(signal.symbol)}  {signal.pnl_pct:.1f}%\n"
-                            f"closed at a loss"
-                        )
+                        notify_s1_follow(s1_follow_exit(
+                            "sl", signal.symbol, direction, signal.pnl_pct,
+                            note="觸及停損 · 本單結束",
+                        ))
                         continue
 
                 # Handle TP1_PARTIAL signals — the runner (50%) is managed EXACTLY
@@ -825,10 +826,10 @@ def update_pending_signals():
                             reason=f"TP2 hit at +{tp2_pct:.1f}% — full position closed (+{signal.pnl_pct:.1f}% total)",
                             current_price=current_price, entry=entry, tp=tp2, sl=entry, exit_price=tp2,
                         )
-                        notify(
-                            f"🏆 TP2 HIT  {dir_tag(direction)} · {pair_name(signal.symbol)}  +{signal.pnl_pct:.1f}% total\n"
-                            f"full position closed (runner +{tp2_pct:.1f}%)"
-                        )
+                        notify_s1_follow(s1_follow_exit(
+                            "tp2", signal.symbol, direction, signal.pnl_pct,
+                            note=f"全部平倉 · 續抱段 +{tp2_pct:.1f}%",
+                        ))
                         continue
 
                     if is_breakeven:
@@ -844,10 +845,10 @@ def update_pending_signals():
                             reason=f"Runner stopped at breakeven — TP1 profit locked (+{signal.pnl_pct:.1f}% total)",
                             current_price=current_price, entry=entry, tp=tp2, sl=entry, exit_price=entry,
                         )
-                        notify(
-                            f"⚖️ BREAKEVEN — {dir_tag(direction)} {signal.symbol}  +{signal.pnl_pct:.1f}% total\n"
-                            f"Runner stopped at breakeven, TP1 profit locked."
-                        )
+                        notify_s1_follow(s1_follow_exit(
+                            "be", signal.symbol, direction, signal.pnl_pct,
+                            note="剩餘倉位回到進場價平倉 · TP1 獲利已入袋",
+                        ))
                         continue
 
             db.session.commit()
@@ -912,6 +913,7 @@ def activate_queued_signals():
                 tp=tp1,
                 sl=sl,
             )
+            notify_s1_follow(s1_follow_cancel(symbol, direction, "價格已先觸及目標、未成交"))
             queued_signals.pop(queue_key, None)
             continue
 
@@ -933,6 +935,7 @@ def activate_queued_signals():
                 tp=tp1,
                 sl=sl,
             )
+            notify_s1_follow(s1_follow_cancel(symbol, direction, "價格已先觸及停損、未成交"))
             queued_signals.pop(queue_key, None)
             continue
 
@@ -981,6 +984,7 @@ def activate_queued_signals():
                 tp=tp1,
                 sl=sl,
             )
+            notify_s1_follow(s1_follow_cancel(symbol, direction, "掛單已不在委託簿、未成交"))
             queued_signals.pop(queue_key, None)
             continue
 
@@ -1032,17 +1036,13 @@ def activate_queued_signals():
                 tp=tp_price,
                 sl=sl_price,
             )
-            notify(
-                format_trade_card(
-                    "✅ FILLED", symbol, direction,
-                    filled_entry, sl_price, tp2_price,
+            notify_s1_follow(
+                s1_follow_card(
+                    "✅ 進場成交 FILLED", symbol, direction,
+                    filled_entry, sl_price, tp_price, tp2_price,
                     timeframe=payload.get("timeframe"),
-                    lights=payload.get("lights_count"),
-                    rsi=payload.get("rsi_value"),
-                    footer="position active &amp; managed",
-                ),
-                parse_mode="HTML",
-                channel="signals",
+                    footer="已進場 · 依計畫嚴守停損",
+                )
             )
         else:
             print(f"Queue trigger skipped for {symbol}: {reason}")
@@ -1384,6 +1384,99 @@ def format_trade_card(headline, symbol, direction, entry, sl, tp,
     lines.append(f'<a href="{tv_url}">📈 chart →</a>')
     return "\n".join(lines)
 
+
+# ── Strategy-1 copy-trade feed (📈 S1 交易訊號 topic) ─────────────────────────
+# The full live lifecycle in 中文, quoting Bybit prices/links (the user promotes
+# Bybit) so followers can mirror each trade. Everything here routes to
+# channel="s1signals"; the plain English cards above stay for internal use.
+S1_FOLLOW_CHANNEL = "s1signals"
+
+
+def _s1_bybit_lines(base: str, ref_price) -> list:
+    """Bybit 現價 line + tappable Bybit 下單 link, with an honest Binance
+    fallback ('未上架 · 參考價 …' + a TradingView chart link). Never raises."""
+    lines: list = []
+    url = None
+    try:
+        import bybit_data
+        price_line = bybit_data.price_line(base, fallback_price=ref_price)
+        if price_line:
+            lines.append(price_line)
+        url = bybit_data.trade_url(base)
+    except Exception:  # noqa: BLE001 — a Bybit hiccup must never break an alert
+        pass
+    if url:
+        lines.append(f'<a href="{url}">Bybit 下單 →</a>')
+    else:
+        tv = f"https://www.tradingview.com/chart/?symbol=BINANCE:{base}{QUOTE_ASSET}.P"
+        lines.append(f'<a href="{tv}">📈 圖表 →</a>')
+    return lines
+
+
+def s1_follow_card(headline, symbol, direction, entry, sl, tp1, tp2, *,
+                   timeframe=None, footer=None) -> str:
+    """One 中文 copy-trade card (HTML): 方向 · 進場/停損/目標 block · 槓桿 · R:R ·
+    Bybit 現價+連結 · 免責聲明. Used for 掛單 (limit placed) and 進場成交 (filled)."""
+    is_long = str(direction).upper() == "LONG"
+    base = symbol.split("/")[0].split(":")[0]
+    dir_zh = "🟢 做多 LONG" if is_long else "🔴 做空 SHORT"
+    tf = f" · {timeframe}" if timeframe else ""
+
+    rows = [f"進場 Entry  {format_price(entry)}"]
+    if sl is not None:
+        rows.append(f"停損 SL     {format_price(sl)}  ({_signed_pct(entry, sl, is_long)})")
+    if tp1 is not None:
+        rows.append(f"目標1 TP1  {format_price(tp1)}  ({_signed_pct(entry, tp1, is_long)})")
+    if tp2 is not None:
+        rows.append(f"目標2 TP2  {format_price(tp2)}  ({_signed_pct(entry, tp2, is_long)})")
+    price_block = "\n".join(rows)
+
+    meta = []
+    if tp2 is not None and sl is not None and entry:
+        risk, reward = abs(entry - sl), abs(tp2 - entry)
+        if risk > 0:
+            meta.append(f"風險報酬 {reward / risk:.1f}R")
+    meta.append(f"本倉槓桿 {LEVERAGE}x")
+
+    lines = [f"{headline}  {dir_zh} · {pair_name(symbol)}{tf}",
+             f"<pre>{price_block}</pre>",
+             " · ".join(meta)]
+    if footer:
+        lines.append(footer)
+    lines += _s1_bybit_lines(base, entry)
+    lines.append("⚠️ 訊號僅供參考，非投資建議 · 到 TP1 建議先平一半、停損移到進場價")
+    return "\n".join(x for x in lines if x)
+
+
+def s1_follow_exit(kind, symbol, direction, pnl_pct, *, note=None) -> str:
+    """One-line 中文 exit update for the follow feed. `kind` ∈
+    {tp1, sl, tp2, be}; `pnl_pct` is already signed (loss is negative)."""
+    dir_zh = "做多" if str(direction).upper() == "LONG" else "做空"
+    pair = pair_name(symbol)
+    heads = {
+        "tp1": f"🎯 TP1 達標 · {pair} {dir_zh}  +{pnl_pct:.1f}%",
+        "sl":  f"🛑 停損出場 · {pair} {dir_zh}  {pnl_pct:.1f}%",
+        "tp2": f"🏆 止盈達標 · {pair} {dir_zh}  +{pnl_pct:.1f}%",
+        "be":  f"⚖️ 保本出場 · {pair} {dir_zh}  +{pnl_pct:.1f}%",
+    }
+    lines = [heads[kind]]
+    if note:
+        lines.append(note)
+    return "\n".join(lines)
+
+
+def s1_follow_cancel(symbol, direction, reason_zh) -> str:
+    """取消掛單 notice — a follower who mirrored the limit must know to cancel it."""
+    dir_zh = "做多" if str(direction).upper() == "LONG" else "做空"
+    return (f"🚫 取消掛單 · {pair_name(symbol)} {dir_zh}\n"
+            f"{reason_zh}，如已掛單請一併取消")
+
+
+def notify_s1_follow(message: str) -> None:
+    """Send an S1 copy-trade message to the 📈 S1 交易訊號 topic (HTML)."""
+    notify(message, parse_mode="HTML", channel=S1_FOLLOW_CHANNEL)
+
+
 def determine_trade_direction(
     current_rsi,
     bull_strat_score,
@@ -1591,8 +1684,8 @@ def send_batch_alerts(alerts, chunk_size=20):
         chunk = alerts[i:i+chunk_size]
         tw_time = get_now_taiwan().strftime("%H:%M")
         part = "" if len(alerts) <= chunk_size else f" ({i // chunk_size + 1})"
-        header = (f"📊 RSI Extremes — {len(alerts)} coin"
-                  f"{'s' if len(alerts) != 1 else ''}{part}  ·  {tw_time} TW")
+        header = (f"📊 RSI 極端值 Extremes — {len(alerts)} 幣{part}  ·  {tw_time} 台北\n"
+                  f"🟢 = 超賣(可能反彈) · 🔴 = 超買(可能回落)")
         message = "\n".join([header, ""] + [_rsi_alert_line(a) for a in chunk])
         sent = send_message(message, parse_mode="HTML")
         if sent:
@@ -1604,7 +1697,7 @@ def send_batch_alerts(alerts, chunk_size=20):
 
 
 def send_compact_alert(symbol, timeframe, rsi, candle_close_price, trigger, candle_close_time_ms=None):
-    state_label = "OVERBOUGHT" if trigger == "overbought" else "OVERSOLD"
+    state_label = "超買 OVERBOUGHT" if trigger == "overbought" else "超賣 OVERSOLD"
     tw_time = get_now_taiwan().strftime("%H:%M")
     line = _rsi_alert_line({
         "symbol": symbol, "timeframe": timeframe, "rsi": rsi,
@@ -1674,6 +1767,7 @@ def apply_queue_clear_request() -> bool:
     try:
         for payload in queued_signals.values():
             executor.cancel_resting_order(payload["symbol"], payload["direction"], reason="queue cleared")
+            notify_s1_follow(s1_follow_cancel(payload["symbol"], payload["direction"], "掛單已手動清除"))
     except Exception as exc:  # noqa: BLE001
         print(f"[executor] cancel on queue-clear error: {exc}")
     queued_signals = {}
@@ -2400,16 +2494,13 @@ def run_bot() -> None:
                                     # Telegram alert the moment a setup is freshly queued
                                     # (i.e. the funnel's "queued" count just went up).
                                     if is_new_queue:
-                                        notify(
-                                            format_trade_card(
-                                                "📥 QUEUED", symbol, direction_str,
-                                                entry_price, sl_price, tp2_price,
+                                        notify_s1_follow(
+                                            s1_follow_card(
+                                                "⏳ 掛單 待成交 QUEUED", symbol, direction_str,
+                                                entry_price, sl_price, tp1_price, tp2_price,
                                                 timeframe=timeframe,
-                                                lights=effective_lights, rsi=current_rsi,
-                                                footer="⏳ waiting for entry",
-                                            ),
-                                            parse_mode="HTML",
-                                            channel="signals",
+                                                footer="已掛限價單，等待成交（可同步掛單）",
+                                            )
                                         )
                                 else:
                                     # No order on the book → don't queue, don't alert,
@@ -2573,6 +2664,7 @@ def run_bot() -> None:
                     if target_reached_before_entry(remaining_dir, cp, tp_val):
                         print(f"Dropping stale queued card for {remaining_key[0]}: target already reached before entry.")
                         executor.cancel_resting_order(remaining_key[0], remaining_dir, reason="stale: target reached")
+                        notify_s1_follow(s1_follow_cancel(remaining_key[0], remaining_dir, "價格已先觸及目標、未成交"))
                         queued_signals.pop((remaining_key[0], remaining_key[1], remaining_dir), None)
                         continue
                 except (TypeError, ValueError):
