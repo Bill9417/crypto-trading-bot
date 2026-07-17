@@ -38,6 +38,7 @@ import tg_commands
 import tw_intraday
 import tw_stocks
 import watchdog
+import whale_tracker
 import strategy2_live as S2L
 import strategy2_meter as S2
 import telegram_utils
@@ -642,6 +643,12 @@ def main() -> None:
             liq_alerts.tick(client)
         except Exception as exc:  # noqa: BLE001 — alerts must never kill the loop
             print(f"[strategy2] liq alerts error: {exc}")
+        # 🐳 Whale tracker — curated Hyperliquid addresses open/close/flip into
+        # the same liq topic (self-paced to WHALE_POLL_SEC).
+        try:
+            whale_tracker.tick(client)
+        except Exception as exc:  # noqa: BLE001 — must never kill the loop
+            print(f"[strategy2] whale tracker error: {exc}")
         # 🚨 Watchdog — bark on Telegram if a stack process died (S3 watches us).
         try:
             watchdog.tick("strategy2_scanner.py")

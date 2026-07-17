@@ -55,7 +55,8 @@ ALLOWED_CHATS = {str(c) for c in (config.TELEGRAM_GROUP_CHAT_ID, config.CHAT_ID,
 # Destructive commands need more than "typed inside the group": the SENDER
 # must be a group admin (checked live via getChatAdministrators, cached) or
 # the owner (the DM chat ids double as the owner's user ids).
-ADMIN_COMMANDS = {"clean", "clear", "purge", "cleanall", "resume", "halt"}
+ADMIN_COMMANDS = {"clean", "clear", "purge", "cleanall", "resume", "halt",
+                  "whaleadd", "whalerm"}
 OWNER_IDS = {str(c) for c in (config.CHAT_ID, config.ALERTS_CHAT_ID) if c}
 # The daily report carries REAL account balances/P&L → strictly the owner's.
 # Not even group admins may read it, and the answer always goes to the
@@ -239,6 +240,8 @@ HELP = ("🤖 Commands\n"
         "/tw — latest 台股 scan (大盤 regime + setups)\n"
         "/twnow — 台股即時: TAIEX + 漲跌幅前三 + 追蹤設定現價\n"
         "/liq — BTC/ETH 清算: 24h統計 + 最近清算價 + 🧲清算地圖\n"
+        "/whale — 🐳 巨鯨追蹤: 每個地址的即時持倉 (Hyperliquid)\n"
+        "/whaleadd <0x地址> [名稱] · /whalerm <地址> — 管理追蹤清單 (限管理員)\n"
         "/outcomes — 訊號成績單: 每個訊號48h後的真實結果\n"
         "/mom — ETH 14d動能紙上前測戰績\n"
         "/resume — 解除 S3 熔斷 (限管理員) · /halt [原因] — 手動熔斷\n"
@@ -291,6 +294,20 @@ def handle(cmd: str, args: str = "") -> str:
     if cmd in ("liq", "liquidations"):
         import liq_alerts
         return liq_alerts.build_report()
+    if cmd in ("whale", "whales"):
+        import whale_tracker
+        return whale_tracker.build_report()
+    if cmd == "whaleadd":
+        import whale_tracker
+        parts = args.strip().split(None, 1)
+        if not parts:
+            return "用法: /whaleadd <0x地址> [名稱]"
+        return whale_tracker.add_address(parts[0], parts[1] if len(parts) > 1 else "")
+    if cmd == "whalerm":
+        import whale_tracker
+        if not args.strip():
+            return "用法: /whalerm <0x地址>"
+        return whale_tracker.remove_address(args.strip())
     if cmd in ("tw", "twstocks"):
         import tw_stocks
         st = tw_stocks._load_state()

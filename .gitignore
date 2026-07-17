@@ -43,6 +43,8 @@ s3_halt.json
 signal_outcomes.json
 eth_mom_state.json
 balance_history.json
+whale_state.json
+whale_addresses.json
 app/backups/
 
 # ── Large generated caches / data dumps ──
