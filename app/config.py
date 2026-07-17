@@ -497,7 +497,15 @@ STRATEGY2_LIVE_TOP_N = int(os.getenv("STRATEGY2_LIVE_TOP_N", str(TOP_SYMBOL_LIMI
 # BTC-aligned AND ADX ≥ MIN_ADX (trend, not chop). Only ⭐ signals send the
 # immediate bilingual alert; the digest keeps a wider bar (below) so the
 # topic stays alive without drowning readers in coin-flip signals.
-STRATEGY2_PREMIUM_MIN_SCORE = int(os.getenv("STRATEGY2_PREMIUM_MIN_SCORE", "80"))
+#
+# 2026-07-17 re-measure (same 60d/6,545-fire replay): of all combined gates,
+# conv≥85 + aligned + ADX≥20 was the BEST on both axes — 51.6% TP1-first (vs
+# 50.0% at conv≥80) and the highest managed expectancy of the grid (+0.113R vs
+# +0.076R). At the ⭐ plan geometry (SL 2×ATR, TP1 0.75R) that gate reaches its
+# first target 58.7% of the time. So MIN_SCORE 80→85: fewer signals (~13/day
+# over 60 symbols), higher win rate, better expectancy. (Alert-only tier —
+# STRATEGY2_LIVE is false — so this changes which alerts fire, not live orders.)
+STRATEGY2_PREMIUM_MIN_SCORE = int(os.getenv("STRATEGY2_PREMIUM_MIN_SCORE", "85"))
 STRATEGY2_PREMIUM_REQUIRE_ALIGNED = _env_bool("STRATEGY2_PREMIUM_REQUIRE_ALIGNED", True)
 STRATEGY2_PREMIUM_MIN_ADX = float(os.getenv("STRATEGY2_PREMIUM_MIN_ADX", "20"))
 # Cap immediate ⭐ alerts per sweep so a market-wide pump (many alts aligning
@@ -520,6 +528,13 @@ STRATEGY2_MIN_STOP_PCT = float(os.getenv("STRATEGY2_MIN_STOP_PCT", "0.003"))
 # gate above (58.7% of premium signals reached TP1 before the stop; the old
 # 1R TP1 on a 1.5×ATR stop was ~50%). TP2 stays a 2R runner. These knobs
 # shape ONLY the published ⭐ plan; live execution keeps its own levels.
+#
+# TP1_R is the win-rate LEVER. Measured on the conv≥85+aligned gate (SL 2×ATR):
+#   TP1 0.50R → 67.7% hit    TP1 0.75R → 58.7%    TP1 1.0R → 50.4%
+# BUT tighter = smaller wins: after fees EVERY setting is slightly negative, so
+# 0.5R buys a prettier win rate at the cost of expectancy (the classic high-WR
+# trap). 0.75R is the honest default; drop to 0.50R only if you knowingly want
+# the higher hit rate for the promo optics, not because it makes more money.
 STRATEGY2_PREMIUM_SL_MULT = float(os.getenv("STRATEGY2_PREMIUM_SL_MULT", "2.0"))
 STRATEGY2_PREMIUM_TP1_R = float(os.getenv("STRATEGY2_PREMIUM_TP1_R", "0.75"))
 STRATEGY2_PREMIUM_TP2_R = float(os.getenv("STRATEGY2_PREMIUM_TP2_R", "2.0"))
