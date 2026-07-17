@@ -1,6 +1,8 @@
-"""S2 Telegram trade-plan blocks — pure formatting tests (中文+EN format,
-Bybit fallback exercised offline via the conftest bybit_data guard)."""
+"""S2 Telegram trade-plan blocks — the plan block now lives in the shared house
+style (tg_format.mono_plan); the digest still uses S2S helpers. Bybit fallback
+is exercised offline via the conftest bybit_data guard."""
 import strategy2_scanner as S2S
+import tg_format
 
 
 def _sig(direction="long"):
@@ -11,34 +13,29 @@ def _sig(direction="long"):
             "tp1": 1782.0, "tp2": 1764.0}
 
 
-def test_plan_block_long():
-    block = S2S._plan_block(_sig("long"))
-    assert "進場 Entry   1800" in block
-    assert "停損 SL      1782  (-1.00%)" in block
-    assert "目標1 TP1    1818  (+1.00% · 1R)" in block
-    assert "目標2 TP2    1836  (+2.00% · 2R)" in block
-    assert "先平一半" in block                       # managed-exit guidance
+def test_mono_plan_long_aligned():
+    block = tg_format.mono_plan(1800.0, 1782.0, 1818.0, 1836.0, is_long=True)
+    assert block.startswith("<pre>") and block.endswith("</pre>")
+    assert "進場 1,800" in block
+    assert "停損 1,782" in block and "−1.0%" in block   # real minus glyph
+    assert "目標 1,818" in block and "+1.0% · 1R" in block
+    assert "終標 1,836" in block and "+2.0% · 2R" in block
 
 
-def test_plan_block_premium_geometry_fractional_r():
-    # premium plan: TP1 at 0.75R must not round up to "1R"
-    sig = {"direction": "long", "entry": 100.0, "sl": 98.0,
-           "tp1": 101.5, "tp2": 104.0}
-    block = S2S._plan_block(sig)
-    assert "0.75R" in block
-    assert "2R" in block
+def test_mono_plan_fractional_r_not_rounded():
+    block = tg_format.mono_plan(100.0, 98.0, 101.5, 104.0, is_long=True)
+    assert "0.75R" in block and "2R" in block           # 0.75R must not round to 1R
 
 
-def test_plan_block_short_signs_flip():
-    block = S2S._plan_block(_sig("short"))
-    assert "停損 SL      1818  (+1.00%)" in block
-    assert "目標2 TP2    1764  (-2.00% · 2R)" in block
+def test_mono_plan_short_signs_flip():
+    block = tg_format.mono_plan(1800.0, 1818.0, 1782.0, 1764.0, is_long=False)
+    assert "停損 1,818" in block and "−1.0%" in block    # SL above entry = unfavourable
+    assert "終標 1,764" in block and "+2.0% · 2R" in block
 
 
-def test_plan_block_missing_levels_is_empty():
-    assert S2S._plan_block({"direction": "long", "entry": 1800.0}) == ""
-    assert S2S._plan_block({"direction": "long", "entry": 1800.0, "sl": 1800.0,
-                            "tp1": 1.0, "tp2": 1.0}) == ""   # zero-risk guard
+def test_mono_plan_missing_or_zero_risk_is_empty():
+    assert tg_format.mono_plan(1800.0, None, 1818.0, 1836.0, is_long=True) == ""
+    assert tg_format.mono_plan(1800.0, 1800.0, 1.0, 1.0, is_long=True) == ""  # zero-risk
 
 
 def test_digest_caps_rows_and_stays_under_telegram_limit():

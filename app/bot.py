@@ -113,6 +113,7 @@ from market_data import (
 from smc import analyze_smc
 from telegram_utils import send_message
 import executor
+import tg_format
 
 # Import database models from app
 try:
@@ -1038,7 +1039,7 @@ def activate_queued_signals():
             )
             notify_s1_follow(
                 s1_follow_card(
-                    "✅ 進場成交 FILLED", symbol, direction,
+                    "✅ 進場成交", symbol, direction,
                     filled_entry, sl_price, tp_price, tp2_price,
                     timeframe=payload.get("timeframe"),
                     footer="已進場 · 依計畫嚴守停損",
@@ -1392,74 +1393,40 @@ def format_trade_card(headline, symbol, direction, entry, sl, tp,
 S1_FOLLOW_CHANNEL = "s1signals"
 
 
-def _s1_bybit_lines(base: str, ref_price) -> list:
-    """Bybit 現價 line + tappable Bybit 下單 link, with an honest Binance
-    fallback ('未上架 · 參考價 …' + a TradingView chart link). Never raises."""
-    lines: list = []
-    url = None
-    try:
-        import bybit_data
-        price_line = bybit_data.price_line(base, fallback_price=ref_price)
-        if price_line:
-            lines.append(price_line)
-        url = bybit_data.trade_url(base)
-    except Exception:  # noqa: BLE001 — a Bybit hiccup must never break an alert
-        pass
-    if url:
-        lines.append(f'<a href="{url}">Bybit 下單 →</a>')
-    else:
-        tv = f"https://www.tradingview.com/chart/?symbol=BINANCE:{base}{QUOTE_ASSET}.P"
-        lines.append(f'<a href="{tv}">📈 圖表 →</a>')
-    return lines
-
-
 def s1_follow_card(headline, symbol, direction, entry, sl, tp1, tp2, *,
                    timeframe=None, footer=None) -> str:
-    """One 中文 copy-trade card (HTML): 方向 · 進場/停損/目標 block · 槓桿 · R:R ·
-    Bybit 現價+連結 · 免責聲明. Used for 掛單 (limit placed) and 進場成交 (filled)."""
+    """One 中文 copy-trade card in the shared house style (tg_format): headline ·
+    方向 · 標的 · 週期 / 槓桿·R:R / monospace 進場停損目標 block / Bybit link /
+    免責. Used for 掛單 (limit placed) and 進場成交 (filled)."""
     is_long = str(direction).upper() == "LONG"
     base = symbol.split("/")[0].split(":")[0]
-    dir_zh = "🟢 做多 LONG" if is_long else "🔴 做空 SHORT"
-    tf = f" · {timeframe}" if timeframe else ""
+    head = f"{headline} · {tg_format.dir_zh(direction)} {pair_name(symbol)}"
+    if timeframe:
+        head += f" · {timeframe}"
 
-    rows = [f"進場 Entry  {format_price(entry)}"]
-    if sl is not None:
-        rows.append(f"停損 SL     {format_price(sl)}  ({_signed_pct(entry, sl, is_long)})")
-    if tp1 is not None:
-        rows.append(f"目標1 TP1  {format_price(tp1)}  ({_signed_pct(entry, tp1, is_long)})")
-    if tp2 is not None:
-        rows.append(f"目標2 TP2  {format_price(tp2)}  ({_signed_pct(entry, tp2, is_long)})")
-    price_block = "\n".join(rows)
+    meta = [f"槓桿 {LEVERAGE}x"]
+    if entry and sl and tp2 and abs(entry - sl) > 0:
+        meta.append(f"風險報酬 {abs(tp2 - entry) / abs(entry - sl):.1f}R")
 
-    meta = []
-    if tp2 is not None and sl is not None and entry:
-        risk, reward = abs(entry - sl), abs(tp2 - entry)
-        if risk > 0:
-            meta.append(f"風險報酬 {reward / risk:.1f}R")
-    meta.append(f"本倉槓桿 {LEVERAGE}x")
-
-    lines = [f"{headline}  {dir_zh} · {pair_name(symbol)}{tf}",
-             f"<pre>{price_block}</pre>",
-             " · ".join(meta)]
+    lines = [head, " · ".join(meta)]
+    plan = tg_format.mono_plan(entry, sl, tp1, tp2, is_long=is_long)
+    if plan:
+        lines += [tg_format.DIV, plan, tg_format.DIV]
     if footer:
         lines.append(footer)
-    lines += _s1_bybit_lines(base, entry)
-    lines.append("⚠️ 訊號僅供參考，非投資建議 · 到 TP1 建議先平一半、停損移到進場價")
+    lines.append(tg_format.bybit_line(base, entry))
+    lines.append("⚠️ 非投資建議 · 到目標先平半、停損移進場")
     return "\n".join(x for x in lines if x)
 
 
 def s1_follow_exit(kind, symbol, direction, pnl_pct, *, note=None) -> str:
     """One-line 中文 exit update for the follow feed. `kind` ∈
     {tp1, sl, tp2, be}; `pnl_pct` is already signed (loss is negative)."""
-    dir_zh = "做多" if str(direction).upper() == "LONG" else "做空"
     pair = pair_name(symbol)
-    heads = {
-        "tp1": f"🎯 TP1 達標 · {pair} {dir_zh}  +{pnl_pct:.1f}%",
-        "sl":  f"🛑 停損出場 · {pair} {dir_zh}  {pnl_pct:.1f}%",
-        "tp2": f"🏆 止盈達標 · {pair} {dir_zh}  +{pnl_pct:.1f}%",
-        "be":  f"⚖️ 保本出場 · {pair} {dir_zh}  +{pnl_pct:.1f}%",
-    }
-    lines = [heads[kind]]
+    pct = f"+{pnl_pct:.1f}%" if pnl_pct >= 0 else f"−{abs(pnl_pct):.1f}%"
+    verb = {"tp1": "🎯 TP1 達標", "sl": "🛑 停損出場",
+            "tp2": "🏆 止盈達標", "be": "⚖️ 保本出場"}[kind]
+    lines = [f"{verb} · {tg_format.dir_zh(direction)} {pair}  {pct}"]
     if note:
         lines.append(note)
     return "\n".join(lines)
@@ -1467,8 +1434,7 @@ def s1_follow_exit(kind, symbol, direction, pnl_pct, *, note=None) -> str:
 
 def s1_follow_cancel(symbol, direction, reason_zh) -> str:
     """取消掛單 notice — a follower who mirrored the limit must know to cancel it."""
-    dir_zh = "做多" if str(direction).upper() == "LONG" else "做空"
-    return (f"🚫 取消掛單 · {pair_name(symbol)} {dir_zh}\n"
+    return (f"🚫 取消掛單 · {tg_format.dir_zh(direction)} {pair_name(symbol)}\n"
             f"{reason_zh}，如已掛單請一併取消")
 
 
@@ -2496,7 +2462,7 @@ def run_bot() -> None:
                                     if is_new_queue:
                                         notify_s1_follow(
                                             s1_follow_card(
-                                                "⏳ 掛單 待成交 QUEUED", symbol, direction_str,
+                                                "⏳ 掛單待成交", symbol, direction_str,
                                                 entry_price, sl_price, tp1_price, tp2_price,
                                                 timeframe=timeframe,
                                                 footer="已掛限價單，等待成交（可同步掛單）",

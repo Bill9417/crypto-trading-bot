@@ -22,7 +22,7 @@ def test_digest_sections_and_dedupe():
     state = {}
     items = [_item("Claude adds MCP marketplace"), _item("New Linux kernel released")]
     msg = TN.build_digest(items, state, now)
-    assert "🤖 AI / LLM" in msg and "🌐 General" in msg
+    assert "🤖 AI / LLM" in msg and "🌐 綜合" in msg
     assert msg.index("MCP marketplace") < msg.index("Linux kernel")
     # everything now seen → nothing new → no digest
     assert TN.build_digest(items, state, now) is None

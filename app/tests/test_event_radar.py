@@ -12,19 +12,19 @@ def _item(title, age_sec=60, source="CoinDesk"):
 
 # ── categorize ───────────────────────────────────────────────────────────────
 def test_categorize_fed():
-    assert "FED" in ER.categorize("Fed holds interest rates steady as Powell warns on inflation")
+    assert "聯準會" in ER.categorize("Fed holds interest rates steady as Powell warns on inflation")
 
 
 def test_categorize_war():
-    assert "GEOPOLITICS" in ER.categorize("Missiles strike port city as war escalation feared")
+    assert "地緣政治" in ER.categorize("Missiles strike port city as war escalation feared")
 
 
 def test_categorize_hack():
-    assert "HACK" in ER.categorize("DeFi protocol drained of $80M in exploit")
+    assert "駭客" in ER.categorize("DeFi protocol drained of $80M in exploit")
 
 
 def test_categorize_whale():
-    assert "WHALE" in ER.categorize("Dormant wallet from 2011 moves coins — whale watchers on alert")
+    assert "巨鯨" in ER.categorize("Dormant wallet from 2011 moves coins — whale watchers on alert")
 
 
 def test_categorize_neutral_is_none():
@@ -46,7 +46,7 @@ def test_news_alerts_fresh_high_impact_once():
     state = {"seeded": True, "seen": {}}
     items = [_item("Fed cuts interest rates by 50bps")]
     out = ER._news_alerts(items, state, now)
-    assert len(out) == 1 and "FED" in out[0]
+    assert len(out) == 1 and "聯準會" in out[0]
     # same headline again → deduped
     assert ER._news_alerts(items, state, now) == []
 
@@ -106,7 +106,7 @@ def test_shock_fires_on_fast_move_with_cooldown():
     state = {}
     out = ER._shock_alerts(_FakeClient(spiked), state, time.time())
     assert len(out) == 2                  # BTC and ETH fake the same feed here
-    assert "MARKET SHOCK" in out[0]
+    assert "行情劇變" in out[0]
     # cooldown: immediate second tick stays silent
     assert ER._shock_alerts(_FakeClient(spiked), state, time.time()) == []
 

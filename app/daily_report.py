@@ -73,30 +73,32 @@ def _pnl(v):
 
 def _acct_section(icon: str, name: str, snap: dict, pnl: dict) -> list:
     """One account block: balance line, realized-P&L line, open positions."""
+    import tg_format
     lines = [f"{icon} {name}"]
     bal = (snap or {}).get("balance") or {}
     total = bal.get("wallet") if bal.get("wallet") is not None else bal.get("equity")
     if total is None:
-        lines.append("  balance unavailable" +
-                     (f" ({snap.get('error')})" if (snap or {}).get("error") else ""))
+        lines.append("  餘額暫時無法取得" +
+                     (f"（{snap.get('error')}）" if (snap or {}).get("error") else ""))
     else:
         upnl = bal.get("unrealized_pnl")
-        lines.append(f"  balance {_n(total)} USDT · avail {_n(bal.get('available'))}"
-                     + (f" · uPnL {_pnl(upnl)}" if upnl not in (None, 0.0) else ""))
+        lines.append(f"  餘額 {_n(total)} USDT · 可用 {_n(bal.get('available'))}"
+                     + (f" · 未實現 {_pnl(upnl)}" if upnl not in (None, 0.0) else ""))
     daily = (pnl or {}).get("daily") or []
     if len(daily) >= 2:
         week = sum(d.get("net") or 0.0 for d in daily[-7:])
-        lines.append(f"  P&L today {_pnl(daily[-1].get('net'))} · "
-                     f"yesterday {_pnl(daily[-2].get('net'))} · 7d {_pnl(week)}")
+        lines.append(f"  損益 今日 {_pnl(daily[-1].get('net'))} · "
+                     f"昨日 {_pnl(daily[-2].get('net'))} · 7 日 {_pnl(week)}")
     positions = (snap or {}).get("positions") or []
     if positions:
         for p in positions[:8]:
             base = (p.get("symbol") or "?").split("/")[0]
             pct = p.get("pnl_pct")
-            lines.append(f"  ▸ {base} {p.get('side')} {_pnl(p.get('unrealized_pnl'))}"
-                         + (f" ({_pnl(pct)}%)" if pct is not None else ""))
+            lines.append(f"  ▸ {base} {tg_format.dir_zh(p.get('side'), arrow=False)} "
+                         f"{_pnl(p.get('unrealized_pnl'))}"
+                         + (f"（{_pnl(pct)}%）" if pct is not None else ""))
     else:
-        lines.append("  no open positions")
+        lines.append("  無持倉")
     return lines
 
 
@@ -112,32 +114,35 @@ def _today_events(events: list, now: datetime) -> list:
         local = datetime.fromtimestamp(ts, TZ)
         if local.strftime("%Y-%m-%d") != today:
             continue
-        extra = f" (forecast {ev['forecast']})" if ev.get("forecast") else ""
+        extra = f"（預測 {ev['forecast']}）" if ev.get("forecast") else ""
         rows.append((ts, f"  • {local.strftime('%H:%M')} {ev.get('title')}{extra}"))
     return [r[1] for r in sorted(rows)]
 
 
+_WD = "一二三四五六日"
+
+
 def build_report(data: dict, now: datetime) -> str:
-    lines = [f"📈 DAILY REPORT · {now.strftime('%a %Y-%m-%d')}", ""]
-    lines += _acct_section("🟨", "Binance (S1/S2)",
+    lines = [f"📈 每日報告 · {now.strftime('%Y-%m-%d')}（週{_WD[now.weekday()]}）", ""]
+    lines += _acct_section("🟨", "Binance · S1/S2",
                            data.get("binance_snap"), data.get("binance_pnl"))
     lines.append("")
-    lines += _acct_section("🟧", "Bybit (S3)",
+    lines += _acct_section("🟧", "Bybit · S3",
                            data.get("bybit_snap"), data.get("bybit_pnl"))
 
     market_bits = []
     btc = data.get("btc") or {}
     if btc.get("price"):
-        market_bits.append(f"BTC {_n(btc['price'], 0)} ({_pnl(btc.get('change_pct'))}% 24h)")
+        market_bits.append(f"BTC {_n(btc['price'], 0)}（{_pnl(btc.get('change_pct'))}% 24h）")
     fng = data.get("fng") or {}
     if fng.get("value") is not None:
-        market_bits.append(f"Fear&Greed {fng['value']} ({fng.get('label')})")
+        market_bits.append(f"貪婪指數 {fng['value']}（{fng.get('label')}）")
     if market_bits:
-        lines += ["", "🌡 Market", "  " + " · ".join(market_bits)]
+        lines += ["", "🌡 市場", "  " + " · ".join(market_bits)]
 
     cal = _today_events(data.get("calendar") or [], now)
-    lines += ["", "🗓 Today (high-impact US)"]
-    lines += cal if cal else ["  none — quiet macro day"]
+    lines += ["", "🗓 今日 · 美國高影響數據"]
+    lines += cal if cal else ["  無 — 平靜的總經日"]
 
     # Monday: each live engine must justify its slot with REAL numbers.
     if now.weekday() == 0:

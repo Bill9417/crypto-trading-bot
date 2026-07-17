@@ -245,10 +245,12 @@ def _px(x) -> str:
     if x == 0:
         return "—"
     if x >= 1000:
-        return f"{x:,.1f}"
-    if x >= 1:
-        return f"{x:,.3f}"
-    return f"{x:.6g}"
+        s = f"{x:,.1f}"
+    elif x >= 1:
+        s = f"{x:,.3f}"
+    else:
+        return f"{x:.6g}"
+    return s.rstrip("0").rstrip(".") if "." in s else s
 
 
 _SIDE_ZH = {"long": "做多", "short": "做空"}
@@ -262,33 +264,36 @@ _KIND = {
 
 
 def build_alert(label: str, address: str, ev: dict, pos: dict, acct: float) -> str:
-    """One 中文 whale-move card for the 清算 topic."""
+    """One 中文 whale-move card for the 清算 topic, in the shared house style
+    (tg_format DIV + a monospace-aligned <pre> block). HTML parse_mode."""
+    import tg_format
     coin = ev["coin"]
     icon, verb = _KIND.get(ev["kind"], ("🐳", ev["kind"]))
     side_zh = _SIDE_ZH.get(ev.get("side"), ev.get("side") or "")
     if ev["kind"] == "flip":
-        head = (f"{icon} {verb} "
-                f"{_SIDE_ZH.get(ev.get('prev_side'), '?')}→{side_zh} {coin}")
-    elif ev["kind"] == "close":
-        head = f"{icon} {verb} {side_zh} {coin}"
+        action = (f"{icon} {verb} "
+                  f"{_SIDE_ZH.get(ev.get('prev_side'), '?')}→{side_zh} {coin}")
     else:
-        head = f"{icon} {verb} {side_zh} {coin}"
+        action = f"{icon} {verb} {side_zh} {coin}"
 
-    lines = [f"🐳 巨鯨動向 · {label}", head]
+    lines = [f"🐳 {label}", action]
     p = pos.get(coin)
     if p and ev["kind"] != "close":
-        parts = [f"部位 {_usd(p['notional'])}", f"進場 {_px(p['entry'])}"]
+        r1 = f"部位 {_usd(p['notional'])}"
         if p.get("lev"):
-            parts.append(f"{int(p['lev'])}x")
-        lines.append(" · ".join(parts))
-        tail = [f"未實現 {_signed_usd(p['upnl'])}"]
+            r1 += f" · {int(p['lev'])}x"
+        r2 = f"進場 {_px(p['entry'])}"
         if p.get("liq"):
-            tail.append(f"清算價 {_px(p['liq'])}")
-        lines.append(" · ".join(tail))
-    if acct:
+            r2 += f" · 清算 {_px(p['liq'])}"
+        r3 = f"損益 {_signed_usd(p['upnl'])}"
+        if acct:
+            r3 += f" · 帳戶 {_usd(acct)}"
+        lines += [tg_format.DIV, "<pre>" + "\n".join((r1, r2, r3)) + "</pre>",
+                  tg_format.DIV]
+    elif acct:
         lines.append(f"帳戶淨值 {_usd(acct)}")
-    lines.append(f"📊 Coinglass → {_coinglass(address)}")
-    lines.append("⚠️ 追蹤資訊，非投資建議 · 巨鯨也會做錯方向")
+    lines.append(f'📊 <a href="{_coinglass(address)}">Coinglass ↗</a>')
+    lines.append("⚠️ 追蹤資訊，非投資建議")
     return "\n".join(lines)
 
 
@@ -397,7 +402,8 @@ def tick(client=None) -> int:
             if sent >= ALERTS_PER_POLL:
                 break
             msg = build_alert(label, addr, ev, pos, acct)
-            if telegram_utils.send_message(msg, force=True, channel="liq"):
+            if telegram_utils.send_message(msg, parse_mode="HTML",
+                                           force=True, channel="liq"):
                 sent += 1
                 print(f"[whale] {label} {ev['kind']} {ev.get('side','')} {ev['coin']}")
         state[addr] = cur                     # advance baseline whether or not we alerted

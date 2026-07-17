@@ -5,6 +5,9 @@ A daemon thread inside the Strategy-2 scanner long-polls getUpdates on the
 main bot token and answers slash-commands, replying in whatever topic thread
 the command was typed in:
 
+    /guide      the group guide — topics map + honesty policy (also auto-sent
+                as a short welcome when a new member joins the group)
+    /price      spot quotes, default BTC ETH SOL BNB (Binance public REST)
     /winrate    win-rate report from REAL exchange records (Binance + Bybit)
     /positions  open positions on both accounts, with unrealized P&L
     /signals    last fired S2 signals with their Entry/SL/TP plans
@@ -146,52 +149,54 @@ def _pnl(v):
 def fmt_winrate(binance: dict, bybit: dict) -> str:
     """The /winrate report — REAL exchange records, fees included, not the
     simulated tracker. Sections degrade to the error text on an API blip."""
-    lines = ["🎯 WIN RATE — real account trades\n"]
-    for icon, name, s in (("🟨", "Binance (S1/S2)", binance),
-                          ("🟧", "Bybit (S3)", bybit)):
+    lines = ["🎯 勝率 · 真實帳戶成交\n"]
+    for icon, name, s in (("🟨", "Binance · S1/S2", binance),
+                          ("🟧", "Bybit · S3", bybit)):
         lines.append(f"{icon} {name}")
         if not (s or {}).get("ok"):
-            lines.append(f"  unavailable ({(s or {}).get('error', 'no data')})\n")
+            lines.append(f"  暫時無法取得（{(s or {}).get('error', 'no data')}）\n")
             continue
         n = s.get("n_trades") or 0
         if not n:
-            lines.append("  no closed trades yet\n")
+            lines.append("  尚無平倉紀錄\n")
             continue
         pf = s.get("profit_factor")
         streak = f"{s.get('streak_type') or ''}{s.get('streak') or 0}"
         week = sum(d.get("net") or 0.0 for d in (s.get("daily") or [])[-7:])
         lines += [
-            f"  trades {n} · {s.get('wins')}W / {s.get('losses')}L → "
+            f"  成交 {n} · {s.get('wins')}勝 / {s.get('losses')}敗 → "
             f"{_n(s.get('win_rate'), 1)}%",
-            f"  net {_pnl(s.get('net'))} USDT (fees in) · "
+            f"  淨值 {_pnl(s.get('net'))} USDT（含手續費）· "
             f"PF {pf if pf is not None else '—'}",
-            f"  avg win {_pnl(s.get('avg_win'))} · avg loss {_pnl(s.get('avg_loss'))}",
-            f"  7d {_pnl(week)} · max DD {_pnl(s.get('max_drawdown'))} · "
-            f"streak {streak}",
+            f"  平均獲利 {_pnl(s.get('avg_win'))} · 平均虧損 {_pnl(s.get('avg_loss'))}",
+            f"  7 日 {_pnl(week)} · 最大回撤 {_pnl(s.get('max_drawdown'))} · "
+            f"連續 {streak}",
             "",
         ]
-    lines.append("⚠ win rate alone means nothing — a 90% strategy loses money "
-                 "when the 10% are big. Read it WITH profit factor and net.")
+    lines.append("⚠️ 勝率不代表賺錢 — 90% 勝率但那 10% 賠很大照樣虧。"
+                 "要跟獲利因子（PF）和淨值一起看。")
     return "\n".join(lines)
 
 
 def fmt_positions(binance: dict, bybit: dict) -> str:
-    lines = ["📌 OPEN POSITIONS\n"]
+    import tg_format
+    lines = ["📌 未平倉部位\n"]
     for icon, name, snap in (("🟨", "Binance", binance), ("🟧", "Bybit", bybit)):
         lines.append(f"{icon} {name}")
         if not (snap or {}).get("ok", True) and not (snap or {}).get("positions"):
-            lines.append(f"  unavailable ({(snap or {}).get('error', 'no data')})\n")
+            lines.append(f"  暫時無法取得（{(snap or {}).get('error', 'no data')}）\n")
             continue
         poss = (snap or {}).get("positions") or []
         if not poss:
-            lines.append("  flat\n")
+            lines.append("  無持倉\n")
             continue
         for p in poss[:10]:
             base = (p.get("symbol") or "?").split("/")[0]
             pct = p.get("pnl_pct")
-            lines.append(f"  ▸ {base} {p.get('side')} · entry {_n(p.get('entry'))} "
-                         f"· uPnL {_pnl(p.get('unrealized_pnl'))}"
-                         + (f" ({_pnl(pct)}%)" if pct is not None else ""))
+            lines.append(f"  ▸ {base} {tg_format.dir_zh(p.get('side'), arrow=False)} "
+                         f"· 進場 {_n(p.get('entry'))} "
+                         f"· 未實現 {_pnl(p.get('unrealized_pnl'))}"
+                         + (f"（{_pnl(pct)}%）" if pct is not None else ""))
         lines.append("")
     return "\n".join(lines).rstrip()
 
@@ -209,7 +214,7 @@ def fmt_signals(payload: dict, limit: int = 5) -> str:
         star = " ⭐" if s.get("premium") else ""
         dir_zh = "做多" if s.get("direction") == "long" else "做空"
         lines.append(f"{arrow} {s.get('base')} {dir_zh}{star} · "
-                     f"信心 {s.get('score')}/100 · {age}前")
+                     f"信心 {s.get('score')} · {age}前")
         if s.get("entry") and s.get("sl") and s.get("tp2"):
             lines.append(f"   進場 {s['entry']:,.6g} · 停損 {s['sl']:,.6g} · "
                          f"目標1 {s.get('tp1', 0):,.6g} · 目標2 {s['tp2']:,.6g}")
@@ -221,33 +226,109 @@ def fmt_alerts(alerts: list) -> str:
     active = [a for a in alerts if not a.get("triggered")]
     fired = [a for a in alerts if a.get("triggered")]
     if not alerts:
-        return "🔔 No price alerts set — add them on the dashboard."
-    lines = ["🔔 PRICE ALERTS\n"]
+        return "🔔 尚未設定到價提醒 — 可在儀表板新增。"
+    lines = ["🔔 到價提醒\n"]
     for a in active:
-        lines.append(f"  ▸ {a['base']} {'▲ above' if a['direction'] == 'above' else '▼ below'} "
+        lines.append(f"  ▸ {a['base']} {'▲ 突破' if a['direction'] == 'above' else '▼ 跌破'} "
                      f"{a['price']:,.6g}")
     for a in fired[:5]:
-        lines.append(f"  ✓ {a['base']} fired @ {a.get('triggered_price', 0):,.6g}")
+        lines.append(f"  ✓ {a['base']} 已觸發 @ {a.get('triggered_price', 0):,.6g}")
     return "\n".join(lines)
 
 
-HELP = ("🤖 Commands\n"
-        "/winrate — win-rate report from real Binance + Bybit records\n"
-        "/positions — open positions on both accounts\n"
-        "/signals — last fired S2 signals with Entry/SL/TP\n"
-        "/alerts — price alerts currently armed\n"
-        "/report — 今日帳戶+市場日報 (擁有者專用, 只私訊回覆)\n"
-        "/tw — latest 台股 scan (大盤 regime + setups)\n"
+# ── group guide + welcome (the promo surface) ────────────────────────────────
+GUIDE = (
+    "📖 群組導覽\n"
+    "\n"
+    "本群由 24/7 自動化交易系統驅動。所有訊號都附進場/停損/目標，"
+    "而且每個訊號 48 小時後會用真實 K 線結算成績（/outcomes）— "
+    "我們公開輸單，不只貼贏單。\n"
+    "\n"
+    "🗂 主題頻道\n"
+    "📊 訊號 — S2 掃描（15m）：⭐ 精選訊號 + 訊號榜 + 週日成績單\n"
+    "📈 S1 交易訊號 — 實盤跟單流程：掛單 → 成交 → 出場 全程通知\n"
+    "📈 每日報告 — 每天早上市場快報（價格、恐懼貪婪、總經日曆）\n"
+    "🌍 大事件 — Fed／地緣政治／監管／駭客 突發 + 行情劇變警報\n"
+    "💥 清算 — BTC/ETH 清算連鎖警報 + 🧲 清算地圖 + 🐳 巨鯨持倉追蹤\n"
+    "🇹🇼 台股 — TW50 回踩掃描（每交易日 14:00）+ 盤中異動\n"
+    "💻 科技 — AI／科技新聞摘要（每 6 小時）\n"
+    "🔔 提醒 — 到價提醒與系統通知\n"
+    "\n"
+    "🤖 常用指令\n"
+    "/price — 即時報價 · /signals — 最近訊號 · /outcomes — 成績單\n"
+    "/liq — 清算地圖 · /whale — 巨鯨持倉 · /help — 完整清單\n"
+    "\n"
+    "⚠️ 誠實原則：勝率不是保證，歷史不代表未來。所有內容僅供參考，"
+    "非投資建議 — 資金管理永遠是你自己的責任。")
+
+
+def welcome_text(names: list) -> str:
+    """Short greeting for new members — points at the full /guide."""
+    who = "、".join(n for n in names if n)[:80] or "新朋友"
+    return (f"👋 歡迎 {who}！\n"
+            "這裡是自動化交易訊號群 — 訊號附進場/停損/目標，"
+            "成績每週公開結算，輸單也照貼。\n"
+            "先看 /guide 了解各主題頻道，常用指令在 /help。\n"
+            "⚠️ 訊號僅供參考，非投資建議。")
+
+
+HELP = ("🤖 指令列表\n"
+        "/guide — 📖 群組導覽（新朋友從這裡開始）\n"
+        "/price [幣] — 即時報價（預設 BTC ETH SOL BNB）\n"
+        "/winrate — 真實 Binance + Bybit 帳戶的勝率報告\n"
+        "/positions — 兩個帳戶的未平倉部位\n"
+        "/signals — 最近的 S2 訊號（含進場/停損/目標）\n"
+        "/alerts — 目前設定的到價提醒\n"
+        "/report — 今日帳戶+市場日報（擁有者專用, 只私訊回覆）\n"
+        "/tw — 最新台股掃描（大盤狀態 + 設定）\n"
         "/twnow — 台股即時: TAIEX + 漲跌幅前三 + 追蹤設定現價\n"
         "/liq — BTC/ETH 清算: 24h統計 + 最近清算價 + 🧲清算地圖\n"
-        "/whale — 🐳 巨鯨追蹤: 每個地址的即時持倉 (Hyperliquid)\n"
-        "/whaleadd <0x地址> [名稱] · /whalerm <地址> — 管理追蹤清單 (限管理員)\n"
-        "/outcomes — 訊號成績單: 每個訊號48h後的真實結果\n"
-        "/mom — ETH 14d動能紙上前測戰績\n"
-        "/resume — 解除 S3 熔斷 (限管理員) · /halt [原因] — 手動熔斷\n"
-        "/clean [小時] — 刪除 bot 超過N小時的舊訊息 (預設24, 上限47, 限管理員)\n"
-        "/cleanall — 一次清掉記錄功能上線前的全部舊訊息 (限管理員, 需確認)\n"
-        "/help — this list")
+        "/whale — 🐳 巨鯨追蹤: 每個地址的即時持倉（Hyperliquid）\n"
+        "/whaleadd <0x地址> [名稱] · /whalerm <地址> — 管理追蹤清單（限管理員）\n"
+        "/outcomes — 訊號成績單: 每個訊號 48h 後的真實結果\n"
+        "/mom — ETH 14 日動能紙上前測戰績\n"
+        "/resume — 解除 S3 熔斷（限管理員）· /halt [原因] — 手動熔斷\n"
+        "/clean [小時] — 刪除 bot 超過 N 小時的舊訊息（預設 24, 上限 47, 限管理員）\n"
+        "/cleanall — 一次清掉記錄功能上線前的全部舊訊息（限管理員, 需確認）\n"
+        "/help — 顯示這份清單")
+
+
+# ── /price — quick quotes (Binance spot public REST, no key) ────────────────
+PRICE_DEFAULT = ("BTC", "ETH", "SOL", "BNB")
+PRICE_MAX = 6
+
+
+def _fetch_price(base: str):
+    """One spot 24h ticker → {last, pct} or None (unknown symbol / blip)."""
+    try:
+        r = requests.get("https://api.binance.com/api/v3/ticker/24hr",
+                         params={"symbol": f"{base}USDT"}, timeout=8)
+        if not r.ok:
+            return None
+        d = r.json()
+        return {"last": float(d["lastPrice"]),
+                "pct": float(d["priceChangePercent"])}
+    except Exception:  # noqa: BLE001 — a dead quote is a per-symbol miss
+        return None
+
+
+def fmt_price_reply(rows: list) -> str:
+    """rows = [(base, {last, pct} | None), ...] → aligned quote list."""
+    import tg_format
+    lines = ["💲 即時報價（現貨 24h）"]
+    for base, q in rows:
+        if not q:
+            lines.append(f"  {base} — 查無此幣（試試完整代號，如 PEPE）")
+            continue
+        lines.append(f"  {base} {tg_format.fmt_price(q['last'])} · "
+                     f"{tg_format.pct(q['pct'])}")
+    return "\n".join(lines)
+
+
+def handle_price(args: str) -> str:
+    bases = [b.strip().upper() for b in args.split() if b.strip()][:PRICE_MAX]
+    bases = bases or list(PRICE_DEFAULT)
+    return fmt_price_reply([(b, _fetch_price(b)) for b in bases])
 
 
 def fmt_clean(summary: dict, hours: float) -> str:
@@ -267,6 +348,10 @@ def fmt_clean(summary: dict, hours: float) -> str:
 def handle(cmd: str, args: str = "") -> str:
     """Command name (+ raw args) → reply text. Import-inside so one broken
     dependency degrades that command, not the whole bot."""
+    if cmd in ("guide", "about", "intro"):
+        return GUIDE
+    if cmd in ("price", "p"):
+        return handle_price(args)
     if cmd in ("winrate", "stats", "wr"):
         import executor
         import strategy3_exec
@@ -402,6 +487,30 @@ def _reply(chat_id, thread_id, text) -> bool:
     return ok
 
 
+# 👋 Auto-welcome: a new member's first impression of the group. Rate-limited
+# so a join wave (or Telegram redelivering a service message) can't spam —
+# one greeting per WELCOME_GAP_SEC covers the whole burst.
+WELCOME_GAP_SEC = int(os.getenv("TG_WELCOME_GAP_SEC", "120"))
+_last_welcome = 0.0
+
+
+def _maybe_welcome(chat_id, thread_id, joiners) -> bool:
+    global _last_welcome
+    now = time.time()
+    if now - _last_welcome < WELCOME_GAP_SEC:
+        return False
+    _last_welcome = now
+    names = [(m.get("first_name") or m.get("username") or "").strip()
+             for m in joiners]
+    try:
+        ok = _reply(chat_id, thread_id, welcome_text(names))
+        print(f"[tgcmd] welcomed {len(joiners)} new member(s)")
+        return ok
+    except Exception as exc:  # noqa: BLE001 — a greeting must never kill the loop
+        print(f"[tgcmd] welcome failed: {exc}")
+        return False
+
+
 def _poll_loop() -> None:
     state = _load_state()
     offset = state.get("offset")
@@ -430,6 +539,12 @@ def _poll_loop() -> None:
             offset = up["update_id"] + 1
             msg = up.get("message") or {}
             chat_id = (msg.get("chat") or {}).get("id")
+            # 👋 join events (service messages) — greet humans, in the group only
+            joiners = [m for m in (msg.get("new_chat_members") or [])
+                       if not m.get("is_bot")]
+            if joiners and str(chat_id) == str(config.TELEGRAM_GROUP_CHAT_ID):
+                _maybe_welcome(chat_id, msg.get("message_thread_id"), joiners)
+                continue
             parsed = parse_command(msg.get("text") or "")
             if not parsed or not allowed(chat_id):
                 continue

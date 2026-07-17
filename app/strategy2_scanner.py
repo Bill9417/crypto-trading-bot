@@ -23,6 +23,7 @@ import os
 import time
 
 import bybit_data
+import tg_format
 import config
 import daily_report
 import event_radar
@@ -32,6 +33,7 @@ import price_alerts
 import backup_state
 import eth_mom
 import liq_alerts
+import morning_brief
 import signal_outcomes
 import tech_news
 import tg_commands
@@ -230,45 +232,26 @@ def _fmt_price(p) -> str:
         return str(p)
 
 
-def _plan_block(sig: dict) -> str:
-    """Multi-line 中文+EN Entry/SL/TP plan — % distances and R multiples so
-    the risk is readable at a glance. Empty when the signal carries no plan
-    (ATR calc failed)."""
-    entry, sl, tp1, tp2 = (sig.get(k) for k in ("entry", "sl", "tp1", "tp2"))
-    if not all((entry, sl, tp1, tp2)) or entry == sl:
-        return ""
-    return (f"進場 Entry   {_fmt_price(entry)}\n"
-            f"停損 SL      {_fmt_price(sl)}  ({(sl / entry - 1) * 100:+.2f}%)\n"
-            f"目標1 TP1    {_fmt_price(tp1)}  ({(tp1 / entry - 1) * 100:+.2f}% · "
-            f"{abs((tp1 - entry) / (entry - sl)):.2g}R)\n"
-            f"目標2 TP2    {_fmt_price(tp2)}  ({(tp2 / entry - 1) * 100:+.2f}% · "
-            f"{abs((tp2 - entry) / (entry - sl)):.2g}R)\n"
-            f"到 TP1 建議先平一半、停損移到進場價\n")
-
-
 def premium_alert_text(sig: dict) -> str:
-    """The ⭐ premium alert — 中文為主 (Bybit 現價+連結), compact English tags
-    kept so the terms stay chart-recognisable. Only signals that passed the
-    measured premium gate ever reach this."""
+    """The ⭐ premium alert in the shared house style (tg_format): headline ·
+    方向 · 標的 · 週期 / 信心·BTC·ADX / monospace 進場停損目標 block / Bybit link /
+    免責. Only signals that passed the measured premium gate reach this."""
     direction = sig.get("direction")
-    dir_zh = "做多" if direction == "long" else "做空"
-    arrow = "🟢" if direction == "long" else "🔴"
-    align_zh = "BTC趨勢同向 ✓" if sig.get("aligned") else "BTC盤整中"
+    base = sig["base"]
+    is_long = direction == "long"
     adx = sig.get("adx")
-    lines = [
-        f"⭐ 精選訊號 PREMIUM · {arrow} {dir_zh} {str(direction).upper()} · {sig['base']}",
-        f"信心 {sig.get('score')}/100 · {TIMEFRAME} · {align_zh}"
-        + (f" · ADX {adx:.0f}" if adx else ""),
-    ]
-    plan = _plan_block(sig)
+    head = f"⭐ 精選訊號 · {tg_format.dir_zh(direction)} {base} · {TIMEFRAME}"
+    meta = [f"信心 {sig.get('score')}",
+            "BTC同向" if sig.get("aligned") else "BTC盤整"]
+    if adx:
+        meta.append(f"ADX {adx:.0f}")
+    lines = [head, " · ".join(meta)]
+    plan = tg_format.mono_plan(sig.get("entry"), sig.get("sl"),
+                               sig.get("tp1"), sig.get("tp2"), is_long=is_long)
     if plan:
-        lines += ["──────────", plan.rstrip()]
-    lines.append("──────────")
-    bybit_line = bybit_data.price_line(sig["base"], fallback_price=sig.get("price"))
-    if bybit_line:
-        lines.append(bybit_line)
-    lines.append(bybit_data.trade_url(sig["base"]) or sig.get("tv_url") or "")
-    lines.append("⚠️ 訊號僅供參考，非投資建議 · 倉位風險請自行控管")
+        lines += [tg_format.DIV, plan, tg_format.DIV]
+    lines.append(tg_format.bybit_line(base, sig.get("price")))
+    lines.append("⚠️ 非投資建議 · 到目標先平半、停損移進場")
     return "\n".join(x for x in lines if x)
 
 
@@ -291,7 +274,7 @@ def _digest_text(sigs: list) -> str:
     ticker call), otherwise the Binance signal price."""
     longs = sorted([s for s in sigs if s["direction"] == "long"], key=lambda s: -s["score"])
     shorts = sorted([s for s in sigs if s["direction"] == "short"], key=lambda s: s["score"])
-    lines = [f"📊 策略2 訊號榜 STRATEGY 2 · {TIMEFRAME}",
+    lines = [f"📊 策略2 訊號榜 · {TIMEFRAME}",
              f"— 最近 {DIGEST_SEC // 60} 分鐘 · {len(sigs)} 個新訊號 —"]
 
     def _price_part(s):
@@ -303,13 +286,13 @@ def _digest_text(sigs: list) -> str:
             return
         lines.append(f"\n{title}")
         lines.extend(f"  {'⭐' if s.get('premium') else '•'} {s['base']} · "
-                     f"信心 {s['score']}/100 · {_price_part(s)}"
+                     f"信心 {s['score']} · {_price_part(s)}"
                      f"{_plan_suffix(s)}" for s in rows[:DIGEST_MAX_ROWS])
         if len(rows) > DIGEST_MAX_ROWS:
             lines.append(f"  …還有 {len(rows) - DIGEST_MAX_ROWS} 個 (完整清單見網頁)")
 
-    _side("🟢 做多 LONG", longs)
-    _side("🔴 做空 SHORT", shorts)
+    _side("🟢 做多", longs)
+    _side("🔴 做空", shorts)
     lines.append("\n⭐ = 精選 (信心+BTC同向+趨勢確認) · 僅供參考，非投資建議")
     return "\n".join(lines)
 
@@ -619,6 +602,12 @@ def main() -> None:
             daily_report.tick()
         except Exception as exc:  # noqa: BLE001 — report must never kill the loop
             print(f"[strategy2] daily report error: {exc}")
+        # ☀️ Public morning brief — market-only snapshot into the group's
+        # Report topic (the private report above goes to the owner's DM).
+        try:
+            morning_brief.tick(client)
+        except Exception as exc:  # noqa: BLE001 — brief must never kill the loop
+            print(f"[strategy2] morning brief error: {exc}")
         # 🔔 Price alerts — user-set levels from the dashboard, checked against
         # live tickers each sweep (one bulk fetch_tickers call).
         try:

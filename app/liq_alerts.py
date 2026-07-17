@@ -224,9 +224,9 @@ def build_alert(base: str, stats: dict, side: str, day: dict,
                 ticker: dict = None, window_sec: int = WINDOW_SEC,
                 liqmap: dict = None) -> str:
     mins = window_sec // 60
-    head = {"long": f"💥 {base} 多單被掃 (stop-run ↓)",
-            "short": f"💥 {base} 空單被掃 (stop-run ↑)",
-            "mixed": f"💥 {base} 雙向絞殺 (whipsaw)"}[side]
+    head = {"long": f"💥 {base} 多單被掃 ↓",
+            "short": f"💥 {base} 空單被掃 ↑",
+            "mixed": f"💥 {base} 雙向絞殺"}[side]
     total, n = stats["total_usd"], stats["n"]
     pct_long = 100 * stats["long_usd"] / total if total else 0
     lines = [head,

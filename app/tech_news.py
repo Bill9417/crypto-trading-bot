@@ -102,14 +102,14 @@ def build_digest(items: list, state: dict, now: float) -> str | None:
 
     def _fmt(i):
         title = (i["title"] or "")[:110]
-        return f"• {title} ({i['source']})\n  {i['link']}"
+        return f"• {title}（{i['source']}）\n  {i['link']}"
 
-    lines = [f"💻 TECH DIGEST · {len(fresh)} new"]
+    lines = [f"💻 科技新聞 · {len(fresh)} 則新消息"]
     if ai:
         lines.append("\n🤖 AI / LLM")
         lines += [_fmt(i) for i in ai]
     if rest:
-        lines.append("\n🌐 General")
+        lines.append("\n🌐 綜合")
         lines += [_fmt(i) for i in rest]
     return "\n".join(lines)
 

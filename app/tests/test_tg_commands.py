@@ -63,16 +63,16 @@ def _summary(**kw):
 def test_fmt_winrate_reports_both_accounts():
     msg = TG.fmt_winrate(_summary(), _summary(n_trades=40, win_rate=57.5, net=-104.29))
     assert "Binance" in msg and "Bybit" in msg
-    assert "6W / 4L" in msg and "60.0%" in msg
+    assert "6勝 / 4敗" in msg and "60.0%" in msg
     assert "-104.29" in msg
-    assert "PF 1.31" in msg and "7d +3.50" in msg
-    assert "win rate alone means nothing" in msg      # the honesty footer
+    assert "PF 1.31" in msg and "7 日 +3.50" in msg
+    assert "勝率不代表賺錢" in msg                     # the honesty footer
 
 
 def test_fmt_winrate_degrades_on_error():
     msg = TG.fmt_winrate({"ok": False, "error": "boom"}, _summary(n_trades=0))
-    assert "unavailable (boom)" in msg
-    assert "no closed trades yet" in msg
+    assert "暫時無法取得（boom）" in msg
+    assert "尚無平倉紀錄" in msg
 
 
 # ── /positions /signals /alerts formatting ───────────────────────────────────
@@ -81,7 +81,7 @@ def test_fmt_positions():
         {"symbol": "ETH/USDT:USDT", "side": "LONG", "entry": 1800.0,
          "unrealized_pnl": 0.42, "pnl_pct": 2.1}]}
     msg = TG.fmt_positions(binance, {"ok": True, "positions": []})
-    assert "ETH LONG" in msg and "+0.42" in msg and "flat" in msg
+    assert "ETH 做多" in msg and "+0.42" in msg and "無持倉" in msg
 
 
 def test_fmt_signals_with_plan():
@@ -90,7 +90,7 @@ def test_fmt_signals_with_plan():
          "entry": 1800.0, "sl": 1782.0, "tp1": 1818.0, "tp2": 1836.0,
          "premium": True}]}
     msg = TG.fmt_signals(payload)
-    assert "ETH 做多 ⭐" in msg and "85/100" in msg
+    assert "ETH 做多 ⭐" in msg and "信心 85" in msg and "85/100" not in msg
     assert "停損 1,782" in msg and "目標2 1,836" in msg
 
 
@@ -103,5 +103,61 @@ def test_fmt_alerts():
               {"base": "ETH", "direction": "below", "price": 1700.0,
                "triggered": 1.0, "triggered_price": 1699.0}]
     msg = TG.fmt_alerts(alerts)
-    assert "BTC ▲ above 70,000" in msg and "ETH fired @ 1,699" in msg
-    assert "No price alerts" in TG.fmt_alerts([])
+    assert "BTC ▲ 突破 70,000" in msg and "ETH 已觸發 @ 1,699" in msg
+    assert "尚未設定到價提醒" in TG.fmt_alerts([])
+
+
+# ── /guide + welcome (the promo surface) ─────────────────────────────────────
+def test_guide_is_returned_and_honest():
+    msg = TG.handle("guide")
+    assert "群組導覽" in msg and "主題頻道" in msg
+    assert "/outcomes" in msg and "/help" in msg
+    assert "非投資建議" in msg and "勝率不是保證" in msg   # honesty policy leads
+    # the guide is PUBLIC promo text — it must never mention account facts
+    for banned in ("餘額", "USDT", "持倉部位"):
+        assert banned not in msg
+
+
+def test_guide_aliases():
+    assert TG.handle("about") == TG.handle("guide") == TG.handle("intro")
+
+
+def test_welcome_text_greets_and_points_to_guide():
+    msg = TG.welcome_text(["小明", "Ada"])
+    assert "歡迎 小明、Ada" in msg
+    assert "/guide" in msg and "/help" in msg and "非投資建議" in msg
+
+
+def test_welcome_text_handles_empty_names():
+    assert "歡迎 新朋友" in TG.welcome_text(["", None])
+
+
+def test_maybe_welcome_rate_limited(monkeypatch):
+    sent = []
+    monkeypatch.setattr(TG, "_reply", lambda c, t, m: sent.append(m) or True)
+    monkeypatch.setattr(TG, "_last_welcome", 0.0)
+    assert TG._maybe_welcome(1, None, [{"first_name": "Bob"}])
+    assert not TG._maybe_welcome(1, None, [{"first_name": "Eve"}])  # inside gap
+    assert len(sent) == 1 and "Bob" in sent[0]
+
+
+# ── /price formatting ────────────────────────────────────────────────────────
+def test_fmt_price_reply_mixes_hits_and_misses():
+    rows = [("BTC", {"last": 108432.1, "pct": 1.23}),
+            ("ETH", {"last": 3520.5, "pct": -2.0}),
+            ("NOPE", None)]
+    msg = TG.fmt_price_reply(rows)
+    assert "BTC 108,432.1 · +1.2%" in msg
+    assert "ETH 3,520.5 · −2.0%" in msg          # real minus glyph
+    assert "NOPE — 查無此幣" in msg
+
+
+def test_handle_price_defaults_and_cap(monkeypatch):
+    asked = []
+    monkeypatch.setattr(TG, "_fetch_price",
+                        lambda b: asked.append(b) or {"last": 1.0, "pct": 0.0})
+    TG.handle_price("")
+    assert asked == list(TG.PRICE_DEFAULT)
+    asked.clear()
+    TG.handle_price("btc eth sol bnb doge pepe xrp ada")   # 8 asked → capped
+    assert len(asked) == TG.PRICE_MAX and asked[0] == "BTC"

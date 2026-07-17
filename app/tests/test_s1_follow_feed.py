@@ -17,26 +17,25 @@ import telegram_utils
 
 # ── entry / queued card ──────────────────────────────────────────────────────
 def test_follow_card_long_is_chinese_bybit_and_complete():
-    msg = bot.s1_follow_card("⏳ 掛單 待成交 QUEUED", "ETH/USDT:USDT", "LONG",
+    msg = bot.s1_follow_card("⏳ 掛單待成交", "ETH/USDT:USDT", "LONG",
                              3500.0, 3430.0, 3552.5, 3640.0, timeframe="1h")
-    assert "🟢 做多 LONG" in msg and "ETH/USDT" in msg
-    assert "進場 Entry" in msg and "停損 SL" in msg
-    assert "目標1 TP1" in msg and "目標2 TP2" in msg
-    assert f"本倉槓桿 {bot.LEVERAGE}x" in msg
+    assert "🟢 做多" in msg and "ETH/USDT" in msg
+    assert "進場" in msg and "停損" in msg
+    assert "目標" in msg and "終標" in msg
+    assert f"槓桿 {bot.LEVERAGE}x" in msg
     assert "風險報酬 2.0R" in msg           # reward 140 / risk 70
     assert "非投資建議" in msg
-    # Bybit offline in tests → honest fallback + TradingView chart link, no crash
-    assert "參考價" in msg and "(Binance)" in msg
-    assert "圖表" in msg
+    # Bybit offline in tests → honest reference price + a tappable chart link
+    assert "參考價" in msg and "看圖" in msg
 
 
 def test_follow_card_short_signs_and_rr():
     # short: SL ABOVE entry (unfavourable −%), TPs BELOW entry (favourable +%)
-    msg = bot.s1_follow_card("✅ 進場成交 FILLED", "SOL/USDT:USDT", "SHORT",
+    msg = bot.s1_follow_card("✅ 進場成交", "SOL/USDT:USDT", "SHORT",
                              100.0, 104.0, 97.0, 92.0)
-    assert "🔴 做空 SHORT" in msg
-    assert "(-4.0%)" in msg                  # SL moved against the short
-    assert "(+3.0%)" in msg and "(+8.0%)" in msg   # TP1 / TP2 favourable
+    assert "🔴 做空" in msg
+    assert "−4.0%" in msg                    # SL moved against the short (minus glyph)
+    assert "+3.0%" in msg and "+8.0%" in msg  # TP1 / TP2 favourable
     assert "風險報酬 2.0R" in msg            # reward 8 / risk 4
 
 
@@ -47,7 +46,7 @@ def test_follow_exit_tp_and_sl_sign_handling():
     assert "🎯 TP1 達標" in tp1 and "做多" in tp1 and "+1.5%" in tp1 and "先平一半" in tp1
 
     sl = bot.s1_follow_exit("sl", "ETH/USDT:USDT", "LONG", -2.0)
-    assert "🛑 停損出場" in sl and "-2.0%" in sl and "+-" not in sl   # no double sign
+    assert "🛑 停損出場" in sl and "−2.0%" in sl and "+-" not in sl   # minus glyph, no double sign
 
     tp2 = bot.s1_follow_exit("tp2", "ETH/USDT:USDT", "SHORT", 4.0, note="全部平倉")
     assert "🏆 止盈達標" in tp2 and "做空" in tp2 and "全部平倉" in tp2

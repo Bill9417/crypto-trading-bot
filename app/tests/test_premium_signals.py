@@ -106,10 +106,11 @@ def test_premium_alert_text_chinese_with_fallback_link():
            "aligned": True, "premium": True, "adx": 27.0,
            "tv_url": "https://tv.example/ETH"}
     msg = S2S.premium_alert_text(sig)
-    assert "精選訊號 PREMIUM" in msg and "做多" in msg
-    assert "信心 88/100" in msg and "BTC趨勢同向" in msg
-    assert "進場 Entry" in msg and "0.75R" in msg
-    assert "https://tv.example/ETH" in msg            # offline → TV fallback
+    assert "精選訊號" in msg and "做多" in msg
+    assert "信心 88" in msg and "BTC同向" in msg and "ADX 27" in msg
+    assert "進場" in msg and "0.75R" in msg
+    assert "參考價" in msg                             # Bybit offline → honest reference price
+    assert "看圖" in msg or "下單" in msg                # always a tappable link
     assert "非投資建議" in msg
 
 

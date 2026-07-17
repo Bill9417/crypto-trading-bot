@@ -19,6 +19,8 @@ import json
 import os
 import time
 
+import tg_format
+
 SYMBOL = "ETH/USDT:USDT"
 TIMEFRAME = "2h"
 TF_SEC = 7200
@@ -109,17 +111,19 @@ def tick(client) -> bool:
             pct = leg_pnl_pct(prev_dir, prev_entry, price)
             ledger.append({"dir": prev_dir, "entry": prev_entry, "exit": price,
                            "pct": round(pct, 2), "ts": now})
-            leg_note = f"上一腿 {prev_dir.upper()} {pct:+.2f}%\n"
+            leg_note = (f"上一腿 {tg_format.dir_zh(prev_dir, arrow=False)} "
+                        f"{tg_format.pct(pct, 2)}\n")
         state["dir"], state["entry"], state["entry_ts"] = want, price, now
         st = ledger_stats(state.get("ledger") or [])
-        record = (f"紙上戰績 {st['n']} 腿 · 淨 {st['net_pct']:+.1f}% "
-                  f"({st['wins']} 勝)" if st["n"] else "紙上戰績從這一腿開始")
+        record = (f"紙上戰績 {st['n']} 腿 · 淨 {tg_format.pct(st['net_pct'])} "
+                  f"（{st['wins']} 勝）" if st["n"] else "紙上戰績從這一腿開始")
         try:
             import telegram_utils
             telegram_utils.send_message(
-                f"📐 ETH 14d-MOM 翻轉 → {want.upper()} @ {price:,.0f} (2h收盤)\n"
+                f"📐 ETH 14 日動能翻轉 → {tg_format.dir_zh(want, arrow=False)} "
+                f"@ {price:,.0f}（2h 收盤）\n"
                 f"{leg_note}{record}\n"
-                f"⚠️ 純紙上前測 (60-90天後看戰績再談真錢) — 不會下單",
+                f"⚠️ 純紙上前測（60–90 天後看戰績再談真錢）— 不會下單",
                 force=True, channel="signals")
         except Exception as exc:  # noqa: BLE001 — ledger still updates
             print(f"[ethmom] alert failed: {exc}")
@@ -134,19 +138,20 @@ def report() -> str:
     """/mom — the forward-test ledger so far."""
     state = _load_state()
     st = ledger_stats(state.get("ledger") or [])
-    lines = ["📐 ETH 14d-MOM 紙上前測"]
+    lines = ["📐 ETH 14 日動能 · 紙上前測"]
     if state.get("dir"):
         age_d = (time.time() - (state.get("entry_ts") or time.time())) / 86400
-        lines.append(f"目前 {state['dir'].upper()} @ {state.get('entry'):,.0f} "
-                     f"({age_d:.1f} 天)")
+        lines.append(f"目前 {tg_format.dir_zh(state['dir'], arrow=False)} "
+                     f"@ {state.get('entry'):,.0f}（{age_d:.1f} 天）")
     else:
-        lines.append("等第一個訊號 (每根2h收盤檢查)")
+        lines.append("等第一個訊號（每根 2h 收盤檢查）")
     if st["n"]:
-        lines.append(f"完成 {st['n']} 腿 · 淨 {st['net_pct']:+.1f}% · {st['wins']} 勝")
+        lines.append(f"完成 {st['n']} 腿 · 淨 {tg_format.pct(st['net_pct'])} · "
+                     f"{st['wins']} 勝")
         for l in (state.get("ledger") or [])[-5:]:
-            lines.append(f"  {l['dir'].upper():5s} {l['entry']:,.0f}→{l['exit']:,.0f} "
-                         f"{l['pct']:+.2f}%")
+            lines.append(f"  {tg_format.dir_zh(l['dir'], arrow=False)} "
+                         f"{l['entry']:,.0f}→{l['exit']:,.0f} {tg_format.pct(l['pct'], 2)}")
     else:
         lines.append("尚無完成的腿")
-    lines.append("(回測: 2年 +770/500名目, 8/8季正, ~30%勝率 — 前測就是在驗證它)")
+    lines.append("（回測: 2 年 +770/500 名目, 8/8 季正, ~30% 勝率 — 前測就是在驗證它）")
     return "\n".join(lines)

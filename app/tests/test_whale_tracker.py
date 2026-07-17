@@ -100,7 +100,7 @@ def test_tick_seeds_silently_then_alerts(monkeypatch, tmp_path):
     assert WT.tick() == 1                    # the new ETH short alerts once
     channel, msg = sent[-1]
     assert channel == "liq"
-    assert "🐳 巨鯨動向" in msg and "ETH" in msg and "做空" in msg
+    assert "🐳" in msg and "ETH" in msg and "做空" in msg
 
 
 def test_tick_respects_poll_pacing(monkeypatch, tmp_path):

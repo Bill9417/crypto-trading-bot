@@ -51,32 +51,32 @@ def test_due_once_per_day():
 # ── report body ──────────────────────────────────────────────────────────────
 def test_report_has_all_sections():
     msg = DR.build_report(_data(), _now())
-    assert "DAILY REPORT" in msg and "2026-07-10" in msg
-    assert "Binance (S1/S2)" in msg and "Bybit (S3)" in msg
-    assert "🌡 Market" in msg and "🗓 Today" in msg
+    assert "每日報告" in msg and "2026-07-10" in msg
+    assert "Binance · S1/S2" in msg and "Bybit · S3" in msg
+    assert "🌡 市場" in msg and "🗓 今日" in msg
 
 
 def test_report_pnl_lines():
     msg = DR.build_report(_data(), _now())
     # Binance: today −0.42, yesterday +1.13, 7d = their sum
-    assert "today -0.42" in msg and "yesterday +1.13" in msg and "7d +0.71" in msg
+    assert "今日 -0.42" in msg and "昨日 +1.13" in msg and "7 日 +0.71" in msg
     # Bybit: yesterday −3.20
-    assert "yesterday -3.20" in msg
+    assert "昨日 -3.20" in msg
 
 
 def test_report_positions_and_flat():
     msg = DR.build_report(_data(), _now())
-    assert "ETH LONG +0.42 (+2.10%)" in msg      # Binance open position
-    assert "no open positions" in msg            # Bybit is flat
+    assert "ETH 做多 +0.42（+2.10%）" in msg      # Binance open position
+    assert "無持倉" in msg                        # Bybit is flat
 
 
 def test_report_calendar_today_only():
     msg = DR.build_report(_data(), _now())
-    assert "CPI y/y (forecast 2.4%)" in msg and "20:30" in msg
+    assert "CPI y/y（預測 2.4%）" in msg and "20:30" in msg
     assert "NFP" not in msg                      # tomorrow's print stays out
 
 
 def test_report_degrades_without_data():
     msg = DR.build_report({}, _now())
-    assert "balance unavailable" in msg
-    assert "none — quiet macro day" in msg       # calendar section still renders
+    assert "餘額暫時無法取得" in msg
+    assert "無 — 平靜的總經日" in msg             # calendar section still renders
