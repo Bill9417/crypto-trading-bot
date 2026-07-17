@@ -2751,6 +2751,145 @@ def api_strategy2_live_status():
         return jsonify({"error": str(exc), "enabled": False})
 
 
+# ── Strategies hub (📊 one page, three tabs: S1/S2/S3 rules + live状況) ────────
+def _strategies_params() -> dict:
+    """Live rule NUMBERS pulled from config so the /strategies rules stay honest
+    when a threshold is retuned (the prose lives in the template, the digits here)."""
+    import config
+    import strategy2_meter
+    s3syms = []
+    for base in config.STRATEGY3_SYMBOLS:
+        p = config.strategy3_params(base)
+        s3syms.append({"base": base, "engine": p.get("engine"),
+                       "tf": p.get("timeframe"), "leverage": p.get("leverage")})
+    return {
+        "s1": {
+            "tf": ", ".join(config.TIMEFRAMES),
+            "lights_long": config.MIN_LIGHTS_FOR_ENTRY,
+            "lights_short": config.MIN_LIGHTS_SHORT,
+            "leverage": config.LEVERAGE,
+            "margin": config.FIXED_MARGIN_USDT,
+            "notional": round(config.FIXED_MARGIN_USDT * config.LEVERAGE, 1),
+            "sl_mult": config.ATR_SL_MULTIPLIER,
+            "max_sl_pct": round(config.MAX_SL_PCT * 100, 1),
+            "tp1_r": config.ATR_TP1_MULTIPLIER,
+            "tp2_r": config.ATR_TP_MULTIPLIER,
+            "rsi_hi": int(config.RSI_UPPER_THRESHOLD),
+            "rsi_lo": int(config.RSI_LOWER_THRESHOLD),
+            "max_concurrent": config.MAX_CONCURRENT_POSITIONS,
+        },
+        "s2": {
+            "tf": os.getenv("STRATEGY2_TIMEFRAME", "15m"),
+            "long_th": strategy2_meter.LONG_THRESHOLD,
+            "short_th": strategy2_meter.SHORT_THRESHOLD,
+            "premium_score": config.STRATEGY2_PREMIUM_MIN_SCORE,
+            "premium_adx": int(config.STRATEGY2_PREMIUM_MIN_ADX),
+            "sl_mult": config.STRATEGY2_PREMIUM_SL_MULT,
+            "tp1_r": config.STRATEGY2_PREMIUM_TP1_R,
+            "tp2_r": config.STRATEGY2_PREMIUM_TP2_R,
+        },
+        "s3": {
+            "adx_th": config.STRATEGY3_ADX_TH,
+            "emergency_sl": round(config.STRATEGY3_EMERGENCY_SL_PCT * 100, 1),
+            "be_trigger": round(config.STRATEGY3_BE_TRIGGER_PCT * 100, 2),
+            "symbols": s3syms,
+        },
+    }
+
+
+def build_strategies_status() -> dict:
+    """Consolidated LIVE snapshot of all three strategies for the hub. Every
+    branch is failure-safe — one strategy's data source being down must not blank
+    the others or 500 the page."""
+    import config
+    out = {"s1": {}, "s2": {}, "s3": {}}
+
+    # ── S1 — latest scan funnel + best armed/queued setup ──
+    try:
+        data = load_data()
+        funnel = build_funnel(data)
+        out["s1"] = {
+            "regime": funnel.get("btc_regime", "unknown"),
+            "scanned": funnel.get("total", 0),
+            "tradeable": funnel.get("tradeable", 0),
+            "queued": funnel.get("queued", 0),
+            "best": build_best_s1_trade(data),
+            "last_update": funnel.get("last_update"),
+        }
+    except Exception as exc:  # noqa: BLE001
+        out["s1"] = {"error": str(exc)}
+
+    # ── S2 — the 15m scanner's most recent sweep ──
+    try:
+        path = os.path.join(os.path.dirname(__file__), "strategy2_signals.json")
+        with open(path, "r", encoding="utf-8") as f:
+            sd = json.load(f) or {}
+        sigs = sd.get("signals", []) or []
+
+        def _conv(s):
+            sc = s.get("score") or 0
+            return sc if s.get("direction") == "long" else 100 - sc
+
+        prem = sorted((s for s in sigs if s.get("premium")), key=_conv, reverse=True)
+        out["s2"] = {
+            "live": bool(sd.get("live")),
+            "fresh": (time.time() - float(sd.get("generated_at", 0) or 0)) < 1800,
+            "last_scan": sd.get("last_scan_human"),
+            "count": len(sigs),
+            "premium_count": len(prem),
+            "premium": [{
+                "base": s.get("base"), "direction": s.get("direction"),
+                "score": s.get("score"), "conv": _conv(s), "adx": s.get("adx"),
+                "aligned": s.get("aligned"), "entry": s.get("entry"),
+                "sl": s.get("sl"), "tp1": s.get("tp1"), "tp2": s.get("tp2"),
+            } for s in prem[:5]],
+        }
+    except Exception as exc:  # noqa: BLE001
+        out["s2"] = {"error": str(exc), "count": 0, "premium": []}
+
+    # ── S3 — flag-flip / OCC per-symbol position state ──
+    try:
+        st = strategy3_scanner.load_state()
+        syms = []
+        for base in config.STRATEGY3_SYMBOLS:
+            sym = f"{base}/{config.QUOTE_ASSET}:{config.QUOTE_ASSET}"
+            stt = st.get(sym, {}) or {}
+            p = config.strategy3_params(base)
+            holding = (stt.get("pos_dir") or "").lower() or None
+            armed = bool(stt.get("last_flag")) and not stt.get("consumed") and not holding
+            syms.append({
+                "base": base, "engine": p.get("engine"), "tf": p.get("timeframe"),
+                "leverage": p.get("leverage"),
+                "holding": holding.upper() if holding else None,
+                "armed": (stt.get("last_flag") or "").upper() if armed else None,
+                "score": stt.get("last_score"),
+            })
+        out["s3"] = {"symbols": syms}
+    except Exception as exc:  # noqa: BLE001
+        out["s3"] = {"error": str(exc), "symbols": []}
+
+    return out
+
+
+@app.route("/strategies")
+@login_required
+def strategies():
+    """One hub for all three strategies — tab buttons switch between S1/S2/S3,
+    each showing its RULES (prose in-template, live numbers from config) and its
+    CURRENT SITUATION (build_strategies_status). Concludes the separate strategy
+    pages into a single overview; each tab links out to its detailed page."""
+    return render_template("strategies.html", user=current_user,
+                           params=_strategies_params(),
+                           status=_json_safe(build_strategies_status()))
+
+
+@app.route("/api/strategies")
+@login_required
+def api_strategies():
+    """Live status for the hub's auto-refresh (rules are static, only状況 moves)."""
+    return jsonify(_json_safe(build_strategies_status()))
+
+
 @app.route("/api/price_alerts")
 @login_required
 def api_price_alerts():
