@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Wolf Scanner — 24/7 自動化交易訊號</title>
+    <meta name="description" content="自動化加密貨幣交易訊號：進場/停損/目標齊全，48 小時真實 K 線結算成績，輸單也公開。">
+    <!-- OG tags: the link unfurls as a rich card when shared in Telegram/Twitter -->
+    <meta property="og:type" content="website">
+    <meta property="og:title" content="🐺 Wolf Scanner — 24/7 自動化交易訊號">
+    <meta property="og:description" content="訊號附進場/停損/目標，成績每週公開結算 — 我們公開輸單，不只貼贏單。">
+    <meta property="og:image" content="{{ request.url_root.rstrip('/') }}/static/icon-512.png">
+    <meta property="og:url" content="{{ request.url_root.rstrip('/') }}/welcome">
+    <meta name="twitter:card" content="summary">
+    <link rel="manifest" href="/manifest.webmanifest">
+    <meta name="theme-color" content="#0e1018">
+    <link rel="apple-touch-icon" href="/static/apple-touch-icon.png">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/static/app.css?v={{ asset_ver }}">
+    <style>
+        :root {
+            --wolf-blue: #00d2ff;
+            --wolf-gold: #ffcf4b;
+            --wolf-bg: #0e1018;
+            --wolf-card: rgba(30, 36, 56, 0.78);
+            --wolf-border: rgba(255, 255, 255, 0.08);
+            --wolf-text: #f1f5f9;
+            --wolf-muted: #8a99ad;
+        }
+        * { box-sizing: border-box; }
+        body {
+            margin: 0;
+            background-color: var(--wolf-bg);
+            color: var(--wolf-text);
+            font-family: 'Inter', -apple-system, 'PingFang TC', 'Microsoft JhengHei', sans-serif;
+            background-image: var(--page-bg-glow);
+            line-height: 1.6;
+        }
+        .wrap { max-width: 720px; margin: 0 auto; padding: 40px 20px 60px; }
+
+        /* ── hero ── */
+        .hero { text-align: center; padding: 28px 0 8px; }
+        .hero .icon { font-size: 4rem; filter: drop-shadow(0 0 12px rgba(0,210,255,.35)); }
+        .hero h1 { font-weight: 900; letter-spacing: -1px; font-size: 2.1rem; margin: 8px 0 4px; }
+        .hero h1 span { color: var(--wolf-blue); }
+        .hero .tag { color: var(--wolf-muted); font-size: 1.02rem; margin: 0 0 6px; }
+        .hero .honest {
+            display: inline-block; margin-top: 10px; padding: 6px 14px;
+            border: 1px solid rgba(255,207,75,.35); border-radius: 999px;
+            color: var(--wolf-gold); font-weight: 700; font-size: .85rem;
+            background: rgba(255,207,75,.07);
+        }
+
+        /* ── CTA ── */
+        .cta-row { display: flex; gap: 12px; justify-content: center; flex-wrap: wrap; margin: 26px 0 8px; }
+        .btn {
+            display: inline-block; padding: 14px 26px; border-radius: 12px;
+            font-weight: 800; text-decoration: none; font-size: 1rem;
+            transition: transform .2s, box-shadow .2s; border: 1px solid transparent;
+        }
+        .btn:active { transform: translateY(1px) scale(.99); }
+        .btn-join { background: var(--wolf-blue); color: #000; }
+        .btn-join:hover { box-shadow: 0 6px 18px rgba(0,210,255,.35); transform: translateY(-1px); color:#000; }
+        .btn-ghost { border-color: var(--wolf-border); color: var(--wolf-text); background: rgba(255,255,255,.03); }
+        .btn-ghost:hover { border-color: var(--wolf-blue); color: var(--wolf-blue); }
+
+        /* ── live proof strip ── */
+        .stats { display: flex; gap: 12px; justify-content: center; flex-wrap: wrap; margin: 30px 0 6px; }
+        .stat {
+            background: var(--wolf-card); border: 1px solid var(--wolf-border);
+            border-radius: 16px; padding: 14px 22px; text-align: center; min-width: 150px;
+            backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+        }
+        .stat .num { font-size: 1.6rem; font-weight: 900; color: var(--wolf-blue); }
+        .stat .lbl { font-size: .75rem; color: var(--wolf-muted); font-weight: 700; letter-spacing: .5px; }
+        .stats-note { text-align: center; color: var(--wolf-muted); font-size: .78rem; margin-bottom: 6px; }
+
+        /* ── cards ── */
+        .card {
+            background: var(--wolf-card); border: 1px solid var(--wolf-border);
+            border-radius: 20px; padding: 26px 26px; margin: 26px 0;
+            backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+            position: relative; overflow: hidden;
+        }
+        .card::before {
+            content: ""; position: absolute; top: 0; left: 0; width: 100%; height: 4px;
+            background: linear-gradient(90deg, var(--wolf-blue), var(--wolf-gold));
+        }
+        .card h2 { font-size: 1.15rem; font-weight: 900; margin: 0 0 16px; }
+
+        /* topic grid */
+        .topics { display: grid; grid-template-columns: 1fr 1fr; gap: 10px 18px; }
+        .topic { font-size: .92rem; }
+        .topic b { display: block; font-size: .95rem; }
+        .topic span { color: var(--wolf-muted); font-size: .82rem; }
+        @media (max-width: 560px) { .topics { grid-template-columns: 1fr; } }
+
+        /* sample signal */
+        .sig {
+            background: rgba(0,0,0,.35); border: 1px solid var(--wolf-border);
+            border-radius: 14px; padding: 16px 18px; font-size: .92rem;
+        }
+        .sig .head { font-weight: 800; }
+        .sig .meta { color: var(--wolf-muted); font-size: .82rem; margin-bottom: 8px; }
+        .sig pre {
+            font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+            background: none; border: none; color: var(--wolf-text);
+            margin: 8px 0; padding: 0; font-size: .88rem; line-height: 1.55;
+        }
+        .sig .demo-tag { color: var(--wolf-gold); font-size: .75rem; font-weight: 700; }
+
+        /* honesty list */
+        .honesty li { margin-bottom: 10px; font-size: .93rem; }
+        .honesty li b { color: var(--wolf-gold); }
+
+        footer { text-align: center; color: var(--wolf-muted); font-size: .78rem; margin-top: 34px; }
+        footer a { color: var(--wolf-blue); text-decoration: none; font-weight: 700; }
+    </style>
+</head>
+<body>
+<div class="wrap">
+
+    <div class="hero">
+        <div class="icon">🐺</div>
+        <h1>WOLF <span>SCANNER</span></h1>
+        <p class="tag">24/7 自動化加密貨幣交易訊號 — 進場 · 停損 · 目標，一則訊息全給你</p>
+        <div class="honest">我們公開輸單，不只貼贏單</div>
+    </div>
+
+    <div class="cta-row">
+        {% if invite_url %}
+        <a class="btn btn-join" href="{{ invite_url }}" rel="noopener">🚀 加入 Telegram 訊號群</a>
+        {% endif %}
+        <a class="btn btn-ghost" href="/login">會員登入</a>
+    </div>
+
+    {# ── live proof: real aggregated numbers, evidence next to the claim ── #}
+    {% set oc = stats.get('outcomes') or {} %}
+    {% set sg = stats.get('signals') or {} %}
+    {% if (oc.get('n') or 0) >= 5 or sg.get('n') %}
+    <div class="stats">
+        {% if (oc.get('n') or 0) >= 5 %}
+        <div class="stat"><div class="num">{{ oc.n }}</div><div class="lbl">近 7 日已結算訊號</div></div>
+        <div class="stat"><div class="num">{{ '%.0f' % oc.hit_pct }}%</div><div class="lbl">先到目標比例</div></div>
+        {% endif %}
+        {% if sg.get('n') %}
+        <div class="stat"><div class="num">{{ sg.n }}</div><div class="lbl">過去 24h 掃出訊號</div></div>
+        {% endif %}
+    </div>
+    <div class="stats-note">真實數字，每個訊號 48 小時後用真實 K 線結算（同根 K 線先算停損）— 含輸單</div>
+    {% endif %}
+
+    <div class="card">
+        <h2>🗂 加入後你會得到</h2>
+        <div class="topics">
+            <div class="topic"><b>📊 交易訊號</b><span>15m 掃描 · ⭐ 精選訊號 · 週日成績單</span></div>
+            <div class="topic"><b>📈 實盤跟單</b><span>掛單 → 成交 → 出場 全程通知</span></div>
+            <div class="topic"><b>☀️ 每日快報</b><span>價格、恐懼貪婪、總經日曆</span></div>
+            <div class="topic"><b>🌍 大事件</b><span>Fed／監管／駭客突發 + 行情劇變</span></div>
+            <div class="topic"><b>💥 清算警報</b><span>清算連鎖 + 🧲 清算地圖 + 🐳 巨鯨追蹤</span></div>
+            <div class="topic"><b>🇹🇼 台股掃描</b><span>TW50 回踩設定 + 盤中異動</span></div>
+            <div class="topic"><b>💻 科技新聞</b><span>AI／科技摘要，每 6 小時</span></div>
+            <div class="topic"><b>🤖 即時指令</b><span>/price 報價 · /liq 清算 · /whale 巨鯨</span></div>
+        </div>
+    </div>
+
+    <div class="card">
+        <h2>📨 訊號長這樣 <span class="demo-tag">（示意）</span></h2>
+        <div class="sig">
+            <div class="head">⭐ 精選訊號 · 🟢 做多 ETH · 15m</div>
+            <div class="meta">信心 88 · BTC同向 · ADX 27</div>
+            <pre>進場   3,500
+停損   3,430   −2.0%
+目標 3,552.5   +1.5% · 0.75R
+終標   3,640   +4.0% · 2R</pre>
+            <div class="meta">💱 一鍵跳轉下單連結 · ⚠️ 非投資建議</div>
+        </div>
+    </div>
+
+    <div class="card">
+        <h2>⚖️ 誠實原則 — 為什麼跟別的群不一樣</h2>
+        <ul class="honesty">
+            <li><b>成績可查：</b>每個訊號 48 小時後自動用真實 K 線結算，週日公佈成績單 — 輸單照樣列出，從不刪貼。</li>
+            <li><b>不吹勝率：</b>高勝率可以是虧錢策略（我們實測過）。我們同時公佈期望值與盈虧比，勝率只是其中一個數字。</li>
+            <li><b>訊號 ≠ 建議：</b>所有內容僅供參考，非投資建議。槓桿交易有歸零風險，資金管理永遠是你自己的責任。</li>
+        </ul>
+    </div>
+
+    <div class="cta-row">
+        {% if invite_url %}
+        <a class="btn btn-join" href="{{ invite_url }}" rel="noopener">🚀 免費加入 Telegram 群</a>
+        {% endif %}
+    </div>
+
+    <footer>
+        Wolf Scanner · 自動化訊號系統
+        {% if registration_enabled %} · <a href="/register">註冊會員</a>{% endif %}
+        · <a href="/login">登入</a><br>
+        ⚠️ 本站與群組內容皆為資訊分享，非投資建議
+    </footer>
+</div>
+</body>
+</html>

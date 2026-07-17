@@ -123,6 +123,10 @@ TELEGRAM_LIQ_THREAD_ID = os.getenv("TELEGRAM_LIQ_THREAD_ID", "")
 # 中文 with Bybit prices/links, so followers can mirror the trades. Empty =
 # falls back into the Signals thread. Provision it with create_s1_topic.py.
 TELEGRAM_S1SIGNALS_THREAD_ID = os.getenv("TELEGRAM_S1SIGNALS_THREAD_ID", "")
+# Public invite link for the topics group (t.me/+xxxx from the group's invite
+# settings). Shown as the join CTA on the public /welcome landing page; empty
+# = the page renders without a join button (members can still log in).
+TELEGRAM_INVITE_URL = os.getenv("TELEGRAM_INVITE_URL", "").strip()
 
 # ── Live trading (Binance Futures USD-M) ──────────────────────────────────
 # SAFETY: LIVE_TRADING defaults to False. While False the bot is in DRY-RUN —

@@ -139,12 +139,17 @@ class SignalRecord(db.Model):
     cur_stop = db.Column(db.Float, nullable=True)     # current ratcheted stop price
     last_bar_ts = db.Column(db.BigInteger, nullable=True)  # last 1h bar ts managed (ms)
 
-# Admin required decorator
+# Admin required decorator. Owner-only data (real balances, positions, P&L,
+# ops) — registered MEMBERS are welcome on the signal pages but never here.
+# API paths answer 403 JSON so a member's fetch() degrades cleanly instead of
+# receiving a full dashboard-HTML redirect body.
 def admin_required(f):
     @wraps(f)
     @login_required
     def decorated_function(*args, **kwargs):
         if not current_user.is_admin:
+            if request.path.startswith('/api/'):
+                return jsonify({"error": "admin only"}), 403
             flash("You do not have permission to access this page.", "danger")
             return redirect(url_for('index'))
         return f(*args, **kwargs)
@@ -1734,6 +1739,46 @@ def _record_login_fail(ip: str) -> None:
     _login_fails.setdefault(ip, []).append(datetime.now().timestamp())
 
 
+# ── public landing page (the promo surface — NO login) ──────────────────────
+# Everything else on this site is behind auth, so a shared link used to dump
+# visitors on a bare login form. /welcome is the shareable front door: what
+# the system is, LIVE honest numbers (the same outcome stats the Telegram
+# scorecard publishes — evidence next to the claim), and the group-join CTA.
+# PUBLIC-SAFE BY CONSTRUCTION: only aggregated signal stats ever appear here —
+# never balances, positions or per-account P&L (enforced by test).
+_public_stats_cache = {"ts": 0.0, "data": None}
+PUBLIC_STATS_TTL = 300
+
+
+def _public_stats() -> dict:
+    """Aggregated, account-free stats for the landing page. Cached; every
+    branch fail-safe — a missing state file renders as absence, never a 500."""
+    now = time.time()
+    if _public_stats_cache["data"] is not None \
+            and now - _public_stats_cache["ts"] < PUBLIC_STATS_TTL:
+        return _public_stats_cache["data"]
+    import morning_brief
+    out = {"outcomes": {}, "signals": {}}
+    try:
+        out["outcomes"] = morning_brief._outcome_stat(now) or {}
+    except Exception as e:  # noqa: BLE001 — stats are decoration on this page
+        print(f"[welcome] outcome stat unavailable: {e}")
+    try:
+        out["signals"] = morning_brief._signal_tally(now) or {}
+    except Exception as e:  # noqa: BLE001
+        print(f"[welcome] signal tally unavailable: {e}")
+    _public_stats_cache.update(ts=now, data=out)
+    return out
+
+
+@app.route("/welcome")
+def welcome():
+    import config as _config
+    return render_template("welcome.html", stats=_public_stats(),
+                           invite_url=_config.TELEGRAM_INVITE_URL,
+                           registration_enabled=ALLOW_PUBLIC_REGISTRATION)
+
+
 @app.route("/login", methods=['GET', 'POST'])
 def login():
     if request.method == 'POST':
@@ -2951,10 +2996,11 @@ def api_events_feed():
 
 
 @app.route("/api/balance_history")
-@login_required
+@admin_required
 def api_balance_history():
     """Daily real-balance snapshots (both venues) — the equity curve the
-    /performance overview draws. Written by daily_report.record_balance."""
+    /performance overview draws. Written by daily_report.record_balance.
+    ADMIN-ONLY: this is the owner's real money, not member content."""
     import daily_report
     try:
         with open(daily_report.BALANCE_FILE, "r", encoding="utf-8") as f:
