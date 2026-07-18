@@ -101,6 +101,19 @@ else
     START_SCANONLY_S1=0            # S1 is already the live engine here
 fi
 
+# --- S1 execution venue for the companion ----------------------------------
+# S1_BYBIT_MIRROR=true upgrades the S1 companion from scan-only to a REAL
+# second engine that EXECUTES ON BYBIT (fixed S1_BYBIT_ORDER_USDT notional via
+# the 🪞 mirror) while leaving Binance untouched — S1 signals + S3 flag-flip
+# then trade side by side on the Bybit account. Without the flag the old
+# scan-only behaviour is kept.
+S1_COMPANION_ENV="SCAN_ONLY=true"
+S1_COMPANION_DESC="S1 scan-only companion (refreshes the dashboard hourly; no orders)"
+if read_env_bool S1_BYBIT_MIRROR; then
+    S1_COMPANION_ENV="S1_EXEC=bybit"
+    S1_COMPANION_DESC="S1 engine → BYBIT (🪞 mirror executes fills; Binance untouched)"
+fi
+
 # --- subcommands -----------------------------------------------------------
 MODE="start"
 case "${1:-start}" in
@@ -160,8 +173,8 @@ if [ "$MODE" = "bg" ]; then
         nohup "$PYTHON" -u strategy3_scanner.py >> "$LOG_DIR/strategy3.log" 2>&1 & disown
     fi
     if [ "$START_SCANONLY_S1" = "1" ]; then
-        echo "  + S1 scan-only companion (refreshes the dashboard hourly; no orders)"
-        SCAN_ONLY=true nohup "$PYTHON" -u bot.py >> "$LOG_DIR/bot.log" 2>&1 & disown
+        echo "  + $S1_COMPANION_DESC"
+        env "$S1_COMPANION_ENV" nohup "$PYTHON" -u bot.py >> "$LOG_DIR/bot.log" 2>&1 & disown
     fi
     sleep 3
     echo ""
@@ -209,8 +222,8 @@ fi
 # orders, so S2 stays the sole live engine.
 SCANONLY_PID=""
 if [ "$START_SCANONLY_S1" = "1" ]; then
-    echo "Starting S1 scan-only companion (refreshes the dashboard; no orders)..."
-    SCAN_ONLY=true "$PYTHON" -u bot.py >> "$LOG_DIR/bot.log" 2>&1 &
+    echo "Starting $S1_COMPANION_DESC..."
+    env "$S1_COMPANION_ENV" "$PYTHON" -u bot.py >> "$LOG_DIR/bot.log" 2>&1 &
     SCANONLY_PID=$!
 fi
 

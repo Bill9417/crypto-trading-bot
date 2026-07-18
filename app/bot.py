@@ -2729,10 +2729,26 @@ def main() -> None:
     # never place a real order, even if LIVE_TRADING=true. Used by run_all.sh when
     # S2 is the live engine but you still want the S1-based dashboard.
     scan_only = os.getenv("SCAN_ONLY", "").strip().lower() in ("1", "true", "yes", "on")
+    # S1_EXEC=bybit: S1 signals EXECUTE ON BYBIT (via the 🪞 mirror at
+    # S1_BYBIT_ORDER_USDT fixed notional) while the Binance executor is
+    # force-halted — the full queue→fill→SL/TP lifecycle still runs (dry-run
+    # queues fine and the mirror hooks sit on the lifecycle, not on Binance
+    # orders), so 掛單/成交/出場 cards flow and Bybit gets the real trades.
+    # Lets S1 trade alongside the S3 flag-flip: different symbols, and the
+    # mirror refuses any symbol that already holds an untracked position.
+    bybit_exec = os.getenv("S1_EXEC", "").strip().lower() == "bybit"
     if scan_only:
         executor.halt_live_trading("SCAN_ONLY — dashboard refresh companion; no orders placed")
         print("[bot] SCAN_ONLY mode: scanning to refresh the dashboard only — "
               "no bot lock, no orders. (S2 remains the live engine.)")
+    elif bybit_exec:
+        # No bot lock: the lock means "an S1 bot is trading BINANCE" (the S2
+        # engine refuses to trade while it's held) — this mode never does.
+        executor.halt_live_trading("S1_EXEC=bybit — Binance untouched; "
+                                   "fills execute on Bybit via the 🪞 mirror")
+        print("[bot] S1_EXEC=bybit: signal lifecycle live, execution on BYBIT "
+              f"({'ARMED' if s1_bybit_mirror.enabled() else 'mirror OFF — set S1_BYBIT_MIRROR=true'}) "
+              "— no Binance orders.")
     else:
         acquire_bot_lock()
     ensure_database_ready()
