@@ -55,8 +55,8 @@ def test_outcome_candles_before_signal_ignored():
 def test_summarize_counts_and_small_sample_honesty():
     outs = [{"outcome": "tp2"}, {"outcome": "sl"}, {"outcome": "tp1→sl"}]
     txt = SO.summarize(outs)
-    assert "🎯 到 TP2: 1 (33%)" in txt
-    assert "⚠️ 停損: 2 (67%)" in txt
+    assert "🎯 到 TP2" in txt and "33%" in txt
+    assert "⚠️ 停損" in txt and "67%" in txt
     assert "樣本只有 3 個" in txt          # small-n warning is mandatory
 
 

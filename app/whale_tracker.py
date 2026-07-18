@@ -337,34 +337,39 @@ def build_report() -> str:
         pos, acct = fetch_positions(addr)
         books.append((label, addr, pos, acct))
 
+    import tg_format
     lines = [f"🐳 巨鯨追蹤 · 共 {len(whales)} 個地址"]
     consensus = whale_consensus(books)
     if consensus:
         lines.append("\n🧭 巨鯨共識 (≥2 個地址同標的)")
-        lines.extend(consensus)
+        lines.append("<pre>" + tg_format.esc("\n".join(r.strip() for r in consensus))
+                     + "</pre>")
     lines.append("")
     for label, addr, pos, acct in books:
+        cg = f'📊 <a href="{_coinglass(addr)}">Coinglass ↗</a>'
         if pos is None:
-            lines.append(f"• {label} — 查詢失敗")
+            lines.append(f"• {tg_format.esc(label)} — 查詢失敗 · {cg}")
             continue
         if not pos:
-            lines.append(f"• {label} — 空手 (淨值 {_usd(acct)})")
+            lines.append(f"• {tg_format.esc(label)} — 空手 (淨值 {_usd(acct)}) · {cg}")
             continue
-        lines.append(f"• {label} — 淨值 {_usd(acct)}")
+        lines.append(f"• {tg_format.esc(label)} — 淨值 {_usd(acct)} · {cg}")
         big = [(c, p) for c, p in pos.items() if p["notional"] >= REPORT_MIN_POS_USD]
         big.sort(key=lambda cp: -cp[1]["notional"])
+        rows = []
         for coin, p in big[:REPORT_MAX_POS]:
             arrow = "🟢" if p["side"] == "long" else "🔴"
-            lev = f" · {int(p['lev'])}x" if p.get("lev") else ""
-            lines.append(f"    {arrow} {_SIDE_ZH[p['side']]} {coin} "
-                         f"{_usd(p['notional'])} @ {_px(p['entry'])}{lev} · "
-                         f"未實現 {_signed_usd(p['upnl'])}")
+            rows.append((f"{arrow} {_SIDE_ZH[p['side']]}", coin,
+                         _usd(p["notional"]), f"@ {_px(p['entry'])}",
+                         f"{int(p['lev'])}x" if p.get("lev") else "",
+                         _signed_usd(p["upnl"])))
+        if rows:
+            lines.append(tg_format.pre_table(rows, align="llrlrr"))
         extra = len(big) - REPORT_MAX_POS
         if extra > 0:
-            lines.append(f"    …還有 {extra} 個 ≥{_usd(REPORT_MIN_POS_USD)} 部位")
+            lines.append(f"…還有 {extra} 個 ≥{_usd(REPORT_MIN_POS_USD)} 部位")
         elif not big:
-            lines.append("    (無 ≥$250k 部位，多為小倉)")
-        lines.append(f"    📊 {_coinglass(addr)}")
+            lines.append("(無 ≥$250k 部位，多為小倉)")
     lines.append("\n⚠️ 追蹤資訊，非投資建議")
     return "\n".join(lines)
 

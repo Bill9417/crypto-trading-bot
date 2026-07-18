@@ -72,33 +72,36 @@ def _pnl(v):
 
 
 def _acct_section(icon: str, name: str, snap: dict, pnl: dict) -> list:
-    """One account block: balance line, realized-P&L line, open positions."""
+    """One account block: an ALIGNED <pre> table (balance / P&L / positions).
+    The report is sent with parse_mode='HTML' so the columns actually line up."""
     import tg_format
     lines = [f"{icon} {name}"]
+    rows = []
     bal = (snap or {}).get("balance") or {}
     total = bal.get("wallet") if bal.get("wallet") is not None else bal.get("equity")
     if total is None:
-        lines.append("  餘額暫時無法取得" +
-                     (f"（{snap.get('error')}）" if (snap or {}).get("error") else ""))
-    else:
-        upnl = bal.get("unrealized_pnl")
-        lines.append(f"  餘額 {_n(total)} USDT · 可用 {_n(bal.get('available'))}"
-                     + (f" · 未實現 {_pnl(upnl)}" if upnl not in (None, 0.0) else ""))
+        lines.append("餘額暫時無法取得" +
+                     (f"（{tg_format.esc(snap.get('error'))}）"
+                      if (snap or {}).get("error") else ""))
+        return lines
+    upnl = bal.get("unrealized_pnl")
+    rows.append(("餘額", f"{_n(total)} USDT", f"可用 {_n(bal.get('available'))}",
+                 f"未實現 {_pnl(upnl)}" if upnl not in (None, 0.0) else ""))
     daily = (pnl or {}).get("daily") or []
     if len(daily) >= 2:
         week = sum(d.get("net") or 0.0 for d in daily[-7:])
-        lines.append(f"  損益 今日 {_pnl(daily[-1].get('net'))} · "
-                     f"昨日 {_pnl(daily[-2].get('net'))} · 7 日 {_pnl(week)}")
+        rows.append(("損益", f"今日 {_pnl(daily[-1].get('net'))}",
+                     f"昨日 {_pnl(daily[-2].get('net'))}", f"7日 {_pnl(week)}"))
     positions = (snap or {}).get("positions") or []
-    if positions:
-        for p in positions[:8]:
-            base = (p.get("symbol") or "?").split("/")[0]
-            pct = p.get("pnl_pct")
-            lines.append(f"  ▸ {base} {tg_format.dir_zh(p.get('side'), arrow=False)} "
-                         f"{_pnl(p.get('unrealized_pnl'))}"
-                         + (f"（{_pnl(pct)}%）" if pct is not None else ""))
-    else:
-        lines.append("  無持倉")
+    for p in positions[:8]:
+        base = (p.get("symbol") or "?").split("/")[0]
+        pct = p.get("pnl_pct")
+        rows.append((f"▸ {base}", tg_format.dir_zh(p.get("side"), arrow=False),
+                     _pnl(p.get("unrealized_pnl")),
+                     f"{_pnl(pct)}%" if pct is not None else ""))
+    if not positions:
+        rows.append(("持倉", "無", "", ""))
+    lines.append(tg_format.pre_table(rows, align="llll"))
     return lines
 
 
@@ -114,8 +117,10 @@ def _today_events(events: list, now: datetime) -> list:
         local = datetime.fromtimestamp(ts, TZ)
         if local.strftime("%Y-%m-%d") != today:
             continue
-        extra = f"（預測 {ev['forecast']}）" if ev.get("forecast") else ""
-        rows.append((ts, f"  • {local.strftime('%H:%M')} {ev.get('title')}{extra}"))
+        import tg_format
+        extra = f"（預測 {tg_format.esc(ev['forecast'])}）" if ev.get("forecast") else ""
+        rows.append((ts, f"  • {local.strftime('%H:%M')} "
+                         f"{tg_format.esc(ev.get('title'))}{extra}"))
     return [r[1] for r in sorted(rows)]
 
 
@@ -136,7 +141,8 @@ def build_report(data: dict, now: datetime) -> str:
         market_bits.append(f"BTC {_n(btc['price'], 0)}（{_pnl(btc.get('change_pct'))}% 24h）")
     fng = data.get("fng") or {}
     if fng.get("value") is not None:
-        market_bits.append(f"貪婪指數 {fng['value']}（{fng.get('label')}）")
+        import tg_format
+        market_bits.append(f"貪婪指數 {fng['value']}（{tg_format.esc(fng.get('label'))}）")
     if market_bits:
         lines += ["", "🌡 市場", "  " + " · ".join(market_bits)]
 
@@ -240,7 +246,8 @@ def tick() -> bool:
         record_balance(data, now)             # daily equity-curve point
     except Exception as exc:  # noqa: BLE001 — history must never block the report
         print(f"[report] balance record failed: {exc}")
-    ok = telegram_utils.send_message(msg, force=True, channel="private")
+    ok = telegram_utils.send_message(msg, parse_mode="HTML", force=True,
+                                     channel="private")
     if ok:
         # Only mark done on a confirmed send — a Telegram blip retries next sweep.
         state["last_report"] = now.strftime("%Y-%m-%d")

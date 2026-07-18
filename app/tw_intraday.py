@@ -112,9 +112,12 @@ def opening_text(now, taiex: dict, monitored: list) -> str:
     if taiex:
         lines.append(f"TAIEX {_px(taiex['price'])} ({taiex['pct']:+.2f}% vs 昨收)")
     if monitored:
+        import tg_format
         lines.append(f"今日追蹤 {len(monitored)} 檔設定:")
-        lines += [f"• {s['code']} {s.get('name') or ''} — 進 {_px(s['ref'])} / "
-                  f"損 {_px(s['sl'])} / 標 {_px(s['tp'])}" for s in monitored[:8]]
+        lines.append(tg_format.pre_table(
+            [(s["code"], s.get("name") or "", f"進 {_px(s['ref'])}",
+              f"損 {_px(s['sl'])}", f"標 {_px(s['tp'])}")
+             for s in monitored[:8]], align="lllll"))
     else:
         lines.append("目前無追蹤中的設定 — 等 14:00 收盤掃描")
     lines.append(f"(盤中警報: 個股 ±{MOVER_PCT:g}%、大盤 ±{TAIEX_ALERT_PCT:g}%、"
@@ -168,12 +171,16 @@ def snapshot_text() -> str:
     by_code = {r["code"]: r for r in rows}
     setups = tw_stocks._load_state().get("active_setups") or []
     if setups:
+        import tg_format
         lines.append("追蹤設定:")
+        cells = []
         for s in setups[:8]:
             row = by_code.get(s["code"])
-            px = f"現價 {_px(row['price'])}" if row and row.get("price") else "無報價"
-            lines.append(f"• {s['code']} {s.get('name') or ''} {px} "
-                         f"(進 {_px(s['ref'])} / 損 {_px(s['sl'])} / 標 {_px(s['tp'])})")
+            px = _px(row["price"]) if row and row.get("price") else "無報價"
+            cells.append((s["code"], s.get("name") or "", f"現價 {px}",
+                          f"進 {_px(s['ref'])}", f"損 {_px(s['sl'])}",
+                          f"標 {_px(s['tp'])}"))
+        lines.append(tg_format.pre_table(cells, align="llllll"))
     if quote_ts and time.time() - quote_ts > STALE_QUOTE_SEC:
         age_min = int((time.time() - quote_ts) / 60)
         lines.append(f"(報價為 {age_min} 分鐘前的最後成交)")
@@ -245,8 +252,9 @@ def tick() -> bool:
     sent = False
     if parts:
         import telegram_utils
-        sent = telegram_utils.send_message("\n\n".join(parts), force=True,
-                                           channel="twstocks")
+        # opening_text may carry a <pre> setups table — HTML mode throughout
+        sent = telegram_utils.send_message("\n\n".join(parts), parse_mode="HTML",
+                                           force=True, channel="twstocks")
         print(f"[twintraday] {now.strftime('%H:%M')}: "
               f"{len(parts)} block(s), sent={sent}")
     _save_state(state)

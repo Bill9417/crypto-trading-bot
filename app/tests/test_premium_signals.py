@@ -175,8 +175,8 @@ def test_scorecard_shows_premium_line():
             {"outcome": "sl", "premium": True},
             {"outcome": "tp2"}]
     text = SO.summarize(outs)
-    assert "精選訊號 2 個" in text
-    assert "先到TP1 1 個 (50%)" in text
+    assert "⭐ 精選→TP1" in text
+    assert "1/2" in text and "50%" in text
 
 
 # ── owner-only /report ───────────────────────────────────────────────────────

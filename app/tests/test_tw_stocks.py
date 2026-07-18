@@ -97,8 +97,8 @@ def test_digest_bull_with_setup():
     s = {"ref": 2415.0, "sl": 2255.0, "tp": 2680.0, "atr": 53.0, "turnover": 1e9}
     msg = tw_stocks.build_digest(_now(), reg, [("2330", "台積電", s)])
     assert "✅" in msg and "2330" in msg and "台積電" in msg
-    assert "進場參考 2,415" in msg
-    assert "停損 2,255" in msg and "目標 2,680" in msg
+    assert "2,415" in msg and "2,255" in msg and "2,680" in msg   # 進/損/標 columns
+    assert "<pre>" in msg and "進場=下一交易日開盤參考" in msg
     assert "勝率≠賺錢" in msg          # the honesty footer is not optional
 
 

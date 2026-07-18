@@ -285,13 +285,15 @@ def _next_magnet(liqmap: dict, side: str):
 def fmt_summary(snap: dict, btc_day: dict, eth_day: dict,
                 recent: dict = None, maps: dict = None) -> str:
     """/liq — 24h tallies + most-recent prints (with prices) + 🧲 maps."""
+    import tg_format
     lines = ["💥 清算 24h\n"]
-    for base, d in (("BTC", btc_day), ("ETH", eth_day)):
-        lines.append(f"{base}: 多單 {_usd(d['long_usd'])} / 空單 {_usd(d['short_usd'])}"
-                     f" · {d['n']} 筆")
-    lines.append(f"\n全市場: {_usd(snap.get('total_usd') or 0)} "
-                 f"(多 {_usd(snap.get('long_usd') or 0)} / "
-                 f"空 {_usd(snap.get('short_usd') or 0)})")
+    lines.append(tg_format.pre_table(
+        [(base, f"多單 {_usd(d['long_usd'])}", f"空單 {_usd(d['short_usd'])}",
+          f"{d['n']} 筆")
+         for base, d in (("BTC", btc_day), ("ETH", eth_day))]
+        + [("全市場", f"多 {_usd(snap.get('long_usd') or 0)}",
+            f"空 {_usd(snap.get('short_usd') or 0)}",
+            _usd(snap.get('total_usd') or 0))], align="llll"))
     lg = snap.get("largest")
     if lg:
         lines.append(f"最大單筆: {lg['symbol']} {('多' if lg['side'] == 'long' else '空')}單 "
@@ -300,11 +302,12 @@ def fmt_summary(snap: dict, btc_day: dict, eth_day: dict,
     for base in ("BTC", "ETH"):
         rows = (recent or {}).get(base)
         if rows:
-            lines += ["", f"🕐 {base} 最近清算:"] + [f"  {r}" for r in rows]
+            lines += ["", f"🕐 {base} 最近清算:",
+                      "<pre>" + tg_format.esc("\n".join(rows)) + "</pre>"]
     for base in ("BTC", "ETH"):
         m = (maps or {}).get(base)
         if m:
-            lines += ["", fmt_map(m, base)]
+            lines += ["", "<pre>" + tg_format.esc(fmt_map(m, base)) + "</pre>"]
     if maps:
         lines.append("(地圖=量能×假設槓桿10/25/50/100x推估、已排除掃過區 — 僅供參考)")
 

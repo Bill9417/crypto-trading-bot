@@ -162,4 +162,5 @@ def test_report_offline(monkeypatch, tmp_path):
                         lambda a: ({"BTC": _pos("long", 10, 6e6, entry=60000, upnl=5e5)}, 1e7))
     rep = WT.build_report()
     assert "巨鯨追蹤" in rep and "鯨魚A" in rep
-    assert "做多 BTC" in rep and "coinglass.com" in rep
+    assert "做多" in rep and "BTC" in rep and "coinglass.com" in rep
+    assert "<pre>" in rep                        # aligned positions table

@@ -168,21 +168,21 @@ def build_digest(now, reg: dict, setups: list, pattern_blocked: int = 0,
     lines.append("")
     if reg.get("ok"):
         if setups:
+            import tg_format
             shown = setups[:MAX_SHOW]
             lines.append(f"🎯 今日訊號 {len(setups)} 檔 — 回踩20日線收紅:")
+            rows = [("代號", "名稱", "進場", "停損", "", "目標", "")]
             for code, name, s in shown:
                 risk = (s["ref"] - s["sl"]) / s["ref"] * 100
                 gain = (s["tp"] - s["ref"]) / s["ref"] * 100
-                lines += [
-                    "",
-                    f"▫️ {code} {name}",
-                    f"   進場參考 {_px(s['ref'])} (下一交易日開盤)",
-                    f"   停損 {_px(s['sl'])} (−{risk:.1f}%, 3×ATR)",
-                    f"   目標 {_px(s['tp'])} (+{gain:.1f}%, 5×ATR)",
-                ]
+                rows.append((code, name, _px(s["ref"]),
+                             _px(s["sl"]), f"−{risk:.1f}%",
+                             _px(s["tp"]), f"+{gain:.1f}%"))
+            lines.append(tg_format.pre_table(rows, align="llrrrrr"))
+            lines.append("進場=下一交易日開盤參考 · 停損 3×ATR · 目標 5×ATR")
             if len(setups) > MAX_SHOW:
-                lines.append(f"\n   …另有 {len(setups) - MAX_SHOW} 檔未列出")
-            lines.append(f"\n⏱ 未到目標/停損時最長持有 {MAX_HOLD} 個交易日")
+                lines.append(f"…另有 {len(setups) - MAX_SHOW} 檔未列出")
+            lines.append(f"⏱ 未到目標/停損時最長持有 {MAX_HOLD} 個交易日")
             if cooldown_skipped:
                 lines.append(f"({cooldown_skipped} 檔 {COOLDOWN_DAYS} 日內已提醒過，未重複列出)")
         else:
@@ -270,7 +270,8 @@ def tick() -> bool:
     msg = build_digest(now, reg, setups, blocked, skipped)
 
     import telegram_utils
-    sent = telegram_utils.send_message(msg, force=True, channel="twstocks")
+    sent = telegram_utils.send_message(msg, parse_mode="HTML", force=True,
+                                       channel="twstocks")
     print(f"[twstocks] {today}: regime={'BULL' if reg.get('ok') else 'OFF'} "
           f"setups={len(setups)} sent={sent}")
 

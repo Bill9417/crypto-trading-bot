@@ -59,15 +59,17 @@ def test_report_has_all_sections():
 def test_report_pnl_lines():
     msg = DR.build_report(_data(), _now())
     # Binance: today −0.42, yesterday +1.13, 7d = their sum
-    assert "今日 -0.42" in msg and "昨日 +1.13" in msg and "7 日 +0.71" in msg
+    assert "今日 -0.42" in msg and "昨日 +1.13" in msg and "7日 +0.71" in msg
     # Bybit: yesterday −3.20
     assert "昨日 -3.20" in msg
+    assert "<pre>" in msg                        # aligned account tables
 
 
 def test_report_positions_and_flat():
     msg = DR.build_report(_data(), _now())
-    assert "ETH 做多 +0.42（+2.10%）" in msg      # Binance open position
-    assert "無持倉" in msg                        # Bybit is flat
+    row = next(ln for ln in msg.splitlines() if "▸ ETH" in ln)
+    assert "做多" in row and "+0.42" in row and "+2.10%" in row
+    assert "持倉" in msg and "無" in msg          # Bybit is flat
 
 
 def test_report_calendar_today_only():

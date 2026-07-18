@@ -90,6 +90,7 @@ def summarize(outcomes: list, title: str = "📋 訊號成績單 (7天)") -> str
     """outcomes: [{"outcome", "direction", "score", "base", ...}, ...]"""
     if not outcomes:
         return f"{title}\n尚無已評估的訊號 — 訊號滿48小時後才會結算。"
+    import tg_format
     counts: dict = {}
     for o in outcomes:
         counts[o["outcome"]] = counts.get(o["outcome"], 0) + 1
@@ -97,25 +98,27 @@ def summarize(outcomes: list, title: str = "📋 訊號成績單 (7天)") -> str
     wins = counts.get("tp2", 0)
     partial = counts.get("tp1", 0) + counts.get("tp1→sl", 0)
     stops = counts.get("sl", 0) + counts.get("tp1→sl", 0)
-    lines = [title,
-             f"共 {n} 個訊號 (進場=訊號價, 48h 窗口, 同根K線先算停損):",
-             f"  🎯 到 TP2: {wins} ({100 * wins / n:.0f}%)",
-             f"  ◐ 碰到 TP1: {partial} ({100 * partial / n:.0f}%)",
-             f"  ⚠️ 停損: {stops} ({100 * stops / n:.0f}%)",
-             f"  ➖ 都沒碰到: {counts.get('none', 0)}"]
+    rows = [
+        ("🎯 到 TP2", wins, f"{100 * wins / n:.0f}%"),
+        ("◐ 碰到 TP1", partial, f"{100 * partial / n:.0f}%"),
+        ("⚠️ 停損", stops, f"{100 * stops / n:.0f}%"),
+        ("➖ 都沒碰到", counts.get("none", 0), ""),
+    ]
     hc = [o for o in outcomes if o.get("hc")]
     if hc:
         hw = sum(1 for o in hc if o["outcome"] == "tp2")
-        lines.append(f"  其中高信心(HC) {len(hc)} 個 → TP2 {hw} 個 "
-                     f"({100 * hw / len(hc):.0f}%)")
+        rows.append(("高信心→TP2", f"{hw}/{len(hc)}", f"{100 * hw / len(hc):.0f}%"))
     prem = [o for o in outcomes if o.get("premium")]
     if prem:
         pw = sum(1 for o in prem
                  if o["outcome"] in ("tp2", "tp1", "tp1→sl"))
-        lines.append(f"  ⭐ 精選訊號 {len(prem)} 個 → 先到TP1 {pw} 個 "
-                     f"({100 * pw / len(prem):.0f}%)")
+        rows.append(("⭐ 精選→TP1", f"{pw}/{len(prem)}",
+                     f"{100 * pw / len(prem):.0f}%"))
+    lines = [title,
+             f"共 {n} 個訊號（進場=訊號價 · 48h 窗口 · 同根K線先算停損）",
+             tg_format.pre_table(rows, align="lrr")]
     if n < 20:
-        lines.append(f"(樣本只有 {n} 個 — 先當參考，別當結論)")
+        lines.append(f"（樣本只有 {n} 個 — 先當參考，別當結論）")
     return "\n".join(lines)
 
 
@@ -199,7 +202,8 @@ def tick(client) -> int:
         recent = [v for v in state["evaluated"].values()
                   if (v.get("sig_ts") or 0) >= now - 7 * 86400]
         import telegram_utils
-        telegram_utils.send_message(summarize(recent), force=True, channel="signals")
+        telegram_utils.send_message(summarize(recent), parse_mode="HTML",
+                                    force=True, channel="signals")
         print(f"[outcomes] weekly scorecard sent ({len(recent)} signals)")
 
     if done or snapped or state.get("last_weekly") == today:

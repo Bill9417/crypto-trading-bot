@@ -96,7 +96,9 @@ def test_opening_text_with_setups():
     msg = tw_intraday.opening_text(_t(9, 1), taiex, [SETUP])
     assert "🔔 台股開盤" in msg and "(週一)" in msg
     assert "TAIEX 45,120 (+0.38%" in msg
-    assert "2330" in msg and "進 1,150 / 損 1,080 / 標 1,260" in msg
+    assert "2330" in msg
+    assert "進 1,150" in msg and "損 1,080" in msg and "標 1,260" in msg
+    assert "<pre>" in msg                       # aligned setups table
 
 
 def test_opening_text_no_setups():

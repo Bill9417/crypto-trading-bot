@@ -148,9 +148,11 @@ def report() -> str:
     if st["n"]:
         lines.append(f"完成 {st['n']} 腿 · 淨 {tg_format.pct(st['net_pct'])} · "
                      f"{st['wins']} 勝")
-        for l in (state.get("ledger") or [])[-5:]:
-            lines.append(f"  {tg_format.dir_zh(l['dir'], arrow=False)} "
-                         f"{l['entry']:,.0f}→{l['exit']:,.0f} {tg_format.pct(l['pct'], 2)}")
+        lines.append(tg_format.pre_table(
+            [(tg_format.dir_zh(l["dir"], arrow=False),
+              f"{l['entry']:,.0f}", "→", f"{l['exit']:,.0f}",
+              tg_format.pct(l["pct"], 2))
+             for l in (state.get("ledger") or [])[-5:]], align="lrlrr"))
     else:
         lines.append("尚無完成的腿")
     lines.append("（回測: 2 年 +770/500 名目, 8/8 季正, ~30% 勝率 — 前測就是在驗證它）")

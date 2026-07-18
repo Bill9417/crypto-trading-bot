@@ -245,6 +245,22 @@ def _chunks_of(message: str) -> list:
     return parts
 
 
+def balance_pre(parts: list) -> list:
+    """When an HTML message is CHUNKED, a split inside a <pre> block leaves an
+    unclosed tag in one part and a stray closer in the next — Telegram 400s
+    BOTH chunks and the whole message is lost. Close the open block at each
+    chunk end and reopen it at the next chunk start."""
+    out, reopen = [], False
+    for p in parts:
+        if reopen:
+            p = "<pre>" + p
+        reopen = p.count("<pre>") > p.count("</pre>")
+        if reopen:
+            p = p + "</pre>"
+        out.append(p)
+    return out
+
+
 def _post_one(url: str, payload: dict, retries: int):
     """One paced POST with 429-aware retries. Returns (ok, message_id) —
     message_id may be None when the response body wasn't parseable. Network
@@ -327,7 +343,10 @@ def send_message(message, parse_mode=None, *, force=False, retries=2, channel="a
 
     ok = True
     bot = "main" if token == BOT_TOKEN else "alerts"
-    for part in _chunks_of(message):
+    parts = _chunks_of(message)
+    if parse_mode == "HTML" and len(parts) > 1:
+        parts = balance_pre(parts)          # a split inside <pre> must not 400
+    for part in parts:
         sent, mid = _post_one(url, {**payload, "text": part}, retries)
         if sent and mid:
             _record_sent(payload["chat_id"], mid, bot)   # /clean can find it later

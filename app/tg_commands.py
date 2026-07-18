@@ -149,30 +149,31 @@ def _pnl(v):
 def fmt_winrate(binance: dict, bybit: dict) -> str:
     """The /winrate report — REAL exchange records, fees included, not the
     simulated tracker. Sections degrade to the error text on an API blip."""
+    import tg_format
     lines = ["🎯 勝率 · 真實帳戶成交\n"]
     for icon, name, s in (("🟨", "Binance · S1/S2", binance),
                           ("🟧", "Bybit · S3", bybit)):
         lines.append(f"{icon} {name}")
         if not (s or {}).get("ok"):
-            lines.append(f"  暫時無法取得（{(s or {}).get('error', 'no data')}）\n")
+            lines.append(f"暫時無法取得（{(s or {}).get('error', 'no data')}）\n")
             continue
         n = s.get("n_trades") or 0
         if not n:
-            lines.append("  尚無平倉紀錄\n")
+            lines.append("尚無平倉紀錄\n")
             continue
         pf = s.get("profit_factor")
         streak = f"{s.get('streak_type') or ''}{s.get('streak') or 0}"
         week = sum(d.get("net") or 0.0 for d in (s.get("daily") or [])[-7:])
-        lines += [
-            f"  成交 {n} · {s.get('wins')}勝 / {s.get('losses')}敗 → "
-            f"{_n(s.get('win_rate'), 1)}%",
-            f"  淨值 {_pnl(s.get('net'))} USDT（含手續費）· "
-            f"PF {pf if pf is not None else '—'}",
-            f"  平均獲利 {_pnl(s.get('avg_win'))} · 平均虧損 {_pnl(s.get('avg_loss'))}",
-            f"  7 日 {_pnl(week)} · 最大回撤 {_pnl(s.get('max_drawdown'))} · "
-            f"連續 {streak}",
-            "",
-        ]
+        lines.append(tg_format.pre_table([
+            ("成交", f"{n} 筆", f"{s.get('wins')}勝 {s.get('losses')}敗",
+             f"→ {_n(s.get('win_rate'), 1)}%"),
+            ("淨值", f"{_pnl(s.get('net'))} USDT", "含手續費",
+             f"PF {pf if pf is not None else '—'}"),
+            ("平均", f"獲利 {_pnl(s.get('avg_win'))}",
+             f"虧損 {_pnl(s.get('avg_loss'))}", f"連續 {streak}"),
+            ("7日", _pnl(week), "最大回撤", _pnl(s.get('max_drawdown'))),
+        ], align="llll"))
+        lines.append("")
     lines.append("⚠️ 勝率不代表賺錢 — 90% 勝率但那 10% 賠很大照樣虧。"
                  "要跟獲利因子（PF）和淨值一起看。")
     return "\n".join(lines)
@@ -184,56 +185,66 @@ def fmt_positions(binance: dict, bybit: dict) -> str:
     for icon, name, snap in (("🟨", "Binance", binance), ("🟧", "Bybit", bybit)):
         lines.append(f"{icon} {name}")
         if not (snap or {}).get("ok", True) and not (snap or {}).get("positions"):
-            lines.append(f"  暫時無法取得（{(snap or {}).get('error', 'no data')}）\n")
+            lines.append(f"暫時無法取得（{(snap or {}).get('error', 'no data')}）\n")
             continue
         poss = (snap or {}).get("positions") or []
         if not poss:
-            lines.append("  無持倉\n")
+            lines.append("無持倉\n")
             continue
+        rows = [("幣種", "方向", "進場", "未實現", "")]
         for p in poss[:10]:
             base = (p.get("symbol") or "?").split("/")[0]
             pct = p.get("pnl_pct")
-            lines.append(f"  ▸ {base} {tg_format.dir_zh(p.get('side'), arrow=False)} "
-                         f"· 進場 {_n(p.get('entry'))} "
-                         f"· 未實現 {_pnl(p.get('unrealized_pnl'))}"
-                         + (f"（{_pnl(pct)}%）" if pct is not None else ""))
+            rows.append((base, tg_format.dir_zh(p.get("side"), arrow=False),
+                         tg_format.fmt_price(p.get("entry")),
+                         _pnl(p.get("unrealized_pnl")),
+                         f"{_pnl(pct)}%" if pct is not None else ""))
+        lines.append(tg_format.pre_table(rows))
         lines.append("")
     return "\n".join(lines).rstrip()
 
 
 def fmt_signals(payload: dict, limit: int = 5) -> str:
+    import tg_format
     sigs = (payload or {}).get("signals") or []
     if not sigs:
         return "過去24小時沒有 S2 訊號。"
     lines = [f"📊 最近 {min(limit, len(sigs))} 個 S2 訊號 "
              f"({payload.get('timeframe', '15m')})\n"]
+    rows = [("", "方向", "信心", "", "進場", "停損", "目標", "")]
     for s in sigs[:limit]:
         age_min = int((time.time() - (s.get("ts") or 0)) / 60)
-        age = f"{age_min}分" if age_min < 120 else f"{age_min // 60}小時"
+        age = f"{age_min}分前" if age_min < 120 else f"{age_min // 60}小時前"
         arrow = "🟢" if s.get("direction") == "long" else "🔴"
-        star = " ⭐" if s.get("premium") else ""
+        star = "⭐" if s.get("premium") else ""
         dir_zh = "做多" if s.get("direction") == "long" else "做空"
-        lines.append(f"{arrow} {s.get('base')} {dir_zh}{star} · "
-                     f"信心 {s.get('score')} · {age}前")
-        if s.get("entry") and s.get("sl") and s.get("tp2"):
-            lines.append(f"   進場 {s['entry']:,.6g} · 停損 {s['sl']:,.6g} · "
-                         f"目標1 {s.get('tp1', 0):,.6g} · 目標2 {s['tp2']:,.6g}")
-    lines.append("\n⭐ = 精選訊號 (信心+BTC同向+趨勢確認)")
+        has_plan = s.get("entry") and s.get("sl") and s.get("tp2")
+        rows.append((
+            f"{arrow} {s.get('base')}", f"{dir_zh}{star}",
+            s.get("score"), age,
+            tg_format.fmt_price(s["entry"]) if has_plan else "",
+            tg_format.fmt_price(s["sl"]) if has_plan else "",
+            tg_format.fmt_price(s["tp2"]) if has_plan else "", ""))
+    lines.append(tg_format.pre_table(rows))
+    lines.append("\n⭐ = 精選訊號（信心+BTC同向+趨勢確認）· 目標 = 最終目標 TP2")
     return "\n".join(lines)
 
 
 def fmt_alerts(alerts: list) -> str:
+    import tg_format
     active = [a for a in alerts if not a.get("triggered")]
     fired = [a for a in alerts if a.get("triggered")]
     if not alerts:
         return "🔔 尚未設定到價提醒 — 可在儀表板新增。"
-    lines = ["🔔 到價提醒\n"]
+    rows = []
     for a in active:
-        lines.append(f"  ▸ {a['base']} {'▲ 突破' if a['direction'] == 'above' else '▼ 跌破'} "
-                     f"{a['price']:,.6g}")
+        rows.append(("▸", a["base"],
+                     "▲ 突破" if a["direction"] == "above" else "▼ 跌破",
+                     f"{a['price']:,.6g}"))
     for a in fired[:5]:
-        lines.append(f"  ✓ {a['base']} 已觸發 @ {a.get('triggered_price', 0):,.6g}")
-    return "\n".join(lines)
+        rows.append(("✓", a["base"], "已觸發",
+                     f"{a.get('triggered_price', 0):,.6g}"))
+    return "🔔 到價提醒\n" + tg_format.pre_table(rows, align="lllr")
 
 
 # ── group guide + welcome (the promo surface) ────────────────────────────────
@@ -313,16 +324,15 @@ def _fetch_price(base: str):
 
 
 def fmt_price_reply(rows: list) -> str:
-    """rows = [(base, {last, pct} | None), ...] → aligned quote list."""
+    """rows = [(base, {last, pct} | None), ...] → aligned quote table."""
     import tg_format
-    lines = ["💲 即時報價（現貨 24h）"]
+    cells = []
     for base, q in rows:
         if not q:
-            lines.append(f"  {base} — 查無此幣（試試完整代號，如 PEPE）")
+            cells.append((base, "查無此幣", ""))
             continue
-        lines.append(f"  {base} {tg_format.fmt_price(q['last'])} · "
-                     f"{tg_format.pct(q['pct'])}")
-    return "\n".join(lines)
+        cells.append((base, tg_format.fmt_price(q["last"]), tg_format.pct(q["pct"])))
+    return "💲 即時報價（現貨 24h）\n" + tg_format.pre_table(cells, align="lrr")
 
 
 def handle_price(args: str) -> str:
@@ -456,16 +466,21 @@ def _api(method: str, *, http_timeout: float = 30, **params):
     return r.json()
 
 
-def _reply(chat_id, thread_id, text) -> bool:
+def _reply(chat_id, thread_id, text, parse_mode=None) -> bool:
     """Chunked, 429-aware reply. Returns whether every part was delivered —
     a rate-limited reply used to be dropped silently while the log said
     'answered' (the same trap fixed in telegram_utils on 2026-07-12)."""
     payload = {"chat_id": chat_id}
+    if parse_mode:
+        payload["parse_mode"] = parse_mode
     if thread_id:
         payload["message_thread_id"] = thread_id
     url = f"https://api.telegram.org/bot{config.BOT_TOKEN}/sendMessage"
     ok = True
-    for part in telegram_utils._chunks_of(text):
+    parts = telegram_utils._chunks_of(text)
+    if parse_mode == "HTML" and len(parts) > 1:
+        parts = telegram_utils.balance_pre(parts)
+    for part in parts:
         for attempt in (0, 1):
             r = requests.post(url, data={**payload, "text": part}, timeout=15)
             if r.status_code == 429 and attempt == 0:
@@ -572,7 +587,10 @@ def _poll_loop() -> None:
                         _reply(chat_id, msg.get("message_thread_id"),
                                "📈 日報是私人資訊 — 已私訊給你")
                 try:
-                    delivered = _reply(dest_chat, dest_thread, reply)
+                    # replies built in the house style carry <pre>/<a> markup —
+                    # those need HTML parse mode; plain replies stay plain
+                    mode = "HTML" if ("<pre>" in reply or "<a href" in reply) else None
+                    delivered = _reply(dest_chat, dest_thread, reply, mode)
                     print(f"[tgcmd] {'answered' if delivered else 'REPLY DROPPED'} /{cmd}")
                 except Exception as exc:  # noqa: BLE001
                     print(f"[tgcmd] reply failed: {exc}")

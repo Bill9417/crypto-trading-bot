@@ -46,7 +46,9 @@ def test_digest_caps_rows_and_stays_under_telegram_limit():
                 "price": 2.5, "sl": 2.6, "tp2": 2.3} for i in range(30)])
     msg = S2S._digest_text(sigs)
     assert len(msg) < 4096
-    assert msg.count("  • ") == 2 * S2S.DIGEST_MAX_ROWS
+    rows = sum(1 for ln in msg.splitlines()
+               if ln.startswith(("•", "⭐")) and not ln.startswith("⭐ ="))
+    assert rows == 2 * S2S.DIGEST_MAX_ROWS
     assert f"…還有 {50 - S2S.DIGEST_MAX_ROWS} 個" in msg
     assert f"…還有 {30 - S2S.DIGEST_MAX_ROWS} 個" in msg
     assert "80 個新訊號" in msg                   # true total still reported
@@ -60,8 +62,11 @@ def test_digest_marks_premium_rows():
             {"direction": "long", "base": "BBB", "score": 75, "price": 1.0,
              "sl": 0.98, "tp2": 1.04}]
     msg = S2S._digest_text(sigs)
-    assert "⭐ AAA" in msg
-    assert "• BBB" in msg
+    star_rows = [ln for ln in msg.splitlines()
+                 if ln.startswith("⭐") and not ln.startswith("⭐ =")]
+    dot_rows = [ln for ln in msg.splitlines() if ln.startswith("•")]
+    assert len(star_rows) == 1 and "AAA" in star_rows[0]
+    assert len(dot_rows) == 1 and "BBB" in dot_rows[0]
     assert "非投資建議" in msg
 
 
@@ -72,6 +77,10 @@ def test_digest_offline_falls_back_to_binance_price():
     assert "1.2345" in msg
 
 
-def test_plan_suffix():
-    assert S2S._plan_suffix(_sig()) == " · 停損 1782 · 目標 1836"
-    assert S2S._plan_suffix({"direction": "long"}) == ""
+def test_digest_rows_carry_plan_columns():
+    # the digest table must carry the plan (停損/目標 columns) per row
+    msg = S2S._digest_text([{"direction": "long", "base": "ETH", "score": 88,
+                             "price": 1800.0, "sl": 1782.0, "tp2": 1836.0}])
+    row = next(ln for ln in msg.splitlines()
+               if ln.startswith(("•", "⭐")) and not ln.startswith("⭐ ="))
+    assert "1782" in row and "1836" in row

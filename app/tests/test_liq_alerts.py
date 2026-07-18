@@ -116,8 +116,8 @@ def test_fmt_summary():
             "collecting_since": 1000.0}
     d = {"long_usd": 45e6, "short_usd": 12e6, "n": 900}
     msg = liq_alerts.fmt_summary(snap, d, d)
-    assert "BTC: 多單 $45.0M" in msg
-    assert "全市場: $90.0M" in msg
+    assert "多單 $45.0M" in msg
+    assert "全市場" in msg and "$90.0M" in msg
     assert "BTC 多單 $2.5M @ OKX" in msg
     assert "收集中" in msg              # restart-resets honesty line
 

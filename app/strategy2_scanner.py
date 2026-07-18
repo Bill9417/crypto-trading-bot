@@ -255,14 +255,6 @@ def premium_alert_text(sig: dict) -> str:
     return "\n".join(x for x in lines if x)
 
 
-def _plan_suffix(sig: dict) -> str:
-    """One-line ' · 停損 x · 目標 y' tail for digest rows (目標 = final TP)."""
-    sl, tp2 = sig.get("sl"), sig.get("tp2")
-    if not (sl and tp2):
-        return ""
-    return f" · 停損 {_fmt_price(sl)} · 目標 {_fmt_price(tp2)}"
-
-
 DIGEST_MAX_ROWS = int(os.getenv("STRATEGY2_DIGEST_MAX_ROWS", "12"))   # per side
 
 
@@ -285,11 +277,16 @@ def _digest_text(sigs: list) -> str:
         if not rows:
             return
         lines.append(f"\n{title}")
-        lines.extend(f"  {'⭐' if s.get('premium') else '•'} {s['base']} · "
-                     f"信心 {s['score']} · {_price_part(s)}"
-                     f"{_plan_suffix(s)}" for s in rows[:DIGEST_MAX_ROWS])
+        cells = [("", "幣種", "信心", "現價", "停損", "目標")]
+        for s in rows[:DIGEST_MAX_ROWS]:
+            has_plan = s.get("sl") and s.get("tp2")
+            cells.append(("⭐" if s.get("premium") else "•", s["base"],
+                          s["score"], _price_part(s),
+                          _fmt_price(s["sl"]) if has_plan else "",
+                          _fmt_price(s["tp2"]) if has_plan else ""))
+        lines.append(tg_format.pre_table(cells, align="llrrrr"))
         if len(rows) > DIGEST_MAX_ROWS:
-            lines.append(f"  …還有 {len(rows) - DIGEST_MAX_ROWS} 個 (完整清單見網頁)")
+            lines.append(f"…還有 {len(rows) - DIGEST_MAX_ROWS} 個 (完整清單見網頁)")
 
     _side("🟢 做多", longs)
     _side("🔴 做空", shorts)
@@ -312,7 +309,8 @@ def _send_digest(sigs: list) -> bool:
                   f"counter-BTC) — nothing sent")
         return False
     try:
-        return bool(telegram_utils.send_message(_digest_text(rows), channel="signals"))
+        return bool(telegram_utils.send_message(_digest_text(rows),
+                                                parse_mode="HTML", channel="signals"))
     except Exception as exc:  # noqa: BLE001 — a failed alert must never kill the loop
         print(f"[strategy2] digest send failed: {exc}")
         return False

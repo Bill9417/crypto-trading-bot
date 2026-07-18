@@ -63,9 +63,10 @@ def _summary(**kw):
 def test_fmt_winrate_reports_both_accounts():
     msg = TG.fmt_winrate(_summary(), _summary(n_trades=40, win_rate=57.5, net=-104.29))
     assert "Binance" in msg and "Bybit" in msg
-    assert "6勝 / 4敗" in msg and "60.0%" in msg
+    assert "6勝 4敗" in msg and "60.0%" in msg
     assert "-104.29" in msg
-    assert "PF 1.31" in msg and "7 日 +3.50" in msg
+    assert "PF 1.31" in msg and "+3.50" in msg
+    assert "<pre>" in msg                             # aligned stat tables
     assert "勝率不代表賺錢" in msg                     # the honesty footer
 
 
@@ -81,7 +82,9 @@ def test_fmt_positions():
         {"symbol": "ETH/USDT:USDT", "side": "LONG", "entry": 1800.0,
          "unrealized_pnl": 0.42, "pnl_pct": 2.1}]}
     msg = TG.fmt_positions(binance, {"ok": True, "positions": []})
-    assert "ETH 做多" in msg and "+0.42" in msg and "無持倉" in msg
+    row = next(ln for ln in msg.splitlines() if "ETH" in ln)
+    assert "做多" in row and "+0.42" in row
+    assert "無持倉" in msg
 
 
 def test_fmt_signals_with_plan():
@@ -90,8 +93,10 @@ def test_fmt_signals_with_plan():
          "entry": 1800.0, "sl": 1782.0, "tp1": 1818.0, "tp2": 1836.0,
          "premium": True}]}
     msg = TG.fmt_signals(payload)
-    assert "ETH 做多 ⭐" in msg and "信心 85" in msg and "85/100" not in msg
-    assert "停損 1,782" in msg and "目標2 1,836" in msg
+    row = next(ln for ln in msg.splitlines() if "ETH" in ln)
+    assert "做多⭐" in row and "85" in row and "85/100" not in msg
+    assert "1,782" in row and "1,836" in row      # 停損/目標 columns
+    assert "<pre>" in msg
 
 
 def test_fmt_signals_empty():
@@ -103,7 +108,10 @@ def test_fmt_alerts():
               {"base": "ETH", "direction": "below", "price": 1700.0,
                "triggered": 1.0, "triggered_price": 1699.0}]
     msg = TG.fmt_alerts(alerts)
-    assert "BTC ▲ 突破 70,000" in msg and "ETH 已觸發 @ 1,699" in msg
+    btc = next(ln for ln in msg.splitlines() if "BTC" in ln)
+    eth = next(ln for ln in msg.splitlines() if "ETH" in ln)
+    assert "▲ 突破" in btc and "70,000" in btc
+    assert "已觸發" in eth and "1,699" in eth
     assert "尚未設定到價提醒" in TG.fmt_alerts([])
 
 
@@ -147,9 +155,11 @@ def test_fmt_price_reply_mixes_hits_and_misses():
             ("ETH", {"last": 3520.5, "pct": -2.0}),
             ("NOPE", None)]
     msg = TG.fmt_price_reply(rows)
-    assert "BTC 108,432.1 · +1.2%" in msg
-    assert "ETH 3,520.5 · −2.0%" in msg          # real minus glyph
-    assert "NOPE — 查無此幣" in msg
+    btc = next(ln for ln in msg.splitlines() if "BTC" in ln)
+    eth = next(ln for ln in msg.splitlines() if "ETH" in ln)
+    assert "108,432.1" in btc and "+1.2%" in btc
+    assert "3,520.5" in eth and "−2.0%" in eth   # real minus glyph
+    assert "查無此幣" in msg and "<pre>" in msg
 
 
 def test_handle_price_defaults_and_cap(monkeypatch):

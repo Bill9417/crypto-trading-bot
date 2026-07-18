@@ -19,8 +19,59 @@ Every helper is failure-safe: a Bybit hiccup degrades to a Binance reference
 price + chart link, never a crash.
 """
 
+import html as _html
+import unicodedata as _ud
+
 DIV = "━━━━━━━━━━"
 DISCLAIMER = "⚠️ 訊號僅供參考，非投資建議"
+
+
+def esc(s) -> str:
+    """HTML-escape arbitrary text for parse_mode='HTML' messages — one bare
+    '&' or '<' in a news title / exception string 400s the whole send."""
+    return _html.escape(str(s), quote=False)
+
+
+def disp_w(s: str) -> int:
+    """Display width of a string in a monospace cell: CJK/fullwidth chars
+    render two columns wide, everything else one."""
+    return sum(2 if _ud.east_asian_width(ch) in ("W", "F") else 1 for ch in str(s))
+
+
+def pad(s, width: int) -> str:
+    """Left-align `s` inside `width` display columns (CJK-aware)."""
+    s = str(s)
+    return s + " " * max(0, width - disp_w(s))
+
+
+def rpad(s, width: int) -> str:
+    """Right-align `s` inside `width` display columns (CJK-aware)."""
+    s = str(s)
+    return " " * max(0, width - disp_w(s)) + s
+
+
+def pre_table(rows, *, align=None, gap: str = "  ") -> str:
+    """The aligned-columns workhorse: rows of cells → ONE <pre> block whose
+    columns line up perfectly (CJK-aware padding, so 中文 labels and latin
+    digits share a grid). align: per-column 'l'/'r' string, default first
+    column left + the rest right (label + numbers). Cells are HTML-escaped.
+    Empty/None cells are fine; short rows are fine. '' when rows is empty."""
+    rows = [[("" if c is None else str(c)) for c in r] for r in rows if r]
+    if not rows:
+        return ""
+    ncol = max(len(r) for r in rows)
+    widths = [0] * ncol
+    for r in rows:
+        for i, c in enumerate(r):
+            widths[i] = max(widths[i], disp_w(c))
+    spec = (align or ("l" + "r" * (ncol - 1))).ljust(ncol, "r")
+    out = []
+    for r in rows:
+        cells = []
+        for i, c in enumerate(r):
+            cells.append(pad(c, widths[i]) if spec[i] == "l" else rpad(c, widths[i]))
+        out.append(gap.join(cells).rstrip())
+    return "<pre>" + "\n".join(esc(ln) for ln in out) + "</pre>"
 
 
 def dir_zh(direction, *, arrow: bool = True) -> str:
