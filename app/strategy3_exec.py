@@ -111,8 +111,17 @@ def account_snapshot() -> dict:
             "unrealized_pnl": _num("totalPerpUPL"),
         }
 
-        our_symbols = {f"{b}/{config.QUOTE_ASSET}:{config.QUOTE_ASSET}"
-                       for b in config.STRATEGY3_SYMBOLS}
+        s3_symbols = {f"{b}/{config.QUOTE_ASSET}:{config.QUOTE_ASSET}"
+                      for b in config.STRATEGY3_SYMBOLS}
+        # 🪞 the S1 mirror's Bybit positions are OURS too — without this they
+        # were invisible to the daily report, /positions and the /bybit page.
+        mirror_symbols = set()
+        try:
+            import s1_bybit_mirror
+            mirror_symbols = set(s1_bybit_mirror._load().keys())
+        except Exception:  # noqa: BLE001 — mirror state is optional decoration
+            pass
+        our_symbols = s3_symbols | mirror_symbols
         positions = []
         for p in ex.fetch_positions(None, params={"settleCoin": config.QUOTE_ASSET}):
             if p.get("symbol") not in our_symbols:
@@ -133,6 +142,7 @@ def account_snapshot() -> dict:
                 "unrealized_pnl": p.get("unrealizedPnl"),
                 "pnl_pct": p.get("percentage"),
                 "sl": float(sl) if sl not in ("", "0") else None,
+                "engine": "s1鏡" if p.get("symbol") in mirror_symbols else "s3",
             })
         return {"ok": True, "error": None, "live": is_live(),
                 "balance": balance, "positions": positions}

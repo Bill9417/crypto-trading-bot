@@ -167,6 +167,18 @@ def mirror_open(binance_symbol: str, direction: str, price: float,
 
         margin = config.S1_BYBIT_ORDER_USDT / config.S1_BYBIT_LEVERAGE
         if X.is_live():
+            # Bybit lot-size pre-check with an HONEST message — without this a
+            # BTC-priced symbol (min lot ≈ 118 USDT > the 100 USDT order) failed
+            # deep in open_flip with a confusing STRATEGY3_MARGIN_USDT error.
+            try:
+                step, min_qty, min_notional = X._market_limits(sym)
+                need = max(min_qty * float(price), min_notional or 0.0)
+                if config.S1_BYBIT_ORDER_USDT < need:
+                    _tg(f"{sym.split('/')[0]} 最小下單額 ≈{need:.0f} USDT > "
+                        f"設定 {config.S1_BYBIT_ORDER_USDT:g} USDT，略過鏡單")
+                    return False
+            except Exception:  # noqa: BLE001 — open_flip still checks properly
+                pass
             avail = _available_usdt()
             if avail < margin * MARGIN_BUFFER:
                 _tg(f"{sym.split('/')[0]} 可用保證金不足（{avail:.1f} < "

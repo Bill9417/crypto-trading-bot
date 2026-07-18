@@ -96,7 +96,8 @@ def _acct_section(icon: str, name: str, snap: dict, pnl: dict) -> list:
     for p in positions[:8]:
         base = (p.get("symbol") or "?").split("/")[0]
         pct = p.get("pnl_pct")
-        rows.append((f"▸ {base}", tg_format.dir_zh(p.get("side"), arrow=False),
+        eng = f"（{p['engine']}）" if p.get("engine") else ""
+        rows.append((f"▸ {base}{eng}", tg_format.dir_zh(p.get("side"), arrow=False),
                      _pnl(p.get("unrealized_pnl")),
                      f"{_pnl(pct)}%" if pct is not None else ""))
     if not positions:

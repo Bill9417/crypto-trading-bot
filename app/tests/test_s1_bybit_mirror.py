@@ -219,3 +219,45 @@ def test_dry_run_places_no_orders_and_tracks_nothing(monkeypatch, tmp_path):
     assert calls["opens"][0]                           # open_flip called (its own dry-run)
     assert M._load() == {}                             # nothing tracked in dry-run
     assert calls["orders"] == []
+
+
+def test_open_skips_below_bybit_min_lot(monkeypatch, tmp_path):
+    # BTC-priced symbol: min lot 0.001 @ 118k ≈ 118 USDT > the 100 USDT order.
+    calls = _wire(monkeypatch, tmp_path, markets=("BTC/USDT:USDT",))
+    monkeypatch.setattr(X, "_market_limits", lambda s: (0.001, 0.001, 5.0))
+    assert not M.mirror_open("BTC/USDT:USDT", "long", 118000.0, 115000.0)
+    assert calls["opens"] == []                        # never reached open_flip
+    assert any("最小下單額" in m for m in calls["tg"])  # honest reason, not S3 jargon
+
+
+def test_account_snapshot_includes_mirror_positions(monkeypatch, tmp_path):
+    # The daily report / /positions / bybit page read account_snapshot — the
+    # mirror's Bybit positions must appear there (tagged), manual ones must not.
+    monkeypatch.setattr(M, "STATE_FILE", str(tmp_path / "pos.json"))
+    M._save({"ETH/USDT:USDT": {"side": "long", "qty": 0.02, "entry": 3500.0,
+                               "sl": 3430.0, "ts": 0}})
+
+    class _Ex:
+        def fetch_balance(self):
+            return {"info": {"result": {"list": [{"totalEquity": "300"}]}}}
+
+        def fetch_positions(self, syms, params=None):
+            def _p(sym, qty):
+                return {"symbol": sym, "side": "long", "contracts": qty,
+                        "notional": 100, "entryPrice": 1, "markPrice": 1,
+                        "liquidationPrice": None, "leverage": 10,
+                        "unrealizedPnl": 0.5, "percentage": 1.0,
+                        "info": {"stopLoss": "0.9"}}
+            return [_p("XAUT/USDT:USDT", 30.0),        # S3's own
+                    _p("ETH/USDT:USDT", 0.02),         # mirror-tracked
+                    _p("SKHYNIX/USDT:USDT", 0.17)]     # manual → excluded
+
+    monkeypatch.setattr(X, "keys_present", lambda: True)
+    monkeypatch.setattr(X, "client", lambda: _Ex())
+    import config as _c
+    monkeypatch.setattr(_c, "STRATEGY3_SYMBOLS", ["XAUT"])
+    snap = X.account_snapshot()
+    by_sym = {p["symbol"]: p for p in snap["positions"]}
+    assert by_sym["ETH/USDT:USDT"]["engine"] == "s1鏡"
+    assert by_sym["XAUT/USDT:USDT"]["engine"] == "s3"
+    assert "SKHYNIX/USDT:USDT" not in by_sym            # manual stays private

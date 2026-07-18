@@ -191,14 +191,15 @@ def fmt_positions(binance: dict, bybit: dict) -> str:
         if not poss:
             lines.append("無持倉\n")
             continue
-        rows = [("幣種", "方向", "進場", "未實現", "")]
+        rows = [("幣種", "方向", "進場", "未實現", "", "")]
         for p in poss[:10]:
             base = (p.get("symbol") or "?").split("/")[0]
             pct = p.get("pnl_pct")
             rows.append((base, tg_format.dir_zh(p.get("side"), arrow=False),
                          tg_format.fmt_price(p.get("entry")),
                          _pnl(p.get("unrealized_pnl")),
-                         f"{_pnl(pct)}%" if pct is not None else ""))
+                         f"{_pnl(pct)}%" if pct is not None else "",
+                         p.get("engine") or ""))       # s3 / s1鏡 on Bybit rows
         lines.append(tg_format.pre_table(rows))
         lines.append("")
     return "\n".join(lines).rstrip()
