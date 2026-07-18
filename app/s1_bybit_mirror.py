@@ -111,10 +111,37 @@ def _reduce(sym: str, pos_side: str, qty: float) -> str:
         return str(exc)[:300]
 
 
+def _set_tp(sym: str, tp_price: float) -> str:
+    """Attach a Full-mode take-profit to the position server-side (same v5
+    trading-stop endpoint set_stop uses; omitted fields stay unchanged, so
+    this never disturbs the resting stop-loss). '' on success."""
+    if not X.is_live():
+        print(f"[s1-mirror][DRY-RUN] set TP {sym} → {tp_price:.6g} (no order sent)")
+        return ""
+    try:
+        ex = X.client()
+        market_id = ex.market(sym)["id"]
+        body = {"category": "linear", "symbol": market_id, "positionIdx": 0,
+                "tpslMode": "Full",
+                "takeProfit": ex.price_to_precision(sym, tp_price)}
+        setter = getattr(ex, "private_post_v5_position_trading_stop", None) or \
+            getattr(ex, "privatePostV5PositionTradingStop", None)
+        if setter is None:
+            return "no trading-stop endpoint in this ccxt build"
+        setter(body)
+        return ""
+    except Exception as exc:  # noqa: BLE001
+        return str(exc)[:200]
+
+
 # ── lifecycle hooks (called from bot.py — each never raises) ─────────────────
 def mirror_open(binance_symbol: str, direction: str, price: float,
-                sl_price: float) -> bool:
-    """Binance entry FILLED → open the same trade on Bybit at fixed notional."""
+                sl_price: float, tp2_price: float = None) -> bool:
+    """Binance entry FILLED → open the same trade on Bybit at fixed notional.
+    Both the stop AND the final target rest server-side on Bybit, so the
+    position closes itself even if this bot dies (TP1's half-close is the
+    only client-driven step — if the bot is down at TP1, the whole position
+    simply rides to the server-side TP2/SL instead)."""
     if not enabled():
         return False
     try:
@@ -153,11 +180,21 @@ def mirror_open(binance_symbol: str, direction: str, price: float,
             return False
         if not res.get("dry"):
             state[sym] = {"side": d, "qty": float(res.get("qty") or 0),
-                          "entry": float(price), "ts": time.time()}
+                          "entry": float(price), "sl": float(sl_price),
+                          "ts": time.time()}
             _save(state)
+            tp_note = ""
+            if tp2_price:
+                tp_err = _set_tp(sym, float(tp2_price))
+                if tp_err:
+                    # SL still protects the position; TP just falls back to the
+                    # bot-driven close — surface it so the owner knows.
+                    _tg(f"⚠️ {sym.split('/')[0]} 掛終標失敗（停損仍在）：{tp_err}")
+                else:
+                    tp_note = f" · 終標 {float(tp2_price):.6g}"
             _tg(f"{'🟢 做多' if d == 'long' else '🔴 做空'} {sym.split('/')[0]} "
                 f"{config.S1_BYBIT_ORDER_USDT:g} USDT @ {price:.6g} · "
-                f"停損 {sl_price:.6g}（已掛在 Bybit）")
+                f"停損 {sl_price:.6g}{tp_note}（皆掛在 Bybit 交易所端）")
         return bool(res.get("ok"))
     except Exception as exc:  # noqa: BLE001 — the mirror must never break S1
         print(f"[s1-mirror] mirror_open error {binance_symbol}: {exc}")
@@ -188,7 +225,9 @@ def mirror_tp1(binance_symbol: str, direction: str, entry_price: float) -> bool:
         # breakeven stop on the remainder either way (matches S1's live bracket)
         try:
             X.set_stop(sym, float(entry_price))
-        except Exception as exc:  # noqa: BLE001 — stop move retries are manual
+            t["sl"] = float(entry_price)               # guardian re-arms at BE now
+            _save(state)
+        except Exception as exc:  # noqa: BLE001 — the guardian retries next pass
             _tg(f"⚠️ {sym.split('/')[0]} 停損移到進場價失敗：{str(exc)[:150]}")
             return False
         if X.is_live():
@@ -197,6 +236,41 @@ def mirror_tp1(binance_symbol: str, direction: str, entry_price: float) -> bool:
     except Exception as exc:  # noqa: BLE001
         print(f"[s1-mirror] mirror_tp1 error {binance_symbol}: {exc}")
         return False
+
+
+# ── guardian: no mirror position may ever sit without a stop ─────────────────
+GUARD_SEC = 300
+_last_guard = 0.0
+
+
+def guardian_tick() -> int:
+    """Called every tracking pass (1 min), self-paced to GUARD_SEC. For every
+    position WE opened: if its Bybit stop-loss is gone (attach failed once,
+    or removed by hand), re-arm it at the tracked level (original SL, or
+    breakeven after TP1). The same belt-and-braces S3 gives its own symbols —
+    this is what makes the mirror safe to ignore. Returns stops re-armed."""
+    global _last_guard
+    if not enabled() or not X.is_live():
+        return 0
+    now = time.time()
+    if now - _last_guard < GUARD_SEC:
+        return 0
+    _last_guard = now
+    fixed = 0
+    for sym, t in _load().items():
+        try:
+            pos = X.get_position(sym)
+            if not pos or pos.get("side") != t.get("side") or pos.get("sl"):
+                continue                     # flat / not ours / already protected
+            slp = float(t.get("sl") or 0)
+            if not slp:
+                continue
+            X.set_stop(sym, slp)
+            fixed += 1
+            _tg(f"⛑ {sym.split('/')[0]} 停損不見了 — 已重掛 @ {slp:.6g}")
+        except Exception as exc:  # noqa: BLE001 — one symbol must not stop the sweep
+            print(f"[s1-mirror] guardian error {sym}: {exc}")
+    return fixed
 
 
 def mirror_close(binance_symbol: str, kind: str = "") -> bool:

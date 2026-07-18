@@ -44,7 +44,11 @@ def _wire(monkeypatch, tmp_path, *, live=True, markets=("ETH/USDT:USDT",),
                                "margin": margin, "lev": lev})
         return {"ok": True, "dry": not live, "qty": margin * lev / price}
     monkeypatch.setattr(X, "open_flip", fake_open)
+    calls["tps"] = []
+    monkeypatch.setattr(M, "_set_tp",
+                        lambda sym, tp: calls["tps"].append((sym, tp)) or "")
     monkeypatch.setattr(M, "_tg", lambda msg: calls["tg"].append(msg))
+    monkeypatch.setattr(M, "_last_guard", 0.0)
     return calls
 
 
@@ -60,12 +64,23 @@ def test_disabled_by_default_does_nothing(monkeypatch, tmp_path):
 # ── entries ──────────────────────────────────────────────────────────────────
 def test_open_uses_fixed_100_usdt_order_value(monkeypatch, tmp_path):
     calls = _wire(monkeypatch, tmp_path)
-    assert M.mirror_open("ETH/USDT:USDT", "long", 3500.0, 3430.0)
+    assert M.mirror_open("ETH/USDT:USDT", "long", 3500.0, 3430.0, 3640.0)
     o = calls["opens"][0]
     assert o["margin"] * o["lev"] == 100.0            # notional = 100 USDT exactly
     assert o["sym"] == "ETH/USDT:USDT" and o["dir"] == "long"
     assert o["sl"] == 3430.0
-    assert M._load()["ETH/USDT:USDT"]["side"] == "long"   # tracked for later close
+    t = M._load()["ETH/USDT:USDT"]
+    assert t["side"] == "long"                        # tracked for later close
+    assert t["sl"] == 3430.0                          # guardian knows the level
+    assert calls["tps"] == [("ETH/USDT:USDT", 3640.0)]  # TP2 rests SERVER-SIDE
+
+
+def test_open_tp_attach_failure_keeps_position_and_warns(monkeypatch, tmp_path):
+    calls = _wire(monkeypatch, tmp_path)
+    monkeypatch.setattr(M, "_set_tp", lambda sym, tp: "boom")
+    assert M.mirror_open("ETH/USDT:USDT", "long", 3500.0, 3430.0, 3640.0)
+    assert "ETH/USDT:USDT" in M._load()               # position kept (SL protects)
+    assert any("掛終標失敗" in m for m in calls["tg"])
 
 
 def test_open_maps_binance_symbol_and_short(monkeypatch, tmp_path):
@@ -121,6 +136,45 @@ def test_tp1_untracked_symbol_is_ignored(monkeypatch, tmp_path):
     calls = _wire(monkeypatch, tmp_path)
     assert not M.mirror_tp1("XAUT/USDT:USDT", "long", 2000.0)  # S3's symbol!
     assert calls["orders"] == [] and calls["stops"] == []
+
+
+def test_tp1_records_breakeven_for_guardian(monkeypatch, tmp_path):
+    _wire(monkeypatch, tmp_path)
+    M.mirror_open("ETH/USDT:USDT", "long", 3500.0, 3430.0)
+    M.mirror_tp1("ETH/USDT:USDT", "LONG", 3500.0)
+    assert M._load()["ETH/USDT:USDT"]["sl"] == 3500.0  # guardian re-arms at BE
+
+
+# ── guardian: no naked mirror positions, ever ────────────────────────────────
+def test_guardian_rearms_missing_stop(monkeypatch, tmp_path):
+    calls = _wire(monkeypatch, tmp_path)
+    M.mirror_open("ETH/USDT:USDT", "long", 3500.0, 3430.0)
+    monkeypatch.setattr(X, "get_position",                     # stop vanished!
+                        lambda s: {"side": "long", "qty": 0.02, "entry": 3500.0,
+                                   "sl": None})
+    assert M.guardian_tick() == 1
+    assert calls["stops"] == [("ETH/USDT:USDT", 3430.0)]
+    assert any("重掛" in m for m in calls["tg"])
+
+
+def test_guardian_leaves_protected_positions_alone(monkeypatch, tmp_path):
+    calls = _wire(monkeypatch, tmp_path)
+    M.mirror_open("ETH/USDT:USDT", "long", 3500.0, 3430.0)
+    monkeypatch.setattr(X, "get_position",
+                        lambda s: {"side": "long", "qty": 0.02, "entry": 3500.0,
+                                   "sl": 3430.0})              # stop is fine
+    assert M.guardian_tick() == 0
+    assert calls["stops"] == []
+
+
+def test_guardian_is_paced(monkeypatch, tmp_path):
+    _wire(monkeypatch, tmp_path)
+    M.mirror_open("ETH/USDT:USDT", "long", 3500.0, 3430.0)
+    monkeypatch.setattr(X, "get_position",
+                        lambda s: {"side": "long", "qty": 0.02, "entry": 3500.0,
+                                   "sl": None})
+    assert M.guardian_tick() == 1
+    assert M.guardian_tick() == 0                      # inside GUARD_SEC → no-op
 
 
 # ── exits ────────────────────────────────────────────────────────────────────

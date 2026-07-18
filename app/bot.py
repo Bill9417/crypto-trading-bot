@@ -671,6 +671,12 @@ def update_pending_signals():
     apply_queue_clear_request()
     print("Checking pending signals for outcomes...")
     activate_queued_signals()
+    # 🪞 guardian: re-arm any mirror position whose Bybit stop went missing
+    # (self-paced inside; a Bybit blip must never break signal tracking)
+    try:
+        s1_bybit_mirror.guardian_tick()
+    except Exception as exc:  # noqa: BLE001
+        print(f"[s1-mirror] guardian tick error: {exc}")
     with app.app_context():
         try:
             # Get both PENDING and TP1_PARTIAL signals
@@ -1051,8 +1057,10 @@ def activate_queued_signals():
                 )
             )
             # 🪞 mirror the fill onto the real Bybit account (fixed notional;
-            # no-op unless S1_BYBIT_MIRROR — and never breaks S1 execution)
-            s1_bybit_mirror.mirror_open(symbol, direction, filled_entry, sl_price)
+            # SL + TP2 both rest server-side on Bybit; no-op unless
+            # S1_BYBIT_MIRROR — and never breaks S1 execution)
+            s1_bybit_mirror.mirror_open(symbol, direction, filled_entry,
+                                        sl_price, tp2_price)
         else:
             print(f"Queue trigger skipped for {symbol}: {reason}")
             update_signal_state_in_ui(
