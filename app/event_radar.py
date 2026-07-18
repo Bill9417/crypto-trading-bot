@@ -116,11 +116,13 @@ def _headline_key(item: dict) -> str:
 
 
 # ── detectors (pure given their inputs — unit-testable without network) ─────
-def _news_alerts(items: list, state: dict, now: float) -> list:
-    """New, fresh, high-impact headlines → alert strings. Mutates state."""
+def _news_alerts(items: list, state: dict, now: float, summarizer=None) -> list:
+    """New, fresh, high-impact headlines → alert strings. Mutates state.
+    `summarizer` (news_summarizer.gist in production) adds a ↳ one-line 中文
+    gist under the English headline so the alert is readable at a glance."""
     seen = state.setdefault("seen", {})
     seeding = not state.get("seeded")
-    out = []
+    picked = []
     for it in items:
         key = _headline_key(it)
         if not key or key in seen:
@@ -134,12 +136,18 @@ def _news_alerts(items: list, state: dict, now: float) -> list:
         pub = market_intel._pub_ts(it)
         if pub and pub < now - FRESH_SEC:
             continue                        # feed backfill, not breaking news
-        out.append(f"🌍 重大事件 · {cat}\n"
-                   f"{it.get('title')}\n"
-                   f"來源 {it.get('source')} · {it.get('link')}")
-        if len(out) >= MAX_PER_TICK:
+        picked.append((cat, it))
+        if len(picked) >= MAX_PER_TICK:
             break
     state["seeded"] = True
+    gists = summarizer([it for _c, it in picked]) if (summarizer and picked) \
+        else [""] * len(picked)
+    out = []
+    for (cat, it), g in zip(picked, gists, strict=True):
+        out.append(f"🌍 重大事件 · {cat}\n"
+                   f"{it.get('title')}\n"
+                   + (f"↳ {g[:150]}\n" if g else "")
+                   + f"來源 {it.get('source')} · {it.get('link')}")
     return out
 
 
@@ -210,7 +218,9 @@ def tick(client) -> int:
     state = _load_state()
     alerts = []
     try:
-        alerts += _news_alerts(_fetch_news_items(), state, now)
+        import news_summarizer
+        alerts += _news_alerts(_fetch_news_items(), state, now,
+                               summarizer=news_summarizer.gist)
     except Exception as exc:  # noqa: BLE001
         print(f"[events] news detector error: {exc}")
     try:

@@ -245,9 +245,10 @@ def _parse_rss(source: str, xml_text: str, limit: int) -> list[dict]:
         title = (item.findtext("title") or "").strip()
         link = (item.findtext("link") or "").strip()
         pub = (item.findtext("pubDate") or "").strip()
+        desc = (item.findtext("description") or "").strip()
         if title and link:
             items.append({"source": source, "title": title, "link": link, "published": pub,
-                          "sentiment": headline_sentiment(title)})
+                          "desc": desc, "sentiment": headline_sentiment(title)})
         if len(items) >= limit:
             break
     if items:
@@ -259,9 +260,10 @@ def _parse_rss(source: str, xml_text: str, limit: int) -> list[dict]:
         link_el = entry.find(f"{ns}link")
         link = (link_el.get("href") if link_el is not None else "") or ""
         pub = (entry.findtext(f"{ns}published") or entry.findtext(f"{ns}updated") or "").strip()
+        desc = (entry.findtext(f"{ns}summary") or entry.findtext(f"{ns}content") or "").strip()
         if title and link:
             items.append({"source": source, "title": title, "link": link, "published": pub,
-                          "sentiment": headline_sentiment(title)})
+                          "desc": desc, "sentiment": headline_sentiment(title)})
         if len(items) >= limit:
             break
     return items

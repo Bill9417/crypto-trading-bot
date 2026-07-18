@@ -82,9 +82,12 @@ def _fetch_items() -> list:
     return items
 
 
-def build_digest(items: list, state: dict, now: float) -> str | None:
+def build_digest(items: list, state: dict, now: float,
+                 summarizer=None) -> str | None:
     """Digest text of headlines not seen before, AI section first; None when
-    nothing new. Mutates state["seen"]."""
+    nothing new. Mutates state["seen"]. `summarizer` (news_summarizer.gist in
+    production, None in pure tests) supplies the ↳ one-line gist per item so
+    nobody has to tap through to know what a story says."""
     seen = state.setdefault("seen", {})
     fresh = []
     for it in items:
@@ -97,12 +100,17 @@ def build_digest(items: list, state: dict, now: float) -> str | None:
             break
     if not fresh:
         return None
+    gists = summarizer(fresh) if summarizer else [""] * len(fresh)
+    by_id = {id(it): g for it, g in zip(fresh, gists, strict=True)}
     ai = [i for i in fresh if is_ai(i["title"])]
     rest = [i for i in fresh if not is_ai(i["title"])]
 
     def _fmt(i):
         title = (i["title"] or "")[:110]
-        return f"• {title}（{i['source']}）\n  {i['link']}"
+        g = (by_id.get(id(i)) or "")[:150]
+        return (f"• {title}（{i['source']}）"
+                + (f"\n  ↳ {g}" if g else "")
+                + f"\n  {i['link']}")
 
     lines = [f"💻 科技新聞 · {len(fresh)} 則新消息"]
     if ai:
@@ -120,7 +128,9 @@ def tick() -> bool:
     state = _load_state()
     if now - state.get("last_digest", 0) < DIGEST_SEC:
         return False
-    msg = build_digest(_fetch_items(), state, now)
+    import news_summarizer
+    msg = build_digest(_fetch_items(), state, now,
+                       summarizer=news_summarizer.gist)
     state["last_digest"] = now            # even an empty window resets the clock
     sent = False
     if msg:
