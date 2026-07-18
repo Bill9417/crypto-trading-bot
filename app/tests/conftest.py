@@ -92,3 +92,14 @@ def _no_live_side_effects(request, monkeypatch, tmp_path):
     monkeypatch.setattr(bybit_data, "_exchange", _no_exchange)
     monkeypatch.setattr(bybit_data, "_bases", {})
     monkeypatch.setattr(bybit_data, "_tickers", {})
+    # strategy3_exec.client() is the EXECUTION venue (real Bybit keys live in
+    # .env, which the test process loads) — any test path that reaches it
+    # unstubbed must die loudly, not silently place/read real orders. Tests
+    # that need a client monkeypatch their own fake over this.
+    import strategy3_exec
+    def _no_bybit_client():
+        raise RuntimeError("strategy3_exec.client() called in tests — stub it")
+    monkeypatch.setattr(strategy3_exec, "client", _no_bybit_client)
+    # the S1→Bybit mirror must also stay OFF unless a test opts in
+    import config as _cfg
+    monkeypatch.setattr(_cfg, "S1_BYBIT_MIRROR", False)

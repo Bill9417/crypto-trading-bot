@@ -215,6 +215,21 @@ LIVE_TRAIL_TO_BREAKEVEN = _env_bool("LIVE_TRAIL_TO_BREAKEVEN", True)
 # TradFi-Perps rejects on stock perps the account can't trade). Safety alarms
 # (a position left with NO stop-loss → manual action) ALWAYS send, regardless.
 LIVE_ORDER_NOTIFY = _env_bool("LIVE_ORDER_NOTIFY", False)
+
+# ── S1 → Bybit mirror ──────────────────────────────────────────────────────
+# Mirror every S1 trade onto the REAL Bybit account (the same keys/account
+# Strategy 3 uses) at a FIXED order value. Entries go in at market the moment
+# the Binance limit fills (with S1's stop attached server-side on Bybit);
+# TP1 closes half and moves the stop to breakeven; SL/TP2/BE close the rest —
+# the exact lifecycle the S1 copy-trade feed publishes. Default OFF; obeys
+# the same LIVE_TRADING master switch (dry-run logs when False).
+S1_BYBIT_MIRROR = _env_bool("S1_BYBIT_MIRROR", False)
+# Order VALUE (notional, USDT) per mirrored trade — qty = value / price.
+S1_BYBIT_ORDER_USDT = float(os.getenv("S1_BYBIT_ORDER_USDT", "100"))
+# Isolated margin locked per trade = order value / leverage. Leverage does NOT
+# change the loss at S1's stop (that's notional × stop distance); it only sets
+# how much margin each mirror position ties up on the ~235 USDT account.
+S1_BYBIT_LEVERAGE = int(os.getenv("S1_BYBIT_LEVERAGE", "10"))
 # Binance deprecated ccxt's set_sandbox_mode for futures, so we point the USD-M
 # endpoints at the demo/testnet host directly. Options seen in the wild:
 #   demo-fapi.binance.com        → new "Demo Trading" (keys from demo.binance.com)

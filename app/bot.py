@@ -113,6 +113,7 @@ from market_data import (
 from smc import analyze_smc
 from telegram_utils import send_message
 import executor
+import s1_bybit_mirror
 import tg_format
 
 # Import database models from app
@@ -764,6 +765,7 @@ def update_pending_signals():
                             "tp1", signal.symbol, direction, tp1_pct,
                             note="先平一半 · 停損移到進場價 · 剩餘續抱到 TP2",
                         ))
+                        s1_bybit_mirror.mirror_tp1(signal.symbol, direction, entry)
                         continue
 
                     # SL (also reached here when TP1+SL hit the same candle → SL wins)
@@ -789,6 +791,7 @@ def update_pending_signals():
                             "sl", signal.symbol, direction, signal.pnl_pct,
                             note="觸及停損 · 本單結束",
                         ))
+                        s1_bybit_mirror.mirror_close(signal.symbol, "sl")
                         continue
 
                 # Handle TP1_PARTIAL signals — the runner (50%) is managed EXACTLY
@@ -831,6 +834,7 @@ def update_pending_signals():
                             "tp2", signal.symbol, direction, signal.pnl_pct,
                             note=f"全部平倉 · 續抱段 +{tp2_pct:.1f}%",
                         ))
+                        s1_bybit_mirror.mirror_close(signal.symbol, "tp2")
                         continue
 
                     if is_breakeven:
@@ -850,6 +854,7 @@ def update_pending_signals():
                             "be", signal.symbol, direction, signal.pnl_pct,
                             note="剩餘倉位回到進場價平倉 · TP1 獲利已入袋",
                         ))
+                        s1_bybit_mirror.mirror_close(signal.symbol, "be")
                         continue
 
             db.session.commit()
@@ -1045,6 +1050,9 @@ def activate_queued_signals():
                     footer="已進場 · 依計畫嚴守停損",
                 )
             )
+            # 🪞 mirror the fill onto the real Bybit account (fixed notional;
+            # no-op unless S1_BYBIT_MIRROR — and never breaks S1 execution)
+            s1_bybit_mirror.mirror_open(symbol, direction, filled_entry, sl_price)
         else:
             print(f"Queue trigger skipped for {symbol}: {reason}")
             update_signal_state_in_ui(
