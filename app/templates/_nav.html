@@ -24,12 +24,16 @@
        every page on a web process that predates the health route #}
     <a href="/health" class="nav-pill health{% if request.endpoint == 'health_page' %} active{% endif %}">Health</a>
     {% endif %}
+    {# status chips + session controls wrap as ONE unit (never orphan a lone
+       "Logout" onto its own row) and sit flush right when sharing the row #}
+    <span class="nav-status">
     <span class="nav-regime neutral" id="nav-regime" title="BTC trend regime — gates every trade (LONGs blocked in BEAR, SHORTs in BULL)"><span class="nr-dot" aria-hidden="true"></span><span class="nr-tag">BTC</span><span class="nr-state" id="nav-regime-state">—</span></span>
     <span class="nav-regime off" id="nav-vol" style="margin-left:6px;" title="BTC daily volatility vs its 30-day norm. DEAD = confluence signals fire into chop and are less reliable; HIGH = bigger moves both ways — mind position size."><span class="nr-dot" aria-hidden="true"></span><span class="nr-tag">VOL</span><span class="nr-state" id="nav-vol-state">—</span></span>
     <span class="nav-regime off" id="nav-session" style="margin-left:6px;" title="Trading session clock"><span class="nr-dot" aria-hidden="true"></span><span class="nr-tag">SES</span><span class="nr-state" id="nav-session-state">—</span></span>
     <span class="nav-sep" aria-hidden="true"></span>
     <button type="button" class="nav-pill lang-toggle" id="wolf-lang-toggle" onclick="wolfToggleLang()" title="切換語言 / Switch language" style="appearance:none;-webkit-appearance:none;font-family:inherit;line-height:inherit;margin:0;cursor:pointer;"><span id="wolf-lang-label">中文</span></button>
     <a href="{{ url_for('logout') }}" class="nav-pill logout">Logout</a>
+    </span>
 </nav>
 <script src="{{ url_for('static', filename='i18n.js') }}?v={{ asset_ver }}"></script>
 <script>

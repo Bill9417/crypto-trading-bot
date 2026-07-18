@@ -67,11 +67,15 @@ html { scrollbar-width: thin; scrollbar-color: rgba(255, 255, 255, 0.18) transpa
 
 .nav-pill {
     position: relative; display: inline-flex; align-items: center;
-    font-size: 0.66rem; font-weight: 600; letter-spacing: 0.15em; text-transform: uppercase;
-    padding: 7px 12px; border-radius: 8px; text-decoration: none;
+    font-size: 0.66rem; font-weight: 600; letter-spacing: 0.12em; text-transform: uppercase;
+    padding: 7px 10px; border-radius: 8px; text-decoration: none;
     border: 1px solid transparent; color: var(--wolf-muted); background: transparent;
     transition: color .18s, background .18s, border-color .18s;
 }
+/* chips + lang + logout travel as one unit: flush right on a shared row,
+   wrapping to a clean full second row when the pills need the width —
+   never an orphaned lone "Logout" (the old wrap behaviour). */
+.nav-status { display: inline-flex; align-items: center; gap: 2px; margin-left: auto; }
 /* hairline champagne underline, grows in on hover / stays lit on the active page */
 .nav-pill::after {
     content: ""; position: absolute; left: 12px; right: 12px; bottom: 3px; height: 1px;

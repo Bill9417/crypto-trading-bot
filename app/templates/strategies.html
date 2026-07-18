@@ -207,6 +207,15 @@
                 <div class="card-h"><span class="ic">📡</span><h2>即時狀況</h2><span class="scope">Live now</span></div>
                 <div id="live-s1"></div>
                 <a class="detail-link" href="/funnel">看完整漏斗與最佳設定 Funnel →</a>
+
+                {# 🪞 how S1 actually executes since S1_EXEC=bybit (2026-07-18) #}
+                <div class="card-h" style="margin-top:18px;"><span class="ic">🪞</span><h2>執行方式</h2><span class="scope">Bybit</span></div>
+                <ul class="rules">
+                    <li>訊號成交即以 <b>市價</b> 在 Bybit 開倉，每筆固定 <code>100 USDT</code> 名目。</li>
+                    <li><b>停損與最終目標都掛在交易所端</b> — 機器人斷線也會自行出場。</li>
+                    <li>TP1 先平一半、停損移到進場價；守護程序每 5 分鐘補掛遺失的停損。</li>
+                    <li>Binance 只出訊號、不下單；已有倉位的幣種自動跳過（保護手動/S3 倉）。</li>
+                </ul>
             </div>
         </div>
     </section>

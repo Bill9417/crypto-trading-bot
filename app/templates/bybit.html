@@ -95,8 +95,8 @@
         <div class="stats">
             <div class="stat"><div class="stat-label">Equity</div><div class="stat-value num" id="s-equity">—</div><div class="stat-note">wallet + unrealized</div></div>
             <div class="stat"><div class="stat-label">Available</div><div class="stat-value num" id="s-avail">—</div><div class="stat-note">free margin</div></div>
-            <div class="stat"><div class="stat-label">Unrealized P&L</div><div class="stat-value num" id="s-upnl">—</div><div class="stat-note">open positions</div></div>
-            <div class="stat"><div class="stat-label">Open positions</div><div class="stat-value num" id="s-pos">—</div><div class="stat-note">of {{ cfg.symbols|length }} tradeable</div></div>
+            <div class="stat"><div class="stat-label">Unrealized P&L</div><div class="stat-value num" id="s-upnl">—</div><div class="stat-note">whole account — incl. manual &amp; 🪞 mirror trades</div></div>
+            <div class="stat"><div class="stat-label">Open positions</div><div class="stat-value num" id="s-pos">—</div><div class="stat-note">S3 + 🪞 mirror（手動倉不列）</div></div>
             <div class="stat"><div class="stat-label">Mode</div><div class="stat-value" id="s-mode" style="font-size:.9rem;">—</div><div class="stat-note">flag-flip: score ≥{{ cfg.score_th }} · ADX ≥{{ cfg.adx_th }} · SL {{ (cfg.emergency_sl_pct*100)|round(1) }}% — OCC stop per card</div></div>
         </div>
 
