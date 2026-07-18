@@ -58,7 +58,8 @@ def test_admin_page_redirects_member_not_json(monkeypatch):
 def test_equity_panel_hidden_from_members():
     # The /performance template must not even render the equity-curve panel
     # (canvas + fetch) for non-admins — defence in depth beside the API 403.
-    src = open("templates/performance.html", encoding="utf-8").read()
+    from pathlib import Path
+    src = Path("templates/performance.html").read_text(encoding="utf-8")
     start = src.index("Equity curve")
     guard = src.rindex("{% if user.is_admin %}", 0, start)
     end = src.index("{% endif %}", start)
