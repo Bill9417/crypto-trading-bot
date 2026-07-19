@@ -225,6 +225,63 @@ def snapshot_plain() -> str:
     return "\n".join(lines)
 
 
+_tx_rows_cache = {"ts": 0.0, "rows": []}
+
+
+def _taiex_daily() -> list:
+    """1y of TAIEX daily bars, cached 10 min (the 期貨 command's heavy fetch)."""
+    if time.time() - _tx_rows_cache["ts"] < 600 and _tx_rows_cache["rows"]:
+        return _tx_rows_cache["rows"]
+    rows = tw_stocks._yahoo_daily("%5ETWII")
+    _tx_rows_cache.update(ts=time.time(), rows=rows)
+    return rows
+
+
+def taifex_plain() -> str:
+    """「期貨」 command — a TAIEX read for 台指期 traders: live index, the
+    SAME trend verdict the stock scan uses, and the reference levels
+    day-traders anchor on. Honest scope: this is the underlying INDEX —
+    the futures trade at a basis to it, so orders go by the futures quote."""
+    now = datetime.now(TZ)
+    try:
+        rows = _taiex_daily()
+    except Exception:  # noqa: BLE001 — Yahoo down = polite failure
+        rows = []
+    if len(rows) < 121:
+        return "台股指數資料暫時抓不到，稍後再試。"
+    today = now.strftime("%Y-%m-%d")
+    last_is_today = datetime.fromtimestamp(rows[-1][0], TZ).strftime("%Y-%m-%d") == today
+    # during the session today's bar is still forming — levels come from
+    # completed sessions only (after the close, today IS the last session)
+    hist = rows[:-1] if (last_is_today and in_session(now)) else rows
+    prev = hist[-1]
+    reg = tw_stocks.regime(hist)
+    cs = [r[4] for r in hist]
+    s20, s60, s100 = (sum(cs[-n:]) / n for n in (20, 60, 100))
+    h20 = max(r[2] for r in hist[-20:])
+    l20 = min(r[3] for r in hist[-20:])
+    lines = [f"🇹🇼 台指期參考 {now.strftime('%H:%M')}"
+             f"（{'盤中' if in_session(now) else '已收盤'}）"]
+    try:
+        rt = fetch_taiex()
+    except Exception:  # noqa: BLE001 — realtime line is optional
+        rt = None
+    if rt:
+        lines.append(f"加權指數 {_px(rt['price'])}（{rt['pct']:+.2f}%）")
+    if "close" in reg:
+        verdict = "✅ 多頭 — 偏多操作" if reg.get("ok") else "⛔ 非多頭 — 保守或偏空"
+        lines += [f"趨勢：{verdict}",
+                  f"（100日線 {_px(reg['sma100'])}，20日動能 {reg['mom20'] * 100:+.1f}%）"]
+    lines += ["",
+              "關鍵價位：",
+              f"前日收 {_px(prev[4])}｜高 {_px(prev[2])}｜低 {_px(prev[3])}",
+              f"20日高 {_px(h20)}｜20日低 {_px(l20)}",
+              f"20日均 {_px(s20)}｜60日均 {_px(s60)}｜100日均 {_px(s100)}",
+              "",
+              "⚠️ 以上為加權指數（現貨）數據，台指期有正/逆價差，下單以期貨報價為準"]
+    return "\n".join(lines)
+
+
 # ── orchestration ────────────────────────────────────────────────────────────
 def tick() -> bool:
     """Once per scanner sweep during the TWSE session; one batched message

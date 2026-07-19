@@ -48,6 +48,7 @@ WELCOME_GROUP = ("✅ 已連接台股訊號！\n"
 HELP_MSG = ("📖 台股天地指令：\n"
             "訊號 — 今日台股掃描結果\n"
             "現況 — 即時大盤與追蹤個股\n"
+            "期貨 — 台指期趨勢與關鍵價位\n"
             "說明 — 顯示本說明")
 
 # Service lifecycle notices — sent by the S2 scanner (the process that owns
@@ -189,6 +190,13 @@ def _command_reply(text: str):
             return tw_intraday.snapshot_plain()
         except Exception as exc:  # noqa: BLE001
             print(f"[line] 現況 command failed: {exc}")
+            return None
+    if t in ("期貨", "台指", "futures"):
+        try:
+            import tw_intraday
+            return tw_intraday.taifex_plain()
+        except Exception as exc:  # noqa: BLE001
+            print(f"[line] 期貨 command failed: {exc}")
             return None
     if t in ("說明", "幫助", "指令", "help"):
         return HELP_MSG

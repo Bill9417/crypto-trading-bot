@@ -257,6 +257,37 @@ def test_first_message_gets_welcome_not_command(monkeypatch):
     assert texts == [line_push.WELCOME_GROUP]
 
 
+def test_command_taifex(monkeypatch):
+    calls = _subscribed(monkeypatch)
+    import tw_intraday
+    monkeypatch.setattr(tw_intraday, "taifex_plain", lambda: "台指期參考內容")
+    line_push.handle_webhook(_text_event("期貨"))
+    assert calls[0][1]["messages"][0]["text"] == "台指期參考內容"
+
+
+def test_taifex_plain_levels(monkeypatch):
+    import tw_intraday
+    import tw_stocks
+    day = 86400
+    # 130 completed sessions, gently rising → bull regime; distinctive last bar
+    rows = [(1_700_000_000 + i * day, 20000 + i * 10, 20050 + i * 10,
+             19950 + i * 10, 20020 + i * 10, 1000) for i in range(130)]
+    monkeypatch.setattr(tw_intraday, "_tx_rows_cache", {"ts": 0.0, "rows": []})
+    monkeypatch.setattr(tw_stocks, "_yahoo_daily", lambda sym: rows)
+    monkeypatch.setattr(tw_intraday, "fetch_taiex",
+                        lambda: {"price": 21400.0, "prev": 21310.0, "pct": 0.42})
+    snap = tw_intraday.taifex_plain()
+    assert "加權指數 21,400" in snap
+    assert "✅ 多頭" in snap
+    assert f"前日收 {21310:,}" in snap          # last bar close = 20020+129*10
+    assert "20日高" in snap and "100日均" in snap
+    assert "正/逆價差" in snap and "<" not in snap
+    # second call is served from the 10-min cache (no refetch)
+    monkeypatch.setattr(tw_stocks, "_yahoo_daily",
+                        lambda sym: (_ for _ in ()).throw(AssertionError("refetched")))
+    assert "加權指數" in tw_intraday.taifex_plain()
+
+
 def test_snapshot_plain_has_no_html(monkeypatch):
     import time as _time
 
