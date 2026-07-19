@@ -533,6 +533,13 @@ def main() -> None:
         mode = "ALERT-ONLY: no orders are ever placed (set STRATEGY2_LIVE=true to trade)."
     print(f"[strategy2] 15m signal scanner starting — interval {INTERVAL_SEC}s, "
           f"cooldown {ALERT_COOLDOWN_SEC}s. {mode}")
+    # 📱 LINE 開機通知 — the family group learns the 台股 service is up.
+    try:
+        import line_push
+        if line_push.enabled():
+            line_push.send(line_push.START_MSG)
+    except Exception as exc:  # noqa: BLE001 — LINE must never block startup
+        print(f"[strategy2] line start notice failed: {exc}")
     client = SafeBinanceClient(
         min_rest_interval=float(os.getenv("STRATEGY2_REST_INTERVAL", "0.25")),
         max_retries=3,
@@ -677,4 +684,21 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    import signal as _signal
+
+    def _term(signum, frame):        # ./run_all.sh stop pkills with SIGTERM —
+        raise SystemExit(0)          # turn it into an exit that runs `finally`
+
+    _signal.signal(_signal.SIGTERM, _term)
+    try:
+        main()
+    except KeyboardInterrupt:
+        pass
+    finally:
+        # 📱 LINE 關機通知 — covers stop, Ctrl+C and crashes alike.
+        try:
+            import line_push
+            if line_push.enabled():
+                line_push.send(line_push.STOP_MSG)
+        except Exception:  # noqa: BLE001 — dying anyway
+            pass

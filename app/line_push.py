@@ -44,6 +44,13 @@ WELCOME_GROUP = ("✅ 已連接台股訊號！\n"
                  "每個交易日 14:00 會收到台股掃描（進場參考/停損/目標），\n"
                  "盤中觸到停損或目標也會即時提醒。")
 
+# Service lifecycle notices — sent by the S2 scanner (the process that owns
+# every 台股 message) on startup and on SIGTERM/SIGINT/crash shutdown.
+START_MSG = ("✅ 台股訊號系統已啟動\n"
+             "每個交易日 14:00 台股掃描、盤中停損/目標觸價提醒運作中")
+STOP_MSG = ("🛑 台股訊號系統已停止\n"
+            "訊息暫停發送，重新啟動後會自動通知")
+
 
 def enabled() -> bool:
     return bool(config.LINE_CHANNEL_ACCESS_TOKEN
