@@ -225,6 +225,20 @@ def build_digest_plain(now, reg: dict, setups: list) -> str:
     return "\n".join(lines)
 
 
+def mark_hit(code: str, setup_date: str, kind: str, date: str, hhmm: str) -> None:
+    """Stamp a tracked setup with its SL/TP touch (kind 'sl'|'tp') so every
+    tracking view can show 已停損/已達標 with the touch date+time. Called by
+    tw_intraday when a level fires (same process — no write race)."""
+    state = _load_state()
+    changed = False
+    for s in (state.get("active_setups") or []):
+        if s.get("code") == code and s.get("date") == setup_date and not s.get("hit"):
+            s["hit"] = {"kind": kind, "date": date, "time": hhmm}
+            changed = True
+    if changed:
+        _save_state(state)
+
+
 def _due(state: dict, now) -> bool:
     """One send per TWSE trading day, after the close is final."""
     if now.weekday() >= 5 or now.hour < SEND_HOUR:

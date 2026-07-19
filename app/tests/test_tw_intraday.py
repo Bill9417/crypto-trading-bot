@@ -90,6 +90,34 @@ def test_setup_dated_today_not_live_yet():
     assert events == [] and hits == {}
 
 
+def test_level_hit_includes_touch_time():
+    events, _hits = tw_intraday.check_levels(
+        {"2330": _row("2330", -6.0, price=1075.0)}, [SETUP], {}, "2026-07-13",
+        tstr="10:23")
+    assert "觸價 10:23" in events[0]
+
+
+def test_mark_hit_persists_and_tags(monkeypatch, tmp_path):
+    import tw_stocks
+    monkeypatch.setattr(tw_stocks, "STATE_FILE", str(tmp_path / "tw.json"))
+    tw_stocks._save_state({"active_setups": [dict(SETUP)]})
+    tw_stocks.mark_hit("2330", "2026-07-11", "tp", "2026-07-13", "10:23")
+    s = tw_stocks._load_state()["active_setups"][0]
+    assert s["hit"] == {"kind": "tp", "date": "2026-07-13", "time": "10:23"}
+    assert tw_intraday._hit_tag(s) == "🎯達標 07-13 10:23"
+    assert tw_intraday._hit_tag(SETUP) == ""            # live setup → no tag
+    # a later opposite touch never overwrites the first outcome
+    tw_stocks.mark_hit("2330", "2026-07-11", "sl", "2026-07-14", "09:01")
+    assert tw_stocks._load_state()["active_setups"][0]["hit"]["kind"] == "tp"
+
+
+def test_opening_text_shows_signal_date_and_outcome():
+    resolved = dict(SETUP, hit={"kind": "sl", "date": "2026-07-12", "time": "11:05"})
+    msg = tw_intraday.opening_text(_t(9, 1), None, [resolved])
+    assert "07-11" in msg                               # 訊號日 column
+    assert "🛑停損 07-12 11:05" in msg                  # outcome + touch time
+
+
 # ── formatting ───────────────────────────────────────────────────────────────
 def test_opening_text_with_setups():
     taiex = {"price": 45120.0, "prev": 44950.0, "pct": 0.38}

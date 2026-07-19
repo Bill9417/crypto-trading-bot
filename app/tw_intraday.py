@@ -55,6 +55,15 @@ def _save_state(state: dict) -> None:
 
 
 # ── pure helpers (unit-tested) ───────────────────────────────────────────────
+def _hit_tag(s: dict) -> str:
+    """'🎯達標 07-18 10:23' / '🛑停損 …' for a resolved setup, '' while live."""
+    h = s.get("hit")
+    if not h:
+        return ""
+    return (("🎯達標" if h.get("kind") == "tp" else "🛑停損")
+            + f" {h.get('date', '')[5:]} {h.get('time', '')}")
+
+
 def in_session(now) -> bool:
     minutes = now.hour * 60 + now.minute
     return now.weekday() < 5 and SESSION_START_MIN <= minutes < SESSION_END_MIN
@@ -82,9 +91,11 @@ def detect_movers(rows: list, alerted: dict, today: str,
     return [e[1] for e in events], hits
 
 
-def check_levels(rows_by_code: dict, setups: list, hits: dict, today: str) -> tuple:
+def check_levels(rows_by_code: dict, setups: list, hits: dict, today: str,
+                 tstr: str = "") -> tuple:
     """SL/TP touches for tracked setups. A setup dated today is NOT yet live
     (entry is the next session's open). Each level fires exactly once, ever.
+    tstr (HH:MM) stamps the touch time onto the alert when provided.
     Returns (event lines, {hit_key: today} to record)."""
     events, new_hits = [], {}
     for s in setups:
@@ -100,9 +111,10 @@ def check_levels(rows_by_code: dict, setups: list, hits: dict, today: str) -> tu
             key = f"{s['code']}:{s['date']}:{kind}"
             if touched and key not in hits and key not in new_hits:
                 new_hits[key] = today
+                when = f" · 觸價 {tstr}" if tstr else ""
                 events.append(f"{emoji} {s['code']} {s.get('name') or ''} "
                               f"{label} {_px(level)} (現價 {_px(price)}) "
-                              f"— {s['date'][5:]} 的設定")
+                              f"— {s['date'][5:]} 的設定{when}")
     return events, new_hits
 
 
@@ -115,9 +127,9 @@ def opening_text(now, taiex: dict, monitored: list) -> str:
         import tg_format
         lines.append(f"今日追蹤 {len(monitored)} 檔設定:")
         lines.append(tg_format.pre_table(
-            [(s["code"], s.get("name") or "", f"進 {_px(s['ref'])}",
-              f"損 {_px(s['sl'])}", f"標 {_px(s['tp'])}")
-             for s in monitored[:8]], align="lllll"))
+            [(s["date"][5:], s["code"], s.get("name") or "", f"進 {_px(s['ref'])}",
+              f"損 {_px(s['sl'])}", f"標 {_px(s['tp'])}", _hit_tag(s))
+             for s in monitored[:8]], align="lllllll"))
     else:
         lines.append("目前無追蹤中的設定 — 等 14:00 收盤掃描")
     lines.append(f"(盤中警報: 個股 ±{MOVER_PCT:g}%、大盤 ±{TAIEX_ALERT_PCT:g}%、"
@@ -177,10 +189,11 @@ def snapshot_text() -> str:
         for s in setups[:8]:
             row = by_code.get(s["code"])
             px = _px(row["price"]) if row and row.get("price") else "無報價"
-            cells.append((s["code"], s.get("name") or "", f"現價 {px}",
-                          f"進 {_px(s['ref'])}", f"損 {_px(s['sl'])}",
-                          f"標 {_px(s['tp'])}"))
-        lines.append(tg_format.pre_table(cells, align="llllll"))
+            cells.append((s["date"][5:], s["code"], s.get("name") or "",
+                          f"現價 {px}", f"進 {_px(s['ref'])}",
+                          f"損 {_px(s['sl'])}", f"標 {_px(s['tp'])}",
+                          _hit_tag(s)))
+        lines.append(tg_format.pre_table(cells, align="llllllll"))
     if quote_ts and time.time() - quote_ts > STALE_QUOTE_SEC:
         age_min = int((time.time() - quote_ts) / 60)
         lines.append(f"(報價為 {age_min} 分鐘前的最後成交)")
@@ -216,8 +229,13 @@ def snapshot_plain() -> str:
         for s in setups[:8]:
             row = by_code.get(s["code"])
             px = _px(row["price"]) if row and row.get("price") else "無報價"
-            lines.append(f"■ {s['code']} {s.get('name') or ''} 現價 {px}")
+            lines.append(f"■ {s['code']} {s.get('name') or ''} 現價 {px}"
+                         f"（{s['date'][5:]} 訊號）")
             lines.append(f"　進 {_px(s['ref'])}／損 {_px(s['sl'])}／標 {_px(s['tp'])}")
+            if s.get("hit"):
+                h = s["hit"]
+                lines.append(f"　{'🎯 已達目標' if h.get('kind') == 'tp' else '🛑 已觸停損'}"
+                             f"（{h.get('date', '')[5:]} {h.get('time', '')}）")
     else:
         lines.append("目前無追蹤中的設定 — 等 14:00 收盤掃描")
     if quote_ts and time.time() - quote_ts > STALE_QUOTE_SEC:
@@ -334,10 +352,14 @@ def tick() -> bool:
                      f"@ {_px(taiex['price'])}")
 
     level_events, new_hits = check_levels({r["code"]: r for r in rows},
-                                          monitored, state.get("hits") or {}, today)
+                                          monitored, state.get("hits") or {}, today,
+                                          tstr=now.strftime("%H:%M"))
     if new_hits:
         state.setdefault("hits", {}).update(new_hits)
         parts.append("\n".join(level_events))
+        for key in new_hits:               # stamp outcome+time onto the setup
+            code, sdate, kind = key.split(":")
+            tw_stocks.mark_hit(code, sdate, kind, today, now.strftime("%H:%M"))
         import line_push
         if line_push.enabled():            # SL/TP hits matter if 爸爸 is holding
             line_push.send("🇹🇼 台股價位提醒\n" + "\n".join(level_events))
