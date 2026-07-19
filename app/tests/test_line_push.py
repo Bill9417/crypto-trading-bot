@@ -68,6 +68,86 @@ def test_failure_returns_false_never_raises(monkeypatch):
     assert len(calls) == 1
 
 
+# ── webhook: LINE-group auto-subscribe ───────────────────────────────────────
+def _join_event(gid="Cgroup12345", token="rt-1"):
+    return {"events": [{"type": "join", "replyToken": token,
+                        "source": {"type": "group", "groupId": gid}}]}
+
+
+def test_group_join_subscribes_replies_and_notifies(monkeypatch):
+    calls = _cap(monkeypatch)
+    notes = []
+    import telegram_utils
+    monkeypatch.setattr(telegram_utils, "send_message",
+                        lambda text, **kw: notes.append(text) or True)
+    assert line_push.handle_webhook(_join_event()) == 1
+    assert "Cgroup12345" in line_push.targets()
+    assert [(p, pl.get("replyToken")) for p, pl in calls] == [("reply", "rt-1")]
+    assert calls[0][1]["messages"][0]["text"] == line_push.WELCOME_GROUP
+    assert notes and "LINE 群組已連接" in notes[0]
+    # …and send() now pushes to the group, not broadcast
+    calls.clear()
+    assert line_push.send("hi") is True
+    assert [(p, pl.get("to")) for p, pl in calls] == [("push", "Cgroup12345")]
+
+
+def test_group_join_is_idempotent(monkeypatch):
+    calls = _cap(monkeypatch)
+    line_push.handle_webhook(_join_event())
+    calls.clear()
+    assert line_push.handle_webhook(_join_event(token="rt-2")) == 0
+    assert not calls                            # no second welcome reply
+    assert line_push.targets().count("Cgroup12345") == 1
+
+
+def test_group_leave_unsubscribes(monkeypatch):
+    _cap(monkeypatch)
+    line_push.handle_webhook(_join_event())
+    leave = {"events": [{"type": "leave",
+                         "source": {"type": "group", "groupId": "Cgroup12345"}}]}
+    assert line_push.handle_webhook(leave) == 1
+    assert "Cgroup12345" not in line_push.targets()
+
+
+def test_signature_check(monkeypatch):
+    import base64
+    import hashlib
+    import hmac as hmac_mod
+    body = b'{"events":[]}'
+    monkeypatch.setattr(config, "LINE_CHANNEL_SECRET", "")
+    assert line_push.sig_ok(body, "") is True              # capture mode
+    monkeypatch.setattr(config, "LINE_CHANNEL_SECRET", "secret")
+    good = base64.b64encode(
+        hmac_mod.new(b"secret", body, hashlib.sha256).digest()).decode()
+    assert line_push.sig_ok(body, good) is True
+    assert line_push.sig_ok(body, "forged") is False
+    assert line_push.sig_ok(body, "") is False
+
+
+def test_webhook_route(monkeypatch):
+    import base64
+    import hashlib
+    import hmac as hmac_mod
+
+    import app as APP
+    _cap(monkeypatch)
+    monkeypatch.setattr(config, "LINE_CHANNEL_SECRET", "s3cret")
+    import json as _json
+    body = _json.dumps(_join_event("Croute999")).encode()
+    sig = base64.b64encode(
+        hmac_mod.new(b"s3cret", body, hashlib.sha256).digest()).decode()
+    with APP.app.test_client() as c:
+        bad = c.post("/line/webhook", data=body,
+                     content_type="application/json",
+                     headers={"X-Line-Signature": "wrong"})
+        assert bad.status_code == 403
+        okr = c.post("/line/webhook", data=body,
+                     content_type="application/json",
+                     headers={"X-Line-Signature": sig})
+        assert okr.status_code == 200
+    assert "Croute999" in line_push.targets()
+
+
 # ── the plain-Chinese digest ─────────────────────────────────────────────────
 _NOW = datetime(2026, 7, 17, 14, 0)             # a Friday
 

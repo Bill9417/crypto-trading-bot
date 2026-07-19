@@ -730,7 +730,9 @@ def inject_csrf_token():
 
 @app.before_request
 def protect_post_requests():
-    if request.method == "POST":
+    # /line/webhook is POSTed by LINE's servers (no session): it authenticates
+    # with the channel-secret signature inside the route, not a CSRF token.
+    if request.method == "POST" and request.endpoint != "line_webhook":
         validate_csrf()
 
 
@@ -3233,6 +3235,20 @@ def get_live_prices():
     except Exception as e:
         print(f"Error fetching live prices: {e}")
         return jsonify([]), 500
+
+@app.route("/line/webhook", methods=["POST"])
+def line_webhook():
+    # Called by LINE's servers, not browsers — auth is the channel-secret
+    # signature (no session/CSRF). Inviting the Official Account into a LINE
+    # group lands a join event here and the group auto-subscribes to the
+    # 台股 messages; leaving unsubscribes. See line_push.handle_webhook.
+    import line_push
+    if not line_push.sig_ok(request.get_data(),
+                            request.headers.get("X-Line-Signature", "")):
+        return "bad signature", 403
+    line_push.handle_webhook(request.get_json(silent=True) or {})
+    return "OK"
+
 
 @app.errorhandler(400)
 def bad_request(error):

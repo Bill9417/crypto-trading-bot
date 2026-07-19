@@ -135,8 +135,13 @@ TELEGRAM_INVITE_URL = os.getenv("TELEGRAM_INVITE_URL", "").strip()
 # Setup: developers.line.biz → create a Messaging API channel → issue a
 # long-lived channel access token → family adds the OA via its QR code.
 LINE_CHANNEL_ACCESS_TOKEN = os.getenv("LINE_CHANNEL_ACCESS_TOKEN", "").strip()
-# Optional comma-separated LINE userIds to push to individually. Empty =
-# broadcast to every friend of the Official Account (simplest — no webhook).
+# Channel secret (Basic settings tab) — verifies the X-Line-Signature on
+# /line/webhook so only LINE's servers can register a group. Empty = webhook
+# accepts unsigned calls (fine for the one-minute group-capture, set it after).
+LINE_CHANNEL_SECRET = os.getenv("LINE_CHANNEL_SECRET", "").strip()
+# Optional comma-separated LINE user/group IDs to push to explicitly. Groups
+# the OA is invited into auto-subscribe via the webhook (line_ids.json), so
+# this usually stays empty. No groups + no LINE_TO = broadcast to 1:1 friends.
 LINE_TO = [s.strip() for s in os.getenv("LINE_TO", "").split(",") if s.strip()]
 
 # ── Live trading (Binance Futures USD-M) ──────────────────────────────────

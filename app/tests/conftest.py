@@ -104,6 +104,9 @@ def _no_live_side_effects(request, monkeypatch, tmp_path):
     import config as _cfg
     monkeypatch.setattr(_cfg, "S1_BYBIT_MIRROR", False)
     # LINE push (dad's 台股 messages) — same single-choke-point treatment as
-    # telegram: send() logic still runs, nothing leaves the process.
+    # telegram: send() logic still runs, nothing leaves the process. The
+    # webhook's subscription file is redirected so tests never touch the
+    # real app/line_ids.json.
     import line_push
     monkeypatch.setattr(line_push, "_post", lambda path, payload: (200, "stubbed"))
+    monkeypatch.setattr(line_push, "IDS_FILE", str(tmp_path / "line_ids.json"))
