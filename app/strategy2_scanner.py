@@ -533,10 +533,12 @@ def main() -> None:
         mode = "ALERT-ONLY: no orders are ever placed (set STRATEGY2_LIVE=true to trade)."
     print(f"[strategy2] 15m signal scanner starting — interval {INTERVAL_SEC}s, "
           f"cooldown {ALERT_COOLDOWN_SEC}s. {mode}")
-    # 📱 LINE 開機通知 — the family group learns the 台股 service is up.
+    # 📱 LINE 開機通知 + webhook 自動註冊(quick-tunnel 網址每次重啟都會換,
+    # 由程式打 LINE API 重新指向,不必手動改 console)。
     try:
         import line_push
         if line_push.enabled():
+            line_push.sync_webhook()
             line_push.send(line_push.START_MSG)
     except Exception as exc:  # noqa: BLE001 — LINE must never block startup
         print(f"[strategy2] line start notice failed: {exc}")
@@ -595,6 +597,13 @@ def main() -> None:
             event_radar.tick(client)
         except Exception as exc:  # noqa: BLE001 — radar must never kill the loop
             print(f"[strategy2] event radar error: {exc}")
+        # 📱 LINE webhook keep-alive — re-registers the endpoint if the
+        # cloudflare quick-tunnel URL rotated mid-run (no-op otherwise).
+        try:
+            import line_push
+            line_push.sync_webhook()
+        except Exception as exc:  # noqa: BLE001
+            print(f"[strategy2] line webhook sync error: {exc}")
         # 💻 Tech digest — 6-hourly tech/AI headlines into the Tech topic
         # (self-paced: tick() is a no-op until the cadence is due).
         try:

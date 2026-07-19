@@ -28,6 +28,7 @@ import hashlib
 import hmac
 import json
 import os
+import re
 import time
 from datetime import datetime
 
@@ -233,6 +234,58 @@ def _post(path: str, payload: dict) -> tuple:
         f"{API}/{path}", json=payload, timeout=15,
         headers={"Authorization": f"Bearer {tok}"})
     return r.status_code, r.text
+
+
+def _put(url: str, payload: dict) -> tuple:
+    """PUT choke-point (webhook-endpoint registration; stubbed in tests)."""
+    tok = _token()
+    if not tok:
+        return 0, "no token"
+    r = requests.put(url, json=payload, timeout=15,
+                     headers={"Authorization": f"Bearer {tok}"})
+    return r.status_code, r.text
+
+
+# ── webhook endpoint auto-registration ───────────────────────────────────────
+# Cloudflare QUICK tunnels mint a brand-new hostname every time cloudflared
+# restarts (e.g. after a reboot). Instead of asking anyone to re-paste the
+# URL into the LINE console, the scanner re-registers the endpoint through
+# LINE's API whenever the tunnel URL changes. Manual override: LINE_WEBHOOK_BASE.
+TUNNEL_LOG = os.path.join(os.path.dirname(__file__), "..", "cloudflared.log")
+_synced = {"url": ""}
+
+
+def current_tunnel_url() -> str:
+    """Newest trycloudflare URL in the tunnel log ('' when absent)."""
+    try:
+        with open(TUNNEL_LOG, "r", encoding="utf-8", errors="ignore") as f:
+            urls = re.findall(r"https://[a-z0-9-]+\.trycloudflare\.com", f.read())
+        return urls[-1] if urls else ""
+    except Exception:  # noqa: BLE001 — no tunnel = nothing to register
+        return ""
+
+
+def sync_webhook() -> bool:
+    """Point LINE's webhook at the current public URL; no-op until it changes."""
+    if not enabled():
+        return False
+    base = os.getenv("LINE_WEBHOOK_BASE", "").strip() or current_tunnel_url()
+    if not base:
+        return False
+    url = base.rstrip("/") + "/line/webhook"
+    if _synced["url"] == url:
+        return True
+    try:
+        code, body = _put("https://api.line.me/v2/bot/channel/webhook/endpoint",
+                          {"endpoint": url})
+        if code == 200:
+            _synced["url"] = url
+            print(f"[line] webhook endpoint → {url}")
+            return True
+        print(f"[line] webhook sync failed {code}: {body[:200]}")
+    except Exception as exc:  # noqa: BLE001 — never kill the scanner
+        print(f"[line] webhook sync error: {exc}")
+    return False
 
 
 def _chunks(text: str) -> list:

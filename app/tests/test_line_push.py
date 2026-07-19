@@ -183,6 +183,45 @@ def test_webhook_route(monkeypatch):
     assert "Croute999" in line_push.targets()
 
 
+# ── webhook endpoint auto-registration ───────────────────────────────────────
+def test_current_tunnel_url_takes_newest(monkeypatch, tmp_path):
+    log = tmp_path / "cf.log"
+    log.write_text("x https://old-name.trycloudflare.com y\n"
+                   "z https://new-name.trycloudflare.com w\n", encoding="utf-8")
+    monkeypatch.setattr(line_push, "TUNNEL_LOG", str(log))
+    assert line_push.current_tunnel_url() == "https://new-name.trycloudflare.com"
+    monkeypatch.setattr(line_push, "TUNNEL_LOG", str(tmp_path / "absent.log"))
+    assert line_push.current_tunnel_url() == ""
+
+
+def test_sync_webhook_registers_once_then_noop(monkeypatch):
+    _cap(monkeypatch)
+    puts = []
+    monkeypatch.setattr(line_push, "_put",
+                        lambda url, payload: puts.append((url, payload)) or (200, "ok"))
+    monkeypatch.setattr(line_push, "_synced", {"url": ""})
+    monkeypatch.setattr(line_push, "current_tunnel_url",
+                        lambda: "https://abc.trycloudflare.com")
+    assert line_push.sync_webhook() is True
+    assert puts == [("https://api.line.me/v2/bot/channel/webhook/endpoint",
+                     {"endpoint": "https://abc.trycloudflare.com/line/webhook"})]
+    assert line_push.sync_webhook() is True     # same URL → no second PUT
+    assert len(puts) == 1
+    # tunnel restarted with a NEW hostname → re-registers
+    monkeypatch.setattr(line_push, "current_tunnel_url",
+                        lambda: "https://xyz.trycloudflare.com")
+    assert line_push.sync_webhook() is True
+    assert puts[-1][1]["endpoint"] == "https://xyz.trycloudflare.com/line/webhook"
+
+
+def test_sync_webhook_disabled_or_no_tunnel(monkeypatch):
+    monkeypatch.setattr(line_push, "current_tunnel_url", lambda: "")
+    _cap(monkeypatch)
+    assert line_push.sync_webhook() is False    # enabled but no URL known
+    monkeypatch.setattr(config, "LINE_CHANNEL_ACCESS_TOKEN", "")
+    assert line_push.sync_webhook() is False    # disabled entirely
+
+
 # ── text commands (free reply messages) ──────────────────────────────────────
 def _text_event(text, gid="Cgroup12345", token="rt-9"):
     return {"events": [{"type": "message", "replyToken": token,
