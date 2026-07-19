@@ -128,6 +128,17 @@ TELEGRAM_S1SIGNALS_THREAD_ID = os.getenv("TELEGRAM_S1SIGNALS_THREAD_ID", "")
 # = the page renders without a join button (members can still log in).
 TELEGRAM_INVITE_URL = os.getenv("TELEGRAM_INVITE_URL", "").strip()
 
+# ── LINE push (家人的台股訊息) ─────────────────────────────────────────────
+# Channel access token of a LINE Official Account (Messaging API). When set,
+# the daily 台股 digest + SL/TP level hits are ALSO sent to LINE — plain
+# Chinese, phone-friendly, for family who don't use Telegram. Empty = off.
+# Setup: developers.line.biz → create a Messaging API channel → issue a
+# long-lived channel access token → family adds the OA via its QR code.
+LINE_CHANNEL_ACCESS_TOKEN = os.getenv("LINE_CHANNEL_ACCESS_TOKEN", "").strip()
+# Optional comma-separated LINE userIds to push to individually. Empty =
+# broadcast to every friend of the Official Account (simplest — no webhook).
+LINE_TO = [s.strip() for s in os.getenv("LINE_TO", "").split(",") if s.strip()]
+
 # ── Live trading (Binance Futures USD-M) ──────────────────────────────────
 # SAFETY: LIVE_TRADING defaults to False. While False the bot is in DRY-RUN —
 # it logs the exact order it WOULD place (and sends a Telegram note) but sends

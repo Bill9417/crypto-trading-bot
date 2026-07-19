@@ -1,0 +1,115 @@
+// ════════════════════════════════════════════════════════════════════════════
+//  台股 TW50 PULLBACK — Strategy (backtest) version of app/tw_stocks.py
+//
+//  The EXACT rules behind the daily 🇹🇼 台股掃描 Telegram digest — the config
+//  that survived a 3-year TW50 backtest with full Taiwan costs:
+//
+//    regime  TAIEX close > its 100-day SMA  AND  higher than 20 sessions ago
+//            (bearish regime = the digest says 觀望 and this script stands
+//            aside — the filter is what turned the tune window positive)
+//    setup   close > 60-day SMA, today's LOW tags the 20-day SMA, close > open
+//            (an uptrend pullback that buyers bought back up)
+//    entry   NEXT session's open (signal is confirmed on the daily close)
+//    exit    SL = entry − 3×ATR14 · TP = entry + 5×ATR14 · time-out 40 sessions
+//
+//  HOW TO USE — open any TW50 stock on the DAILY chart (TWSE:2330 台積電,
+//  TWSE:2317 鴻海, TWSE:2454 聯發科, …) and apply this script. TradingView
+//  backtests ONE symbol at a time; the Python scanner watches all 50 and
+//  takes every signal, so per-symbol TV results will be noisier (a single
+//  stock only signals a handful of times per year — judge the IDEA across
+//  several symbols, not one equity curve).
+//
+//  Python backtest for reference (tune = 2024-05→2025-08 incl. two crashes,
+//  validation = the last year, next-open fills, all costs):
+//    tune  n=178  WR 47.8%  avg +0.59%/trade  PF 1.16
+//    val   n=205  WR 58.0%  avg +5.00%/trade  PF 2.78
+//  ⚠ Chasing win rate was a trap on this data too: the tightest-TP configs
+//  showed 77% WR and LOST money after costs. Judge expectancy + PF.
+//
+//  Fidelity notes vs the Python engine:
+//  · Costs: Taiwan charges 0.1425% commission each way + 0.3% securities tax
+//    on the SELL only. TV has one commission field, so the round-trip total
+//    (0.585%) is averaged to 0.2925% per side — same total cost per trade.
+//  · Same-bar SL+TP: the Python engine assumes STOP-FIRST (conservative);
+//    TV decides by its own intrabar assumption, so TV can look slightly
+//    BETTER on bars that touch both levels. Trust the conservative number.
+//  · The live alert feed has a 10-day per-stock cooldown so the digest never
+//    re-lists a name it just alerted. That's alert hygiene, not a backtested
+//    rule — the input below defaults to 0 (off) to match the backtest.
+// ════════════════════════════════════════════════════════════════════════════
+//@version=6
+strategy("台股 TW50 Pullback — Daily", overlay=true,
+     initial_capital=1000000,
+     default_qty_type=strategy.percent_of_equity, default_qty_value=95,
+     commission_type=strategy.commission.percent, commission_value=0.2925,
+     max_labels_count=500)
+
+// ╔═══════════════════════════════════════════════════════╗
+// ║  INPUTS (defaults = the backtested config)             ║
+// ╚═══════════════════════════════════════════════════════╝
+gR = "① Rules"
+slMult   = input.float(3.0, "停損 Stop-loss ×ATR14", minval=0.5, maxval=10, step=0.5, group=gR, tooltip="SL = entry − this × ATR14 (ATR from the signal bar). Backtested: 3.0")
+tpMult   = input.float(5.0, "目標 Target ×ATR14",    minval=0.5, maxval=15, step=0.5, group=gR, tooltip="TP = entry + this × ATR14. Backtested: 5.0. Tighter TPs raised win rate and LOST money after costs.")
+maxHold  = input.int(40,  "逾時出場 Time-out (sessions)", minval=5, maxval=200, group=gR, tooltip="If neither SL nor TP is hit within this many sessions, exit at the next open. Backtested: 40")
+coolBars = input.int(0,   "Re-entry cooldown (sessions)", minval=0, maxval=60, group=gR, tooltip="Sessions to wait after an exit before a new entry. The LIVE ALERT feed uses 10 purely to avoid repeat alerts; the backtested rules have none — default 0.")
+
+gF = "② TAIEX regime filter"
+useRegime = input.bool(true, "大盤濾網 — only trade in a TAIEX bull regime", group=gF, tooltip="TAIEX close > 100-day SMA AND > its close 20 sessions ago. This filter is what turned the tune window positive — turning it OFF shows you why it exists.")
+regimeSym = input.symbol("TWSE:TAIEX", "Regime index", group=gF, tooltip="加權指數. Change only if your data plan names it differently (e.g. TVC:TAIEX).")
+
+gD = "③ Backtest window"
+useDate   = input.bool(false, "Limit date range", group=gD)
+startDate = input.time(timestamp("1 Jan 2023 00:00 +0000"), "From", group=gD)
+endDate   = input.time(timestamp("1 Jan 2030 00:00 +0000"), "To", group=gD)
+inWindow  = not useDate or (time >= startDate and time <= endDate)
+
+// ╔═══════════════════════════════════════════════════════╗
+// ║  REGIME — TAIEX bull filter                            ║
+// ╚═══════════════════════════════════════════════════════╝
+[tC, tS100, tC20] = request.security(regimeSym, "D", [close, ta.sma(close, 100), close[20]])
+regimeOK = not useRegime or (not na(tS100) and not na(tC20) and tC > tS100 and tC > tC20)
+
+// ╔═══════════════════════════════════════════════════════╗
+// ║  SETUP — uptrend pullback bought back up               ║
+// ╚═══════════════════════════════════════════════════════╝
+s60   = ta.sma(close, 60)
+s20   = ta.sma(close, 20)
+atr14 = ta.atr(14)                                     // Wilder RMA — same maths as app/tw_stocks._atr14
+setupOK = close > s60 and low <= s20 and close > open
+
+// live-alert-style cooldown (default off — see header)
+lastExit = strategy.closedtrades > 0 ? strategy.closedtrades.exit_bar_index(strategy.closedtrades - 1) : na
+coolOK = coolBars == 0 or na(lastExit) or bar_index - lastExit >= coolBars
+
+// ╔═══════════════════════════════════════════════════════╗
+// ║  ORDERS — signal on close, fill at the NEXT open       ║
+// ╚═══════════════════════════════════════════════════════╝
+var float sigAtr = na                                  // ATR14 captured on the signal bar → sets SL/TP off the fill
+canEnter = inWindow and setupOK and regimeOK and coolOK and strategy.position_size == 0 and not na(atr14) and bar_index >= 75
+if canEnter and (barstate.isconfirmed or barstate.ishistory)
+    sigAtr := atr14
+    strategy.entry("L", strategy.long)
+
+slPx = strategy.position_size > 0 ? strategy.position_avg_price - slMult * sigAtr : na
+tpPx = strategy.position_size > 0 ? strategy.position_avg_price + tpMult * sigAtr : na
+if strategy.position_size > 0
+    strategy.exit("X", from_entry="L", stop=slPx, limit=tpPx)
+    entryBar = strategy.opentrades.entry_bar_index(strategy.opentrades - 1)
+    if bar_index - entryBar >= maxHold
+        strategy.close("L", comment="⏱ 逾時出場")
+
+// ╔═══════════════════════════════════════════════════════╗
+// ║  VISUALS                                               ║
+// ╚═══════════════════════════════════════════════════════╝
+plot(s20, "SMA20 (pullback line)", color=color.new(color.orange, 0), linewidth=2)
+plot(s60, "SMA60 (trend line)",    color=color.new(color.blue, 30))
+bgcolor(useRegime and not regimeOK ? color.new(color.gray, 88) : na, title="⛔ 大盤空頭 (no entries)")
+plotshape(setupOK and regimeOK, "Setup", shape.triangleup, location.belowbar, color.rgb(0, 230, 118), size=size.tiny)
+plot(slPx, "停損 SL", style=plot.style_linebr, color=color.new(color.red, 20))
+plot(tpPx, "目標 TP", style=plot.style_linebr, color=color.new(color.green, 20))
+
+// timeframe reminder — the rules are DAILY-bar rules
+var table warnTbl = table.new(position.bottom_right, 1, 1)
+if barstate.islast and not timeframe.isdaily
+    table.cell(warnTbl, 0, 0, "⚠ 台股掃描 expects the DAILY chart (current: " + timeframe.period + ")",
+         text_color=color.orange, bgcolor=color.new(color.black, 20), text_size=size.small)

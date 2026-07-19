@@ -103,3 +103,7 @@ def _no_live_side_effects(request, monkeypatch, tmp_path):
     # the S1→Bybit mirror must also stay OFF unless a test opts in
     import config as _cfg
     monkeypatch.setattr(_cfg, "S1_BYBIT_MIRROR", False)
+    # LINE push (dad's 台股 messages) — same single-choke-point treatment as
+    # telegram: send() logic still runs, nothing leaves the process.
+    import line_push
+    monkeypatch.setattr(line_push, "_post", lambda path, payload: (200, "stubbed"))

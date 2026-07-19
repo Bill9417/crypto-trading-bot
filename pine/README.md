@@ -22,6 +22,7 @@ live; porting a change into the bot is a separate, explicit step.
 | `ETH_Precision_Confluence.pine` | ETH 15m/30m confluence strategy (EMA stack + structure + momentum voting) built for TradingView experimentation. | Testing only — NOT live, not validated. |
 | `ETH_HighWinRate_RSI2.pine` | **Evidence script, not a trading system.** RSI-2 dip-buy tuned for maximum win rate: ~69% WR and still LOSES after fees (PF 0.87 tune / measured numbers in the header). Kept to demonstrate that win rate ≠ profit. | Educational — do not trade. |
 | `US_Stock_Precision_Trend.pine` | US stock daily strategy for TV testing: SPY regime filter, relative-strength weight, earnings block/exit, liquidity floor, RTH options. | Testing only — nothing in this repo trades stocks. |
+| `TW_Stock_Pullback_Daily.pine` | **台股 TW50 pullback** — the exact rules behind the daily 🇹🇼 台股掃描 digest (`app/tw_stocks.py`): TAIEX regime (close > SMA100 & higher than 20 sessions ago), setup = close > SMA60 + low tags SMA20 + green close, next-open entry, SL 3×ATR14 / TP 5×ATR14 / 40-session time-out, full Taiwan costs (0.585% round-trip averaged per side). Apply to ONE TW50 symbol on the DAILY chart. | Watch-only — the digest alerts, nothing in this repo trades TW stocks. |
 
 Deleted in the 2026-07-09 cleanup: `TV_strategy_TP.pine`,
 `TV_strategy_V2.pine` (13-month replay: high win rate, net LOSS — the

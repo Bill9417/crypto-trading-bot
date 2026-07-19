@@ -192,6 +192,39 @@ def build_digest(now, reg: dict, setups: list, pattern_blocked: int = 0,
     return "\n".join(lines)
 
 
+def build_digest_plain(now, reg: dict, setups: list) -> str:
+    """LINE version of the digest — plain text, no HTML/<pre> tables (LINE is
+    a proportional font), written in everyday Chinese for a family reader."""
+    lines = [f"🇹🇼 台股掃描 {now.strftime('%Y-%m-%d')} (週{_WD[now.weekday()]})", ""]
+    if reg.get("ok"):
+        lines.append(f"✅ 大盤多頭 — 加權指數 {_px(reg['close'])} 站上100日均線")
+        if setups:
+            lines.append(f"🎯 今日訊號 {len(setups)} 檔（強勢股回檔後買盤接手）:")
+            for code, name, s in setups[:MAX_SHOW]:
+                risk = (s["ref"] - s["sl"]) / s["ref"] * 100
+                gain = (s["tp"] - s["ref"]) / s["ref"] * 100
+                lines += ["",
+                          f"■ {code} {name}",
+                          f"　進場參考 {_px(s['ref'])}（明日開盤附近）",
+                          f"　停損 {_px(s['sl'])}（約 −{risk:.1f}%）",
+                          f"　目標 {_px(s['tp'])}（約 +{gain:.1f}%）"]
+            if len(setups) > MAX_SHOW:
+                lines += ["", f"…另有 {len(setups) - MAX_SHOW} 檔未列出"]
+            lines += ["",
+                      "📌 跌破停損就賣出、到目標就獲利了結",
+                      f"⏱ 最多抱 {MAX_HOLD} 個交易日，沒到就先出場"]
+        else:
+            lines.append("🔍 今日沒有符合條件的股票，休息一天")
+    else:
+        lines.append("⛔ 大盤未達多頭條件 — 今日觀望，不進場")
+        if "close" in reg:
+            why = ("指數在100日均線之下" if reg["close"] <= reg["sma100"]
+                   else "近20日走勢轉弱")
+            lines.append(f"　加權指數 {_px(reg['close'])}（{why}）")
+    lines += ["", "⚠️ 訊號來自歷史回測，過去績效不代表未來，請自行評估風險"]
+    return "\n".join(lines)
+
+
 def _due(state: dict, now) -> bool:
     """One send per TWSE trading day, after the close is final."""
     if now.weekday() >= 5 or now.hour < SEND_HOUR:
@@ -272,6 +305,9 @@ def tick() -> bool:
     import telegram_utils
     sent = telegram_utils.send_message(msg, parse_mode="HTML", force=True,
                                        channel="twstocks")
+    import line_push
+    if line_push.enabled():                # 爸爸的 LINE — plain-text copy
+        line_push.send(build_digest_plain(now, reg, setups))
     print(f"[twstocks] {today}: regime={'BULL' if reg.get('ok') else 'OFF'} "
           f"setups={len(setups)} sent={sent}")
 

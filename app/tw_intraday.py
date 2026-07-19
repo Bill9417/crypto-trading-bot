@@ -243,6 +243,9 @@ def tick() -> bool:
     if new_hits:
         state.setdefault("hits", {}).update(new_hits)
         parts.append("\n".join(level_events))
+        import line_push
+        if line_push.enabled():            # SL/TP hits matter if 爸爸 is holding
+            line_push.send("🇹🇼 台股價位提醒\n" + "\n".join(level_events))
 
     mover_events, new_movers = detect_movers(rows, state.get("movers") or {}, today)
     if new_movers:
