@@ -48,7 +48,15 @@ WELCOME_GROUP = ("✅ 已連接台股訊號！\n"
 HELP_MSG = ("📖 台股天地指令：\n"
             "訊號 — 今日台股掃描結果\n"
             "現況 — 即時大盤與追蹤個股\n"
+            "暫停 — 暫停本群推播\n"
+            "開啟 — 恢復本群推播\n"
+            "清除 — 如何清空聊天畫面\n"
             "說明 — 顯示本說明")
+
+CLEAR_MSG = ("🧹 LINE 官方限制：機器人無法刪除聊天訊息。\n"
+             "想清空畫面：長按此聊天室 → 刪除聊天記錄\n"
+             "（只影響自己的手機，其他人不受影響）。\n"
+             "覺得訊息太多的話，輸入「暫停」可停止推播。")
 
 # Service lifecycle notices — sent by the S2 scanner (the process that owns
 # every 台股 message) on startup and on SIGTERM/SIGINT/crash shutdown.
@@ -144,34 +152,61 @@ def handle_webhook(payload: dict) -> int:
             ids = _load_ids()
             groups = ids.setdefault("groups", {})
             known = groups.get(gid) or {}
+            # join = explicit (re)invite → (re)activate; message only
+            # subscribes a NEVER-seen group (backfills groups joined before
+            # the webhook went live) — so a 「暫停」-paused group's chatter
+            # does NOT silently re-subscribe it.
             if etype == "leave":
                 if known.get("active"):
                     groups[gid] = {**known, "active": False}
                     _save_ids(ids)
                     changed += 1
-            elif etype in ("join", "message"):
-                if not known.get("active"):
-                    groups[gid] = {"active": True,
-                                   "since": datetime.now().strftime("%Y-%m-%d")}
-                    _save_ids(ids)
-                    changed += 1
-                    if token:               # the one replyToken goes to the welcome
-                        _reply(token, WELCOME_GROUP)
-                        replied = True
-                    _notify_owner(gid)
+            elif (etype == "join" and not known.get("active")) or \
+                 (etype == "message" and gid not in groups):
+                groups[gid] = {"active": True, "paused": False,
+                               "since": datetime.now().strftime("%Y-%m-%d")}
+                _save_ids(ids)
+                changed += 1
+                if token:                   # the one replyToken goes to the welcome
+                    _reply(token, WELCOME_GROUP)
+                    replied = True
+                _notify_owner(gid)
         if etype == "message" and token and not replied:
             msg = ev.get("message") or {}
             if msg.get("type") == "text":
-                resp = _command_reply(msg.get("text", ""))
+                resp = _command_reply(msg.get("text", ""), gid)
                 if resp:
                     _reply(token, resp)
     return changed
 
 
-def _command_reply(text: str):
+def _command_reply(text: str, gid: str = None):
     """Response for a recognised command, else None (bots in groups see every
     message — only exact keywords answer, anything else stays silent)."""
     t = (text or "").strip().lower()
+    if t in ("暫停", "暫停推播", "關閉推播"):
+        if not gid:
+            return "此指令僅在群組內有效。"
+        ids = _load_ids()
+        g = (ids.get("groups") or {}).get(gid)
+        if g and g.get("active"):
+            ids["groups"][gid] = {**g, "active": False, "paused": True}
+            _save_ids(ids)
+        return ("⏸ 已暫停本群組推播 — 台股訊號不再發送。\n"
+                "輸入「開啟」隨時恢復。")
+    if t in ("開啟", "恢復", "開啟推播"):
+        if not gid:
+            return "此指令僅在群組內有效。"
+        ids = _load_ids()
+        groups = ids.setdefault("groups", {})
+        g = groups.get(gid) or {}
+        groups[gid] = {**g, "active": True, "paused": False,
+                       "since": g.get("since")
+                       or datetime.now().strftime("%Y-%m-%d")}
+        _save_ids(ids)
+        return "▶️ 已恢復本群組推播！台股訊號將照常發送。"
+    if t in ("清除", "清空", "clear"):
+        return CLEAR_MSG
     if t in ("訊號", "台股", "tw"):
         try:
             import tw_stocks

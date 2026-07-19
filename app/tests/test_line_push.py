@@ -236,6 +236,38 @@ def test_ordinary_chatter_stays_silent(monkeypatch):
     assert not calls                        # bots must not answer normal chat
 
 
+def test_pause_and_resume(monkeypatch):
+    calls = _subscribed(monkeypatch)
+    line_push.handle_webhook(_text_event("暫停"))
+    assert "已暫停" in calls[0][1]["messages"][0]["text"]
+    assert "Cgroup12345" not in line_push.targets()
+    # chatter while paused must NOT silently re-subscribe (nor re-welcome)
+    calls.clear()
+    line_push.handle_webhook(_text_event("隨便聊天"))
+    assert not calls
+    assert "Cgroup12345" not in line_push.targets()
+    # …but 「開啟」 resumes
+    line_push.handle_webhook(_text_event("開啟"))
+    assert "已恢復" in calls[0][1]["messages"][0]["text"]
+    assert "Cgroup12345" in line_push.targets()
+
+
+def test_reinvite_after_pause_reactivates(monkeypatch):
+    calls = _subscribed(monkeypatch)
+    line_push.handle_webhook(_text_event("暫停"))
+    calls.clear()
+    line_push.handle_webhook(_join_event(token="rt-again"))   # kicked+re-invited
+    assert "Cgroup12345" in line_push.targets()
+    assert calls[0][1]["messages"][0]["text"] == line_push.WELCOME_GROUP
+
+
+def test_clear_command_explains_limitation(monkeypatch):
+    calls = _subscribed(monkeypatch)
+    line_push.handle_webhook(_text_event("清除"))
+    txt = calls[0][1]["messages"][0]["text"]
+    assert "無法刪除" in txt and "暫停" in txt
+
+
 def test_first_message_gets_welcome_not_command(monkeypatch):
     # One replyToken per event: if the group's first-ever event is a command,
     # the welcome wins and the command is NOT double-replied.
