@@ -183,6 +183,89 @@ def test_webhook_route(monkeypatch):
     assert "Croute999" in line_push.targets()
 
 
+# ── text commands (free reply messages) ──────────────────────────────────────
+def _text_event(text, gid="Cgroup12345", token="rt-9"):
+    return {"events": [{"type": "message", "replyToken": token,
+                        "message": {"type": "text", "text": text},
+                        "source": {"type": "group", "groupId": gid}}]}
+
+
+def _subscribed(monkeypatch):
+    """Recorder with the group already subscribed (welcome consumed)."""
+    calls = _cap(monkeypatch)
+    line_push.handle_webhook(_join_event())
+    calls.clear()
+    return calls
+
+
+def test_command_help(monkeypatch):
+    calls = _subscribed(monkeypatch)
+    line_push.handle_webhook(_text_event("說明"))
+    assert [(p, pl["messages"][0]["text"]) for p, pl in calls] == \
+        [("reply", line_push.HELP_MSG)]
+
+
+def test_command_digest_from_state(monkeypatch):
+    calls = _subscribed(monkeypatch)
+    import tw_stocks
+    monkeypatch.setattr(tw_stocks, "_load_state",
+                        lambda: {"last_digest_plain": "🇹🇼 今日掃描內容"})
+    line_push.handle_webhook(_text_event("訊號"))
+    assert calls[0][1]["messages"][0]["text"] == "🇹🇼 今日掃描內容"
+
+
+def test_command_digest_before_first_scan(monkeypatch):
+    calls = _subscribed(monkeypatch)
+    import tw_stocks
+    monkeypatch.setattr(tw_stocks, "_load_state", lambda: {})
+    line_push.handle_webhook(_text_event("台股"))
+    assert "還沒有台股掃描" in calls[0][1]["messages"][0]["text"]
+
+
+def test_command_snapshot(monkeypatch):
+    calls = _subscribed(monkeypatch)
+    import tw_intraday
+    monkeypatch.setattr(tw_intraday, "snapshot_plain", lambda: "即時快照")
+    line_push.handle_webhook(_text_event("現況"))
+    assert calls[0][1]["messages"][0]["text"] == "即時快照"
+
+
+def test_ordinary_chatter_stays_silent(monkeypatch):
+    calls = _subscribed(monkeypatch)
+    line_push.handle_webhook(_text_event("爸 晚餐吃什麼"))
+    assert not calls                        # bots must not answer normal chat
+
+
+def test_first_message_gets_welcome_not_command(monkeypatch):
+    # One replyToken per event: if the group's first-ever event is a command,
+    # the welcome wins and the command is NOT double-replied.
+    calls = _cap(monkeypatch)
+    line_push.handle_webhook(_text_event("說明", token="rt-first"))
+    texts = [pl["messages"][0]["text"] for _p, pl in calls]
+    assert texts == [line_push.WELCOME_GROUP]
+
+
+def test_snapshot_plain_has_no_html(monkeypatch):
+    import time as _time
+
+    import tw_intraday
+    import tw_stocks
+    rows = [{"code": "2330", "name": "台積電", "price": 1050.0, "change_pct": 2.1},
+            {"code": "2317", "name": "鴻海", "price": 210.0, "change_pct": -1.2}]
+    monkeypatch.setattr(tw_intraday, "_quotes", lambda: (rows, _time.time()))
+    monkeypatch.setattr(tw_intraday, "fetch_taiex",
+                        lambda: {"price": 23000.0, "prev": 22800.0, "pct": 0.88})
+    monkeypatch.setattr(tw_stocks, "_load_state",
+                        lambda: {"active_setups": [{"code": "2330", "name": "台積電",
+                                                    "date": "2026-07-18", "ref": 1040.0,
+                                                    "sl": 990.0, "tp": 1150.0}]})
+    snap = tw_intraday.snapshot_plain()
+    assert "加權指數 23,000" in snap
+    assert "2330 台積電 現價 1,050" in snap
+    assert "進 1,040／損 990.0／標 1,150" in snap
+    assert "<" not in snap                  # plain text, no <pre> tables
+
+
 # ── the plain-Chinese digest ─────────────────────────────────────────────────
 _NOW = datetime(2026, 7, 17, 14, 0)             # a Friday
 

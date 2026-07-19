@@ -42,7 +42,13 @@ BATCH = 5               # API limit: 5 message objects per call
 
 WELCOME_GROUP = ("✅ 已連接台股訊號！\n"
                  "每個交易日 14:00 會收到台股掃描（進場參考/停損/目標），\n"
-                 "盤中觸到停損或目標也會即時提醒。")
+                 "盤中觸到停損或目標也會即時提醒。\n"
+                 "輸入「說明」可查看指令。")
+
+HELP_MSG = ("📖 台股天地指令：\n"
+            "訊號 — 今日台股掃描結果\n"
+            "現況 — 即時大盤與追蹤個股\n"
+            "說明 — 顯示本說明")
 
 # Service lifecycle notices — sent by the S2 scanner (the process that owns
 # every 台股 message) on startup and on SIGTERM/SIGINT/crash shutdown.
@@ -123,33 +129,67 @@ def sig_ok(body: bytes, signature: str) -> bool:
 
 
 def handle_webhook(payload: dict) -> int:
-    """Auto-subscribe groups/rooms the OA is invited into; a 'leave' event
-    unsubscribes. Returns the number of subscription changes."""
+    """Auto-subscribe groups/rooms the OA is invited into ('leave'
+    unsubscribes) and answer text commands — 訊號/現況/說明 — with free
+    reply messages (replies never count against the monthly push quota).
+    Returns the number of subscription changes."""
     changed = 0
     for ev in (payload or {}).get("events") or []:
         src = ev.get("source") or {}
         gid = src.get("groupId") or src.get("roomId")
         etype = ev.get("type")
-        if not gid:
-            continue
-        ids = _load_ids()
-        groups = ids.setdefault("groups", {})
-        known = groups.get(gid) or {}
-        if etype == "leave":
-            if known.get("active"):
-                groups[gid] = {**known, "active": False}
-                _save_ids(ids)
-                changed += 1
-        elif etype in ("join", "message"):
-            if not known.get("active"):
-                groups[gid] = {"active": True,
-                               "since": datetime.now().strftime("%Y-%m-%d")}
-                _save_ids(ids)
-                changed += 1
-                if ev.get("replyToken"):    # reply = free, no quota
-                    _reply(ev["replyToken"], WELCOME_GROUP)
-                _notify_owner(gid)
+        token = ev.get("replyToken")
+        replied = False
+        if gid:
+            ids = _load_ids()
+            groups = ids.setdefault("groups", {})
+            known = groups.get(gid) or {}
+            if etype == "leave":
+                if known.get("active"):
+                    groups[gid] = {**known, "active": False}
+                    _save_ids(ids)
+                    changed += 1
+            elif etype in ("join", "message"):
+                if not known.get("active"):
+                    groups[gid] = {"active": True,
+                                   "since": datetime.now().strftime("%Y-%m-%d")}
+                    _save_ids(ids)
+                    changed += 1
+                    if token:               # the one replyToken goes to the welcome
+                        _reply(token, WELCOME_GROUP)
+                        replied = True
+                    _notify_owner(gid)
+        if etype == "message" and token and not replied:
+            msg = ev.get("message") or {}
+            if msg.get("type") == "text":
+                resp = _command_reply(msg.get("text", ""))
+                if resp:
+                    _reply(token, resp)
     return changed
+
+
+def _command_reply(text: str):
+    """Response for a recognised command, else None (bots in groups see every
+    message — only exact keywords answer, anything else stays silent)."""
+    t = (text or "").strip().lower()
+    if t in ("訊號", "台股", "tw"):
+        try:
+            import tw_stocks
+            return (tw_stocks._load_state().get("last_digest_plain")
+                    or "今日還沒有台股掃描 — 每個交易日 14:00 後更新。")
+        except Exception as exc:  # noqa: BLE001 — a broken command stays silent
+            print(f"[line] 訊號 command failed: {exc}")
+            return None
+    if t in ("現況", "即時", "now"):
+        try:
+            import tw_intraday
+            return tw_intraday.snapshot_plain()
+        except Exception as exc:  # noqa: BLE001
+            print(f"[line] 現況 command failed: {exc}")
+            return None
+    if t in ("說明", "幫助", "指令", "help"):
+        return HELP_MSG
+    return None
 
 
 def _reply(reply_token: str, text: str) -> None:

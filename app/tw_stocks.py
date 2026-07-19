@@ -305,9 +305,10 @@ def tick() -> bool:
     import telegram_utils
     sent = telegram_utils.send_message(msg, parse_mode="HTML", force=True,
                                        channel="twstocks")
+    plain = build_digest_plain(now, reg, setups)
     import line_push
     if line_push.enabled():                # 爸爸的 LINE — plain-text copy
-        line_push.send(build_digest_plain(now, reg, setups))
+        line_push.send(plain)
     print(f"[twstocks] {today}: regime={'BULL' if reg.get('ok') else 'OFF'} "
           f"setups={len(setups)} sent={sent}")
 
@@ -326,5 +327,6 @@ def tick() -> bool:
     state["active_setups"] = active
     state["last_run_date"] = today
     state["last_digest_text"] = msg
+    state["last_digest_plain"] = plain     # served by the LINE 「訊號」 command
     _save_state(state)
     return bool(sent)

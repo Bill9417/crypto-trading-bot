@@ -187,6 +187,44 @@ def snapshot_text() -> str:
     return "\n".join(lines)
 
 
+def snapshot_plain() -> str:
+    """LINE version of /twnow — plain text, no HTML tables (LINE renders a
+    proportional font), for the 「現況」 command."""
+    now = datetime.now(TZ)
+    rows, quote_ts = _quotes()
+    if not rows:
+        return "台股即時資料暫時抓不到，稍後再試。"
+    lines = [f"🇹🇼 台股即時 {now.strftime('%H:%M')}"
+             f"（{'盤中' if in_session(now) else '已收盤'}）"]
+    try:
+        taiex = fetch_taiex()
+    except Exception:  # noqa: BLE001 — index line is optional
+        taiex = None
+    if taiex:
+        lines.append(f"加權指數 {_px(taiex['price'])}（{taiex['pct']:+.2f}%）")
+    ranked = [r for r in rows if r.get("change_pct") is not None and r.get("price")]
+    if ranked:
+        up = sorted(ranked, key=lambda r: -r["change_pct"])[:3]
+        dn = sorted(ranked, key=lambda r: r["change_pct"])[:3]
+        lines.append("📈 " + "、".join(f"{r['code']} {r['change_pct']:+.1f}%" for r in up))
+        lines.append("📉 " + "、".join(f"{r['code']} {r['change_pct']:+.1f}%" for r in dn))
+    by_code = {r["code"]: r for r in rows}
+    setups = tw_stocks._load_state().get("active_setups") or []
+    if setups:
+        lines.append("")
+        lines.append("追蹤中的設定：")
+        for s in setups[:8]:
+            row = by_code.get(s["code"])
+            px = _px(row["price"]) if row and row.get("price") else "無報價"
+            lines.append(f"■ {s['code']} {s.get('name') or ''} 現價 {px}")
+            lines.append(f"　進 {_px(s['ref'])}／損 {_px(s['sl'])}／標 {_px(s['tp'])}")
+    else:
+        lines.append("目前無追蹤中的設定 — 等 14:00 收盤掃描")
+    if quote_ts and time.time() - quote_ts > STALE_QUOTE_SEC:
+        lines.append(f"（報價為 {int((time.time() - quote_ts) / 60)} 分鐘前的最後成交）")
+    return "\n".join(lines)
+
+
 # ── orchestration ────────────────────────────────────────────────────────────
 def tick() -> bool:
     """Once per scanner sweep during the TWSE session; one batched message
