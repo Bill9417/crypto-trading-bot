@@ -46,7 +46,40 @@ WELCOME_GROUP = ("✅ 已連接台股訊號！\n"
 
 
 def enabled() -> bool:
-    return bool(config.LINE_CHANNEL_ACCESS_TOKEN)
+    return bool(config.LINE_CHANNEL_ACCESS_TOKEN
+                or (config.LINE_CHANNEL_ID and config.LINE_CHANNEL_SECRET))
+
+
+# ── auth ─────────────────────────────────────────────────────────────────────
+# Preferred setup: only LINE_CHANNEL_ID + LINE_CHANNEL_SECRET in .env — we
+# mint short-lived STATELESS channel access tokens ourselves (15 min, no
+# issue-count limit, nothing to renew in the console). A console-issued
+# long-lived LINE_CHANNEL_ACCESS_TOKEN, if present, is used as-is instead.
+_tok_cache = {"token": "", "exp": 0.0}
+
+
+def _token() -> str:
+    if config.LINE_CHANNEL_ACCESS_TOKEN:
+        return config.LINE_CHANNEL_ACCESS_TOKEN
+    if not (config.LINE_CHANNEL_ID and config.LINE_CHANNEL_SECRET):
+        return ""
+    if time.time() < _tok_cache["exp"] - 60:
+        return _tok_cache["token"]
+    try:
+        r = requests.post("https://api.line.me/oauth2/v3/token", timeout=15,
+                          data={"grant_type": "client_credentials",
+                                "client_id": config.LINE_CHANNEL_ID,
+                                "client_secret": config.LINE_CHANNEL_SECRET})
+        if r.status_code != 200:
+            print(f"[line] token mint failed {r.status_code}: {r.text[:200]}")
+            return ""
+        d = r.json()
+        _tok_cache.update(token=d["access_token"],
+                          exp=time.time() + float(d.get("expires_in", 900)))
+    except Exception as exc:  # noqa: BLE001 — auth outage = message skipped, not a crash
+        print(f"[line] token mint error: {exc}")
+        return ""
+    return _tok_cache["token"]
 
 
 # ── subscribed groups (webhook-captured) ─────────────────────────────────────
@@ -135,9 +168,12 @@ def _notify_owner(gid: str) -> None:
 
 def _post(path: str, payload: dict) -> tuple:
     """(status_code, body) — the only place that talks to LINE."""
+    tok = _token()
+    if not tok:
+        return 0, "no token"
     r = requests.post(
         f"{API}/{path}", json=payload, timeout=15,
-        headers={"Authorization": f"Bearer {config.LINE_CHANNEL_ACCESS_TOKEN}"})
+        headers={"Authorization": f"Bearer {tok}"})
     return r.status_code, r.text
 
 

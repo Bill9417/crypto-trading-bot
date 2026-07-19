@@ -68,6 +68,41 @@ def test_failure_returns_false_never_raises(monkeypatch):
     assert len(calls) == 1
 
 
+# ── self-minted stateless tokens ─────────────────────────────────────────────
+class _TokResp:
+    status_code = 200
+    text = "ok"
+
+    @staticmethod
+    def json():
+        return {"access_token": "minted-tok", "expires_in": 900}
+
+
+def test_enabled_via_channel_id_and_secret(monkeypatch):
+    monkeypatch.setattr(config, "LINE_CHANNEL_ID", "2010")
+    monkeypatch.setattr(config, "LINE_CHANNEL_SECRET", "sec")
+    assert line_push.enabled() is True
+
+
+def test_token_minted_and_cached(monkeypatch):
+    monkeypatch.setattr(config, "LINE_CHANNEL_ID", "2010")
+    monkeypatch.setattr(config, "LINE_CHANNEL_SECRET", "sec")
+    monkeypatch.setattr(line_push, "_tok_cache", {"token": "", "exp": 0.0})
+    mints = []
+    monkeypatch.setattr(line_push.requests, "post",
+                        lambda url, **kw: mints.append(url) or _TokResp())
+    assert line_push._token() == "minted-tok"
+    assert line_push._token() == "minted-tok"       # second call hits the cache
+    assert len(mints) == 1 and "oauth2/v3/token" in mints[0]
+
+
+def test_console_token_overrides_minting(monkeypatch):
+    monkeypatch.setattr(config, "LINE_CHANNEL_ACCESS_TOKEN", "console-tok")
+    monkeypatch.setattr(line_push.requests, "post",
+                        lambda url, **kw: (_ for _ in ()).throw(AssertionError("minted")))
+    assert line_push._token() == "console-tok"
+
+
 # ── webhook: LINE-group auto-subscribe ───────────────────────────────────────
 def _join_event(gid="Cgroup12345", token="rt-1"):
     return {"events": [{"type": "join", "replyToken": token,

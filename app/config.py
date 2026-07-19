@@ -129,11 +129,13 @@ TELEGRAM_S1SIGNALS_THREAD_ID = os.getenv("TELEGRAM_S1SIGNALS_THREAD_ID", "")
 TELEGRAM_INVITE_URL = os.getenv("TELEGRAM_INVITE_URL", "").strip()
 
 # ── LINE push (家人的台股訊息) ─────────────────────────────────────────────
-# Channel access token of a LINE Official Account (Messaging API). When set,
-# the daily 台股 digest + SL/TP level hits are ALSO sent to LINE — plain
-# Chinese, phone-friendly, for family who don't use Telegram. Empty = off.
-# Setup: developers.line.biz → create a Messaging API channel → issue a
-# long-lived channel access token → family adds the OA via its QR code.
+# LINE Official Account (Messaging API) credentials. When configured, the
+# daily 台股 digest + SL/TP level hits are ALSO sent to LINE — plain Chinese,
+# phone-friendly, for family who don't use Telegram.
+# Preferred: set CHANNEL_ID + CHANNEL_SECRET only — line_push mints its own
+# stateless access tokens (nothing expires, nothing to renew in the console).
+LINE_CHANNEL_ID = os.getenv("LINE_CHANNEL_ID", "").strip()
+# Optional console-issued long-lived token; overrides self-minting when set.
 LINE_CHANNEL_ACCESS_TOKEN = os.getenv("LINE_CHANNEL_ACCESS_TOKEN", "").strip()
 # Channel secret (Basic settings tab) — verifies the X-Line-Signature on
 # /line/webhook so only LINE's servers can register a group. Empty = webhook

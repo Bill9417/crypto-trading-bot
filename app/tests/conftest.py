@@ -110,3 +110,9 @@ def _no_live_side_effects(request, monkeypatch, tmp_path):
     import line_push
     monkeypatch.setattr(line_push, "_post", lambda path, payload: (200, "stubbed"))
     monkeypatch.setattr(line_push, "IDS_FILE", str(tmp_path / "line_ids.json"))
+    # real LINE credentials live in .env (which this process loads) — blank
+    # them so enabled() is False unless a test opts in with its own fakes
+    monkeypatch.setattr(_cfg, "LINE_CHANNEL_ID", "")
+    monkeypatch.setattr(_cfg, "LINE_CHANNEL_SECRET", "")
+    monkeypatch.setattr(_cfg, "LINE_CHANNEL_ACCESS_TOKEN", "")
+    monkeypatch.setattr(_cfg, "LINE_TO", [])
