@@ -154,6 +154,23 @@ def _session(tz_name, open_hm, close_hm, hours_label, quote_ts):
 
 # ── Fetchers (network) ────────────────────────────────────────────────────
 
+def _mis_price(m):
+    """MIS 'z' (last trade) is '-' whenever no match landed in the current
+    5-second snapshot — mid-session most of TW50 has no z. Fall back through
+    pz → best bid → best ask (bid ≈ price within one tick; locked limit-down
+    stocks have no bids, and ask strings can lead with '0.0000')."""
+    for v in (m.get("z"), m.get("pz")):
+        f = _f(v)
+        if f:
+            return f
+    for field in ("b", "a"):
+        for part in str(m.get(field) or "").split("_"):
+            f = _f(part)
+            if f:
+                return f
+    return None
+
+
 def _fetch_tw():
     """One MIS batch per 30 codes → rows in TW50 order."""
     by_code = {}
@@ -172,7 +189,7 @@ def _fetch_tw():
     rows, latest_ts = [], 0.0
     for code, name_en in TW50:
         m = by_code.get(code, {})
-        last = _f(m.get("z")) or _f(m.get("pz"))
+        last = _mis_price(m)
         prev = _f(m.get("y"))
         ts = _f(m.get("tlong"))
         if ts:
