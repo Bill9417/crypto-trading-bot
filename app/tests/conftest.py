@@ -119,3 +119,9 @@ def _no_live_side_effects(request, monkeypatch, tmp_path):
     monkeypatch.setattr(_cfg, "LINE_CHANNEL_SECRET", "")
     monkeypatch.setattr(_cfg, "LINE_CHANNEL_ACCESS_TOKEN", "")
     monkeypatch.setattr(_cfg, "LINE_TO", [])
+    # site-link announcer + watchdog write real state/log files — redirect
+    import site_link
+    import watchdog
+    monkeypatch.setattr(site_link, "STATE_FILE", str(tmp_path / "site_link.json"))
+    monkeypatch.setattr(watchdog, "STATE_FILE", str(tmp_path / "watchdog.json"))
+    monkeypatch.setattr(watchdog, "LOG_DIR", str(tmp_path / "logs"))

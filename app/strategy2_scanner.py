@@ -606,6 +606,13 @@ def main() -> None:
             line_push.quota_tick()
         except Exception as exc:  # noqa: BLE001
             print(f"[strategy2] line webhook sync error: {exc}")
+        # 🔗 Site link — when the tunnel URL rotates (reboot), push the fresh
+        # dashboard link to the Telegram group + LINE group automatically.
+        try:
+            import site_link
+            site_link.tick()
+        except Exception as exc:  # noqa: BLE001
+            print(f"[strategy2] site link error: {exc}")
         # 💻 Tech digest — 6-hourly tech/AI headlines into the Tech topic
         # (self-paced: tick() is a no-op until the cadence is due).
         try:

@@ -10,6 +10,7 @@ page still shows it.
 """
 import json
 import os
+import shutil
 import subprocess
 import time
 
@@ -22,6 +23,35 @@ EXPECTED = {
 STATE_FILE = os.path.join(os.path.dirname(__file__), "watchdog_state.json")
 CHECK_SEC = 300
 ALERT_COOLDOWN_SEC = 3600
+LOG_DIR = os.path.join(os.path.dirname(__file__), "logs")
+MAX_LOG_BYTES = 10 * 1024 * 1024
+
+
+def rotate_logs(log_dir: str = None, max_bytes: int = MAX_LOG_BYTES) -> list:
+    """Copy-truncate any oversized log so multi-week runs stay bounded
+    (run_all.sh only rotates at restart). A plain mv would orphan the >>
+    append fds the running processes hold — so copy to .1, then truncate in
+    place; O_APPEND writers continue cleanly at the new EOF. The handful of
+    lines written between copy and truncate can be lost — acceptable."""
+    rotated = []
+    d = log_dir or LOG_DIR
+    try:
+        names = [n for n in os.listdir(d) if n.endswith(".log")]
+    except OSError:
+        return rotated
+    for name in sorted(names):
+        path = os.path.join(d, name)
+        try:
+            if os.path.getsize(path) <= max_bytes:
+                continue
+            shutil.copyfile(path, path + ".1")
+            with open(path, "r+") as f:
+                f.truncate(0)
+            rotated.append(name)
+            print(f"[watchdog] rotated {name} (was over {max_bytes >> 20}MB)")
+        except OSError as exc:  # noqa: PERF203 — per-file failure must not stop the rest
+            print(f"[watchdog] rotate failed {name}: {exc}")
+    return rotated
 
 
 def _load_state() -> dict:
@@ -71,6 +101,8 @@ def tick(self_name: str) -> list:
     if now - state.get("last_check", 0) < CHECK_SEC:
         return []
     state["last_check"] = now
+
+    rotate_logs()                                # bounded logs, same 5-min cadence
 
     try:
         running = parse_running(_ps())

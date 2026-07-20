@@ -291,6 +291,7 @@ HELP = ("🤖 指令列表\n"
         "/positions — 兩個帳戶的未平倉部位\n"
         "/signals — 最近的 S2 訊號（含進場/停損/目標）\n"
         "/alerts — 目前設定的到價提醒\n"
+        "/link — 🔗 網站儀表板連結（重啟後自動更新公告）\n"
         "/report — 今日帳戶+市場日報（擁有者專用, 只私訊回覆）\n"
         "/tw — 最新台股掃描（大盤狀態 + 設定）\n"
         "/twnow — 台股即時: TAIEX + 漲跌幅前三 + 追蹤設定現價\n"
@@ -387,6 +388,9 @@ def handle(cmd: str, args: str = "") -> str:
         import daily_report
         return daily_report.build_report(daily_report._gather(),
                                          datetime.now(daily_report.TZ))
+    if cmd in ("link", "url", "web"):
+        import site_link
+        return site_link.link_reply()
     if cmd in ("liq", "liquidations"):
         import liq_alerts
         return liq_alerts.build_report()

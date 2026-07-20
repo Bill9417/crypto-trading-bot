@@ -50,6 +50,7 @@ HELP_MSG = ("📖 台股天地指令：\n"
             "訊號 — 今日台股掃描結果\n"
             "現況 — 即時大盤與追蹤個股\n"
             "期貨 — 台指期趨勢與關鍵價位\n"
+            "網址 — 網站儀表板連結\n"
             "說明 — 顯示本說明")
 
 # Service lifecycle notices — sent by the S2 scanner (the process that owns
@@ -198,6 +199,13 @@ def _command_reply(text: str):
             return tw_intraday.taifex_plain()
         except Exception as exc:  # noqa: BLE001
             print(f"[line] 期貨 command failed: {exc}")
+            return None
+    if t in ("網址", "連結", "link"):
+        try:
+            import site_link
+            return site_link.link_reply()
+        except Exception as exc:  # noqa: BLE001
+            print(f"[line] 網址 command failed: {exc}")
             return None
     if t in ("說明", "幫助", "指令", "help"):
         return HELP_MSG

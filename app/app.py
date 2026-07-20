@@ -3351,4 +3351,21 @@ if __name__ == "__main__":
     # FLASK_RELOAD=true OR full debug. Reload works WITHOUT the debugger so you
     # don't expose the interactive console just to get hot-reload.
     app_reload = app_debug or os.getenv("FLASK_RELOAD", "false").lower() == "true"
-    app.run(host=app_host, port=app_port, debug=app_debug, use_reloader=app_reload)
+    if app_debug or app_reload:
+        # dev conveniences (interactive debugger / .py auto-reload) need werkzeug
+        app.run(host=app_host, port=app_port, debug=app_debug, use_reloader=app_reload)
+    else:
+        # Production path: the cloudflare tunnel exposes this app publicly and
+        # the single-threaded dev server warns for a reason. Template editing
+        # still hot-reloads (jinja re-checks file mtimes); only .py changes
+        # need a restart. Waitress does not write per-request access logs.
+        app.config["TEMPLATES_AUTO_RELOAD"] = True
+        app.jinja_env.auto_reload = True
+        try:
+            from waitress import serve
+        except ImportError:
+            print("waitress not installed — falling back to the Flask dev server")
+            app.run(host=app_host, port=app_port)
+        else:
+            print(f"Serving with waitress on {app_host}:{app_port} (12 threads)")
+            serve(app, host=app_host, port=app_port, threads=12)
