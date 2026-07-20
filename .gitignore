@@ -37,6 +37,7 @@ price_alerts.json
 tg_commands_state.json
 tw_stocks_state.json
 tw_intraday_state.json
+line_ids.json
 tg_sent_log.json
 tg_autoclean_state.json
 watchdog_state.json
