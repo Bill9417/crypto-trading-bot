@@ -110,6 +110,7 @@ def _no_live_side_effects(request, monkeypatch, tmp_path):
     import line_push
     monkeypatch.setattr(line_push, "_post", lambda path, payload: (200, "stubbed"))
     monkeypatch.setattr(line_push, "_put", lambda url, payload: (200, "stubbed"))
+    monkeypatch.setattr(line_push, "_get", lambda url: (200, "{}"))
     monkeypatch.setattr(line_push, "IDS_FILE", str(tmp_path / "line_ids.json"))
     monkeypatch.setattr(line_push, "TUNNEL_LOG", str(tmp_path / "cloudflared.log"))
     # real LINE credentials live in .env (which this process loads) — blank

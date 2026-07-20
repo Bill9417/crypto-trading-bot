@@ -598,10 +598,12 @@ def main() -> None:
         except Exception as exc:  # noqa: BLE001 — radar must never kill the loop
             print(f"[strategy2] event radar error: {exc}")
         # 📱 LINE webhook keep-alive — re-registers the endpoint if the
-        # cloudflare quick-tunnel URL rotated mid-run (no-op otherwise).
+        # cloudflare quick-tunnel URL rotated mid-run (no-op otherwise) —
+        # plus a daily push-quota check (200/mo runs out silently).
         try:
             import line_push
             line_push.sync_webhook()
+            line_push.quota_tick()
         except Exception as exc:  # noqa: BLE001
             print(f"[strategy2] line webhook sync error: {exc}")
         # 💻 Tech digest — 6-hourly tech/AI headlines into the Tech topic

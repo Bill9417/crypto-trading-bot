@@ -1861,189 +1861,10 @@
                     </div>
                 </div>
                 <div class="signal-cards" id="signal-cards-body">
-                    {% if signals %}
-                    {% for signal in signals %}
-                    <div class="signal-card {{ 'long-card' if signal.direction == 'LONG' else 'short-card' }} {{ 'max-conviction-card' if signal.get('effective_lights', 0) >= 5 else 'high-conviction-card' if signal.get('effective_lights', 0) >= 4 else '' }}{{ ' watch-only' if signal.get('tradeable') == False else '' }}" id="card-{{ signal.symbol|replace('/', '-')|replace(':', '-') }}" data-card-id="{{ signal.symbol|replace('/', '-')|replace(':', '-') }}" data-dir="{{ signal.direction }}" data-status="{{ signal.trade_status or '' }}" data-lights="{{ signal.get('effective_lights', 0) }}" data-score="{{ signal.score or 0 }}" data-rsi="{{ signal.rsi }}">
-                        <div class="signal-row-grid signal-row-hit" role="button" tabindex="0" aria-expanded="false">
-                            <div class="cell cell-asset">
-                                <div class="asset-line">
-                                    <a href="{{ signal.tv_url }}" target="_blank" class="symbol-tag" style="color: var(--wolf-blue); text-decoration: none;" onclick="event.stopPropagation()">{{ signal.symbol }}</a>
-                                    {%- if signal.get('tradeable') == False %}<span class="watch-only-badge" title="Scanned for market breadth — ranked outside the tradeable top pairs, so it never queues or trades.">Watch only</span>{% endif %}
-                                    {%- if signal.trade_status %}
-                                    <span class="trade-status-badge status-{{ signal.trade_status|lower }}"{% if signal.record_status_reason %} title="{{ signal.record_status_reason }}"{% endif %}>
-                                        {%- if signal.trade_status == 'queued' %}QUEUED{% elif signal.trade_status == 'rejected' %}REJECTED{% elif signal.trade_status in ['active', 'pending'] %}PENDING{% elif signal.trade_status == 'tp1_partial' %}TP1 PARTIAL{% elif signal.trade_status == 'tp' %}TP ✓{% elif signal.trade_status == 'sl' %}SL ✗{% elif signal.trade_status == 'manual_close' %}MANUAL CLOSED{% else %}{{ signal.trade_status|upper }}{% endif -%}
-                                    </span>
-                                    {%- endif %}
-                                </div>
-                            </div>
-                            <div class="cell cell-side">
-                                <span class="side-pill {{ 'side-long' if signal.direction == 'LONG' else 'side-short' }}">{{ signal.direction }}</span>
-                            </div>
-                            <div class="cell cell-live live-price-cell">
-                                <span class="live-val">
-                                    {% if signal.current_price is not none %}
-                                        {% if signal.current_price < 0.0001 %}
-                                            {{ "%.8f"|format(signal.current_price) }}
-                                        {% elif signal.current_price < 0.01 %}
-                                            {{ "%.6f"|format(signal.current_price) }}
-                                        {% elif signal.current_price < 1 %}
-                                            {{ "%.4f"|format(signal.current_price) }}
-                                        {% else %}
-                                            {{ "%.2f"|format(signal.current_price) }}
-                                        {% endif %}
-                                    {% else %}
-                                        ...
-                                    {% endif %}
-                                </span>
-                            </div>
-                            <div class="cell cell-rsi {{ 'rsi-high' if signal.rsi >= rsi_upper else 'rsi-low' if signal.rsi <= rsi_lower else '' }}">{{ "%.1f"|format(signal.rsi) }}</div>
-                            <div class="cell cell-lights">
-                                <div class="lights" title="Filled = passed light · hollow = missed · violet = SMC bonus. Total dots = lights used by the 4+/5+/6+ filter.">
-                                    {% for light in signal.lights %}
-                                    <div class="light {{ 'on' if light else 'off' }}"></div>
-                                    {% endfor %}
-                                    {% set base_count = signal.lights|select|list|length %}
-                                    {% set smc_bonus = signal.get('effective_lights', 0) - base_count %}
-                                    {% if smc_bonus > 0 %}
-                                    <span class="smc-divider"></span>
-                                    {% for _ in range(smc_bonus) %}
-                                    <div class="light smc"></div>
-                                    {% endfor %}
-                                    {% endif %}
-                                </div>
-                            </div>
-                            <div class="cell cell-smc">
-                                {% if signal.smc %}
-                                <span class="smc-zone-pill {{ signal.smc.zone_type }}">{{ signal.smc.zone_label }}</span>
-                                {% else %}<span class="cell-dash">—</span>{% endif %}
-                            </div>
-                            <div class="cell cell-score">
-                                <span class="score-badge {{ 'score-high' if signal.score >= 10 else 'score-strong' if signal.score >= 7 else 'score-watch' }}">{{ signal.score }}</span>
-                            </div>
-                            <div class="cell cell-chevron"><span class="chevron">▼</span></div>
-                            <div class="cell cell-chart">
-                                <a href="{{ signal.tv_url }}" target="_blank" class="tv-btn" onclick="event.stopPropagation()">View</a>
-                            </div>
-                        </div>
-                        <div class="card-expand">
-                            <div class="card-expand-inner">
-                                <div class="expand-metrics">
-                                    <div class="metric-box">
-                                        <div class="metric-label">Live Price</div>
-                                        <div class="metric-val metric-live-price">
-                                            {% if signal.current_price is not none %}
-                                                {% if signal.current_price < 0.0001 %}{{ "%.8f"|format(signal.current_price) }}
-                                                {% elif signal.current_price < 0.01 %}{{ "%.6f"|format(signal.current_price) }}
-                                                {% elif signal.current_price < 1 %}{{ "%.4f"|format(signal.current_price) }}
-                                                {% else %}{{ "%.2f"|format(signal.current_price) }}{% endif %}
-                                            {% else %}...{% endif %}
-                                        </div>
-                                    </div>
-                                    <div class="metric-box">
-                                        <div class="metric-label">Conviction</div>
-                                        <div class="metric-val {% if signal.get('effective_lights', 0) >= 5 %}conviction-max{% elif signal.get('effective_lights', 0) >= 4 %}conviction-high{% else %}conviction-normal{% endif %}">
-                                            {{ signal.conviction }} ({{ signal.get('effective_lights', 0) }} lights)
-                                        </div>
-                                    </div>
-                                    <div class="metric-box">
-                                        <div class="metric-label">EMA50 Trend</div>
-                                        <div class="metric-val">
-                                            {% if signal.get('trend_aligned') is not none %}
-                                                <span class="side-pill {{ 'side-long' if signal.get('trend_aligned') else 'side-short' }}" style="font-size: 0.7rem; min-width: auto; height: auto; padding: 2px 8px;">
-                                                    {{ "ALIGNED ✓" if signal.get('trend_aligned') else "CONTRARY ✗" }}
-                                                </span>
-                                            {% else %}
-                                                <span class="text-muted">-</span>
-                                            {% endif %}
-                                        </div>
-                                    </div>
-                                    <div class="metric-box">
-                                        <div class="metric-label">SMC Zone</div>
-                                        <div class="metric-val">
-                                            {% if signal.smc %}
-                                                <span class="smc-zone-pill {{ signal.smc.zone_type }}" style="font-size: 0.7rem; padding: 2px 8px; margin: 0;">
-                                                    {{ signal.smc.zone_label|upper }}
-                                                </span>
-                                            {% else %}
-                                                <span class="text-muted">-</span>
-                                            {% endif %}
-                                        </div>
-                                    </div>
-                                </div>
-                                {% if signal.record_status_reason %}
-                                <div class="card-section">
-                                    <div class="card-section-title">Latest Scan Status</div>
-                                    {{ signal.record_status_reason }}
-                                </div>
-                                {% endif %}
-                                {% if signal.smc %}
-                                <div class="card-section">
-                                    <div class="card-section-title">SMC 1h</div>
-                                    <span class="smc-zone-pill {{ signal.smc.zone_type }}">{{ signal.smc.zone_label }}</span>
-                                    {{ signal.smc.summary }}
-                                    {% if signal.smc.swing_low and signal.smc.swing_high %}
-                                    <br><small>Swing L {{ signal.smc.swing_low }} · H {{ signal.smc.swing_high }}</small>
-                                    {% endif %}
-                                    {% if signal.smc.details %}<br><small>{{ signal.smc.details|join(' · ') }}</small>{% endif %}
-                                </div>
-                                {% endif %}
-                                {% if signal.sl %}
-                                <div class="card-section">
-                                    <div class="card-section-title">Trade Plan</div>
-                                    <div class="trade-plan">
-                                        {% if signal.entry %}
-                                        <div class="plan-row plan-entry">
-                                            <span class="plan-label">Entry</span>
-                                            <span class="plan-value">{{ signal.entry }}</span>
-                                        </div>
-                                        {% endif %}
-                                        {% if signal.tp %}
-                                        <div class="plan-row plan-tp">
-                                            <span class="plan-label">TP1 (+3%)</span>
-                                            <span class="plan-value">{{ signal.tp }}</span>
-                                        </div>
-                                        {% endif %}
-                                        {% if signal.tp2 %}
-                                        <div class="plan-row plan-tp">
-                                            <span class="plan-label">TP2 (+6%)</span>
-                                            <span class="plan-value">{{ signal.tp2 }}</span>
-                                        </div>
-                                        {% endif %}
-                                        <div class="plan-row plan-sl">
-                                            <span class="plan-label">SL</span>
-                                            <span class="plan-value">{{ signal.sl }}</span>
-                                        </div>
-                                        {% if signal.exit_price %}
-                                        <div class="plan-row" style="background: rgba(245,158,11,0.08); border-color: rgba(245,158,11,0.2);">
-                                            <span class="plan-label" style="color:#f59e0b;">Exit Price</span>
-                                            <span class="plan-value" style="color:#f59e0b;">{{ signal.exit_price }}</span>
-                                        </div>
-                                        {% endif %}
-                                        {% if signal.trade_status == 'queued' %}
-                                        <div class="plan-meta">Waiting for price to reach entry — activates on touch.</div>
-                                        {% elif signal.trade_status in ['active', 'pending', 'tp1_partial'] %}
-                                        <div class="plan-meta">Trade is live. Monitoring every 1 minute.</div>
-                                        {% elif signal.trade_status in ['tp', 'sl', 'manual_close'] %}
-                                        <div class="plan-meta">Trade closed.</div>
-                                        {% else %}
-                                        <div class="plan-meta">Plan calculated at last scan.</div>
-                                        {% endif %}
-                                    </div>
-                                </div>
-                                {% endif %}
-                                {% if signal.details %}
-                                <div class="card-section">
-                                    <div class="card-section-title">Strategy Signals</div>
-                                    {{ signal.details|join(' · ') }}
-                                </div>
-                                {% endif %}
-                            </div>
-                        </div>
-                    </div>
-                    {% endfor %}
-                    {% else %}
+                    <!-- Cards are built client-side at boot from the #initial-signals
+                         JSON (renderAllSignals) — server-rendering all ~200 expanded
+                         cards shipped ~2.6 MB of HTML per page load. -->
                     <div class="empty-state"><div class="icon">🌙</div><p>The pack is quiet. No signals yet.</p></div>
-                    {% endif %}
                 </div>
                 <!-- The scanner sweeps ~200+ perps; rendering them all makes the page
                      endless and buries everything below. Top rows only, by default. -->
@@ -2880,11 +2701,9 @@
 
         const initialSignals = JSON.parse(document.getElementById('initial-signals').textContent);
         const initialDashboardSummary = JSON.parse(document.getElementById('initial-dashboard-summary').textContent);
-        updateStats(initialSignals);
+        renderAllSignals(initialSignals);   // builds the card DOM — the server ships JSON only
         applyDashboardSummary(initialDashboardSummary);
-        bindCardToggles();
         bindDashFilters();
-        applySignalFilters();
 
         // ── Top entry candidates ──────────────────────────────────────────
         const INITIAL_TOP = {{ top_entries|tojson }};

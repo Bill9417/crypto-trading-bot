@@ -377,3 +377,56 @@ def test_plain_digest_bear_says_stand_aside():
 def test_plain_digest_always_carries_risk_note():
     for reg, setups in ((_REG_BULL, []), (_REG_BEAR, [])):
         assert "過去績效不代表未來" in tw_stocks.build_digest_plain(_NOW, reg, setups)
+
+
+# ── push-quota guard ─────────────────────────────────────────────────────────
+def _quota_get(limit_body, usage_body):
+    def _fake(url):
+        return 200, (limit_body if url.endswith("/quota") else usage_body)
+    return _fake
+
+
+def test_quota_status_limited_plan(monkeypatch):
+    _cap(monkeypatch)
+    monkeypatch.setattr(line_push, "_get",
+                        _quota_get('{"type":"limited","value":200}',
+                                   '{"totalUsage":37}'))
+    assert line_push.quota_status() == {"limit": 200, "used": 37}
+
+
+def test_quota_status_unlimited_plan_has_no_limit(monkeypatch):
+    _cap(monkeypatch)
+    monkeypatch.setattr(line_push, "_get",
+                        _quota_get('{"type":"none"}', '{"totalUsage":5}'))
+    assert line_push.quota_status() == {"limit": None, "used": 5}
+
+
+def test_quota_tick_warns_owner_at_80pct(monkeypatch):
+    _cap(monkeypatch)
+    monkeypatch.setattr(line_push, "_get",
+                        _quota_get('{"type":"limited","value":200}',
+                                   '{"totalUsage":165}'))
+    line_push._quota_state["date"] = ""
+    warned = []
+    import telegram_utils
+    monkeypatch.setattr(telegram_utils, "send_message",
+                        lambda msg, **kw: warned.append(msg) or True)
+    assert line_push.quota_tick() is True
+    assert warned and "165/200" in warned[0]
+    # same day → no second check, no second warning
+    assert line_push.quota_tick() is False
+    assert len(warned) == 1
+
+
+def test_quota_tick_silent_below_threshold(monkeypatch):
+    _cap(monkeypatch)
+    monkeypatch.setattr(line_push, "_get",
+                        _quota_get('{"type":"limited","value":200}',
+                                   '{"totalUsage":40}'))
+    line_push._quota_state["date"] = ""
+    warned = []
+    import telegram_utils
+    monkeypatch.setattr(telegram_utils, "send_message",
+                        lambda msg, **kw: warned.append(msg) or True)
+    assert line_push.quota_tick() is True
+    assert not warned

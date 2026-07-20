@@ -483,6 +483,8 @@ def _reply(chat_id, thread_id, text, parse_mode=None) -> bool:
         parts = telegram_utils.balance_pre(parts)
     for part in parts:
         for attempt in (0, 1):
+            telegram_utils._pace()   # share the process-wide send spacing —
+            # this thread posts to the same group as the scanner's senders
             r = requests.post(url, data={**payload, "text": part}, timeout=15)
             if r.status_code == 429 and attempt == 0:
                 try:

@@ -246,6 +246,65 @@ def _put(url: str, payload: dict) -> tuple:
     return r.status_code, r.text
 
 
+def _get(url: str) -> tuple:
+    """GET choke-point (quota checks; stubbed in tests)."""
+    tok = _token()
+    if not tok:
+        return 0, "no token"
+    r = requests.get(url, timeout=15,
+                     headers={"Authorization": f"Bearer {tok}"})
+    return r.status_code, r.text
+
+
+# ── push-quota guard ─────────────────────────────────────────────────────────
+# The free plan's 200 pushes/month run out SILENTLY — dad's messages just stop
+# and nothing errors. Once a day the scanner compares consumption against the
+# plan limit and warns the owner on Telegram past QUOTA_WARN_RATIO.
+QUOTA_WARN_RATIO = 0.8
+_quota_state = {"date": ""}
+
+
+def quota_status():
+    """{'limit': int|None, 'used': int} from LINE's quota APIs, or None."""
+    try:
+        code_q, body_q = _get("https://api.line.me/v2/bot/message/quota")
+        code_c, body_c = _get("https://api.line.me/v2/bot/message/quota/consumption")
+        if code_q != 200 or code_c != 200:
+            return None
+        q, c = json.loads(body_q), json.loads(body_c)
+        limit = q.get("value") if q.get("type") == "limited" else None
+        return {"limit": limit, "used": int(c.get("totalUsage") or 0)}
+    except Exception as exc:  # noqa: BLE001 — quota check must never break a sweep
+        print(f"[line] quota check error: {exc}")
+        return None
+
+
+def quota_tick() -> bool:
+    """Once per local day: warn the owner when the monthly push quota is
+    QUOTA_WARN_RATIO used. Returns True when a check actually ran."""
+    if not enabled():
+        return False
+    today = datetime.now().strftime("%Y-%m-%d")
+    if _quota_state["date"] == today:
+        return False
+    _quota_state["date"] = today
+    q = quota_status()
+    if not q or not q.get("limit"):
+        return True
+    if q["used"] >= q["limit"] * QUOTA_WARN_RATIO:
+        print(f"[line] quota warning: {q['used']}/{q['limit']} used")
+        try:
+            import telegram_utils
+            telegram_utils.send_message(
+                f"📱 LINE 推播額度警告:本月已用 {q['used']}/{q['limit']} 則。"
+                f"額度用完後推播會靜默停止(群組指令的免費回覆不受影響)— "
+                f"下月 1 號自動重置。",
+                force=True)
+        except Exception as exc:  # noqa: BLE001
+            print(f"[line] quota warn send failed: {exc}")
+    return True
+
+
 # ── webhook endpoint auto-registration ───────────────────────────────────────
 # Cloudflare QUICK tunnels mint a brand-new hostname every time cloudflared
 # restarts (e.g. after a reboot). Instead of asking anyone to re-paste the

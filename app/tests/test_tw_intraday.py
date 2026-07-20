@@ -132,3 +132,38 @@ def test_opening_text_with_setups():
 def test_opening_text_no_setups():
     msg = tw_intraday.opening_text(_t(9, 1), None, [])
     assert "目前無追蹤中的設定" in msg
+
+
+def test_tick_failed_send_does_not_burn_daily_flags(monkeypatch, tmp_path):
+    """A Telegram outage at 09:01 must not eat the opening bell for the whole
+    day — the once-per-day flags roll back so the next sweep retries."""
+    import time as _time
+
+    import telegram_utils
+    import tw_stocks
+
+    monkeypatch.setattr(tw_intraday, "STATE_FILE", str(tmp_path / "intra.json"))
+    monkeypatch.setattr(tw_stocks, "STATE_FILE", str(tmp_path / "tw.json"))
+    tw_stocks._save_state({"active_setups": []})
+
+    class _FixedDT(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return _t(9, 1)
+    monkeypatch.setattr(tw_intraday, "datetime", _FixedDT)
+    monkeypatch.setattr(tw_intraday, "_quotes",
+                        lambda: ([_row("2330", 0.5)], _time.time()))
+    monkeypatch.setattr(tw_intraday, "fetch_taiex", lambda: None)
+
+    sends = []
+    monkeypatch.setattr(telegram_utils, "send_message",
+                        lambda *a, **kw: sends.append(a[0]) or False)
+    assert tw_intraday.tick() is False
+    assert len(sends) == 1                      # tried the opening bell…
+    assert not tw_intraday._load_state().get("opened")   # …but flag rolled back
+
+    monkeypatch.setattr(telegram_utils, "send_message",
+                        lambda *a, **kw: sends.append(a[0]) or True)
+    assert tw_intraday.tick() is True           # next sweep retries and lands
+    assert tw_intraday._load_state().get("opened") is True
+    assert "台股開盤" in sends[1]

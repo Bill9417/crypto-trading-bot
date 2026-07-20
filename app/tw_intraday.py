@@ -334,6 +334,13 @@ def tick() -> bool:
     setups = tw_stocks._load_state().get("active_setups") or []
     monitored = [s for s in setups if s.get("date") != today]
     parts = []
+    # Once-per-day flags burned below — restored if the Telegram send fails,
+    # so the next sweep rebuilds and retries instead of losing the message
+    # for the whole day. Level hits are NOT restored: they already reached
+    # LINE and must not double-send there.
+    prev_once = {"opened": state.get("opened"),
+                 "taiex_alerted": state.get("taiex_alerted"),
+                 "movers": dict(state.get("movers") or {})}
 
     try:
         taiex = fetch_taiex()
@@ -377,5 +384,11 @@ def tick() -> bool:
                                            force=True, channel="twstocks")
         print(f"[twintraday] {now.strftime('%H:%M')}: "
               f"{len(parts)} block(s), sent={sent}")
+        if not sent:
+            for k, v in prev_once.items():
+                if v:
+                    state[k] = v
+                else:
+                    state.pop(k, None)
     _save_state(state)
     return bool(sent)
