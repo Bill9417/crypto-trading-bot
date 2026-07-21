@@ -298,10 +298,13 @@ def _post_one(url: str, payload: dict, retries: int):
     return False, None
 
 
-def send_message(message, parse_mode=None, *, force=False, retries=2, channel="alerts"):
-    """channel="signals" (RSI extremes + good-entry-chance cards) vs channel=
-    "alerts" (everything else the bot sends automatically). Three ways this can
-    be delivered, tried in order:
+def _route(channel: str, force: bool):
+    """Resolve (token, base_payload, bot_label) for a channel, or None when
+    disabled. The three-tier routing (topics group → two-bot split →
+    fallback) lives in exactly this one place — send_message() and
+    send_message_and_pin() both call it, so a pin never targets the wrong
+    chat_id/token just because routing fell through to a different tier.
+
       1. Topics group (TELEGRAM_GROUP_CHAT_ID + a thread id for this channel) —
          one bot, one group, each channel its own topic thread. Always sends.
       2. Two-bot split (ALERTS_BOT_TOKEN/CHAT_ID) — "alerts" goes to the
@@ -313,9 +316,6 @@ def send_message(message, parse_mode=None, *, force=False, retries=2, channel="a
     channel="private" is special: it ALWAYS goes to the owner's DM with the
     main bot (TELEGRAM_CHAT_ID) — never to the group. Account balances and
     P&L (the daily report) are the owner's business, not the group's.
-
-    Long messages are split on line boundaries and sent as in-order chunks;
-    returns True only when EVERY chunk was delivered.
     """
     thread_id = _TOPIC_THREAD.get(channel)
     payload = {}
@@ -331,18 +331,28 @@ def send_message(message, parse_mode=None, *, force=False, retries=2, channel="a
     else:
         token, payload["chat_id"] = BOT_TOKEN, CHAT_ID
         if channel != "signals" and TELEGRAM_QUIET and not force:
-            return False
+            return None
 
     if not token or not payload["chat_id"]:
         print(f"Telegram disabled ({channel}): missing bot token or chat id.")
-        return False
+        return None
+    bot = "main" if token == BOT_TOKEN else "alerts"
+    return token, payload, bot
 
+
+def send_message(message, parse_mode=None, *, force=False, retries=2, channel="alerts"):
+    """Long messages are split on line boundaries and sent as in-order
+    chunks; returns True only when EVERY chunk was delivered. See _route()
+    for the channel routing rules."""
+    routed = _route(channel, force)
+    if not routed:
+        return False
+    token, payload, bot = routed
     url = f"https://api.telegram.org/bot{token}/sendMessage"
     if parse_mode:
         payload["parse_mode"] = parse_mode
 
     ok = True
-    bot = "main" if token == BOT_TOKEN else "alerts"
     parts = _chunks_of(message)
     if parse_mode == "HTML" and len(parts) > 1:
         parts = balance_pre(parts)          # a split inside <pre> must not 400
@@ -353,3 +363,62 @@ def send_message(message, parse_mode=None, *, force=False, retries=2, channel="a
         if not sent:
             ok = False
     return ok
+
+
+def pin_message(chat_id, message_id, *, bot: str = "main") -> bool:
+    """pinChatMessage — returns False (never raises) when the bot lacks
+    admin+pin rights in the chat, which is the common first-time state."""
+    token = ALERTS_BOT_TOKEN if bot == "alerts" else BOT_TOKEN
+    try:
+        r = requests.post(f"https://api.telegram.org/bot{token}/pinChatMessage",
+                          data={"chat_id": chat_id, "message_id": message_id,
+                                "disable_notification": True}, timeout=15)
+        if not r.ok:
+            print(f"[tg] pin failed (bot needs admin+pin rights?): {r.text[:200]}")
+        return r.ok
+    except requests.RequestException as exc:
+        print(f"[tg] pin error: {exc}")
+        return False
+
+
+def unpin_message(chat_id, message_id, *, bot: str = "main") -> bool:
+    token = ALERTS_BOT_TOKEN if bot == "alerts" else BOT_TOKEN
+    try:
+        r = requests.post(f"https://api.telegram.org/bot{token}/unpinChatMessage",
+                          data={"chat_id": chat_id, "message_id": message_id}, timeout=15)
+        return r.ok
+    except requests.RequestException as exc:
+        print(f"[tg] unpin error: {exc}")
+        return False
+
+
+def send_message_and_pin(message, parse_mode=None, *, force=False, retries=2,
+                         channel="alerts", unpin_previous=None):
+    """Send, then pin the result — using the SAME resolved (token, chat_id)
+    for both, so this never pins in the wrong chat just because routing fell
+    through to a different tier (see _route()). Returns the new message_id
+    (the send succeeded, whether or not the pin itself did — pin failure is
+    logged, not fatal: most commonly the bot just isn't a group admin yet),
+    or None if the send failed."""
+    routed = _route(channel, force)
+    if not routed:
+        return None
+    token, payload, bot = routed
+    url = f"https://api.telegram.org/bot{token}/sendMessage"
+    if parse_mode:
+        payload["parse_mode"] = parse_mode
+    parts = _chunks_of(message)
+    if parse_mode == "HTML" and len(parts) > 1:
+        parts = balance_pre(parts)
+    last_mid = None
+    for part in parts:
+        sent, mid = _post_one(url, {**payload, "text": part}, retries)
+        if not sent:
+            return None
+        if mid:
+            _record_sent(payload["chat_id"], mid, bot)
+            last_mid = mid
+    if last_mid and pin_message(payload["chat_id"], last_mid, bot=bot):
+        if unpin_previous and unpin_previous != last_mid:
+            unpin_message(payload["chat_id"], unpin_previous, bot=bot)
+    return last_mid

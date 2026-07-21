@@ -203,3 +203,123 @@ def test_report_channel_still_goes_to_group_topic(monkeypatch, tmp_path):
     assert T.send_message("group stuff", channel="report")
     assert calls[0]["chat_id"] == "-100123"
     assert calls[0]["message_thread_id"] == "214"
+
+
+# ── pin / unpin ──────────────────────────────────────────────────────────────
+def test_pin_message_success(monkeypatch):
+    calls = []
+    monkeypatch.setattr(T, "BOT_TOKEN", "tok")
+    monkeypatch.setattr(T.requests, "post",
+                        lambda url, **kw: calls.append((url, kw)) or FakeResp(200))
+    assert T.pin_message("-100123", 42) is True
+    url, kw = calls[0]
+    assert url.endswith("/pinChatMessage")
+    assert kw["data"] == {"chat_id": "-100123", "message_id": 42,
+                          "disable_notification": True}
+
+
+def test_pin_message_no_admin_rights_returns_false(monkeypatch):
+    monkeypatch.setattr(T, "BOT_TOKEN", "tok")
+    monkeypatch.setattr(T.requests, "post",
+                        lambda url, **kw: FakeResp(400, {"description": "not enough rights"}))
+    assert T.pin_message("-100123", 42) is False
+
+
+def test_pin_message_network_error_returns_false(monkeypatch):
+    import requests
+    monkeypatch.setattr(T, "BOT_TOKEN", "tok")
+
+    def boom(url, **kw):
+        raise requests.RequestException("timeout")
+    monkeypatch.setattr(T.requests, "post", boom)
+    assert T.pin_message("-100123", 42) is False
+
+
+def test_unpin_message_success(monkeypatch):
+    calls = []
+    monkeypatch.setattr(T, "BOT_TOKEN", "tok")
+    monkeypatch.setattr(T.requests, "post",
+                        lambda url, **kw: calls.append((url, kw)) or FakeResp(200))
+    assert T.unpin_message("-100123", 41) is True
+    assert calls[0][0].endswith("/unpinChatMessage")
+    assert calls[0][1]["data"] == {"chat_id": "-100123", "message_id": 41}
+
+
+# ── send + pin (uses the SAME routed chat/token as send_message) ─────────────
+def test_send_message_and_pin_uses_routed_chat_id(monkeypatch, tmp_path):
+    posts = []
+    monkeypatch.setattr(T, "BOT_TOKEN", "tok")
+    monkeypatch.setattr(T, "TELEGRAM_GROUP_CHAT_ID", "-100123")
+    monkeypatch.setitem(T._TOPIC_THREAD, "report", "214")
+    monkeypatch.setattr(T, "SENT_LOG", str(tmp_path / "sent.json"))
+    monkeypatch.setattr(T, "_last_send_ts", 0.0)
+
+    def fake_post(url, data=None, timeout=None):
+        posts.append((url, data))
+        if url.endswith("/sendMessage"):
+            return FakeResp(200, {"ok": True, "result": {"message_id": 55}})
+        return FakeResp(200)                    # pin/unpin
+    monkeypatch.setattr(T.requests, "post", fake_post)
+    monkeypatch.setattr(T.time, "sleep", lambda s: None)
+
+    mid = T.send_message_and_pin("today's brief", force=True, channel="report")
+    assert mid == 55
+    send_call = next(u for u, d in posts if u.endswith("/sendMessage"))
+    pin_call = next((u, d) for u, d in posts if u.endswith("/pinChatMessage"))
+    assert send_call.endswith("/sendMessage")
+    assert pin_call[1]["chat_id"] == "-100123" and pin_call[1]["message_id"] == 55
+
+
+def test_send_message_and_pin_unpins_previous(monkeypatch, tmp_path):
+    posts = []
+    monkeypatch.setattr(T, "BOT_TOKEN", "tok")
+    monkeypatch.setattr(T, "TELEGRAM_GROUP_CHAT_ID", "-100123")
+    monkeypatch.setitem(T._TOPIC_THREAD, "report", "214")
+    monkeypatch.setattr(T, "SENT_LOG", str(tmp_path / "sent.json"))
+    monkeypatch.setattr(T, "_last_send_ts", 0.0)
+
+    def fake_post(url, data=None, timeout=None):
+        posts.append((url, data))
+        if url.endswith("/sendMessage"):
+            return FakeResp(200, {"ok": True, "result": {"message_id": 66}})
+        return FakeResp(200)
+    monkeypatch.setattr(T.requests, "post", fake_post)
+    monkeypatch.setattr(T.time, "sleep", lambda s: None)
+
+    mid = T.send_message_and_pin("tomorrow's brief", force=True, channel="report",
+                                 unpin_previous=55)
+    assert mid == 66
+    unpin_call = next(d for u, d in posts if u.endswith("/unpinChatMessage"))
+    assert unpin_call == {"chat_id": "-100123", "message_id": 55}
+
+
+def test_send_message_and_pin_returns_none_on_send_failure(monkeypatch, tmp_path):
+    monkeypatch.setattr(T, "BOT_TOKEN", "tok")
+    monkeypatch.setattr(T, "TELEGRAM_GROUP_CHAT_ID", "-100123")
+    monkeypatch.setitem(T._TOPIC_THREAD, "report", "214")
+    monkeypatch.setattr(T, "SENT_LOG", str(tmp_path / "sent.json"))
+    monkeypatch.setattr(T, "_last_send_ts", 0.0)
+    monkeypatch.setattr(T.requests, "post", lambda url, **kw: FakeResp(400))
+    monkeypatch.setattr(T.time, "sleep", lambda s: None)
+
+    assert T.send_message_and_pin("x", force=True, channel="report") is None
+
+
+def test_send_message_and_pin_still_returns_mid_when_pin_fails(monkeypatch, tmp_path):
+    """The message got through — that's what callers care about for their
+    'was this sent' state. A pin failure (no admin rights yet) is logged,
+    not fatal."""
+    monkeypatch.setattr(T, "BOT_TOKEN", "tok")
+    monkeypatch.setattr(T, "TELEGRAM_GROUP_CHAT_ID", "-100123")
+    monkeypatch.setitem(T._TOPIC_THREAD, "report", "214")
+    monkeypatch.setattr(T, "SENT_LOG", str(tmp_path / "sent.json"))
+    monkeypatch.setattr(T, "_last_send_ts", 0.0)
+
+    def fake_post(url, data=None, timeout=None):
+        if url.endswith("/sendMessage"):
+            return FakeResp(200, {"ok": True, "result": {"message_id": 77}})
+        return FakeResp(403, {"description": "not enough rights"})   # pin fails
+    monkeypatch.setattr(T.requests, "post", fake_post)
+    monkeypatch.setattr(T.time, "sleep", lambda s: None)
+
+    assert T.send_message_and_pin("x", force=True, channel="report") == 77

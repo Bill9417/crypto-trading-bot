@@ -67,6 +67,14 @@ OWNER_IDS = {str(c) for c in (config.CHAT_ID, config.ALERTS_CHAT_ID) if c}
 OWNER_ONLY_COMMANDS = {"report"}
 PRIVATE_REPLY_COMMANDS = {"report"}
 ADMIN_CACHE_SEC = 300
+
+# 👆 Tap-to-refresh — the "live data" commands where re-running is a natural
+# next action. Telegram has no persistent menu-button equivalent to LINE's
+# Quick Reply that survives across messages, but inline keyboard buttons
+# attached to a reply DO stay tappable indefinitely (they're part of that
+# specific message, not a suggestion bar), which is the closer fit here.
+REFRESHABLE_CMDS = {"positions", "price", "signals", "winrate", "alerts",
+                    "liq", "whale", "twnow"}
 _admin_cache = {"ts": 0.0, "ids": set()}
 
 
@@ -99,6 +107,23 @@ def parse_command(text: str):
 
 def allowed(chat_id) -> bool:
     return str(chat_id) in ALLOWED_CHATS
+
+
+def refresh_keyboard(cmd: str, args: str = "") -> dict:
+    """Inline keyboard with a single 🔄 Refresh button that re-runs cmd/args
+    via a callback_query. callback_data has Telegram's 64-byte hard limit —
+    fine for REFRESHABLE_CMDS, which take short or no args in practice."""
+    data = f"r:{cmd}:{args}"[:64]
+    return {"inline_keyboard": [[{"text": "🔄 Refresh", "callback_data": data}]]}
+
+
+def parse_refresh_callback(data: str):
+    """'r:positions:' → ('positions', ''); None for anything else."""
+    if not (data or "").startswith("r:"):
+        return None
+    _, _, rest = data.partition(":")
+    cmd, _, args = rest.partition(":")
+    return (cmd, args) if cmd else None
 
 
 def _group_admin_ids() -> set:
@@ -303,7 +328,9 @@ HELP = ("🤖 指令列表\n"
         "/resume — 解除 S3 熔斷（限管理員）· /halt [原因] — 手動熔斷\n"
         "/clean [小時] — 刪除 bot 超過 N 小時的舊訊息（預設 24, 上限 47, 限管理員）\n"
         "/cleanall — 一次清掉記錄功能上線前的全部舊訊息（限管理員, 需確認）\n"
-        "/help — 顯示這份清單")
+        "/help — 顯示這份清單\n"
+        "\n💡 /positions /price /signals /winrate /alerts /liq /whale /twnow "
+        "的回覆下方有 🔄 按鈕，點一下就能直接更新，不用重打指令")
 
 
 # ── /price — quick quotes (Binance spot public REST, no key) ────────────────
@@ -356,11 +383,24 @@ def fmt_clean(summary: dict, hours: float) -> str:
     return "\n".join(lines)
 
 
+GUIDE_CMDS = ("guide", "about", "intro")
+
+
+def _should_pin_guide(state: dict, cmd: str, dest_chat, delivered: bool, mid) -> bool:
+    """True when a just-delivered reply should become the pinned /guide:
+    haven't pinned one yet this deployment, it's a guide command, it landed
+    in the actual group (a DM has no 'pin for everyone' worth bothering
+    with), and its message_id is known."""
+    return bool(delivered and mid and cmd in GUIDE_CMDS
+               and str(dest_chat) == str(config.TELEGRAM_GROUP_CHAT_ID)
+               and not state.get("guide_pinned_mid"))
+
+
 # ── command dispatch ─────────────────────────────────────────────────────────
 def handle(cmd: str, args: str = "") -> str:
     """Command name (+ raw args) → reply text. Import-inside so one broken
     dependency degrades that command, not the whole bot."""
-    if cmd in ("guide", "about", "intro"):
+    if cmd in GUIDE_CMDS:
         return GUIDE
     if cmd in ("price", "p"):
         return handle_price(args)
@@ -471,10 +511,14 @@ def _api(method: str, *, http_timeout: float = 30, **params):
     return r.json()
 
 
-def _reply(chat_id, thread_id, text, parse_mode=None) -> bool:
-    """Chunked, 429-aware reply. Returns whether every part was delivered —
-    a rate-limited reply used to be dropped silently while the log said
-    'answered' (the same trap fixed in telegram_utils on 2026-07-12)."""
+def _reply(chat_id, thread_id, text, parse_mode=None, reply_markup=None):
+    """Chunked, 429-aware reply. Returns (ok, last_mid) — ok is whether every
+    part was delivered (a rate-limited reply used to be dropped silently
+    while the log said 'answered', the same trap fixed in telegram_utils on
+    2026-07-12); last_mid is the final chunk's message_id (for callers that
+    need to pin it or attach a keyboard to), or None if nothing sent
+    successfully. reply_markup (e.g. refresh_keyboard()) rides on the LAST
+    chunk only — same reasoning as LINE's quick replies."""
     payload = {"chat_id": chat_id}
     if parse_mode:
         payload["parse_mode"] = parse_mode
@@ -482,14 +526,18 @@ def _reply(chat_id, thread_id, text, parse_mode=None) -> bool:
         payload["message_thread_id"] = thread_id
     url = f"https://api.telegram.org/bot{config.BOT_TOKEN}/sendMessage"
     ok = True
+    last_mid = None
     parts = telegram_utils._chunks_of(text)
     if parse_mode == "HTML" and len(parts) > 1:
         parts = telegram_utils.balance_pre(parts)
-    for part in parts:
+    for i, part in enumerate(parts):
+        part_payload = {**payload, "text": part}
+        if reply_markup and i == len(parts) - 1:
+            part_payload["reply_markup"] = json.dumps(reply_markup)
         for attempt in (0, 1):
             telegram_utils._pace()   # share the process-wide send spacing —
             # this thread posts to the same group as the scanner's senders
-            r = requests.post(url, data={**payload, "text": part}, timeout=15)
+            r = requests.post(url, data=part_payload, timeout=15)
             if r.status_code == 429 and attempt == 0:
                 try:
                     wait = float((r.json().get("parameters") or {})
@@ -504,9 +552,51 @@ def _reply(chat_id, thread_id, text, parse_mode=None) -> bool:
                 except Exception:  # noqa: BLE001
                     mid = None
                 telegram_utils._record_sent(chat_id, mid, bot="main")
+                if mid:
+                    last_mid = mid
             ok = ok and r.ok
             break
-    return ok
+    return ok, last_mid
+
+
+def _edit_message(chat_id, message_id, text, parse_mode=None, reply_markup=None) -> bool:
+    """editMessageText for the 🔄 Refresh callback — updates the existing
+    message in place instead of sending a new one. 'message is not modified'
+    (the data genuinely hasn't changed since last tap) is treated as success,
+    not an error — the user just tapped refresh and nothing new happened."""
+    payload = {"chat_id": chat_id, "message_id": message_id,
+              "text": telegram_utils._chunks_of(text)[0]}
+    if parse_mode:
+        payload["parse_mode"] = parse_mode
+    if reply_markup:
+        payload["reply_markup"] = json.dumps(reply_markup)
+    try:
+        telegram_utils._pace()
+        r = requests.post(
+            f"https://api.telegram.org/bot{config.BOT_TOKEN}/editMessageText",
+            data=payload, timeout=15)
+        if r.ok:
+            return True
+        try:
+            desc = (r.json() or {}).get("description", "")
+        except Exception:  # noqa: BLE001
+            desc = ""
+        if "not modified" in desc.lower():
+            return True
+        print(f"[tgcmd] edit failed: {r.text[:200]}")
+        return False
+    except requests.RequestException as exc:
+        print(f"[tgcmd] edit error: {exc}")
+        return False
+
+
+def _answer_callback(callback_id: str, text: str = "") -> None:
+    try:
+        requests.post(
+            f"https://api.telegram.org/bot{config.BOT_TOKEN}/answerCallbackQuery",
+            data={"callback_query_id": callback_id, "text": text}, timeout=15)
+    except requests.RequestException as exc:  # noqa: BLE001
+        print(f"[tgcmd] answerCallbackQuery error: {exc}")
 
 
 # 👋 Auto-welcome: a new member's first impression of the group. Rate-limited
@@ -525,12 +615,38 @@ def _maybe_welcome(chat_id, thread_id, joiners) -> bool:
     names = [(m.get("first_name") or m.get("username") or "").strip()
              for m in joiners]
     try:
-        ok = _reply(chat_id, thread_id, welcome_text(names))
+        ok, _mid = _reply(chat_id, thread_id, welcome_text(names))
         print(f"[tgcmd] welcomed {len(joiners)} new member(s)")
         return ok
     except Exception as exc:  # noqa: BLE001 — a greeting must never kill the loop
         print(f"[tgcmd] welcome failed: {exc}")
         return False
+
+
+# 🔄 Refresh taps: a callback_query from an inline keyboard button, not a new
+# /command message. The reply is EDITED in place (not resent) so the button
+# stays attached and the chat doesn't fill up with repeat copies.
+def _handle_callback(cb: dict) -> None:
+    cb_id = cb.get("id")
+    parsed = parse_refresh_callback(cb.get("data") or "")
+    msg = cb.get("message") or {}
+    chat_id = (msg.get("chat") or {}).get("id")
+    message_id = msg.get("message_id")
+    if not (parsed and chat_id and message_id):
+        _answer_callback(cb_id)
+        return
+    cmd, args = parsed
+    if not allowed(chat_id) or cmd not in REFRESHABLE_CMDS:
+        _answer_callback(cb_id, "⛔ 無權限")
+        return
+    try:
+        reply = handle(cmd, args)
+    except Exception as exc:  # noqa: BLE001 — a broken handler must answer, not die
+        reply = f"⚠ {cmd} failed: {str(exc)[:200]}"
+    if reply:
+        mode = "HTML" if ("<pre>" in reply or "<a href" in reply) else None
+        _edit_message(chat_id, message_id, reply, mode, refresh_keyboard(cmd, args))
+    _answer_callback(cb_id, "✅ 已更新")
 
 
 def _poll_loop() -> None:
@@ -552,13 +668,19 @@ def _poll_loop() -> None:
         try:
             updates = _api("getUpdates", http_timeout=POLL_TIMEOUT + 20,
                            offset=offset, timeout=POLL_TIMEOUT,
-                           allowed_updates='["message"]').get("result") or []
+                           allowed_updates='["message","callback_query"]').get("result") or []
         except Exception as exc:  # noqa: BLE001 — network blip: back off, retry
             print(f"[tgcmd] poll error: {exc}")
             time.sleep(10)
             continue
         for up in updates:
             offset = up["update_id"] + 1
+            if "callback_query" in up:
+                try:
+                    _handle_callback(up["callback_query"])
+                except Exception as exc:  # noqa: BLE001 — one bad tap must not kill the loop
+                    print(f"[tgcmd] callback error: {exc}")
+                continue
             msg = up.get("message") or {}
             chat_id = (msg.get("chat") or {}).get("id")
             # 👋 join events (service messages) — greet humans, in the group only
@@ -597,8 +719,17 @@ def _poll_loop() -> None:
                     # replies built in the house style carry <pre>/<a> markup —
                     # those need HTML parse mode; plain replies stay plain
                     mode = "HTML" if ("<pre>" in reply or "<a href" in reply) else None
-                    delivered = _reply(dest_chat, dest_thread, reply, mode)
+                    markup = refresh_keyboard(cmd, args) if cmd in REFRESHABLE_CMDS else None
+                    delivered, mid = _reply(dest_chat, dest_thread, reply, mode, markup)
                     print(f"[tgcmd] {'answered' if delivered else 'REPLY DROPPED'} /{cmd}")
+                    # 📌 Pin the /guide reply once, ever — so new members find
+                    # it without scrolling. If pinning fails (bot isn't a
+                    # group admin yet), state stays unset and the NEXT /guide
+                    # retries — self-healing once admin rights are granted.
+                    if _should_pin_guide(state, cmd, dest_chat, delivered, mid):
+                        if telegram_utils.pin_message(dest_chat, mid):
+                            state["guide_pinned_mid"] = mid
+                            print(f"[tgcmd] pinned /guide (mid={mid})")
                 except Exception as exc:  # noqa: BLE001
                     print(f"[tgcmd] reply failed: {exc}")
         if updates:

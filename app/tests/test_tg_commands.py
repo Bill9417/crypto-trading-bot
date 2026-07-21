@@ -142,7 +142,8 @@ def test_welcome_text_handles_empty_names():
 
 def test_maybe_welcome_rate_limited(monkeypatch):
     sent = []
-    monkeypatch.setattr(TG, "_reply", lambda c, t, m: sent.append(m) or True)
+    monkeypatch.setattr(TG, "_reply",
+                        lambda c, t, m: (sent.append(m) or True, 999))
     monkeypatch.setattr(TG, "_last_welcome", 0.0)
     assert TG._maybe_welcome(1, None, [{"first_name": "Bob"}])
     assert not TG._maybe_welcome(1, None, [{"first_name": "Eve"}])  # inside gap
@@ -171,3 +172,173 @@ def test_handle_price_defaults_and_cap(monkeypatch):
     asked.clear()
     TG.handle_price("btc eth sol bnb doge pepe xrp ada")   # 8 asked → capped
     assert len(asked) == TG.PRICE_MAX and asked[0] == "BTC"
+
+
+# ── /guide auto-pin decision ─────────────────────────────────────────────────
+def test_should_pin_guide_first_time(monkeypatch):
+    monkeypatch.setattr(TG.config, "TELEGRAM_GROUP_CHAT_ID", "-100123")
+    assert TG._should_pin_guide({}, "guide", "-100123", True, 55) is True
+
+
+def test_should_pin_guide_aliases_all_qualify(monkeypatch):
+    monkeypatch.setattr(TG.config, "TELEGRAM_GROUP_CHAT_ID", "-100123")
+    for cmd in TG.GUIDE_CMDS:
+        assert TG._should_pin_guide({}, cmd, "-100123", True, 55) is True
+
+
+def test_should_not_pin_guide_twice(monkeypatch):
+    monkeypatch.setattr(TG.config, "TELEGRAM_GROUP_CHAT_ID", "-100123")
+    state = {"guide_pinned_mid": 40}
+    assert TG._should_pin_guide(state, "guide", "-100123", True, 55) is False
+
+
+def test_should_not_pin_guide_in_a_dm(monkeypatch):
+    monkeypatch.setattr(TG.config, "TELEGRAM_GROUP_CHAT_ID", "-100123")
+    assert TG._should_pin_guide({}, "guide", "777", True, 55) is False   # owner DM
+
+
+def test_should_not_pin_non_guide_commands(monkeypatch):
+    monkeypatch.setattr(TG.config, "TELEGRAM_GROUP_CHAT_ID", "-100123")
+    assert TG._should_pin_guide({}, "price", "-100123", True, 55) is False
+
+
+def test_should_not_pin_when_delivery_failed_or_no_mid(monkeypatch):
+    monkeypatch.setattr(TG.config, "TELEGRAM_GROUP_CHAT_ID", "-100123")
+    assert TG._should_pin_guide({}, "guide", "-100123", False, 55) is False
+    assert TG._should_pin_guide({}, "guide", "-100123", True, None) is False
+
+
+def test_reply_returns_ok_and_message_id(monkeypatch):
+    monkeypatch.setattr(TG.telegram_utils, "_pace", lambda: None)
+    monkeypatch.setattr(TG.telegram_utils, "_record_sent", lambda *a, **kw: None)
+    monkeypatch.setattr(TG.config, "BOT_TOKEN", "tok")
+
+    class _R:
+        status_code = 200
+        ok = True
+
+        def json(self):
+            return {"result": {"message_id": 321}}
+
+    monkeypatch.setattr(TG.requests, "post", lambda url, **kw: _R())
+    ok, mid = TG._reply("-100123", None, "hi")
+    assert ok is True and mid == 321
+
+
+# ── 🔄 refresh keyboard (inline buttons) ──────────────────────────────────────
+def test_refresh_keyboard_shape():
+    kb = TG.refresh_keyboard("positions")
+    assert kb == {"inline_keyboard": [[{"text": "🔄 Refresh",
+                                        "callback_data": "r:positions:"}]]}
+
+
+def test_refresh_keyboard_carries_args():
+    kb = TG.refresh_keyboard("price", "btc eth")
+    assert kb["inline_keyboard"][0][0]["callback_data"] == "r:price:btc eth"
+
+
+def test_parse_refresh_callback_roundtrip():
+    assert TG.parse_refresh_callback("r:positions:") == ("positions", "")
+    assert TG.parse_refresh_callback("r:price:btc eth") == ("price", "btc eth")
+
+
+def test_parse_refresh_callback_rejects_other_data():
+    assert TG.parse_refresh_callback("something_else") is None
+    assert TG.parse_refresh_callback("") is None
+    assert TG.parse_refresh_callback(None) is None
+
+
+def test_edit_message_success(monkeypatch):
+    calls = []
+    monkeypatch.setattr(TG.telegram_utils, "_pace", lambda: None)
+    monkeypatch.setattr(TG.config, "BOT_TOKEN", "tok")
+
+    class _R:
+        ok = True
+
+    monkeypatch.setattr(TG.requests, "post",
+                        lambda url, **kw: calls.append((url, kw)) or _R())
+    assert TG._edit_message("-100123", 55, "new text") is True
+    assert calls[0][0].endswith("/editMessageText")
+    assert calls[0][1]["data"]["message_id"] == 55
+
+
+def test_edit_message_not_modified_is_not_an_error(monkeypatch):
+    monkeypatch.setattr(TG.telegram_utils, "_pace", lambda: None)
+    monkeypatch.setattr(TG.config, "BOT_TOKEN", "tok")
+
+    class _R:
+        ok = False
+        text = '{"description": "Bad Request: message is not modified"}'
+
+        def json(self):
+            return {"description": "Bad Request: message is not modified"}
+
+    monkeypatch.setattr(TG.requests, "post", lambda url, **kw: _R())
+    assert TG._edit_message("-100123", 55, "same text") is True
+
+
+def test_edit_message_real_failure_returns_false(monkeypatch):
+    monkeypatch.setattr(TG.telegram_utils, "_pace", lambda: None)
+    monkeypatch.setattr(TG.config, "BOT_TOKEN", "tok")
+
+    class _R:
+        ok = False
+        text = '{"description": "Forbidden: bot was blocked"}'
+
+        def json(self):
+            return {"description": "Forbidden: bot was blocked"}
+
+    monkeypatch.setattr(TG.requests, "post", lambda url, **kw: _R())
+    assert TG._edit_message("-100123", 55, "x") is False
+
+
+def test_handle_callback_edits_message_and_answers(monkeypatch):
+    monkeypatch.setattr(TG, "ALLOWED_CHATS", {"-100123"})
+    edited = []
+    answered = []
+    monkeypatch.setattr(TG, "_edit_message",
+                        lambda *a, **kw: edited.append(a) or True)
+    monkeypatch.setattr(TG, "_answer_callback",
+                        lambda cb_id, text="": answered.append((cb_id, text)))
+    monkeypatch.setattr(TG, "handle", lambda cmd, args: "🔔 到價提醒\n...")
+    cb = {"id": "cbid1", "data": "r:alerts:",
+          "message": {"chat": {"id": -100123}, "message_id": 77}}
+    TG._handle_callback(cb)
+    assert edited and edited[0][0] == -100123 and edited[0][1] == 77
+    assert answered == [("cbid1", "✅ 已更新")]
+
+
+def test_handle_callback_rejects_unknown_command(monkeypatch):
+    monkeypatch.setattr(TG, "ALLOWED_CHATS", {"-100123"})
+    answered = []
+    monkeypatch.setattr(TG, "_answer_callback",
+                        lambda cb_id, text="": answered.append(text))
+    edited = []
+    monkeypatch.setattr(TG, "_edit_message", lambda *a, **kw: edited.append(a))
+    cb = {"id": "cbid2", "data": "r:halt:",       # not refreshable
+          "message": {"chat": {"id": -100123}, "message_id": 77}}
+    TG._handle_callback(cb)
+    assert not edited
+    assert answered == ["⛔ 無權限"]
+
+
+def test_handle_callback_rejects_unallowed_chat(monkeypatch):
+    monkeypatch.setattr(TG, "ALLOWED_CHATS", {"-100123"})
+    answered = []
+    monkeypatch.setattr(TG, "_answer_callback",
+                        lambda cb_id, text="": answered.append(text))
+    cb = {"id": "cbid3", "data": "r:positions:",
+          "message": {"chat": {"id": -999999}, "message_id": 1}}
+    TG._handle_callback(cb)
+    assert answered == ["⛔ 無權限"]
+
+
+def test_handle_callback_malformed_data_stays_silent(monkeypatch):
+    answered = []
+    monkeypatch.setattr(TG, "_answer_callback",
+                        lambda cb_id, text="": answered.append(text))
+    cb = {"id": "cbid4", "data": "garbage",
+          "message": {"chat": {"id": -100123}, "message_id": 1}}
+    TG._handle_callback(cb)
+    assert answered == [""]

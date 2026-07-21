@@ -109,3 +109,29 @@ def test_signal_tally_counts_last_24h(monkeypatch, tmp_path):
     ]}))
     monkeypatch.setattr(MB, "SIGNALS_FILE", str(f))
     assert MB._signal_tally(now) == {"n": 2, "premium": 1}
+
+
+# ── tick(): pin wiring ────────────────────────────────────────────────────────
+def test_tick_sends_and_pins_unpinning_yesterdays(monkeypatch, tmp_path):
+    calls = []
+    monkeypatch.setattr(MB, "STATE_FILE", str(tmp_path / "brief.json"))
+    monkeypatch.setattr(MB, "_due", lambda state, now: True)
+    monkeypatch.setattr(MB, "_gather", lambda client, now: _data())
+    monkeypatch.setattr(MB.telegram_utils, "send_message_and_pin",
+                        lambda *a, **kw: calls.append(kw) or 909)
+    MB._save_state({"pinned_mid": 808})
+
+    assert MB.tick(client=None) is True
+    assert calls[0]["channel"] == "report"
+    assert calls[0]["unpin_previous"] == 808
+    assert MB._load_state()["pinned_mid"] == 909
+
+
+def test_tick_false_when_send_fails(monkeypatch, tmp_path):
+    monkeypatch.setattr(MB, "STATE_FILE", str(tmp_path / "brief.json"))
+    monkeypatch.setattr(MB, "_due", lambda state, now: True)
+    monkeypatch.setattr(MB, "_gather", lambda client, now: _data())
+    monkeypatch.setattr(MB.telegram_utils, "send_message_and_pin",
+                        lambda *a, **kw: None)
+    assert MB.tick(client=None) is False
+    assert "pinned_mid" not in MB._load_state()

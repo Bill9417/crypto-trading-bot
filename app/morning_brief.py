@@ -189,16 +189,20 @@ def _gather(client, now: datetime) -> dict:
 
 # ── orchestrator (called once per scanner sweep) ─────────────────────────────
 def tick(client) -> bool:
-    """Send today's public brief if due; True only when one was sent."""
+    """Send today's public brief if due; True only when one was sent. Also
+    pins it (unpinning yesterday's) so the group's Report topic always shows
+    today's brief at the top without anyone pinning by hand."""
     now = datetime.now(TZ)
     state = _load_state()
     if not _due(state, now):
         return False
     msg = build_brief(_gather(client, now), now)
-    ok = telegram_utils.send_message(msg, force=True, channel="report")
-    if ok:
+    mid = telegram_utils.send_message_and_pin(
+        msg, force=True, channel="report", unpin_previous=state.get("pinned_mid"))
+    if mid:
         # Only mark done on a confirmed send — a Telegram blip retries next sweep.
         state["last_brief"] = now.strftime("%Y-%m-%d")
+        state["pinned_mid"] = mid
         _save_state(state)
         print(f"[brief] morning brief sent for {state['last_brief']}")
-    return ok
+    return bool(mid)
