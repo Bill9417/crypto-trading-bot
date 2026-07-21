@@ -113,6 +113,7 @@ def _no_live_side_effects(request, monkeypatch, tmp_path):
     monkeypatch.setattr(line_push, "_get", lambda url: (200, "{}"))
     monkeypatch.setattr(line_push, "IDS_FILE", str(tmp_path / "line_ids.json"))
     monkeypatch.setattr(line_push, "TUNNEL_LOG", str(tmp_path / "cloudflared.log"))
+    monkeypatch.setattr(line_push, "QUOTA_STATE_FILE", str(tmp_path / "line_quota.json"))
     # real LINE credentials live in .env (which this process loads) — blank
     # them so enabled() is False unless a test opts in with its own fakes
     monkeypatch.setattr(_cfg, "LINE_CHANNEL_ID", "")

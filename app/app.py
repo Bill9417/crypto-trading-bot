@@ -85,6 +85,14 @@ app.config['SESSION_COOKIE_HTTPONLY'] = True
 app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
 app.config['SESSION_COOKIE_SECURE'] = os.getenv('FLASK_SESSION_COOKIE_SECURE', 'false').lower() == 'true'
 app.config['PREFERRED_URL_SCHEME'] = os.getenv('FLASK_PREFERRED_URL_SCHEME', 'https')
+# Idle timeout: this dashboard shows real account balances/positions, so a
+# browser tab left open indefinitely shouldn't stay authenticated forever.
+# session.permanent=True (set at login) + this lifetime makes the cookie
+# expire after N idle hours; Flask re-stamps the expiry on every request by
+# default (SESSION_REFRESH_EACH_REQUEST), so active use is never interrupted
+# — only genuine inactivity times out.
+app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(
+    hours=float(os.getenv('SESSION_IDLE_HOURS', '24')))
 
 app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1)
 
@@ -1794,6 +1802,7 @@ def login():
 
         if user and check_password_hash(user.password, password):
             _login_fails.pop(ip, None)          # clear the counter on success
+            session.permanent = True            # enrolls the idle-timeout above
             login_user(user)
             return redirect(url_for('index'))
         else:
@@ -2442,6 +2451,46 @@ _HEALTH_PROCS = (
 )
 
 
+def _build_pipeline(base, now) -> dict:
+    """LINE quota + site link + backup freshness — the family notification
+    pipeline. Unlike a crashed process, these fail SILENTLY (a message just
+    never arrives), so /health has to surface them explicitly."""
+    import glob
+
+    import backup_state
+    import line_push
+    import site_link
+
+    q = line_push.quota_cached()
+    line_info = {
+        "enabled": line_push.enabled(),
+        "used": q.get("used"),
+        "limit": q.get("limit"),
+        "checked_ago_sec": (int(now.timestamp() - q["checked_at"])
+                            if q.get("checked_at") else None),
+    }
+
+    link_info = {"url": site_link.current_url()}
+
+    zips = sorted(glob.glob(os.path.join(backup_state.BACKUP_DIR, "state-*.zip")))
+    backup_info = {"exists": False, "age_hours": None, "size_bytes": None,
+                   "offsite_configured": bool(backup_state.OFFSITE_DIR
+                                              and os.path.isdir(os.path.dirname(
+                                                  backup_state.OFFSITE_DIR.rstrip("/")))),
+                   "offsite_ok": False}
+    if zips:
+        latest = zips[-1]
+        st = os.stat(latest)
+        backup_info.update(
+            exists=True,
+            age_hours=round((now.timestamp() - st.st_mtime) / 3600, 1),
+            size_bytes=st.st_size,
+            offsite_ok=os.path.exists(os.path.join(backup_state.OFFSITE_DIR,
+                                                    os.path.basename(latest))),
+        )
+    return {"line": line_info, "site_link": link_info, "backup": backup_info}
+
+
 def _ps_snapshot():
     """One `ps` pass → [{pid, started, rss_kb, cmd}] for every process."""
     import subprocess
@@ -2618,6 +2667,29 @@ def build_health():
                        "text": f"Low disk space — {storage['disk_free_gb']} GB free.",
                        "fix": None})
 
+    # 📡 Pipeline — LINE quota, the public site link, backup freshness. These
+    # fail silently (a message never arrives, a backup silently stops), so
+    # flag them here rather than trusting nothing-looks-wrong.
+    pipeline = _build_pipeline(base, now)
+    s2_running = any(p["key"] == "s2" and p["running"] for p in processes)
+    pl = pipeline["line"]
+    if pl["enabled"] and pl["limit"] and pl["used"] is not None \
+            and pl["used"] >= pl["limit"] * 0.8:
+        issues.append({"sev": "warn",
+                       "text": f"LINE push quota at {pl['used']}/{pl['limit']} this "
+                               "month — messages go silent once it runs out.",
+                       "fix": None})
+    pb = pipeline["backup"]
+    if s2_running:
+        if not pb["exists"]:
+            issues.append({"sev": "warn", "text": "No state backup has been written yet.",
+                           "fix": "tail -50 app/logs/strategy2.log"})
+        elif pb["age_hours"] > 30:
+            issues.append({"sev": "warn",
+                           "text": f"Last state backup was {pb['age_hours']:.0f}h ago "
+                                   "— expected a fresh one every ~24h.",
+                           "fix": "tail -50 app/logs/strategy2.log"})
+
     # Which engine is trading vs which one .env selects (divergence = pending
     # restart), reusing the admin switcher's ground truth.
     try:
@@ -2648,6 +2720,7 @@ def build_health():
         "scan": scan,
         "logs": _log_health(base),
         "storage": storage,
+        "pipeline": pipeline,
     }
 
 
@@ -3357,10 +3430,9 @@ if __name__ == "__main__":
     else:
         # Production path: the cloudflare tunnel exposes this app publicly and
         # the single-threaded dev server warns for a reason. Template editing
-        # still hot-reloads (jinja re-checks file mtimes); only .py changes
-        # need a restart. Waitress does not write per-request access logs.
-        app.config["TEMPLATES_AUTO_RELOAD"] = True
-        app.jinja_env.auto_reload = True
+        # still hot-reloads (TEMPLATES_AUTO_RELOAD is set at app creation
+        # above); only .py changes need a restart. Waitress writes no
+        # per-request access logs.
         try:
             from waitress import serve
         except ImportError:

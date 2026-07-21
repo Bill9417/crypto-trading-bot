@@ -267,8 +267,11 @@ def _get(url: str) -> tuple:
 # ── push-quota guard ─────────────────────────────────────────────────────────
 # The free plan's 200 pushes/month run out SILENTLY — dad's messages just stop
 # and nothing errors. Once a day the scanner compares consumption against the
-# plan limit and warns the owner on Telegram past QUOTA_WARN_RATIO.
+# plan limit and warns the owner on Telegram past QUOTA_WARN_RATIO. The check
+# result is persisted so /health (a SEPARATE web process) can display it
+# without making its own live LINE API calls on every page poll.
 QUOTA_WARN_RATIO = 0.8
+QUOTA_STATE_FILE = os.path.join(os.path.dirname(__file__), "line_quota_state.json")
 _quota_state = {"date": ""}
 
 
@@ -287,9 +290,20 @@ def quota_status():
         return None
 
 
+def quota_cached() -> dict:
+    """Last quota_tick() result, read from disk — safe for a page poll to call
+    (no network). {} when never checked or checked before enabled()."""
+    try:
+        with open(QUOTA_STATE_FILE, "r", encoding="utf-8") as f:
+            return json.load(f) or {}
+    except Exception:  # noqa: BLE001 — missing/corrupt = never checked yet
+        return {}
+
+
 def quota_tick() -> bool:
-    """Once per local day: warn the owner when the monthly push quota is
-    QUOTA_WARN_RATIO used. Returns True when a check actually ran."""
+    """Once per local day: persist the current quota reading (for /health) and
+    warn the owner on Telegram once past QUOTA_WARN_RATIO. Returns True when a
+    check actually ran."""
     if not enabled():
         return False
     today = datetime.now().strftime("%Y-%m-%d")
@@ -297,9 +311,13 @@ def quota_tick() -> bool:
         return False
     _quota_state["date"] = today
     q = quota_status()
-    if not q or not q.get("limit"):
+    if not q:
         return True
-    if q["used"] >= q["limit"] * QUOTA_WARN_RATIO:
+    tmp = QUOTA_STATE_FILE + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump({**q, "checked_at": time.time()}, f)
+    os.replace(tmp, QUOTA_STATE_FILE)
+    if q.get("limit") and q["used"] >= q["limit"] * QUOTA_WARN_RATIO:
         print(f"[line] quota warning: {q['used']}/{q['limit']} used")
         try:
             import telegram_utils

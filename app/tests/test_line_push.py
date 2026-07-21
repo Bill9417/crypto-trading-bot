@@ -430,3 +430,30 @@ def test_quota_tick_silent_below_threshold(monkeypatch):
                         lambda msg, **kw: warned.append(msg) or True)
     assert line_push.quota_tick() is True
     assert not warned
+
+
+def test_quota_tick_persists_for_health_page_to_read(monkeypatch):
+    """quota_tick() runs in the SCANNER process; /health reads quota_cached()
+    from a SEPARATE web process — must go through disk, not a module global."""
+    _cap(monkeypatch)
+    assert line_push.quota_cached() == {}          # never checked yet
+    monkeypatch.setattr(line_push, "_get",
+                        _quota_get('{"type":"limited","value":200}',
+                                   '{"totalUsage":40}'))
+    line_push._quota_state["date"] = ""
+    line_push.quota_tick()
+    cached = line_push.quota_cached()
+    assert cached["used"] == 40 and cached["limit"] == 200
+    assert "checked_at" in cached
+
+
+def test_quota_tick_persists_even_below_warn_threshold(monkeypatch):
+    """A prior version only wrote state on the 80% warning path — /health
+    would show nothing at all for a healthy, low-usage month."""
+    _cap(monkeypatch)
+    monkeypatch.setattr(line_push, "_get",
+                        _quota_get('{"type":"limited","value":200}',
+                                   '{"totalUsage":5}'))
+    line_push._quota_state["date"] = ""
+    line_push.quota_tick()
+    assert line_push.quota_cached()["used"] == 5

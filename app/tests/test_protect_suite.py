@@ -14,6 +14,7 @@ PS = """COMMAND
 /Users/x/miniforge3/bin/python -u strategy2_scanner.py
 /Users/x/miniforge3/bin/python -u bot.py
 grep something strategy3_scanner.py
+/opt/homebrew/bin/cloudflared tunnel --url http://localhost:4000
 """
 
 

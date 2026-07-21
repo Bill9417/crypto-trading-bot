@@ -207,6 +207,12 @@
     </div>
 
     <div class="card">
+        <div class="card-h"><span class="ic">📡</span><h2>Pipeline</h2></div>
+        <p class="hint">LINE quota, the public site link, and state backups — these fail <em>silently</em> (a message never arrives, a backup silently stops) rather than crashing a process, so they're checked here explicitly.</p>
+        <div id="pipeline"></div>
+    </div>
+
+    <div class="card">
         <div class="card-h"><span class="ic">🧰</span><h2>Fix-it commands</h2></div>
         <p class="hint">Run these yourself in Terminal, from the project folder. This page only <em>watches</em> — it never restarts anything.</p>
         <div class="help-cmd"><code>./run_all.sh bg</code><span>restart everything detached (safe: stops old copies first, runs tests)</span></div>
@@ -308,6 +314,9 @@ function render(h) {
     }
     document.getElementById('fresh').innerHTML = rows.join('');
 
+    // Pipeline
+    document.getElementById('pipeline').innerHTML = renderPipeline(h.pipeline || {});
+
     // Logs
     document.getElementById('logs').innerHTML = (h.logs || []).map(l => {
         if (!l.exists) {
@@ -329,6 +338,58 @@ function render(h) {
 
 function chip(k, v, cls) {
     return '<div class="chip"><div class="k">' + k + '</div><div class="v num ' + (cls || '') + '">' + esc(v) + '</div></div>';
+}
+
+function renderPipeline(p) {
+    const rows = [];
+
+    // LINE quota
+    const ln = p.line || {};
+    let lnStats, lnDot = 'up';
+    if (!ln.enabled) {
+        lnStats = 'not configured';
+        lnDot = 'downd';
+    } else if (ln.used == null) {
+        lnStats = 'not checked yet (checks once per day)';
+    } else if (!ln.limit) {
+        lnStats = ln.used + ' sent this month · unlimited plan';
+    } else {
+        const pct = Math.round(100 * ln.used / ln.limit);
+        lnStats = '<b>' + ln.used + ' / ' + ln.limit + '</b> (' + pct + '%) this month';
+        if (pct >= 80) lnDot = 'downd';
+    }
+    rows.push(row('📱', 'LINE push quota', 'family 台股 messages · resets monthly', lnStats, lnDot));
+
+    // Site link
+    const sl = p.site_link || {};
+    const url = sl.url;
+    rows.push(row('🔗', 'Public site link',
+        url ? '<a href="' + esc(url) + '" target="_blank" rel="noopener" style="color:var(--blue)">' + esc(url) + '</a>' : 'no tunnel detected',
+        '', url ? 'up' : 'downd'));
+
+    // Backup freshness
+    const bk = p.backup || {};
+    let bkStats, bkDot = 'up';
+    if (!bk.exists) {
+        bkStats = 'no backup written yet';
+        bkDot = 'downd';
+    } else {
+        bkStats = '<b>' + bk.age_hours + 'h ago</b> · ' + fmtB(bk.size_bytes) +
+            (bk.offsite_ok ? ' · offsite ✓' : bk.offsite_configured ? ' · offsite pending' : ' · offsite not configured');
+        if (bk.age_hours > 30) bkDot = 'downd';
+    }
+    rows.push(row('💾', 'State backup', 'daily zip of every *.json + the login DB', bkStats, bkDot));
+
+    return rows.join('');
+}
+
+function row(icon, name, role, stats, dotCls) {
+    return '<div class="proc">' +
+        '<span class="pdot ' + dotCls + '"></span>' +
+        '<div class="pmain"><div class="pname">' + icon + ' ' + name + '</div>' +
+        '<div class="prole">' + role + '</div></div>' +
+        '<div class="pstats">' + stats + '</div>' +
+        '</div>';
 }
 
 function freshBar(name, age, limit, sub) {

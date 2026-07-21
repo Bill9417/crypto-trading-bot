@@ -2279,14 +2279,35 @@
                 </div>`;
         }
 
+        // Signal objects by card id — lets toggleCard() build a card's expanded
+        // detail HTML lazily (on first click) instead of every card paying that
+        // cost up front. The scanner covers 200+ perps; most cards are never
+        // opened in a session, so this avoids building detail HTML nobody reads.
+        let signalsById = {};
+
+        function buildCardExpandHTML(signal) {
+            const reasonSection = signal.record_status_reason
+                ? `<div class="card-section"><div class="card-section-title">Latest Scan Status</div>${signal.record_status_reason}</div>`
+                : '';
+            const details = (signal.details && signal.details.length)
+                ? `<div class="card-section"><div class="card-section-title">Strategy Signals</div>${signal.details.join(' · ')}</div>` : '';
+            return `
+                ${renderExpandMetrics(signal)}
+                ${reasonSection}
+                ${renderSmcCard(signal.smc)}
+                ${renderTpslCard(signal)}
+                ${details}`;
+        }
+
         function renderSignalCard(signal) {
             const id = rowId(signal.symbol);
+            signalsById[id] = signal;
             const sideCls = signal.direction === 'LONG' ? 'side-long' : 'side-short';
-            
+
             // Conviction classes
             const effLights = signal.effective_lights || 0;
             const convictionCls = effLights >= 5 ? ' max-conviction-card' : (effLights >= 4 ? ' high-conviction-card' : '');
-            
+
             const watchOnly = signal.tradeable === false;
             const cardCls = (signal.direction === 'LONG' ? 'long-card' : 'short-card') + convictionCls + (watchOnly ? ' watch-only' : '');
             const watchBadge = watchOnly ? `<span class="watch-only-badge" title="Scanned for market breadth — ranked outside the tradeable top pairs, so it never queues or trades.">Watch only</span>` : '';
@@ -2294,18 +2315,18 @@
             const smcCell = signal.smc
                 ? `<span class="smc-zone-pill ${smcPillClass(signal.smc.zone_type)}">${signal.smc.zone_label}</span>`
                 : '<span class="cell-dash">—</span>';
-            const details = (signal.details && signal.details.length)
-                ? `<div class="card-section"><div class="card-section-title">Strategy Signals</div>${signal.details.join(' · ')}</div>` : '';
             const status = statusInfo(signal);
             const reasonAttr = signal.record_status_reason
                 ? ` title="${String(signal.record_status_reason).replace(/"/g, '&quot;')}"` : '';
             const statusBadge = status
                 ? `<span class="trade-status-badge ${status.cls}"${reasonAttr}>${status.label}</span>`
                 : '';
-            const reasonSection = signal.record_status_reason
-                ? `<div class="card-section"><div class="card-section-title">Latest Scan Status</div>${signal.record_status_reason}</div>`
-                : '';
             const liveValue = formatLiveValue(signal.current_price);
+            // Only pre-build the expand panel for cards already open (e.g. still
+            // expanded across a poll refresh) — everything else fills in on click.
+            const expandInner = isExpanded
+                ? `<div class="card-expand-inner" data-lazy-built="1">${buildCardExpandHTML(signal)}</div>`
+                : `<div class="card-expand-inner"></div>`;
 
             return `
                 <div class="signal-card ${cardCls}${isExpanded ? ' expanded' : ''}" id="card-${id}" data-card-id="${id}" data-dir="${signal.direction}" data-status="${signal.trade_status || ''}" data-lights="${effLights}" data-score="${signal.score || 0}" data-rsi="${signal.rsi}">
@@ -2329,13 +2350,7 @@
                         </div>
                     </div>
                     <div class="card-expand">
-                        <div class="card-expand-inner">
-                            ${renderExpandMetrics(signal)}
-                            ${reasonSection}
-                            ${renderSmcCard(signal.smc)}
-                            ${renderTpslCard(signal)}
-                            ${details}
-                        </div>
+                        ${expandInner}
                     </div>
                 </div>`;
         }
@@ -2347,10 +2362,16 @@
                 expandedCards.delete(id);
                 card.classList.remove('expanded');
                 if (row) row.setAttribute('aria-expanded', 'false');
-            } else {
-                expandedCards.add(id);
-                card.classList.add('expanded');
-                if (row) row.setAttribute('aria-expanded', 'true');
+                return;
+            }
+            expandedCards.add(id);
+            card.classList.add('expanded');
+            if (row) row.setAttribute('aria-expanded', 'true');
+            const inner = card.querySelector('.card-expand-inner');
+            const signal = signalsById[id];
+            if (inner && signal && !inner.dataset.lazyBuilt) {
+                inner.innerHTML = buildCardExpandHTML(signal);
+                inner.dataset.lazyBuilt = '1';
             }
         }
 

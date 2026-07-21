@@ -20,6 +20,12 @@ EXPECTED = {
     "strategy2_scanner.py": "S2 scanner",
     "strategy3_scanner.py": "S3 scanner",
 }
+# The tunnel isn't a python script EXPECTED matches on (parse_running only
+# looks at "python" lines) — it gets its own pseudo-entry so the alert loop
+# can share the same down/last_alert/recovery machinery.
+TUNNEL_KEY = "cloudflared"
+TUNNEL_LABEL = "Cloudflare 通道（對外網址）"
+TUNNEL_FIX = "./tunnel.sh start"
 STATE_FILE = os.path.join(os.path.dirname(__file__), "watchdog_state.json")
 CHECK_SEC = 300
 ALERT_COOLDOWN_SEC = 3600
@@ -88,6 +94,14 @@ def missing(running: set, expected=None) -> list:
     return sorted(n for n in expected if n not in running)
 
 
+def tunnel_running(ps_output: str) -> bool:
+    """Is the cloudflared quick-tunnel process alive? Its command line doesn't
+    end in a bare script name like the EXPECTED python scripts (it's
+    'cloudflared tunnel --url ...'), so this checks its own pattern rather
+    than reusing parse_running."""
+    return any("cloudflared tunnel" in line for line in ps_output.splitlines())
+
+
 # ── orchestration ────────────────────────────────────────────────────────────
 def _ps() -> str:
     return subprocess.run(["ps", "-ax", "-o", "command"],
@@ -105,30 +119,37 @@ def tick(self_name: str) -> list:
     rotate_logs()                                # bounded logs, same 5-min cadence
 
     try:
-        running = parse_running(_ps())
+        ps_text = _ps()
+        running = parse_running(ps_text)
     except Exception as exc:  # noqa: BLE001 — a ps failure must not kill the sweep
         print(f"[watchdog] ps failed: {exc}")
         _save_state(state)
         return []
     running.add(self_name)                       # we are obviously alive
     down = missing(running)
+    if not tunnel_running(ps_text):
+        down = [*down, TUNNEL_KEY]
 
     import telegram_utils
     alerted = []
     last_alert = state.get("last_alert") or {}
     was_down = set(state.get("down") or [])
 
+    def _label(name):
+        return EXPECTED.get(name, TUNNEL_LABEL)
+
     for name in down:
         if now - last_alert.get(name, 0) >= ALERT_COOLDOWN_SEC:
             last_alert[name] = now
             alerted.append(name)
+            fix = TUNNEL_FIX if name == TUNNEL_KEY else "./run_all.sh bg"
             telegram_utils.send_message(
-                f"🚨 看門狗: {name} ({EXPECTED[name]}) 已停止運行!\n"
-                f"重啟:  ./run_all.sh bg", force=True)
+                f"🚨 看門狗: {name} ({_label(name)}) 已停止運行!\n"
+                f"重啟:  {fix}", force=True)
             print(f"[watchdog] ALERT: {name} is down")
     for name in sorted(was_down - set(down)):
         telegram_utils.send_message(
-            f"✅ 看門狗: {name} ({EXPECTED.get(name, '?')}) 已恢復運行", force=True)
+            f"✅ 看門狗: {name} ({_label(name)}) 已恢復運行", force=True)
         print(f"[watchdog] recovered: {name}")
 
     state["down"] = down
