@@ -246,6 +246,77 @@ def _due(state: dict, now) -> bool:
     return state.get("last_run_date") != now.strftime("%Y-%m-%d")
 
 
+# ── weekly scorecard (honest tally, not a win-rate pitch) ────────────────────
+SCORECARD_HOUR = int(os.getenv("TW_SCORECARD_HOUR", "9"))   # Sunday, Taipei local
+
+
+def _scorecard_due(state: dict, now) -> bool:
+    iso_year, iso_week, iso_weekday = now.isocalendar()
+    if iso_weekday != 7 or now.hour < SCORECARD_HOUR:      # ISO weekday 7 = Sunday
+        return False
+    return state.get("scorecard_sent_week") != f"{iso_year}-W{iso_week:02d}"
+
+
+def weekly_scorecard(state: dict, now) -> dict:
+    """This ISO week's (Mon–Sun) honest TP/SL/still-open tally from
+    active_setups. The R-multiple isn't a backtest guess — 'tp'/'sl' are only
+    stamped when tw_intraday's LIVE quotes actually touched that exact level,
+    so it reflects real observed price action, not a model assumption. Pure
+    (no I/O), unit-testable without touching the state file."""
+    setups = state.get("active_setups") or []
+    iso_year, iso_week, _ = now.isocalendar()
+
+    def _in_week(date_str):
+        y, w, _ = datetime.strptime(date_str, "%Y-%m-%d").date().isocalendar()
+        return (y, w) == (iso_year, iso_week)
+
+    this_week = [s for s in setups if _in_week(s["date"])]
+    wins = sum(1 for s in this_week if (s.get("hit") or {}).get("kind") == "tp")
+    losses = sum(1 for s in this_week if (s.get("hit") or {}).get("kind") == "sl")
+    return {"iso_year": iso_year, "iso_week": iso_week, "total": len(this_week),
+            "wins": wins, "losses": losses,
+            "still_open": len(this_week) - wins - losses,
+            "total_r": wins * (TP_ATR / SL_ATR) - losses * 1.0}
+
+
+def build_scorecard_plain(now, card: dict) -> str:
+    """Plain-Chinese weekly scorecard for LINE — leads with the honest R
+    tally, not a bare win rate (a family reader shouldn't learn to chase
+    win% any more than a trader should)."""
+    lines = [f"📋 本週台股訊號成績單 · 第{card['iso_week']}週", ""]
+    if card["total"] == 0:
+        lines.append("本週沒有新增訊號。")
+    else:
+        lines.append(f"本週共 {card['total']} 檔訊號：")
+        lines.append(f"🎯 達標 {card['wins']} 檔")
+        lines.append(f"🛑 停損 {card['losses']} 檔")
+        if card["still_open"]:
+            lines.append(f"⏳ 追蹤中 {card['still_open']} 檔（還沒到停損或目標）")
+        sign = "+" if card["total_r"] >= 0 else ""
+        lines += ["",
+                  f"以停損/停利換算，本週約 {sign}{card['total_r']:.1f}R"
+                  "（R = 每筆的風險單位；賺賠幅度的總和，比單純勝率更能反映實際結果）"]
+    lines += ["", "⚠️ 訊號僅供參考，過去績效不代表未來"]
+    return "\n".join(lines)
+
+
+def scorecard_tick() -> bool:
+    """Self-paced: Sunday-morning honest tally to LINE (no Telegram mirror —
+    the group already gets /outcomes; this is the family-plain-Chinese
+    equivalent). No-op every other sweep and every other day of the week."""
+    now = datetime.now(TZ)
+    state = _load_state()
+    if not _scorecard_due(state, now):
+        return False
+    card = weekly_scorecard(state, now)
+    plain = build_scorecard_plain(now, card)
+    import line_push
+    sent = line_push.enabled() and line_push.send(plain)
+    state["scorecard_sent_week"] = f"{card['iso_year']}-W{card['iso_week']:02d}"
+    _save_state(state)
+    return sent
+
+
 # ── orchestration ────────────────────────────────────────────────────────────
 def _chinese_names() -> dict:
     """code → Chinese short name via the /stocks page cache; EN fallback."""
@@ -321,8 +392,8 @@ def tick() -> bool:
                                        channel="twstocks")
     plain = build_digest_plain(now, reg, setups)
     import line_push
-    if line_push.enabled():                # 爸爸的 LINE — plain-text copy
-        line_push.send(plain)
+    if line_push.enabled():                # 爸爸的 LINE — card carousel when
+        line_push.send_tw_digest(now, reg, setups, plain)   # there are picks
     print(f"[twstocks] {today}: regime={'BULL' if reg.get('ok') else 'OFF'} "
           f"setups={len(setups)} sent={sent}")
 

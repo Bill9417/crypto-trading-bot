@@ -142,6 +142,112 @@ def test_not_due_twice_same_day():
     assert not tw_stocks._due(state, datetime(2026, 7, 10, 15, 0, tzinfo=tw_stocks.TZ))
 
 
+# ── weekly scorecard ─────────────────────────────────────────────────────────
+SUNDAY = datetime(2026, 7, 19, 10, 0, tzinfo=tw_stocks.TZ)   # 2026-07-19 is a Sunday
+
+
+def _week_setup(code, date, hit=None):
+    d = {"code": code, "name": f"股{code}", "date": date,
+         "ref": 100.0, "sl": 91.0, "tp": 115.0}
+    if hit:
+        d["hit"] = hit
+    return d
+
+
+def test_scorecard_due_only_sunday_after_hour():
+    assert tw_stocks._scorecard_due({}, SUNDAY)
+    assert not tw_stocks._scorecard_due({}, SUNDAY.replace(hour=8))            # too early
+    assert not tw_stocks._scorecard_due({}, SUNDAY.replace(day=20))            # Monday
+
+
+def test_scorecard_due_once_per_iso_week():
+    state = {"scorecard_sent_week": "2026-W29"}
+    assert not tw_stocks._scorecard_due(state, SUNDAY)         # 07-19 is ISO week 29
+    assert tw_stocks._scorecard_due({}, SUNDAY)
+
+
+def test_weekly_scorecard_tallies_wins_losses_and_open():
+    state = {"active_setups": [
+        _week_setup("2330", "2026-07-14", {"kind": "tp", "date": "2026-07-16", "time": "10:00"}),
+        _week_setup("2317", "2026-07-15", {"kind": "sl", "date": "2026-07-17", "time": "11:00"}),
+        _week_setup("2454", "2026-07-16"),                     # still open
+        _week_setup("2882", "2026-07-06"),                     # last week — excluded
+    ]}
+    card = tw_stocks.weekly_scorecard(state, SUNDAY)
+    assert card["total"] == 3 and card["wins"] == 1 and card["losses"] == 1
+    assert card["still_open"] == 1
+    assert abs(card["total_r"] - (5.0 / 3.0 - 1.0)) < 1e-9
+
+
+def test_weekly_scorecard_empty_week():
+    card = tw_stocks.weekly_scorecard({}, SUNDAY)
+    assert card == {"iso_year": 2026, "iso_week": 29, "total": 0, "wins": 0,
+                    "losses": 0, "still_open": 0, "total_r": 0.0}
+
+
+def test_scorecard_plain_empty_week_message():
+    card = tw_stocks.weekly_scorecard({}, SUNDAY)
+    msg = tw_stocks.build_scorecard_plain(SUNDAY, card)
+    assert "本週沒有新增訊號" in msg
+
+
+def test_scorecard_plain_shows_tally_and_r():
+    card = {"iso_year": 2026, "iso_week": 29, "total": 3, "wins": 2, "losses": 1,
+            "still_open": 0, "total_r": 2.33}
+    msg = tw_stocks.build_scorecard_plain(SUNDAY, card)
+    assert "達標 2 檔" in msg and "停損 1 檔" in msg and "+2.3R" in msg
+    assert "⚠️" in msg
+
+
+def test_scorecard_plain_negative_r_keeps_minus_sign():
+    card = {"iso_year": 2026, "iso_week": 29, "total": 2, "wins": 0, "losses": 2,
+            "still_open": 0, "total_r": -2.0}
+    msg = tw_stocks.build_scorecard_plain(SUNDAY, card)
+    assert "-2.0R" in msg and "+-2.0R" not in msg
+
+
+def test_scorecard_tick_sends_once_and_marks_state(monkeypatch, tmp_path):
+    import line_push
+
+    class _FixedDT(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return SUNDAY
+
+    monkeypatch.setattr(tw_stocks, "STATE_FILE", str(tmp_path / "tw.json"))
+    monkeypatch.setattr(tw_stocks, "datetime", _FixedDT)
+    tw_stocks._save_state({"active_setups": []})
+
+    sent = []
+    monkeypatch.setattr(line_push, "enabled", lambda: True)
+    monkeypatch.setattr(line_push, "send", lambda text: sent.append(text) or True)
+
+    assert tw_stocks.scorecard_tick() is True
+    assert sent and "本週" in sent[0]
+    assert tw_stocks._load_state()["scorecard_sent_week"] == "2026-W29"
+
+    # same week → no second send
+    assert tw_stocks.scorecard_tick() is False
+    assert len(sent) == 1
+
+
+def test_scorecard_tick_noop_when_line_disabled(monkeypatch, tmp_path):
+    import line_push
+
+    class _FixedDT(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return SUNDAY
+
+    monkeypatch.setattr(tw_stocks, "STATE_FILE", str(tmp_path / "tw.json"))
+    monkeypatch.setattr(tw_stocks, "datetime", _FixedDT)
+    tw_stocks._save_state({"active_setups": []})
+    monkeypatch.setattr(line_push, "enabled", lambda: False)
+    assert tw_stocks.scorecard_tick() is False
+    # state still marks the week as handled — no retry storm every sweep
+    assert tw_stocks._load_state()["scorecard_sent_week"] == "2026-W29"
+
+
 def test_tw_command_reads_state(monkeypatch):
     import tg_commands
     monkeypatch.setattr(tw_stocks, "_load_state",

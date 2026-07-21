@@ -60,6 +60,20 @@ START_MSG = ("✅ 台股訊號系統已啟動\n"
 STOP_MSG = ("🛑 台股訊號系統已停止\n"
             "訊息暫停發送，重新啟動後會自動通知")
 
+# 👆 Tap-instead-of-type buttons. LINE has no group-chat equivalent of a
+# persistent Rich Menu (that feature only attaches to 1:1 chats with the OA —
+# there is no API to bind one to a group/room ID), so this is the group-
+# compatible substitute: Quick Reply buttons attached to every outgoing
+# message, which DO render in group chats and reappear on each new bot
+# message. Max 13 items; each label ≤20 chars.
+QUICK_REPLY = {"items": [
+    {"type": "action", "action": {"type": "message", "label": "📊 訊號", "text": "訊號"}},
+    {"type": "action", "action": {"type": "message", "label": "📈 現況", "text": "現況"}},
+    {"type": "action", "action": {"type": "message", "label": "📉 期貨", "text": "期貨"}},
+    {"type": "action", "action": {"type": "message", "label": "🔗 網址", "text": "網址"}},
+    {"type": "action", "action": {"type": "message", "label": "❓ 說明", "text": "說明"}},
+]}
+
 
 def enabled() -> bool:
     return bool(config.LINE_CHANNEL_ACCESS_TOKEN
@@ -215,7 +229,8 @@ def _command_reply(text: str):
 def _reply(reply_token: str, text: str) -> None:
     try:
         code, body = _post("reply", {"replyToken": reply_token,
-                                     "messages": [{"type": "text", "text": text}]})
+                                     "messages": [{"type": "text", "text": text,
+                                                  "quickReply": QUICK_REPLY}]})
         if code != 200:
             print(f"[line] reply failed {code}: {body[:200]}")
     except Exception as exc:  # noqa: BLE001
@@ -393,11 +408,12 @@ def _chunks(text: str) -> list:
     return out
 
 
-def send(text: str) -> bool:
-    """Push to subscribed groups/LINE_TO; broadcast when neither exists."""
-    if not enabled() or not (text or "").strip():
+def _push_messages(msgs: list) -> bool:
+    """Push pre-built LINE message objects to subscribed groups/LINE_TO,
+    broadcasting when neither exists. Shared by send() (plain text) and the
+    Flex-card senders — the only difference is who builds the message dicts."""
+    if not enabled() or not msgs:
         return False
-    msgs = [{"type": "text", "text": c} for c in _chunks(text)]
     tos = targets()
     ok = True
     for i in range(0, len(msgs), BATCH):
@@ -417,3 +433,79 @@ def send(text: str) -> bool:
                 print(f"[line] {path} error: {exc}")
                 ok = False
     return ok
+
+
+def send(text: str) -> bool:
+    """Push to subscribed groups/LINE_TO; broadcast when neither exists.
+    Quick-reply buttons ride on the LAST chunk (LINE shows whichever message
+    the user is currently viewing — putting it there keeps it visible)."""
+    if not (text or "").strip():
+        return False
+    msgs = [{"type": "text", "text": c} for c in _chunks(text)]
+    if msgs:
+        msgs[-1] = {**msgs[-1], "quickReply": QUICK_REPLY}
+    return _push_messages(msgs)
+
+
+# ── Flex Message cards — 進場/停損/目標 as a tappable carousel ────────────────
+# Flex Messages render fine in group chats (unlike Rich Menus). Used only for
+# the "here are today's picks" case: a multi-stock list is where a card beats
+# a wall of text. A 觀望/no-signal day stays plain text — one administrative
+# line doesn't need a card, and a fallback is simpler to reason about than a
+# card with nothing in it.
+def _stock_bubble(code: str, name: str, s: dict) -> dict:
+    import tw_stocks
+    px = tw_stocks._px
+    risk = (s["ref"] - s["sl"]) / s["ref"] * 100
+    gain = (s["tp"] - s["ref"]) / s["ref"] * 100
+
+    def _row(label, value, color):
+        return {"type": "box", "layout": "horizontal", "contents": [
+            {"type": "text", "text": label, "size": "sm", "color": "#8a99ad", "flex": 2},
+            {"type": "text", "text": value, "size": "sm", "color": color, "flex": 5,
+             "weight": "bold", "align": "end"},
+        ]}
+
+    return {
+        "type": "bubble",
+        "header": {"type": "box", "layout": "horizontal", "paddingAll": "12px",
+                   "backgroundColor": "#1c1c28", "contents": [
+                       {"type": "text", "text": code, "weight": "bold", "size": "lg",
+                        "color": "#ffffff"},
+                       {"type": "text", "text": name, "size": "sm", "color": "#8a99ad",
+                        "align": "end", "gravity": "center"},
+                   ]},
+        "body": {"type": "box", "layout": "vertical", "spacing": "sm", "paddingAll": "12px",
+                 "contents": [
+                     _row("進場", px(s["ref"]), "#e6e6e6"),
+                     _row("停損", f"{px(s['sl'])} (-{risk:.1f}%)", "#f23645"),
+                     _row("目標", f"{px(s['tp'])} (+{gain:.1f}%)", "#26a69a"),
+                 ]},
+    }
+
+
+def build_digest_flex(now, setups: list) -> dict:
+    """setups: [(code, name, setup-dict), ...] — same shape tw_stocks.tick()
+    already builds for the plain-text digest. Capped at MAX_SHOW, matching
+    the text version so the two never disagree on how many stocks 'today's
+    picks' means."""
+    import tw_stocks
+    bubbles = [_stock_bubble(code, name, s) for code, name, s in setups[:tw_stocks.MAX_SHOW]]
+    alt = f"🇹🇼 台股掃描 {now.strftime('%m-%d')}：今日訊號 {len(setups)} 檔"
+    return {"type": "flex", "altText": alt,
+            "contents": {"type": "carousel", "contents": bubbles},
+            "quickReply": QUICK_REPLY}
+
+
+def send_tw_digest(now, reg: dict, setups: list, plain_fallback: str) -> bool:
+    """The daily 14:00 digest: a Flex carousel when today has actionable
+    picks, else the plain-text 觀望/no-signal message. Falls back to plain
+    text if the flex push itself fails, so a malformed card never means dad
+    gets nothing."""
+    if not enabled():
+        return False
+    if reg.get("ok") and setups:
+        if _push_messages([build_digest_flex(now, setups)]):
+            return True
+        print("[line] digest flex send failed — falling back to plain text")
+    return send(plain_fallback)

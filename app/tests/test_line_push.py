@@ -38,7 +38,8 @@ def test_broadcast_when_no_recipients(monkeypatch):
     assert len(calls) == 1
     path, payload = calls[0]
     assert path == "broadcast"
-    assert payload == {"messages": [{"type": "text", "text": "台股訊號"}]}
+    assert payload == {"messages": [{"type": "text", "text": "台股訊號",
+                                     "quickReply": line_push.QUICK_REPLY}]}
 
 
 def test_push_per_recipient(monkeypatch):
@@ -457,3 +458,71 @@ def test_quota_tick_persists_even_below_warn_threshold(monkeypatch):
     line_push._quota_state["date"] = ""
     line_push.quota_tick()
     assert line_push.quota_cached()["used"] == 5
+
+
+# ── Flex Message digest cards ─────────────────────────────────────────────────
+S = {"ref": 2415.0, "sl": 2255.0, "tp": 2680.0, "atr": 53.0, "turnover": 1e9}
+NOW = datetime(2026, 7, 21, 14, 5)
+
+
+def test_stock_bubble_shows_code_name_and_levels():
+    bubble = line_push._stock_bubble("2330", "台積電", S)
+    text = str(bubble)
+    assert "2330" in text and "台積電" in text
+    assert "2,415" in text and "2,255" in text and "2,680" in text
+    assert "-6.6" in text and "+11.0" in text          # risk/gain %
+
+
+def test_build_digest_flex_structure_and_alt_text():
+    flex = line_push.build_digest_flex(NOW, [("2330", "台積電", S), ("2317", "鴻海", S)])
+    assert flex["type"] == "flex"
+    assert "2 檔" in flex["altText"]
+    assert flex["contents"]["type"] == "carousel"
+    assert len(flex["contents"]["contents"]) == 2
+    assert flex["quickReply"] == line_push.QUICK_REPLY
+
+
+def test_build_digest_flex_caps_at_max_show():
+    import tw_stocks
+    many = [(f"{1000+i}", f"股{i}", S) for i in range(tw_stocks.MAX_SHOW + 5)]
+    flex = line_push.build_digest_flex(NOW, many)
+    assert len(flex["contents"]["contents"]) == tw_stocks.MAX_SHOW
+
+
+def test_send_tw_digest_sends_flex_when_bullish_with_setups(monkeypatch):
+    calls = _cap(monkeypatch)
+    reg = {"ok": True, "close": 28000.0, "sma100": 27000.0, "mom20": 0.03}
+    ok = line_push.send_tw_digest(NOW, reg, [("2330", "台積電", S)], "plain fallback")
+    assert ok is True
+    assert len(calls) == 1
+    _path, payload = calls[0]
+    assert payload["messages"][0]["type"] == "flex"
+
+
+def test_send_tw_digest_uses_plain_text_when_not_bullish(monkeypatch):
+    calls = _cap(monkeypatch)
+    reg = {"ok": False, "close": 27000.0, "sma100": 28000.0, "mom20": -0.02}
+    ok = line_push.send_tw_digest(NOW, reg, [], "⛔ 觀望 today")
+    assert ok is True
+    assert len(calls) == 1
+    _path, payload = calls[0]
+    assert payload["messages"][0]["type"] == "text"
+    assert "觀望" in payload["messages"][0]["text"]
+
+
+def test_send_tw_digest_falls_back_to_plain_text_on_flex_failure(monkeypatch):
+    calls = _cap(monkeypatch, codes=[400, 200])       # flex fails, plain-text retry lands
+    reg = {"ok": True, "close": 28000.0, "sma100": 27000.0, "mom20": 0.03}
+    ok = line_push.send_tw_digest(NOW, reg, [("2330", "台積電", S)], "plain fallback")
+    assert ok is True
+    assert len(calls) == 2
+    assert calls[0][1]["messages"][0]["type"] == "flex"
+    assert calls[1][1]["messages"][0]["type"] == "text"
+    assert calls[1][1]["messages"][0]["text"] == "plain fallback"
+
+
+def test_send_tw_digest_disabled_returns_false(monkeypatch):
+    calls = _cap(monkeypatch, token="")
+    reg = {"ok": True, "close": 28000.0, "sma100": 27000.0, "mom20": 0.03}
+    assert line_push.send_tw_digest(NOW, reg, [("2330", "台積電", S)], "x") is False
+    assert not calls

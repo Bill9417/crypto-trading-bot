@@ -649,6 +649,12 @@ def main() -> None:
             tw_intraday.tick()
         except Exception as exc:  # noqa: BLE001 — intraday must never kill the loop
             print(f"[strategy2] tw intraday error: {exc}")
+        # 📋 台股週結 — honest Sunday-morning TP/SL scorecard to LINE
+        # (self-paced no-op except Sunday mornings).
+        try:
+            tw_stocks.scorecard_tick()
+        except Exception as exc:  # noqa: BLE001 — scorecard must never kill the loop
+            print(f"[strategy2] tw scorecard error: {exc}")
         # 💥 Liquidation cascades — BTC/ETH stop-run bursts into the liq topic
         # (thresholded + cooled down; a quiet market sends nothing).
         try:
