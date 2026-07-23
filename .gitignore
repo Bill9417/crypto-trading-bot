@@ -39,6 +39,7 @@ tw_stocks_state.json
 tw_intraday_state.json
 line_ids.json
 site_link_state.json
+line_quota_state.json
 tg_sent_log.json
 tg_autoclean_state.json
 watchdog_state.json

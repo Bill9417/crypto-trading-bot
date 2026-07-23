@@ -2635,7 +2635,7 @@ def run_bot() -> None:
                 price_from_ws = price_stream.get_price(remaining_key[0])
                 if price_from_ws is not None:
                     remaining_sig["current_price"] = price_from_ws
-            except:
+            except Exception:  # noqa: BLE001 — a stale ws price is optional here
                 pass
             # Drop a carried-forward queued card whose target has already been
             # reached — the move happened, the setup is dead, don't keep showing it.
