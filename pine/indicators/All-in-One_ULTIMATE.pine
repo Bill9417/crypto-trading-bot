@@ -8,6 +8,14 @@
 //  Panels: Confidence Meter = top-right · Volume Profile = top-left (defaults)
 //  ⑨ Reactive S/R Zones — ORIGINAL engine (pivot clustering, volume-weighted
 //     anchors, touch-scored strength, price-side polarity, decay): your own code.
+//  ⑬ Multi-Timeframe Bias — 15m/30m/1H long-short read (default OFF).
+//
+//  ★ CLEAN CHART MODE (① Modules, default ON) — one switch that hides the
+//    visual noise so the S/R zones and trend are readable: EMA 50/100,
+//    Tunnel 2, SMC structure lines, order blocks, FVG, and the volume-profile
+//    histogram bars (POC/VAH/VAL price lines stay). Trendlines capped at
+//    2 active + 2 broken per side. CALCULATIONS ARE UNCHANGED — the
+//    Confidence Meter score is identical with it on or off.
 // ════════════════════════════════════════════════════════════════════════════
 //@version=6
 indicator("All-in-One ULTIMATE", overlay=true, max_lines_count=500, max_boxes_count=500, max_labels_count=500, max_bars_back=5000)
@@ -23,6 +31,7 @@ showSMC   = input.bool(true,  "Smart Money Concepts", group=gM, tooltip="LuxAlgo
 showSIG   = input.bool(false, "Signal Layer (Long/Short)", group=gM, tooltip="Confluence signal. OFF by default — not trading advice.")
 showPanel = input.bool(true,  "Confidence Panel",    group=gM, tooltip="Top-right live status table")
 hideText  = input.bool(true,  "Hide All Text Labels", group=gM, tooltip="Keep blocks and lines, but remove all words (MSB, EQH/EQL, Premium, etc.) from the chart. Info panels are unaffected.")
+cleanMode = input.bool(true,  "★ CLEAN CHART MODE", group=gM, tooltip="ONE switch that removes the visual noise so the S/R zones and trend are actually readable. This indicator can otherwise draw 9 moving averages, 14 trendlines, SMC structure lines, order blocks and ~50 volume-profile boxes at once.\n\nWhen ON it hides: EMA 50/100 (keeps 20 + 200), Tunnel 2 (288/338), SMC internal structure lines, SMC order blocks, FVG, and the volume-profile histogram bars (POC/VAH/VAL price lines stay).\nIt also caps trendlines to 2 active + 2 broken per side.\n\nNothing is switched off in the CALCULATIONS — the Confidence Meter score is identical either way. This only affects what gets drawn.\n\nTurn OFF to see every layer again.")
 
 // ╔═══════════════════════════════════════════════════════╗
 // ║  ② EMA SETTINGS                                        ║
@@ -43,8 +52,8 @@ emaSlow = ta.ema(close, ema100len)
 emaTrend= ta.ema(close, ema200len)
 
 plot(showEMA ? emaFast  : na, "EMA Fast",  color=emaFastCol,  linewidth=1)
-plot(showEMA ? emaMed   : na, "EMA Medium",color=emaMedCol,   linewidth=1)
-plot(showEMA ? emaSlow  : na, "EMA Slow",  color=emaSlowCol,  linewidth=1)
+plot(showEMA and not cleanMode ? emaMed  : na, "EMA Medium",color=emaMedCol,   linewidth=1)
+plot(showEMA and not cleanMode ? emaSlow : na, "EMA Slow",  color=emaSlowCol,  linewidth=1)
 plot(showEMA ? emaTrend : na, "EMA Trend", color=emaTrendCol, linewidth=2)
 
 // ╔═══════════════════════════════════════════════════════╗
@@ -91,11 +100,11 @@ vegasCol    = ta.change(vegasEMA200) > 0 ? color.new(color.green, 0) : color.new
 // Plots
 dt_l1 = plot(showTunnel ? dt_ma1 : na, "Tunnel1-A", color=color.new(color.orange, 50), linewidth=1)
 dt_l2 = plot(showTunnel ? dt_ma2 : na, "Tunnel1-B", color=color.new(color.orange, 50), linewidth=1)
-dt_l3 = plot(showTunnel ? dt_ma3 : na, "Tunnel2-A", color=color.new(color.lime,   70), linewidth=1)
-dt_l4 = plot(showTunnel ? dt_ma4 : na, "Tunnel2-B", color=color.new(color.lime,   70), linewidth=1)
+dt_l3 = plot(showTunnel and not cleanMode ? dt_ma3 : na, "Tunnel2-A", color=color.new(color.lime,   70), linewidth=1)
+dt_l4 = plot(showTunnel and not cleanMode ? dt_ma4 : na, "Tunnel2-B", color=color.new(color.lime,   70), linewidth=1)
 
 fill(dt_l1, dt_l2, color=showTunnel ? (dt_ma1 > dt_ma2 and dt_ma1 >= dt_ma1[1] ? dt_t1Bull : dt_t1Bear) : na, title="Tunnel 1 Fill")
-fill(dt_l3, dt_l4, color=showTunnel ? (dt_ma3 > dt_ma4 and dt_ma3 >= dt_ma3[1] ? dt_t2Bull : dt_t2Bear) : na, title="Tunnel 2 Fill")
+fill(dt_l3, dt_l4, color=showTunnel and not cleanMode ? (dt_ma3 > dt_ma4 and dt_ma3 >= dt_ma3[1] ? dt_t2Bull : dt_t2Bear) : na, title="Tunnel 2 Fill")
 
 plot(showVegas ? vegasEMA200 : na, "Vegas EMA200", color=vegasCol, linewidth=2)
 
@@ -116,6 +125,10 @@ tlBreakAlerts = input.bool(true, "Break Alerts", group=gT)
 tlBaseWidth = input.int(1, "Line Width", minval=1, maxval=4, group=gT, tooltip="Base trendline thickness. Lines thicken slightly with each touch, up to width+2.")
 utcol      = input.color(color.lime, "Up", inline="tcol", group=gT)
 dtcol      = input.color(color.red,  "Down", inline="tcol", group=gT)
+
+// Clean mode caps the number of lines drawn (計算不變,只是少畫幾條)
+maxActiveTL_e = cleanMode ? math.min(maxActiveTL, 2) : maxActiveTL
+keepBroken_e  = cleanMode ? math.min(keepBroken, 2)  : keepBroken
 
 // ╔═══════════════════════════════════════════════════════╗
 // ║  ④ MSB + ORDER BLOCK (legacy EmreKb)                   ║
@@ -242,13 +255,15 @@ equilibriumZoneColorInput = input.color(GRAY, 'Equilibrium Zone', group=gQ)
 discountZoneColorInput = input.color(GREEN, 'Discount Zone', group=gQ)
 
 // gate all SMC sub-features behind the master toggle (separate vars; never reassign inputs)
-showInternals_g            = showInternalsInput and showSMC
+// NOTE: cleanMode hides DRAWING only — internalTrend.bias still updates every bar,
+// so the Confidence Meter's SMC factor and its score are identical either way.
+showInternals_g            = showInternalsInput and showSMC and not cleanMode
 showStructure_g            = showStructureInput and showSMC
 showHighLowSwings_g        = showHighLowSwingsInput and showSMC
-showInternalOrderBlocks_g  = showInternalOrderBlocksInput and showSMC
-showSwingOrderBlocks_g     = showSwingOrderBlocksInput and showSMC
+showInternalOrderBlocks_g  = showInternalOrderBlocksInput and showSMC and not cleanMode
+showSwingOrderBlocks_g     = showSwingOrderBlocksInput and showSMC and not cleanMode
 showEqualHighsLows_g       = showEqualHighsLowsInput and showSMC
-showFairValueGaps_g        = showFairValueGapsInput and showSMC
+showFairValueGaps_g        = showFairValueGapsInput and showSMC and not cleanMode
 showPremiumDiscountZones_g = showPremiumDiscountZonesInput and showSMC
 showDailyLevels_g          = showDailyLevelsInput and showSMC
 showWeeklyLevels_g         = showWeeklyLevelsInput and showSMC
@@ -312,7 +327,7 @@ f_retire_oldest(bool isUp) =>
     for t in tlines
         if t.isUp == isUp and not t.broken
             cnt += 1
-    while cnt > maxActiveTL
+    while cnt > maxActiveTL_e
         retired = false
         for i = 0 to array.size(tlines) - 1
             t = array.get(tlines, i)
@@ -333,7 +348,7 @@ f_prune_broken() =>
     for t in tlines
         if t.broken
             brokenCount += 1
-    while brokenCount > keepBroken and array.size(tlines) > 0
+    while brokenCount > keepBroken_e and array.size(tlines) > 0
         removed = false
         for i = 0 to array.size(tlines) - 1
             t = array.get(tlines, i)
@@ -561,6 +576,16 @@ if showSR
         if not f_srAbsorb(srPl, nz(volume[srLen], 1))
             f_srSpawn(srPl, nz(volume[srLen], 1))
 
+    // find the nearest zone ABOVE and BELOW price — these two are the ones that
+    // actually matter right now, so they get drawn solid while the rest fade back
+    float nearAbove = na
+    float nearBelow = na
+    for z in srZones
+        if z.anchor > close and (na(nearAbove) or z.anchor < nearAbove)
+            nearAbove := z.anchor
+        if z.anchor < close and (na(nearBelow) or z.anchor > nearBelow)
+            nearBelow := z.anchor
+
     // touches, clean breaks, decay, rendering
     int zi = 0
     while zi < srZones.size()
@@ -589,18 +614,23 @@ if showSR
             srZones.remove(zi)
         else
             bool isSup = currSide == 1
+            bool isKey = z.anchor == nearAbove or z.anchor == nearBelow
             color baseCol = isSup ? srSupCol : srResCol
             int s = f_srStrength(z)
-            int tr = math.max(55, 88 - s * 4)   // stronger zone → more opaque
+            // key zones (nearest above/below price) render solid; the rest fade back
+            int tr = isKey ? math.max(45, 78 - s * 4) : math.max(74, 92 - s * 3)
             box.set_top(z.bx, zTop)
             box.set_bottom(z.bx, zBot)
             box.set_right(z.bx, bar_index + 15)
             box.set_bgcolor(z.bx, color.new(baseCol, tr))
-            box.set_border_color(z.bx, color.new(baseCol, math.max(25, tr - 25)))
+            box.set_border_color(z.bx, color.new(baseCol, isKey ? 10 : math.max(45, tr - 20)))
+            box.set_border_width(z.bx, isKey ? 2 : 1)
             if not na(z.lb)
                 label.set_xy(z.lb, bar_index + 15, z.anchor)
-                label.set_text(z.lb, hideText ? "" : (isSup ? "S ×" : "R ×") + str.tostring(s))
-                label.set_textcolor(z.lb, baseCol)
+                // key zones also show the actual price level you're watching
+                label.set_text(z.lb, hideText ? "" : (isSup ? "S ×" : "R ×") + str.tostring(s) + (isKey ? "  " + str.tostring(z.anchor, format.mintick) : ""))
+                label.set_textcolor(z.lb, color.new(baseCol, isKey ? 0 : 45))
+                label.set_size(z.lb, isKey ? size.small : size.tiny)
             zi += 1
 
 alertcondition(srAlerts and srTouch,   "S/R Zone Touch",      "Price tested a reactive S/R zone and it held")
@@ -1402,6 +1432,85 @@ if barstate.islast and showPanel
         table.cell(infoPanel, 1, 11, f_facTxt(fVolume) + " ", text_color=f_facCol(fVolume), text_size=panelSize, text_halign=text.align_right)
 
 // ════════════════════════════════════════════════════════════════════════════
+//  MULTI-TIMEFRAME BIAS — reusable scorer + request.security fetch
+//  Mirrors the chart-TF confidence factors (EMA stack, price vs EMA200, Vegas
+//  slope, tunnel position, volume bias) so each timeframe is scored the SAME
+//  way. SMC/trendline factors are omitted here because they rely on drawing
+//  state that can't be recomputed inside a security() call — so the MTF score
+//  uses the price-based subset (weights re-normalized to 100). It's a bias
+//  read, not the full confidence meter.
+// ════════════════════════════════════════════════════════════════════════════
+f_tfScore() =>
+    eF = ta.ema(close, 20)
+    eM = ta.ema(close, 50)
+    eS = ta.ema(close, 100)
+    eT = ta.ema(close, 200)
+    m1 = ta.ema(close, 144)
+    m3 = ta.ema(close, 288)
+    veg = ta.sma(ta.ema(close, 200), 5)
+    vMean = math.sum(close * volume, 360) / math.sum(volume, 360)
+    s1 = eF > eM and eM > eS and eS > eT ? 1 : eF < eM and eM < eS and eS < eT ? -1 : 0   // EMA stack (30)
+    s2 = close > eT ? 1 : close < eT ? -1 : 0                                              // price vs 200 (25)
+    s3 = ta.change(veg) > 0 ? 1 : ta.change(veg) < 0 ? -1 : 0                              // Vegas slope (20)
+    s4 = close > m1 and close > m3 ? 1 : close < m1 and close < m3 ? -1 : 0                // tunnel (15)
+    s5 = na(vMean) ? 0 : close > vMean ? 1 : close < vMean ? -1 : 0                        // volume bias (10)
+    net = s1*30 + s2*25 + s3*20 + s4*15 + s5*10
+    math.max(0, math.min(100, 50 + net / 2.0))
+
+gMTF = "⑬ Multi-Timeframe Bias"
+showMTF   = input.bool(true, "Show MTF Bias Panel", group=gMTF, tooltip="Small table showing the direction on three timeframes at once (default 15m / 30m / 1H), scored the same way as the confidence meter's price factors. The bottom row lights up only when all three agree.\n\nThis is the one panel that tells you something your chart timeframe cannot: whether the bigger picture agrees with what you're looking at.")
+mtfTf1    = input.timeframe("15", "Timeframe 1", group=gMTF, inline="tf")
+mtfTf2    = input.timeframe("30", "Timeframe 2", group=gMTF, inline="tf")
+mtfTf3    = input.timeframe("60", "Timeframe 3", group=gMTF, inline="tf")
+mtfLongTh = input.int(65, "Long Threshold", minval=50, maxval=100, group=gMTF, tooltip="Score ≥ this = LONG bias on that timeframe; ≤ (100 − this) = SHORT; between = Neutral.")
+mtfPos    = input.string("Middle Right", "Position", ["Top Right","Top Left","Bottom Right","Bottom Left","Middle Right","Middle Left"], group=gMTF)
+mtfSize   = input.string(size.small, "Text Size", [size.tiny, size.small, size.normal], group=gMTF)
+
+// non-repainting HTF fetch: confirmed values only, gaps filled forward
+mtfScore1 = request.security(syminfo.tickerid, mtfTf1, f_tfScore(), lookahead=barmerge.lookahead_off)
+mtfScore2 = request.security(syminfo.tickerid, mtfTf2, f_tfScore(), lookahead=barmerge.lookahead_off)
+mtfScore3 = request.security(syminfo.tickerid, mtfTf3, f_tfScore(), lookahead=barmerge.lookahead_off)
+
+// alignment: +1 all-long, -1 all-short, 0 mixed
+f_mtfDir(float sc) => sc >= mtfLongTh ? 1 : sc <= (100 - mtfLongTh) ? -1 : 0
+mtfAligned = f_mtfDir(mtfScore1) != 0 and f_mtfDir(mtfScore1) == f_mtfDir(mtfScore2) and f_mtfDir(mtfScore2) == f_mtfDir(mtfScore3)
+mtfAllLong  = mtfAligned and f_mtfDir(mtfScore1) == 1
+mtfAllShort = mtfAligned and f_mtfDir(mtfScore1) == -1
+
+f_mtfpos(p) =>
+    p == "Top Right" ? position.top_right : p == "Top Left" ? position.top_left : p == "Bottom Right" ? position.bottom_right : p == "Bottom Left" ? position.bottom_left : p == "Middle Left" ? position.middle_left : position.middle_right
+
+var table mtfPanel = table.new(f_mtfpos(mtfPos), 3, 5, bgcolor=color.new(#0d0d12, 15), border_color=color.new(color.gray, 65), border_width=1, frame_color=color.new(color.gray, 45), frame_width=1)
+
+// pretty timeframe labels: "15" → 15m, "60" → 1H, "D" → 1D
+f_tfLabel(string tf) =>
+    tf == "60" ? "1H" : tf == "120" ? "2H" : tf == "180" ? "3H" : tf == "240" ? "4H" : tf == "D" or tf == "1D" ? "1D" : tf == "W" or tf == "1W" ? "1W" : str.contains(tf, "D") or str.contains(tf, "W") or str.contains(tf, "M") or str.contains(tf, "S") ? tf : tf + "m"
+
+f_mtfRow(int rowN, string tfName, float sc) =>
+    dir = f_mtfDir(sc)
+    txt = dir == 1 ? "LONG" : dir == -1 ? "SHORT" : "Neutral"
+    col = dir == 1 ? #26a69a : dir == -1 ? #ef5350 : #ffb300
+    table.cell(mtfPanel, 0, rowN, " " + f_tfLabel(tfName), text_color=color.silver, text_size=mtfSize, text_halign=text.align_left)
+    table.cell(mtfPanel, 1, rowN, str.tostring(math.round(sc)), text_color=color.white, text_size=mtfSize, text_halign=text.align_center)
+    table.cell(mtfPanel, 2, rowN, txt + " ", text_color=col, text_size=mtfSize, text_halign=text.align_right)
+
+if barstate.islast and showMTF
+    table.cell(mtfPanel, 0, 0, "MTF BIAS", text_color=color.white, text_size=mtfSize, text_halign=text.align_left, bgcolor=color.new(#1c1c28, 0))
+    table.cell(mtfPanel, 1, 0, "", bgcolor=color.new(#1c1c28, 0))
+    table.cell(mtfPanel, 2, 0, "", bgcolor=color.new(#1c1c28, 0))
+    f_mtfRow(1, mtfTf1, mtfScore1)
+    f_mtfRow(2, mtfTf2, mtfScore2)
+    f_mtfRow(3, mtfTf3, mtfScore3)
+    alignTxt = mtfAllLong ? "▲ ALL LONG" : mtfAllShort ? "▼ ALL SHORT" : "— mixed"
+    alignCol = mtfAllLong ? #26a69a : mtfAllShort ? #ef5350 : color.gray
+    table.cell(mtfPanel, 0, 4, " Align", text_color=color.silver, text_size=mtfSize, text_halign=text.align_left)
+    table.cell(mtfPanel, 1, 4, "", text_size=mtfSize)
+    table.cell(mtfPanel, 2, 4, alignTxt + " ", text_color=alignCol, text_size=mtfSize, text_halign=text.align_right)
+
+alertcondition(mtfAllLong  and not mtfAllLong[1],  "MTF All Long",  "All three timeframes aligned LONG")
+alertcondition(mtfAllShort and not mtfAllShort[1], "MTF All Short", "All three timeframes aligned SHORT")
+
+// ════════════════════════════════════════════════════════════════════════════
 //  SIMPLE VOLUME PROFILE  ·  Right-Side Histogram + Info Panel  ·  TOP LEFT panel
 //  All identifiers prefixed  vp  — nothing clashes with the modules above.
 //  Draws only on the last bar → ~zero load.
@@ -1537,8 +1646,8 @@ if barstate.islast and (vpShow or vpShowPanel)
             int anchorL   = bar_index + vpOffset      // left edge of the histogram (blank area to the right)
             int lineRight = anchorL + vpWidth
 
-            // ================= draw histogram (only if vpShow) =================
-            if vpShow
+            // ========== histogram bars (hidden in Clean Mode — ~50 boxes) ==========
+            if vpShow and not cleanMode
                 for r = 0 to vpRows - 1
                     float tv = totV.get(r)
                     if tv > 0
@@ -1557,7 +1666,8 @@ if barstate.islast and (vpShow or vpShowPanel)
                             int bStart = anchorL + sellLen
                             vpBoxes.push(box.new(bStart, rowHi, bStart + buyLen, rowLo, xloc = xloc.bar_index, border_width = 0, bgcolor = color.new(vpBuyCol, tr)))
 
-                // ---- level lines
+            // ---- level lines (kept even in Clean Mode — these ARE key S/R levels)
+            if vpShow
                 lineExt = vpExtend ? extend.right : extend.none
                 if vpShowPOC
                     vpLines.push(line.new(startIdx, pocPrice, lineRight, pocPrice, xloc = xloc.bar_index, extend = lineExt, color = vpPOCCol, width = 2, style = line.style_solid))
