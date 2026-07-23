@@ -182,6 +182,60 @@ def test_clean_treats_400_as_gone_but_retries_5xx(monkeypatch, tmp_path):
     assert 11 in [e["mid"] for e in T._load_sent()]     # kept for next retry
 
 
+def test_clean_preserves_messages_appended_during_the_sweep(monkeypatch, tmp_path):
+    """A message the bot sends WHILE the ~90s delete sweep runs must survive —
+    the final save re-merges instead of overwriting with a stale snapshot."""
+    _seed_ledger(monkeypatch, tmp_path)
+
+    def fake_post(url, data=None, timeout=None):
+        # simulate a concurrent send landing in the ledger mid-sweep, right
+        # when mid 11's delete goes out
+        if data.get("message_id") == 11:
+            T._record_sent(2, 99, bot="main", ts=NOW)
+        return FakeResp(200, {"ok": True, "result": True})
+
+    monkeypatch.setattr(T.requests, "post", fake_post)
+    summary = T.clean_old_messages(24)
+    mids = sorted(e["mid"] for e in T._load_sent())
+    assert summary["deleted"] == 1
+    assert mids == [10, 99]          # 11 deleted, 12 too-old dropped, 10 + the new 99 kept
+
+
+# ── auto-clean: async, once per day ──────────────────────────────────────────
+def _autoclean_wired(monkeypatch, tmp_path, ran):
+    monkeypatch.setattr(T, "AUTO_CLEAN", True)
+    monkeypatch.setattr(T, "TELEGRAM_GROUP_CHAT_ID", "-100123")
+    monkeypatch.setattr(T, "_AC_STATE", str(tmp_path / "ac.json"))
+    # run "async" synchronously in the test so we can assert on it
+    monkeypatch.setattr(T.threading, "Thread",
+                        lambda target, args=(), **kw: type("T", (), {
+                            "start": lambda self: ran.append(args) or target(*args)})())
+
+
+def test_auto_clean_tick_runs_once_then_gated(monkeypatch, tmp_path):
+    from datetime import datetime
+    ran = []
+    _autoclean_wired(monkeypatch, tmp_path, ran)
+    cleans = []
+    monkeypatch.setattr(T, "clean_old_messages",
+                        lambda h: cleans.append(h) or {"deleted": 0, "too_old": 0,
+                                                       "kept": 0, "failed": 0})
+    at_5am = datetime(2026, 7, 23, 5, 0)
+    assert T.auto_clean_tick(at_5am) is True
+    assert cleans == [24]                                  # kicked off the clean
+    assert T.auto_clean_tick(at_5am) is False              # same day → no re-run
+    assert cleans == [24]
+
+
+def test_auto_clean_tick_waits_for_the_hour(monkeypatch, tmp_path):
+    from datetime import datetime
+    ran = []
+    _autoclean_wired(monkeypatch, tmp_path, ran)
+    monkeypatch.setattr(T, "AUTO_CLEAN_HOUR", 4)
+    assert T.auto_clean_tick(datetime(2026, 7, 23, 3, 0)) is False   # before 04:00
+    assert ran == []
+
+
 # ── private channel (owner DM) ───────────────────────────────────────────────
 def test_private_channel_goes_to_owner_dm_not_group(monkeypatch, tmp_path):
     calls, sleeps = [], []
@@ -323,3 +377,20 @@ def test_send_message_and_pin_still_returns_mid_when_pin_fails(monkeypatch, tmp_
     monkeypatch.setattr(T.time, "sleep", lambda s: None)
 
     assert T.send_message_and_pin("x", force=True, channel="report") == 77
+
+
+def test_run_clean_async_skips_when_already_running(monkeypatch):
+    """The non-blocking lock means a second overlapping clean is a no-op —
+    belt-and-suspenders beside the daily state gate."""
+    calls = []
+    monkeypatch.setattr(T, "clean_old_messages",
+                        lambda h: calls.append(h) or {"deleted": 0, "too_old": 0,
+                                                      "kept": 0, "failed": 0})
+    assert T._ac_thread_lock.acquire(blocking=False)      # simulate a clean in flight
+    try:
+        T._run_clean_async(24)
+        assert calls == []                                # skipped, didn't run
+    finally:
+        T._ac_thread_lock.release()
+    T._run_clean_async(24)                                # lock free now → runs
+    assert calls == [24]

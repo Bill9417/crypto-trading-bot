@@ -160,9 +160,26 @@ AUTO_CLEAN_HOUR = int(os.getenv("TG_AUTO_CLEAN_HOUR", "4"))
 _AC_STATE = os.path.join(os.path.dirname(__file__), "tg_autoclean_state.json")
 
 
+# A daily auto-clean can delete hundreds of messages at ~0.1s each — 90s+ of
+# blocking. Run it OFF the scanner sweep so a clean day doesn't stall every
+# other per-sweep task (movers, liq, whale…) behind it. The non-blocking lock
+# guarantees at most one clean thread at a time regardless of the daily gate.
+_ac_thread_lock = threading.Lock()
+
+
+def _run_clean_async(hours: float) -> None:
+    if not _ac_thread_lock.acquire(blocking=False):
+        return                                # a previous sweep is still running
+    try:
+        print(f"[tg] auto-clean: {clean_old_messages(hours)}")
+    finally:
+        _ac_thread_lock.release()
+
+
 def auto_clean_tick(now=None) -> bool:
-    """Scanner hook: one automatic clean_old_messages(24) per local day after
-    AUTO_CLEAN_HOUR. Returns True when a sweep ran."""
+    """Scanner hook: kick off one clean_old_messages(24) per local day after
+    AUTO_CLEAN_HOUR, in a BACKGROUND thread so the sweep never blocks on it.
+    Returns True when a clean was kicked off this call (not when it finished)."""
     if not (AUTO_CLEAN and TELEGRAM_GROUP_CHAT_ID):
         return False
     from datetime import datetime
@@ -177,41 +194,54 @@ def auto_clean_tick(now=None) -> bool:
         state = {}
     if state.get("last") == today:
         return False
-    summary = clean_old_messages(24)
+    # Mark done BEFORE spawning: the delete sweep runs asynchronously, so the
+    # next scanner sweep must not re-trigger it while it's mid-flight. If the
+    # clean is interrupted, its un-deleted entries stay in the ledger and are
+    # picked up tomorrow — no data loss, just a delay.
     state["last"] = today
     tmp = _AC_STATE + ".tmp"
     with open(tmp, "w", encoding="utf-8") as f:
         json.dump(state, f)
     os.replace(tmp, _AC_STATE)
-    print(f"[tg] auto-clean: {summary}")
+    threading.Thread(target=_run_clean_async, args=(24,),
+                     name="tg-autoclean", daemon=True).start()
     return True
 
 
 def clean_old_messages(max_age_hours: float = 24.0) -> dict:
     """Delete every recorded message older than max_age_hours. Returns
-    {"deleted", "too_old" (>48h, Telegram forbids), "kept", "failed"}."""
+    {"deleted", "too_old" (>48h, Telegram forbids), "kept", "failed"}.
+
+    The ledger is re-merged under the lock at the end (drop only the ids we
+    resolved, keep everything else) instead of overwriting with a stale
+    snapshot — so messages sent DURING the ~90s delete sweep by other threads
+    aren't clobbered out of the ledger and stay deletable later."""
     now = time.time()
     with _sent_lock:
         entries = _load_sent()
-    keep, deleted, too_old, failed = [], 0, 0, 0
+    deleted = too_old = failed = 0
+    resolved = set()                          # (chat, mid) to drop from the ledger
     for e in entries:
         age_h = (now - e.get("ts", 0)) / 3600
         if age_h < max_age_hours:
-            keep.append(e)
             continue
+        key = (e.get("chat"), e.get("mid"))
         if age_h >= DELETE_MAX_AGE_H:
             too_old += 1                      # undeletable forever — drop
+            resolved.add(key)
             continue
         token = ALERTS_BOT_TOKEN if e.get("bot") == "alerts" else BOT_TOKEN
         if _delete_one(token, e.get("chat"), e.get("mid")):
             deleted += 1
+            resolved.add(key)
         else:
-            failed += 1
-            keep.append(e)                    # network blip — retry next time
+            failed += 1                       # network blip — leave it, retry next time
         time.sleep(0.1)                       # deleteMessage is rate-limited too
     with _sent_lock:
-        _save_sent(keep)
-    return {"deleted": deleted, "too_old": too_old, "kept": len(keep),
+        kept = [e for e in _load_sent()
+                if (e.get("chat"), e.get("mid")) not in resolved]
+        _save_sent(kept)
+    return {"deleted": deleted, "too_old": too_old, "kept": len(kept),
             "failed": failed}
 
 
