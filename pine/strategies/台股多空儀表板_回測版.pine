@@ -1,0 +1,248 @@
+// ════════════════════════════════════════════════════════════════════════════
+//  台股多空儀表板 — 回測版(strategy)
+//
+//  【這是什麼】
+//  把「台股多空儀表板」指標 ⑦ 綜合買賣訊號的完整邏輯,一字不改搬進
+//  strategy(),讓 TradingView 策略測試器告訴你:「機械式跟著三角形進出,
+//  到底賺不賺錢」。訊號引擎與指標 v3 完全相同:
+//  結構翻轉上膛 → 收盤同時通過【季線/60均同側 + 綜合評分 + ADX + Vegas同向
+//  + VWAP同側(分K) + 價格在通道外(盤整剋星) + 大週期同向(分K) + 冷卻期】才發射。
+//
+//  【怎麼用】
+//  1. 個股日線:圖表開 2330 / 2317 等「日線」,交易方向選「只做多」
+//     (現股不能隨便放空)。手續費已預設台股 0.2925%/邊(含證交稅平均)。
+//  2. 台指期 15分:圖表開 TAIFEX:TXF1! 或 MXF1!「15分」,交易方向「多空都做」,
+//     建議打開「收盤前強制平倉」做當沖版本。
+//     ★ 期貨成本便宜很多:請到 策略屬性(Properties)把手續費改成
+//       每筆約 0.004%(期交稅 0.002% + 手續費),不然會被股票級成本吃死。
+//  3. 出場三選一疊加:反向訊號(永遠有效,雙向=反手/單向=平倉)、
+//     ATR 停損停利(可關;停利 0 = 只設停損)、N 根強制出場(0 = 關)。
+//
+//  【怎麼讀結果 — 誠實提醒】
+//  · 看「淨利、獲利因子(PF)、最大回撤」,不要只看勝率——
+//    我們用真實資料證明過:78% 勝率的設定也可以是虧錢的。
+//  · 訊號在收盤定案、下一根開盤進場(TV 預設),與指標箭頭一致、不重繪。
+//  · 同一根 K 棒同時碰到停損與停利時,TV 的判定是估計值;
+//    Premium 帳戶可在 Properties 打開「Bar Magnifier」提高精度。
+//  · 回測好 ≠ 未來會賺。這支策略的正確定位是「幫箭頭打分數」:
+//    如果連回測都不賺,實盤更不可能;如果回測賺,也只代表值得小部位驗證。
+// ════════════════════════════════════════════════════════════════════════════
+//@version=6
+strategy("台股多空儀表板 — 回測版", overlay=true,
+     initial_capital=10000000,
+     default_qty_type=strategy.percent_of_equity, default_qty_value=95,
+     commission_type=strategy.commission.percent, commission_value=0.2925,
+     calc_on_every_tick=false, max_labels_count=100, max_lines_count=100)
+
+UPCOL = #f23645   // 台股配色:偏多=紅
+DNCOL = #26a69a   // 台股配色:偏空=綠
+
+// ╔═══════════════════════════════════════════════════════╗
+// ║  Ⓐ 回測設定                                            ║
+// ╚═══════════════════════════════════════════════════════╝
+gBT = "Ⓐ 回測設定"
+startT  = input.time(timestamp("1 Jan 2023 00:00 +0800"), "回測起始", group=gBT)
+endT    = input.time(timestamp("1 Jan 2030 00:00 +0800"), "回測結束", group=gBT)
+dirMode = input.string("多空都做", "交易方向", ["多空都做", "只做多", "只做空"], group=gBT,
+     tooltip="個股現股請選「只做多」(賣出訊號變成平倉訊號)。台指期可「多空都做」(反向訊號直接反手)。")
+
+gEX = "Ⓑ 出場設定"
+useAtrExit = input.bool(true, "ATR 停損 / 停利", group=gEX, tooltip="以「訊號當根」的 ATR14 計算:停損 = 進場價 ∓ N×ATR,停利 = 進場價 ± M×ATR。關閉 = 只靠反向訊號出場(純跟箭頭)。")
+slMult     = input.float(2.0, "停損 ×ATR", minval=0.5, maxval=10, step=0.5, group=gEX)
+tpMult     = input.float(4.0, "停利 ×ATR(0 = 不設停利)", minval=0, maxval=20, step=0.5, group=gEX)
+timeoutBars= input.int(0, "N 根後強制出場(0 = 關閉)", minval=0, maxval=500, group=gEX, tooltip="持倉超過 N 根 K 棒未觸價就平倉。日線可試 40(≈ 兩個月)。")
+eodFlat    = input.bool(false, "期貨:收盤前強制平倉(當沖)", group=gEX, tooltip="分K限定。日盤收盤前(預設 13:30–13:45)強制平倉並停止進場,做「不留倉」的當沖回測。注意:TXF1! 含夜盤,夜盤部位請自行評估。")
+eodSess    = input.session("1330-1345", "平倉時段", group=gEX)
+
+// ╔═══════════════════════════════════════════════════════╗
+// ║  Ⓒ 訊號參數(與指標 ⑦ 完全相同)                        ║
+// ╚═══════════════════════════════════════════════════════╝
+gCS = "Ⓒ 綜合訊號(同指標⑦)"
+confirmClose= input.bool(true, "收盤確認(不重繪)", group=gCS)
+zigzagLen  = input.int(9, "結構 ZigZag 長度", minval=5, maxval=30, group=gCS)
+fibFactor  = input.float(0.33, "結構突破確認 (Fib)", minval=0, maxval=1, step=0.01, group=gCS)
+scoreTh    = input.int(70, "評分門檻", minval=55, maxval=90, group=gCS)
+useAdx     = input.bool(true, "ADX 趨勢濾網 ≥", group=gCS, inline="adx")
+adxTh      = input.int(20, "", minval=10, maxval=50, group=gCS, inline="adx")
+adxLen     = input.int(14, "ADX 長度", minval=5, maxval=50, group=gCS)
+useVegasGate = input.bool(true, "Vegas 同向確認", group=gCS)
+useVwapGate  = input.bool(true, "盤中:VWAP 同側確認", group=gCS)
+useTunnelGate = input.bool(true, "價格需在通道外(盤整剋星)", group=gCS)
+useHtfGate   = input.bool(true, "分K:大週期同向確認", group=gCS, inline="htf")
+htfTf        = input.timeframe("60", "", group=gCS, inline="htf")
+sigCooldown  = input.int(5, "訊號冷卻(K棒)", minval=0, maxval=60, group=gCS)
+
+// ╔═══════════════════════════════════════════════════════╗
+// ║  Ⓓ 訊號引擎(照抄指標,勿改)                            ║
+// ╚═══════════════════════════════════════════════════════╝
+sma5   = ta.sma(close, 5)
+sma20  = ta.sma(close, 20)
+sma60  = ta.sma(close, 60)
+sma240 = ta.sma(close, 240)
+atr14  = ta.atr(14)
+intraOn = timeframe.isintraday
+dayVwap = ta.vwap(hlc3)
+
+// 週線 / 日線大方向(已收盤K,lookahead+[1] = 不重繪)
+[wkClose, wkMa10] = request.security(syminfo.tickerid, "W", [close[1], ta.sma(close, 10)[1]], lookahead=barmerge.lookahead_on)
+[dCls, dMa20]     = request.security(syminfo.tickerid, "D", [close[1], ta.sma(close, 20)[1]], lookahead=barmerge.lookahead_on)
+
+// 六因子評分(0–100)——與指標⑤相同
+fArr   = sma5 > sma20 and sma20 > sma60 ? 1 : sma5 < sma20 and sma20 < sma60 ? -1 : 0
+fSea   = close > sma60 ? 1 : close < sma60 ? -1 : 0
+fYearD = na(sma240) ? 0 : close > sma240 ? 1 : close < sma240 ? -1 : 0
+fVwapS = na(dayVwap) ? 0 : close > dayVwap ? 1 : close < dayVwap ? -1 : 0
+fYear  = intraOn ? fVwapS : fYearD
+fSlope = sma20 > sma20[1] ? 1 : sma20 < sma20[1] ? -1 : 0
+volMean60 = math.sum(close * volume, 60) / math.sum(volume, 60)
+fVolP  = na(volMean60) ? 0 : close > volMean60 ? 1 : close < volMean60 ? -1 : 0
+fWeekW = na(wkClose) or na(wkMa10) ? 0 : wkClose > wkMa10 ? 1 : wkClose < wkMa10 ? -1 : 0
+fDayTr = na(dCls) or na(dMa20) ? 0 : dCls > dMa20 ? 1 : dCls < dMa20 ? -1 : 0
+fWeek  = intraOn ? fDayTr : fWeekW
+netRaw    = fArr*25 + fSea*25 + fYear*15 + fSlope*15 + fVolP*10 + fWeek*10
+confScore = math.max(0, math.min(100, 50 + netRaw / 2.0))
+
+// Vegas 通道 + 趨勢線
+vt_ma1 = ta.ema(close, 144)
+vt_ma2 = ta.ema(close, 169)
+vegasEMA200 = ta.sma(ta.ema(close, 200), 5)
+vegasRise = ta.change(vegasEMA200) > 0
+vegasFall = ta.change(vegasEMA200) < 0
+
+// 市場結構(MSB)引擎:結構翻轉負責「上膛」(改寫自 EmreKb,MPL 2.0)
+to_up   = high >= ta.highest(zigzagLen)
+to_down = low  <= ta.lowest(zigzagLen)
+trendL = 1
+trendL := nz(trendL[1], 1)
+trendL := trendL == 1 and to_down ? -1 : trendL == -1 and to_up ? 1 : trendL
+lastUpSince = ta.barssince(to_up[1])
+lowVal  = ta.lowest(nz(lastUpSince > 0 ? lastUpSince : 1, 1))
+lastDnSince = ta.barssince(to_down[1])
+highVal = ta.highest(nz(lastDnSince > 0 ? lastDnSince : 1, 1))
+var float h0 = na
+var float h1 = na
+var float l0 = na
+var float l1 = na
+if ta.change(trendL) != 0
+    if trendL == 1
+        l1 := l0
+        l0 := lowVal
+    if trendL == -1
+        h1 := h0
+        h0 := highVal
+market = 1
+market := nz(market[1], 1)
+lastL0 = ta.valuewhen(ta.change(market) != 0, l0, 0)
+lastH0 = ta.valuewhen(ta.change(market) != 0, h0, 0)
+market := lastL0 == l0 or lastH0 == h0 ? market :
+     market == 1 and not na(l1) and l0 < l1 and l0 < l1 - math.abs(h0 - l1) * fibFactor ? -1 :
+     market == -1 and not na(h1) and h0 > h1 and h0 > h1 + math.abs(h1 - l0) * fibFactor ? 1 : market
+msbFlipUp   = ta.change(market) != 0 and market == 1
+msbFlipDown = ta.change(market) != 0 and market == -1
+
+[dmiP, dmiM, adxVal] = ta.dmi(adxLen, adxLen)
+regimeOK = not useAdx or adxVal >= adxTh
+
+var bool longArmed  = false
+var bool shortArmed = false
+var int  lastSig    = 0
+var int  lastSigBar = na
+if msbFlipUp
+    longArmed := true
+    shortArmed := false
+if msbFlipDown
+    shortArmed := true
+    longArmed := false
+cdOK = sigCooldown == 0 or na(lastSigBar) or bar_index - lastSigBar >= sigCooldown
+
+vwapOKL = not intraOn or not useVwapGate or na(dayVwap) or close > dayVwap
+vwapOKS = not intraOn or not useVwapGate or na(dayVwap) or close < dayVwap
+tunnelOKL = not useTunnelGate or close > math.max(vt_ma1, vt_ma2)
+tunnelOKS = not useTunnelGate or close < math.min(vt_ma1, vt_ma2)
+[htfVA, htfVB] = request.security(syminfo.tickerid, htfTf,
+     [ta.sma(ta.ema(close, 200), 5)[1], ta.sma(ta.ema(close, 200), 5)[2]],
+     lookahead=barmerge.lookahead_on)
+htfOKL = not timeframe.isintraday or not useHtfGate or (not na(htfVA) and not na(htfVB) and htfVA > htfVB)
+htfOKS = not timeframe.isintraday or not useHtfGate or (not na(htfVA) and not na(htfVB) and htfVA < htfVB)
+
+sigWin = not confirmClose or barstate.isconfirmed
+longSig  = false
+shortSig = false
+if sigWin
+    if longArmed and close > sma60 and regimeOK and (not useVegasGate or vegasRise) and vwapOKL and tunnelOKL and htfOKL and confScore >= scoreTh and cdOK and lastSig != 1
+        longSig := true
+        lastSig := 1
+        longArmed := false
+        lastSigBar := bar_index
+    if shortArmed and close < sma60 and regimeOK and (not useVegasGate or vegasFall) and vwapOKS and tunnelOKS and htfOKS and confScore <= (100 - scoreTh) and cdOK and lastSig != -1
+        shortSig := true
+        lastSig := -1
+        shortArmed := false
+        lastSigBar := bar_index
+
+// ╔═══════════════════════════════════════════════════════╗
+// ║  Ⓔ 下單(訊號收盤定案 → 下一根開盤成交)                ║
+// ╚═══════════════════════════════════════════════════════╝
+inWindow  = time >= startT and time <= endT
+inEodFlat = eodFlat and timeframe.isintraday and not na(time(timeframe.period, eodSess, "Asia/Taipei"))
+allowLong  = dirMode != "只做空"
+allowShort = dirMode != "只做多"
+canTrade   = inWindow and not inEodFlat
+
+var float sigAtr = na
+if longSig
+    sigAtr := atr14
+    if canTrade
+        if allowLong
+            strategy.entry("多", strategy.long)
+        else if strategy.position_size < 0
+            strategy.close("空", comment="訊號翻多")
+if shortSig
+    sigAtr := atr14
+    if canTrade
+        if allowShort
+            strategy.entry("空", strategy.short)
+        else if strategy.position_size > 0
+            strategy.close("多", comment="訊號翻空")
+
+// ATR 停損 / 停利(每根重掛,基準 = 實際成交均價)
+if useAtrExit and strategy.position_size > 0 and not na(sigAtr)
+    strategy.exit("出多", from_entry="多",
+         stop=strategy.position_avg_price - slMult * sigAtr,
+         limit=tpMult > 0 ? strategy.position_avg_price + tpMult * sigAtr : na)
+if useAtrExit and strategy.position_size < 0 and not na(sigAtr)
+    strategy.exit("出空", from_entry="空",
+         stop=strategy.position_avg_price + slMult * sigAtr,
+         limit=tpMult > 0 ? strategy.position_avg_price - tpMult * sigAtr : na)
+
+// N 根強制出場
+if timeoutBars > 0 and strategy.opentrades > 0 and bar_index - strategy.opentrades.entry_bar_index(strategy.opentrades - 1) >= timeoutBars
+    strategy.close_all(comment="時間出場")
+
+// 當沖收盤平倉 / 回測區間外清倉
+if inEodFlat and strategy.position_size != 0
+    strategy.close_all(comment="收盤平倉")
+if not inWindow and strategy.position_size != 0
+    strategy.close_all(comment="區間外")
+
+// ╔═══════════════════════════════════════════════════════╗
+// ║  Ⓕ 圖面(精簡:只畫會影響訊號的線)                      ║
+// ╚═══════════════════════════════════════════════════════╝
+plot(sma60, "季線/60均", color=color.new(#2962ff, 0), linewidth=2)
+vtL1 = plot(vt_ma1, "Vegas 通道 EMA144", color=color.new(color.orange, 55), linewidth=1)
+vtL2 = plot(vt_ma2, "Vegas 通道 EMA169", color=color.new(color.orange, 55), linewidth=1)
+fill(vtL1, vtL2, color=vt_ma1 > vt_ma2 and vt_ma1 >= vt_ma1[1] ? color.new(UPCOL, 82) : color.new(DNCOL, 86), title="通道填色")
+plot(vegasEMA200, "Vegas EMA200", color=vegasRise ? UPCOL : DNCOL, linewidth=2)
+plot(intraOn ? dayVwap : na, "當日VWAP", color=color.new(#e040fb, 15), linewidth=2, style=plot.style_linebr)
+
+plotshape(longSig,  "綜合買進", shape.triangleup,   location.belowbar, color.new(UPCOL, 0), text="買", textcolor=color.white, size=size.small)
+plotshape(shortSig, "綜合賣出", shape.triangledown, location.abovebar, color.new(DNCOL, 0), text="賣", textcolor=color.white, size=size.small)
+
+plot(useAtrExit and strategy.position_size != 0 and not na(sigAtr) ?
+     (strategy.position_size > 0 ? strategy.position_avg_price - slMult * sigAtr : strategy.position_avg_price + slMult * sigAtr) : na,
+     "停損線", color=color.new(DNCOL, 0), linewidth=1, style=plot.style_linebr)
+plot(useAtrExit and tpMult > 0 and strategy.position_size != 0 and not na(sigAtr) ?
+     (strategy.position_size > 0 ? strategy.position_avg_price + tpMult * sigAtr : strategy.position_avg_price - tpMult * sigAtr) : na,
+     "停利線", color=color.new(UPCOL, 0), linewidth=1, style=plot.style_linebr)
+plot(strategy.position_size != 0 ? strategy.position_avg_price : na,
+     "進場均價", color=color.new(color.silver, 30), linewidth=1, style=plot.style_linebr)

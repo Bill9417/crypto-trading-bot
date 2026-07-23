@@ -1,0 +1,356 @@
+// ════════════════════════════════════════════════════════════════════════════
+//  台股多空儀表板 — SL/TP 百分比優化版(strategy)
+//
+//  【這是什麼】
+//  訊號引擎與「台股多空儀表板」指標 ⑦ 完全相同(含全部防盤整濾網),
+//  但停損/停利改成「進場價的百分比」,並且內建一個
+//  ★ SL×TP 百分比優化矩陣 ★:
+//  同一段歷史、同一批買賣訊號,一次同時模擬整個 SL% × TP% 網格
+//  (預設 6×6 = 36 種組合),把每一組的總報酬畫成表格放在圖表右下角。
+//  TradingView 本身沒有參數優化器 — 這張表就是優化器。
+//
+//  【怎麼用(台指期 15分)】
+//  1. 圖表開 TAIFEX:TXF1! 或 MXF1!,切 15 分鐘
+//  2. 看右下角矩陣:列=停損%、欄=停利%,格子=該組合的累積報酬%
+//     (紅=賺、綠=賠,台股配色;琥珀色底 = 全場最佳)
+//  3. 把最佳組合填進「Ⓑ 實際下單」的 停損%/停利% → 策略測試器
+//     就會用這組數字跑完整績效(淨利/PF/回撤/勝率)
+//  4. 手續費:期貨成本已預設 0.004%/邊(期交稅+手續費約略值)。
+//     ★ 個股請把「策略屬性的手續費」和「Ⓒ 模擬成本」都改成 0.2925 ★
+//
+//  【誠實提醒 — 一定要讀】
+//  · 矩陣是「對這段歷史」的最佳,不是未來的最佳。挑的時候:
+//    選「一整片都賺」的高原,不要選「孤零零一格賺」的尖峰;
+//    然後用 Deep Backtesting 換一段日期驗證,兩段都賺才算數。
+//  · 個股 15 分做百分比停利幾乎是數學上的死局:台股來回成本 0.585%,
+//    停利 1% 等於六成被成本吃掉 — 矩陣會誠實顯示這件事。
+//  · 模擬假設(偏保守):訊號收盤定案 → 下一根開盤進場;
+//    同一根K棒同時碰到停損和停利時,一律先算停損;
+//    反向訊號出現時以開盤價反手;最後一筆未平倉以現價估值。
+//    TV 策略測試器的同根判定方式略有不同,兩邊數字有小差異是正常的。
+//  · 過去績效不代表未來;僅供參考,非投資建議。
+// ════════════════════════════════════════════════════════════════════════════
+//@version=6
+strategy("台股多空儀表板 — SL/TP 百分比優化版", overlay=true,
+     initial_capital=10000000,
+     default_qty_type=strategy.percent_of_equity, default_qty_value=95,
+     commission_type=strategy.commission.percent, commission_value=0.004,
+     calc_on_every_tick=false, max_labels_count=100, max_lines_count=100)
+
+UPCOL = #f23645   // 台股配色:賺=紅
+DNCOL = #26a69a   // 台股配色:賠=綠
+AMBER = #ffb300
+
+// ╔═══════════════════════════════════════════════════════╗
+// ║  Ⓐ 回測設定                                            ║
+// ╚═══════════════════════════════════════════════════════╝
+gBT = "Ⓐ 回測設定"
+startT  = input.time(timestamp("1 Jan 2024 00:00 +0800"), "回測起始", group=gBT)
+endT    = input.time(timestamp("1 Jan 2030 00:00 +0800"), "回測結束", group=gBT)
+dirMode = input.string("多空都做", "交易方向", ["多空都做", "只做多", "只做空"], group=gBT,
+     tooltip="台指期選「多空都做」(反向訊號直接反手)。個股現股選「只做多」(賣訊號=平倉)。優化矩陣會跟著這個設定一起模擬。")
+
+gEX = "Ⓑ 實際下單(把矩陣最佳組合填進來)"
+slPct = input.float(1.0, "停損 %", minval=0.1, maxval=10, step=0.1, group=gEX)
+tpPct = input.float(2.0, "停利 %", minval=0.1, maxval=20, step=0.1, group=gEX)
+
+gOP = "Ⓒ SL×TP 優化矩陣"
+showOpt   = input.bool(true, "顯示優化矩陣", group=gOP)
+simCost   = input.float(0.004, "模擬成本 %/邊", minval=0, maxval=1, step=0.001, group=gOP,
+     tooltip="期貨約 0.004(期交稅 0.002% + 手續費)。個股請改 0.2925,並把策略屬性的手續費一起改,兩邊才會一致。")
+slListStr = input.string("0.3,0.5,0.8,1.2,1.6,2.0", "停損 % 清單(逗號分隔,勿加空格)", group=gOP)
+tpListStr = input.string("0.5,1.0,1.5,2.0,3.0,4.0", "停利 % 清單(逗號分隔,勿加空格)", group=gOP)
+
+// ╔═══════════════════════════════════════════════════════╗
+// ║  Ⓓ 訊號參數(與指標 ⑦ 完全相同)                        ║
+// ╚═══════════════════════════════════════════════════════╝
+gCS = "Ⓓ 綜合訊號(同指標⑦)"
+confirmClose= input.bool(true, "收盤確認(不重繪)", group=gCS)
+zigzagLen  = input.int(9, "結構 ZigZag 長度", minval=5, maxval=30, group=gCS)
+fibFactor  = input.float(0.33, "結構突破確認 (Fib)", minval=0, maxval=1, step=0.01, group=gCS)
+scoreTh    = input.int(70, "評分門檻", minval=55, maxval=90, group=gCS)
+useAdx     = input.bool(true, "ADX 趨勢濾網 ≥", group=gCS, inline="adx")
+adxTh      = input.int(20, "", minval=10, maxval=50, group=gCS, inline="adx")
+adxLen     = input.int(14, "ADX 長度", minval=5, maxval=50, group=gCS)
+useVegasGate = input.bool(true, "Vegas 同向確認", group=gCS)
+useVwapGate  = input.bool(true, "盤中:VWAP 同側確認", group=gCS)
+useTunnelGate = input.bool(true, "價格需在通道外(盤整剋星)", group=gCS)
+useHtfGate   = input.bool(true, "分K:大週期同向確認", group=gCS, inline="htf")
+htfTf        = input.timeframe("60", "", group=gCS, inline="htf")
+sigCooldown  = input.int(5, "訊號冷卻(K棒)", minval=0, maxval=60, group=gCS)
+
+// ╔═══════════════════════════════════════════════════════╗
+// ║  Ⓔ 訊號引擎(照抄指標,勿改)                            ║
+// ╚═══════════════════════════════════════════════════════╝
+sma5   = ta.sma(close, 5)
+sma20  = ta.sma(close, 20)
+sma60  = ta.sma(close, 60)
+sma240 = ta.sma(close, 240)
+intraOn = timeframe.isintraday
+dayVwap = ta.vwap(hlc3)
+
+[wkClose, wkMa10] = request.security(syminfo.tickerid, "W", [close[1], ta.sma(close, 10)[1]], lookahead=barmerge.lookahead_on)
+[dCls, dMa20]     = request.security(syminfo.tickerid, "D", [close[1], ta.sma(close, 20)[1]], lookahead=barmerge.lookahead_on)
+
+fArr   = sma5 > sma20 and sma20 > sma60 ? 1 : sma5 < sma20 and sma20 < sma60 ? -1 : 0
+fSea   = close > sma60 ? 1 : close < sma60 ? -1 : 0
+fYearD = na(sma240) ? 0 : close > sma240 ? 1 : close < sma240 ? -1 : 0
+fVwapS = na(dayVwap) ? 0 : close > dayVwap ? 1 : close < dayVwap ? -1 : 0
+fYear  = intraOn ? fVwapS : fYearD
+fSlope = sma20 > sma20[1] ? 1 : sma20 < sma20[1] ? -1 : 0
+volMean60 = math.sum(close * volume, 60) / math.sum(volume, 60)
+fVolP  = na(volMean60) ? 0 : close > volMean60 ? 1 : close < volMean60 ? -1 : 0
+fWeekW = na(wkClose) or na(wkMa10) ? 0 : wkClose > wkMa10 ? 1 : wkClose < wkMa10 ? -1 : 0
+fDayTr = na(dCls) or na(dMa20) ? 0 : dCls > dMa20 ? 1 : dCls < dMa20 ? -1 : 0
+fWeek  = intraOn ? fDayTr : fWeekW
+netRaw    = fArr*25 + fSea*25 + fYear*15 + fSlope*15 + fVolP*10 + fWeek*10
+confScore = math.max(0, math.min(100, 50 + netRaw / 2.0))
+
+vt_ma1 = ta.ema(close, 144)
+vt_ma2 = ta.ema(close, 169)
+vegasEMA200 = ta.sma(ta.ema(close, 200), 5)
+vegasRise = ta.change(vegasEMA200) > 0
+vegasFall = ta.change(vegasEMA200) < 0
+
+// 市場結構(MSB)引擎(改寫自 EmreKb,MPL 2.0)
+to_up   = high >= ta.highest(zigzagLen)
+to_down = low  <= ta.lowest(zigzagLen)
+trendL = 1
+trendL := nz(trendL[1], 1)
+trendL := trendL == 1 and to_down ? -1 : trendL == -1 and to_up ? 1 : trendL
+lastUpSince = ta.barssince(to_up[1])
+lowVal  = ta.lowest(nz(lastUpSince > 0 ? lastUpSince : 1, 1))
+lastDnSince = ta.barssince(to_down[1])
+highVal = ta.highest(nz(lastDnSince > 0 ? lastDnSince : 1, 1))
+var float h0 = na
+var float h1 = na
+var float l0 = na
+var float l1 = na
+if ta.change(trendL) != 0
+    if trendL == 1
+        l1 := l0
+        l0 := lowVal
+    if trendL == -1
+        h1 := h0
+        h0 := highVal
+market = 1
+market := nz(market[1], 1)
+lastL0 = ta.valuewhen(ta.change(market) != 0, l0, 0)
+lastH0 = ta.valuewhen(ta.change(market) != 0, h0, 0)
+market := lastL0 == l0 or lastH0 == h0 ? market :
+     market == 1 and not na(l1) and l0 < l1 and l0 < l1 - math.abs(h0 - l1) * fibFactor ? -1 :
+     market == -1 and not na(h1) and h0 > h1 and h0 > h1 + math.abs(h1 - l0) * fibFactor ? 1 : market
+msbFlipUp   = ta.change(market) != 0 and market == 1
+msbFlipDown = ta.change(market) != 0 and market == -1
+
+[dmiP, dmiM, adxVal] = ta.dmi(adxLen, adxLen)
+regimeOK = not useAdx or adxVal >= adxTh
+
+var bool longArmed  = false
+var bool shortArmed = false
+var int  lastSig    = 0
+var int  lastSigBar = na
+if msbFlipUp
+    longArmed := true
+    shortArmed := false
+if msbFlipDown
+    shortArmed := true
+    longArmed := false
+cdOK = sigCooldown == 0 or na(lastSigBar) or bar_index - lastSigBar >= sigCooldown
+
+vwapOKL = not intraOn or not useVwapGate or na(dayVwap) or close > dayVwap
+vwapOKS = not intraOn or not useVwapGate or na(dayVwap) or close < dayVwap
+tunnelOKL = not useTunnelGate or close > math.max(vt_ma1, vt_ma2)
+tunnelOKS = not useTunnelGate or close < math.min(vt_ma1, vt_ma2)
+[htfVA, htfVB] = request.security(syminfo.tickerid, htfTf,
+     [ta.sma(ta.ema(close, 200), 5)[1], ta.sma(ta.ema(close, 200), 5)[2]],
+     lookahead=barmerge.lookahead_on)
+htfOKL = not timeframe.isintraday or not useHtfGate or (not na(htfVA) and not na(htfVB) and htfVA > htfVB)
+htfOKS = not timeframe.isintraday or not useHtfGate or (not na(htfVA) and not na(htfVB) and htfVA < htfVB)
+
+sigWin = not confirmClose or barstate.isconfirmed
+longSig  = false
+shortSig = false
+if sigWin
+    if longArmed and close > sma60 and regimeOK and (not useVegasGate or vegasRise) and vwapOKL and tunnelOKL and htfOKL and confScore >= scoreTh and cdOK and lastSig != 1
+        longSig := true
+        lastSig := 1
+        longArmed := false
+        lastSigBar := bar_index
+    if shortArmed and close < sma60 and regimeOK and (not useVegasGate or vegasFall) and vwapOKS and tunnelOKS and htfOKS and confScore <= (100 - scoreTh) and cdOK and lastSig != -1
+        shortSig := true
+        lastSig := -1
+        shortArmed := false
+        lastSigBar := bar_index
+
+// ╔═══════════════════════════════════════════════════════╗
+// ║  Ⓕ 實際下單(用 Ⓑ 的百分比;供策略測試器出完整報表)      ║
+// ╚═══════════════════════════════════════════════════════╝
+inWindow   = time >= startT and time <= endT
+allowLong  = dirMode != "只做空"
+allowShort = dirMode != "只做多"
+
+if longSig and inWindow
+    if allowLong
+        strategy.entry("多", strategy.long)
+    else if strategy.position_size < 0
+        strategy.close("空", comment="訊號翻多")
+if shortSig and inWindow
+    if allowShort
+        strategy.entry("空", strategy.short)
+    else if strategy.position_size > 0
+        strategy.close("多", comment="訊號翻空")
+
+if strategy.position_size > 0
+    strategy.exit("出多", from_entry="多",
+         stop=strategy.position_avg_price * (1 - slPct / 100),
+         limit=strategy.position_avg_price * (1 + tpPct / 100))
+if strategy.position_size < 0
+    strategy.exit("出空", from_entry="空",
+         stop=strategy.position_avg_price * (1 + slPct / 100),
+         limit=strategy.position_avg_price * (1 - tpPct / 100))
+if not inWindow and strategy.position_size != 0
+    strategy.close_all(comment="區間外")
+
+// ╔═══════════════════════════════════════════════════════╗
+// ║  Ⓖ SL×TP 網格模擬器(同一批訊號,36 組同時跑)           ║
+// ╚═══════════════════════════════════════════════════════╝
+f_list(string s) =>
+    arr = array.new<float>()
+    for p in str.split(s, ",")
+        v = str.tonumber(p)
+        if not na(v) and v > 0
+            array.push(arr, v)
+    arr
+
+var array<float> slList = f_list(slListStr)
+var array<float> tpList = f_list(tpListStr)
+var int nSl = array.size(slList)
+var int nTp = array.size(tpList)
+var int nC  = nSl * nTp
+
+var array<int>   cDir    = array.new<int>(nC, 0)      // 0=空手 1=多 -1=空
+var array<float> cEntry  = array.new<float>(nC, 0.0)
+var array<float> cNet    = array.new<float>(nC, 0.0)  // 累積報酬 %(單利加總)
+var array<int>   cTrades = array.new<int>(nC, 0)
+var array<int>   cWins   = array.new<int>(nC, 0)
+var array<float> cGWin   = array.new<float>(nC, 0.0)
+var array<float> cGLoss  = array.new<float>(nC, 0.0)
+var int pendDir = 0                                    // 上一根收盤產生、等本根開盤進場
+
+rtCost = 2 * simCost                                   // 來回成本 %
+
+f_book(int k, float pnl) =>
+    array.set(cNet, k, array.get(cNet, k) + pnl)
+    array.set(cTrades, k, array.get(cTrades, k) + 1)
+    if pnl > 0
+        array.set(cWins, k, array.get(cWins, k) + 1)
+        array.set(cGWin, k, array.get(cGWin, k) + pnl)
+    else
+        array.set(cGLoss, k, array.get(cGLoss, k) - pnl)
+
+if showOpt and nC > 0
+    // ① 反手 / 進場(本根開盤價 = 訊號收盤定案、下一根開盤成交)
+    if pendDir != 0
+        openOK = pendDir == 1 ? allowLong : allowShort
+        for k = 0 to nC - 1
+            d = array.get(cDir, k)
+            if d != 0 and d != pendDir
+                f_book(k, (open / array.get(cEntry, k) - 1) * 100 * d - rtCost)
+                array.set(cDir, k, 0)
+            if array.get(cDir, k) == 0 and openOK
+                array.set(cDir, k, pendDir)
+                array.set(cEntry, k, open)
+        pendDir := 0
+    // ② 停損 / 停利(同根雙觸 = 保守先算停損)
+    for k = 0 to nC - 1
+        d = array.get(cDir, k)
+        if d != 0
+            e   = array.get(cEntry, k)
+            slp = array.get(slList, math.floor(k / nTp))
+            tpp = array.get(tpList, k % nTp)
+            slPx = d > 0 ? e * (1 - slp / 100) : e * (1 + slp / 100)
+            tpPx = d > 0 ? e * (1 + tpp / 100) : e * (1 - tpp / 100)
+            hitSl = d > 0 ? low <= slPx : high >= slPx
+            hitTp = d > 0 ? high >= tpPx : low <= tpPx
+            if hitSl
+                f_book(k, -slp - rtCost)
+                array.set(cDir, k, 0)
+            else if hitTp
+                f_book(k, tpp - rtCost)
+                array.set(cDir, k, 0)
+    // ③ 本根收盤的新訊號 → 掛到下一根開盤
+    if inWindow and (longSig or shortSig)
+        pendDir := longSig ? 1 : -1
+
+// ── 矩陣表格(列=SL、欄=TP;含未平倉估值)──
+var table optTb = na
+if barstate.islast and showOpt and nC > 0
+    if na(optTb)
+        optTb := table.new(position.bottom_right, nTp + 1, nSl + 2,
+             bgcolor=color.new(#0d0d12, 15), border_color=color.new(color.gray, 65),
+             border_width=1, frame_color=color.new(color.gray, 45), frame_width=1)
+    table.cell(optTb, 0, 0, "損\\利", text_color=color.silver, text_size=size.small)
+    for j = 0 to nTp - 1
+        table.cell(optTb, j + 1, 0, str.tostring(array.get(tpList, j), "#.##") + "%",
+             text_color=color.white, text_size=size.small, bgcolor=color.new(#1c1c28, 0))
+    int bestK = -1
+    float bestV = -1e9
+    for k = 0 to nC - 1
+        float disp = array.get(cNet, k)
+        if array.get(cDir, k) != 0
+            disp += (close / array.get(cEntry, k) - 1) * 100 * array.get(cDir, k) - rtCost
+        if disp > bestV
+            bestV := disp
+            bestK := k
+    for i = 0 to nSl - 1
+        table.cell(optTb, 0, i + 1, str.tostring(array.get(slList, i), "#.##") + "%",
+             text_color=color.white, text_size=size.small, bgcolor=color.new(#1c1c28, 0))
+        for j = 0 to nTp - 1
+            k = i * nTp + j
+            float disp = array.get(cNet, k)
+            if array.get(cDir, k) != 0
+                disp += (close / array.get(cEntry, k) - 1) * 100 * array.get(cDir, k) - rtCost
+            txt = (disp > 0 ? "+" : "") + str.tostring(disp, "#.#")
+            table.cell(optTb, j + 1, i + 1, txt,
+                 text_color=disp > 0 ? UPCOL : disp < 0 ? DNCOL : color.silver,
+                 text_size=size.small,
+                 bgcolor=k == bestK ? color.new(AMBER, 70) : na)
+    // 最佳組合摘要列
+    table.merge_cells(optTb, 0, nSl + 1, nTp, nSl + 1)
+    if bestK >= 0
+        bSl = array.get(slList, math.floor(bestK / nTp))
+        bTp = array.get(tpList, bestK % nTp)
+        bN  = array.get(cTrades, bestK)
+        bW  = array.get(cWins, bestK)
+        bGW = array.get(cGWin, bestK)
+        bGL = array.get(cGLoss, bestK)
+        bWr = bN > 0 ? 100.0 * bW / bN : 0.0
+        bPf = bGL > 0 ? bGW / bGL : bGW > 0 ? 99.9 : 0.0
+        table.cell(optTb, 0, nSl + 1,
+             "最佳:損" + str.tostring(bSl, "#.##") + "% 利" + str.tostring(bTp, "#.##") + "% → " +
+             (bestV > 0 ? "+" : "") + str.tostring(bestV, "#.#") + "% · " + str.tostring(bN) + "筆 · 勝率" +
+             str.tostring(bWr, "#.#") + "% · PF " + str.tostring(bPf, "#.##") + " ※挑高原不挑尖峰,換日期驗證",
+             text_color=AMBER, text_size=size.small, text_halign=text.align_left)
+
+// ╔═══════════════════════════════════════════════════════╗
+// ║  Ⓗ 圖面                                                ║
+// ╚═══════════════════════════════════════════════════════╝
+plot(sma60, "季線/60均", color=color.new(#2962ff, 0), linewidth=2)
+vtL1 = plot(vt_ma1, "Vegas 通道 EMA144", color=color.new(color.orange, 55), linewidth=1)
+vtL2 = plot(vt_ma2, "Vegas 通道 EMA169", color=color.new(color.orange, 55), linewidth=1)
+fill(vtL1, vtL2, color=vt_ma1 > vt_ma2 and vt_ma1 >= vt_ma1[1] ? color.new(UPCOL, 82) : color.new(DNCOL, 86), title="通道填色")
+plot(vegasEMA200, "Vegas EMA200", color=vegasRise ? UPCOL : DNCOL, linewidth=2)
+plot(intraOn ? dayVwap : na, "當日VWAP", color=color.new(#e040fb, 15), linewidth=2, style=plot.style_linebr)
+
+plotshape(longSig,  "綜合買進", shape.triangleup,   location.belowbar, color.new(UPCOL, 0), text="買", textcolor=color.white, size=size.small)
+plotshape(shortSig, "綜合賣出", shape.triangledown, location.abovebar, color.new(DNCOL, 0), text="賣", textcolor=color.white, size=size.small)
+
+plot(strategy.position_size > 0 ? strategy.position_avg_price * (1 - slPct / 100) :
+     strategy.position_size < 0 ? strategy.position_avg_price * (1 + slPct / 100) : na,
+     "停損線", color=color.new(DNCOL, 0), linewidth=1, style=plot.style_linebr)
+plot(strategy.position_size > 0 ? strategy.position_avg_price * (1 + tpPct / 100) :
+     strategy.position_size < 0 ? strategy.position_avg_price * (1 - tpPct / 100) : na,
+     "停利線", color=color.new(UPCOL, 0), linewidth=1, style=plot.style_linebr)
+plot(strategy.position_size != 0 ? strategy.position_avg_price : na,
+     "進場均價", color=color.new(color.silver, 30), linewidth=1, style=plot.style_linebr)
