@@ -109,10 +109,24 @@
         .disc { margin-top: 14px; font-size: 12px; color: var(--muted); text-align: center; line-height: 1.7; }
         .foot { margin-top: 18px; text-align: center; font-size: 11.5px; color: rgba(154,167,189,.7); }
         .foot a { color: var(--blue); text-decoration: none; }
+
+        /* Back-to-Dashboard bar — only shown to a logged-in owner, never to dad */
+        .topbar { display: flex; margin-bottom: 6px; }
+        .backlink {
+            display: inline-flex; align-items: center; gap: 6px;
+            font-size: 13px; font-weight: 600; color: var(--muted);
+            text-decoration: none; padding: 7px 13px; border-radius: 999px;
+            border: 1px solid var(--line); background: var(--card);
+        }
+        .backlink:hover { color: var(--text); border-color: var(--blue); }
     </style>
 </head>
 <body>
 <div class="wrap">
+
+    {% if current_user.is_authenticated %}
+    <div class="topbar"><a href="/" class="backlink">← 返回 Dashboard</a></div>
+    {% endif %}
 
     <div class="head">
         <h1>🇹🇼 台股．好進場點</h1>
