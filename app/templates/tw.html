@@ -1,0 +1,271 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <title>台股．好進場點</title>
+    <meta name="theme-color" content="#0e1018">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700;900&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg: #0e1018;
+            --card: #171b28;
+            --card2: #1e2436;
+            --line: rgba(255,255,255,.09);
+            --text: #f1f5f9;
+            --muted: #9aa7bd;
+            --blue: #38bdf8;
+            --gold: #ffcf4b;
+            --green: #22c55e;
+            --red: #f05252;
+            --amber: #f59e0b;
+        }
+        * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+        html { -webkit-text-size-adjust: 100%; }
+        body {
+            margin: 0; background: var(--bg); color: var(--text);
+            font-family: 'Noto Sans TC', -apple-system, BlinkMacSystemFont, 'PingFang TC', sans-serif;
+            -webkit-font-smoothing: antialiased;
+            min-height: 100vh;
+            background-image: radial-gradient(1200px 600px at 50% -10%, rgba(56,189,248,.10), transparent 60%);
+        }
+        .num { font-variant-numeric: tabular-nums; }
+        .wrap { max-width: 620px; margin: 0 auto; padding: 18px 15px calc(40px + env(safe-area-inset-bottom)); }
+
+        /* Header */
+        .head { text-align: center; padding: 6px 0 14px; }
+        .head h1 { margin: 0; font-size: 22px; font-weight: 900; letter-spacing: .5px; }
+        .head .sub { margin-top: 5px; font-size: 12.5px; color: var(--muted); }
+
+        /* Regime banner */
+        .regime {
+            border-radius: 16px; padding: 16px 18px; margin: 4px 0 18px;
+            border: 1px solid var(--line); text-align: center;
+        }
+        .regime.ok  { background: linear-gradient(160deg, rgba(34,197,94,.16), rgba(34,197,94,.04)); border-color: rgba(34,197,94,.4); }
+        .regime.off { background: linear-gradient(160deg, rgba(148,163,184,.12), rgba(148,163,184,.03)); }
+        .regime .verdict { font-size: 19px; font-weight: 900; }
+        .regime.ok .verdict  { color: var(--green); }
+        .regime.off .verdict { color: var(--muted); }
+        .regime .why { margin-top: 6px; font-size: 13px; color: var(--muted); line-height: 1.5; }
+
+        /* Section label */
+        .seclabel {
+            display: flex; align-items: center; gap: 8px;
+            font-size: 12px; letter-spacing: 2px; color: var(--muted);
+            margin: 20px 2px 10px; text-transform: none;
+        }
+        .seclabel::after { content: ""; flex: 1; height: 1px; background: var(--line); }
+
+        /* Card */
+        .card {
+            background: var(--card); border: 1px solid var(--line);
+            border-radius: 15px; padding: 14px 15px; margin-bottom: 12px;
+        }
+        .card.buy  { border-color: rgba(255,207,75,.55); box-shadow: 0 0 0 1px rgba(255,207,75,.25) inset; }
+        .card.done { opacity: .72; }
+        .crow { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
+        .name { font-size: 17px; font-weight: 700; }
+        .name .code { color: var(--muted); font-weight: 500; font-size: 13px; margin-left: 5px; }
+        .pill {
+            font-size: 11.5px; font-weight: 700; padding: 3px 9px; border-radius: 999px;
+            white-space: nowrap;
+        }
+        .pill.new  { background: rgba(255,207,75,.16); color: var(--gold); border: 1px solid rgba(255,207,75,.4); }
+        .pill.track{ background: rgba(56,189,248,.14); color: var(--blue); border: 1px solid rgba(56,189,248,.35); }
+        .pill.tp   { background: rgba(34,197,94,.16); color: var(--green); border: 1px solid rgba(34,197,94,.4); }
+        .pill.sl   { background: rgba(240,82,82,.15); color: var(--red); border: 1px solid rgba(240,82,82,.4); }
+
+        .live { margin: 9px 0 2px; font-size: 13px; color: var(--muted); }
+        .live .px { color: var(--text); font-weight: 700; font-size: 15px; }
+        .live .up { color: var(--green); } .live .dn { color: var(--red); }
+        .buytag {
+            display: inline-block; margin-left: 8px; font-size: 11.5px; font-weight: 700;
+            color: #1a1205; background: var(--gold); padding: 2px 8px; border-radius: 999px;
+        }
+
+        .levels { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; margin-top: 11px; }
+        .lv { background: var(--card2); border-radius: 11px; padding: 9px 10px; text-align: center; }
+        .lv .k { font-size: 11px; color: var(--muted); }
+        .lv .v { font-size: 16px; font-weight: 800; margin-top: 3px; }
+        .lv .d { font-size: 11.5px; margin-top: 2px; }
+        .lv.entry .v { color: var(--text); }
+        .lv.stop  .v { color: var(--red); }   .lv.stop .d  { color: var(--red); }
+        .lv.goal  .v { color: var(--green); } .lv.goal .d { color: var(--green); }
+
+        .meta { margin-top: 10px; font-size: 12px; color: var(--muted); display: flex; justify-content: space-between; gap: 10px; }
+        .hit { margin-top: 9px; font-size: 13px; font-weight: 700; }
+        .hit.tp { color: var(--green); } .hit.sl { color: var(--red); }
+
+        .empty { text-align: center; color: var(--muted); padding: 26px 10px; font-size: 14px; line-height: 1.7; }
+
+        /* How-to-read + disclaimer */
+        .guide {
+            background: var(--card); border: 1px solid var(--line); border-radius: 15px;
+            padding: 15px 16px; margin-top: 22px; font-size: 13px; color: var(--muted); line-height: 1.85;
+        }
+        .guide b { color: var(--text); }
+        .disc { margin-top: 14px; font-size: 12px; color: var(--muted); text-align: center; line-height: 1.7; }
+        .foot { margin-top: 18px; text-align: center; font-size: 11.5px; color: rgba(154,167,189,.7); }
+        .foot a { color: var(--blue); text-decoration: none; }
+    </style>
+</head>
+<body>
+<div class="wrap">
+
+    <div class="head">
+        <h1>🇹🇼 台股．好進場點</h1>
+        <div class="sub">
+            {% if tw.as_of %}資料日期 {{ tw.as_of }} · {% endif %}強勢股回檔買點掃描
+        </div>
+    </div>
+
+    {# ── 大盤紅綠燈 ── #}
+    {% set reg = tw.regime or {} %}
+    <div class="regime {{ 'ok' if tw.regime_ok else 'off' }}">
+        {% if tw.regime_ok %}
+            <div class="verdict">✅ 今天可以進場</div>
+            <div class="why">
+                大盤多頭 — 加權指數站上 100 日均線且趨勢向上。<br>
+                策略只在這種盤勢出手。
+            </div>
+        {% else %}
+            <div class="verdict">⛔ 今天先觀望</div>
+            <div class="why">
+                大盤未達多頭條件，暫不進場。<br>
+                （回測顯示：濾掉這種盤勢的訊號後，整體績效才轉正）
+            </div>
+        {% endif %}
+    </div>
+
+    {% set open_setups = tw.setups | selectattr('status', 'in', ['new', 'tracking']) | list %}
+    {% set done_setups = tw.setups | selectattr('status', 'in', ['tp', 'sl']) | list %}
+
+    {# ── 進場點 ── #}
+    <div class="seclabel">🎯 追蹤中的進場點（{{ open_setups | length }}）</div>
+
+    {% if open_setups and not tw.regime_ok %}
+    <div style="font-size:12.5px;color:var(--muted);margin:-4px 2px 12px;line-height:1.6;">
+        以下是先前<b style="color:var(--text);">多頭日</b>出現、仍在追蹤的進場點；今天大盤觀望，沒有新增訊號。
+    </div>
+    {% endif %}
+
+    {% if open_setups %}
+        {% for s in open_setups %}
+        <div class="card {{ 'buy' if s.buy_zone }}">
+            <div class="crow">
+                <div class="name">{{ s.name }}<span class="code">{{ s.code }}</span></div>
+                {% if s.status == 'new' %}<span class="pill new">今日新訊號</span>
+                {% else %}<span class="pill track">追蹤中</span>{% endif %}
+            </div>
+
+            {% if s.price %}
+            <div class="live">
+                現價 <span class="px num">{{ s.price_s }}</span>
+                {% if s.change_pct is not none %}
+                    <span class="{{ 'up' if s.change_pct >= 0 else 'dn' }} num">
+                        {{ '%+.1f' % s.change_pct }}%</span>
+                {% endif %}
+                {% if s.dist_pct is not none %}· 距進場 <span class="num">{{ '%+.1f' % s.dist_pct }}%</span>{% endif %}
+                {% if s.buy_zone %}<span class="buytag">接近進場價</span>{% endif %}
+            </div>
+            {% endif %}
+
+            <div class="levels">
+                <div class="lv entry">
+                    <div class="k">進場參考</div>
+                    <div class="v num">{{ s.ref_s }}</div>
+                    <div class="d">{{ '明日開盤附近' if s.status == 'new' else '訊號日參考價' }}</div>
+                </div>
+                <div class="lv stop">
+                    <div class="k">停損</div>
+                    <div class="v num">{{ s.sl_s }}</div>
+                    <div class="d num">−{{ s.risk_pct }}%</div>
+                </div>
+                <div class="lv goal">
+                    <div class="k">目標</div>
+                    <div class="v num">{{ s.tp_s }}</div>
+                    <div class="d num">+{{ s.gain_pct }}%</div>
+                </div>
+            </div>
+
+            <div class="meta">
+                <span>設定於 {{ s.date }} · 第 {{ s.days }} 天</span>
+                {% if s.rr %}<span>風報比 1：{{ s.rr }}</span>{% endif %}
+            </div>
+        </div>
+        {% endfor %}
+    {% else %}
+        <div class="empty">
+            目前沒有追蹤中的進場點。<br>
+            等強勢股回踩 20 日均線、收紅時才會出現訊號。
+        </div>
+    {% endif %}
+
+    {# ── 已結束 ── #}
+    {% if done_setups %}
+    <div class="seclabel">📁 近期已結束</div>
+        {% for s in done_setups %}
+        <div class="card done">
+            <div class="crow">
+                <div class="name">{{ s.name }}<span class="code">{{ s.code }}</span></div>
+                {% if s.status == 'tp' %}<span class="pill tp">✅ 已達標</span>
+                {% else %}<span class="pill sl">已停損</span>{% endif %}
+            </div>
+            <div class="meta">
+                <span>設定於 {{ s.date }}</span>
+                <span>進場 {{ s.ref_s }} · {{ '目標 ' ~ s.tp_s if s.status == 'tp' else '停損 ' ~ s.sl_s }}</span>
+            </div>
+            {% if s.hit and s.hit.date %}
+            <div class="hit {{ s.status }}">
+                {{ '到達目標' if s.status == 'tp' else '觸及停損' }}於 {{ s.hit.date }} {{ s.hit.time or '' }}
+            </div>
+            {% endif %}
+        </div>
+        {% endfor %}
+    {% endif %}
+
+    {# ── 怎麼看 ── #}
+    <div class="guide">
+        <b>怎麼看這個表？</b><br>
+        1. 先看最上面大盤紅綠燈 — <b>綠燈</b>才進場，<b>紅燈</b>就休息。<br>
+        2. <b>進場參考</b>＝訊號當天收盤價（隔日開盤附近可買）；金色「接近進場價」表示現價仍在這個價位附近。<br>
+        3. 買進後 <b>跌破停損就賣</b>、<b>到目標就獲利了結</b>。<br>
+        4. 最多抱 {{ tw.max_hold or 40 }} 個交易日，沒到目標也先出場。<br>
+        5. 停損 {{ tw.sl_atr or 3 }}×ATR、目標 {{ tw.tp_atr or 5 }}×ATR（ATR＝股價近期平均波動幅度）。
+    </div>
+
+    <div class="disc">
+        ⚠️ 訊號來自歷史回測，過去績效不代表未來。<br>
+        僅供參考，請自行評估風險，非投資建議。
+    </div>
+
+    <div class="foot">
+        <span id="updated">最後更新中…</span> · <a href="/tw">重新整理</a>
+    </div>
+
+</div>
+
+<script>
+/* Stamp local update time + light auto-refresh so a left-open phone stays current
+   without hammering the server. Full reload keeps the page dead-simple (no client
+   re-render to drift from the server template). */
+(function () {
+    var el = document.getElementById('updated');
+    if (el) {
+        try {
+            el.textContent = '更新於 ' + new Date().toLocaleTimeString('zh-TW',
+                { hour: '2-digit', minute: '2-digit' });
+        } catch (e) { el.textContent = ''; }
+    }
+    // Refresh every 3 min during Taipei market hours (09:00–13:35), else every 30 min.
+    var d = new Date();
+    var tpe = new Date(d.getTime() + (d.getTimezoneOffset() + 480) * 60000); // UTC+8
+    var mins = tpe.getHours() * 60 + tpe.getMinutes();
+    var open = tpe.getDay() >= 1 && tpe.getDay() <= 5 && mins >= 540 && mins <= 815;
+    setTimeout(function () { location.reload(); }, (open ? 180 : 1800) * 1000);
+})();
+</script>
+</body>
+</html>

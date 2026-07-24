@@ -3169,6 +3169,31 @@ def api_stocks():
         return jsonify(stocks_data.empty_payload(str(e))), 200
 
 
+@app.route("/tw")
+def tw_page():
+    """台股．好進場點 — dad's plain-Chinese view of the daily TW pullback scan.
+    PUBLIC (no login) so it opens straight from the LINE link; shows only the
+    same setups already broadcast to the family LINE group, nothing account-
+    related. Read-only and fully fail-soft — never 500s."""
+    import tw_stocks
+    try:
+        data = tw_stocks.web_view()
+    except Exception as e:  # noqa: BLE001 — never let dad's page break
+        print(f"TW page error: {e}")
+        data = {"setups": [], "regime": {}, "regime_ok": False,
+                "as_of": None, "error": str(e)}
+    return render_template("tw.html", tw=data)
+
+
+@app.route("/api/tw")
+def api_tw():
+    import tw_stocks
+    try:
+        return jsonify(tw_stocks.web_view())
+    except Exception as e:  # noqa: BLE001
+        return jsonify({"setups": [], "regime": {}, "error": str(e)}), 200
+
+
 def build_briefing():
     """Computed 'today' briefing — BTC + US indices + altcoin breadth, with a
     short rule-based read. Reuses cached market_intel fetches and the existing

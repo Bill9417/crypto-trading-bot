@@ -335,3 +335,114 @@ def test_clean_command_parses_hours(monkeypatch):
     assert called["hours"] == 47.0
     tg_commands.handle("clean", "abc")       # junk → default
     assert called["hours"] == 24.0
+
+
+# ── web_view (/tw dad-facing page payload) ────────────────────────────────────
+FRIDAY = datetime(2026, 7, 24, 15, 0, tzinfo=tw_stocks.TZ)   # a weekday afternoon
+
+
+def _seed_web_state(monkeypatch, tmp_path, regime_ok=True):
+    """State with one fresh (today) setup, one older tracking, one TP-hit,
+    one SL-hit — the four card kinds web_view must group."""
+    monkeypatch.setattr(tw_stocks, "STATE_FILE", str(tmp_path / "tw.json"))
+    tw_stocks._save_state({
+        "last_run_date": "2026-07-24",
+        "last_regime": {"ok": regime_ok, "close": 1.0, "sma100": 1.0, "mom20": 0.1},
+        "active_setups": [
+            {"code": "2330", "name": "台積電", "date": "2026-07-24",
+             "ref": 1000.0, "sl": 900.0, "tp": 1200.0},          # fresh → new
+            {"code": "2317", "name": "鴻海", "date": "2026-07-17",
+             "ref": 200.0, "sl": 180.0, "tp": 240.0},            # older → tracking
+            {"code": "2454", "name": "聯發科", "date": "2026-07-10",
+             "ref": 50.0, "sl": 45.0, "tp": 60.0,
+             "hit": {"kind": "tp", "date": "2026-07-15", "time": "10:30"}},
+            {"code": "2308", "name": "台達電", "date": "2026-07-08",
+             "ref": 80.0, "sl": 72.0, "tp": 96.0,
+             "hit": {"kind": "sl", "date": "2026-07-12", "time": "13:00"}},
+        ],
+    })
+
+
+def test_web_view_groups_statuses_and_levels(monkeypatch, tmp_path):
+    import stocks_data
+    _seed_web_state(monkeypatch, tmp_path)
+    # live quote near 台積電's entry (→ buy_zone), 鴻海 unquoted
+    monkeypatch.setattr(stocks_data, "tw_quote_map",
+                        lambda: {"2330": {"price": 1010.0, "change_pct": 1.5}})
+
+    v = tw_stocks.web_view(now=FRIDAY)
+    assert v["regime_ok"] is True and v["as_of"] == "2026-07-24"
+    by = {s["code"]: s for s in v["setups"]}
+
+    # statuses
+    assert by["2330"]["status"] == "new"          # today + bullish regime
+    assert by["2317"]["status"] == "tracking"     # older, unhit
+    assert by["2454"]["status"] == "tp"
+    assert by["2308"]["status"] == "sl"
+    # open before closed in the ordering
+    assert [s["status"] for s in v["setups"]][:2] == ["new", "tracking"]
+    assert v["open_count"] == 2 and v["new_count"] == 1
+
+    tsmc = by["2330"]
+    assert tsmc["risk_pct"] == 10.0 and tsmc["gain_pct"] == 20.0
+    assert tsmc["rr"] == 2.0                       # (1200-1000)/(1000-900)
+    assert tsmc["price"] == 1010.0 and tsmc["dist_pct"] == 1.0
+    assert tsmc["buy_zone"] is True                # within ¼ stop-distance of entry
+    assert tsmc["ref_s"] == "1,000" and tsmc["sl_s"] == "900.0"  # _px formatting
+    assert by["2317"].get("price") is None         # unquoted → no live fields
+    assert v["buy_zone_count"] == 1
+
+
+def test_web_view_buy_zone_excludes_faded_setup(monkeypatch, tmp_path):
+    import stocks_data
+    _seed_web_state(monkeypatch, tmp_path)
+    # price 70% of the way down to the stop — near the stop, NOT the entry
+    monkeypatch.setattr(stocks_data, "tw_quote_map",
+                        lambda: {"2330": {"price": 930.0, "change_pct": -3.0}})
+    v = tw_stocks.web_view(now=FRIDAY)
+    tsmc = next(s for s in v["setups"] if s["code"] == "2330")
+    assert tsmc["price"] == 930.0
+    assert tsmc["buy_zone"] is False               # faded toward stop, not a buy
+
+
+def test_web_view_regime_off_marks_no_new(monkeypatch, tmp_path):
+    import stocks_data
+    _seed_web_state(monkeypatch, tmp_path, regime_ok=False)
+    monkeypatch.setattr(stocks_data, "tw_quote_map", lambda: {})
+    v = tw_stocks.web_view(now=FRIDAY)
+    assert v["regime_ok"] is False and v["new_count"] == 0
+    # today's setup is downgraded to tracking when the regime is off
+    assert next(s for s in v["setups"] if s["code"] == "2330")["status"] == "tracking"
+
+
+def test_web_view_regime_fallback_from_plain_digest(monkeypatch, tmp_path):
+    import stocks_data
+    monkeypatch.setattr(tw_stocks, "STATE_FILE", str(tmp_path / "tw.json"))
+    monkeypatch.setattr(stocks_data, "tw_quote_map", lambda: {})
+    tw_stocks._save_state({                        # pre-last_regime state shape
+        "last_run_date": "2026-07-24",
+        "last_digest_plain": "🇹🇼 台股掃描\n\n✅ 大盤多頭 — 加權指數 …",
+        "active_setups": [],
+    })
+    assert tw_stocks.web_view(now=FRIDAY)["regime_ok"] is True
+
+
+def test_web_view_survives_quote_failure(monkeypatch, tmp_path):
+    import stocks_data
+    _seed_web_state(monkeypatch, tmp_path)
+
+    def boom():
+        raise RuntimeError("MIS down")
+
+    monkeypatch.setattr(stocks_data, "tw_quote_map", boom)
+    v = tw_stocks.web_view(now=FRIDAY)             # must not raise
+    assert len(v["setups"]) == 4
+    assert all(s.get("price") is None for s in v["setups"])
+
+
+def test_biz_days_since_counts_weekdays_only():
+    mon = datetime(2026, 7, 20, 12, 0, tzinfo=tw_stocks.TZ)   # Monday
+    assert tw_stocks._biz_days_since("2026-07-20", mon) == 0   # same day
+    assert tw_stocks._biz_days_since("2026-07-17", mon) == 1   # Fri→Mon = 1 biz day
+    assert tw_stocks._biz_days_since("2026-07-13", mon) == 5   # prior Mon→Mon
+    assert tw_stocks._biz_days_since("garbage", mon) == 0      # unparseable → 0

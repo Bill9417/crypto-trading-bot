@@ -290,6 +290,21 @@ def empty_payload(error=""):
             "perp_error": None}
 
 
+def tw_quote_map():
+    """{code: {'price': float, 'change_pct': float|None}} from the cached TWSE
+    fetch — a light overlay for the /tw setups page. Reuses the same 30s/600s
+    TTL cache as build_stocks() (no extra requests when both pages are open) and
+    returns {} rather than raising if the fetch is down."""
+    tw_open = _in_session("Asia/Taipei", (9, 0), (13, 30))
+    data, _err = _cached("tw", 30 if tw_open else 600, _fetch_tw)
+    out = {}
+    for row in (data or {}).get("rows", []):
+        if row.get("price"):
+            out[row["code"]] = {"price": row["price"],
+                                "change_pct": row.get("change_pct")}
+    return out
+
+
 def build_stocks():
     tw_open = _in_session("Asia/Taipei", (9, 0), (13, 30))
     us_open = _in_session("America/New_York", (9, 30), (16, 0))

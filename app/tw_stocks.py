@@ -328,6 +328,96 @@ def _chinese_names() -> dict:
         return {}
 
 
+def _biz_days_since(date_str: str, now) -> int:
+    """Rough trading-day age of a setup (Mon–Fri, TWSE holidays ignored — this
+    is a friendly '第 N 天' counter for the web page, not a settlement figure)."""
+    from datetime import timedelta
+    try:
+        d0 = datetime.strptime(date_str, "%Y-%m-%d").date()
+    except Exception:  # noqa: BLE001
+        return 0
+    d1 = now.date()
+    days, cur = 0, d0
+    while cur < d1:
+        cur += timedelta(days=1)
+        if cur.weekday() < 5:
+            days += 1
+    return days
+
+
+def web_view(now=None) -> dict:
+    """Read-only payload for the /tw web page (爸爸的『好進場點』看板).
+
+    Reads the persisted daily-scan state — NO network of its own — and overlays
+    optional live TWSE quotes so each setup shows whether price is still in a
+    good entry zone. Fully fail-soft: every branch degrades to a usable page
+    rather than raising, so the route can never 500."""
+    now = now or datetime.now(TZ)
+    state = _load_state()
+    reg = state.get("last_regime") or {}
+    if not reg:                       # state predates last_regime: read the verdict
+        plain = state.get("last_digest_plain") or ""   # marker out of the digest
+        reg = {"ok": "✅ 大盤多頭" in plain}
+
+    prices = {}
+    try:
+        import stocks_data
+        prices = stocks_data.tw_quote_map()
+    except Exception:  # noqa: BLE001 — live price is a bonus, never required
+        prices = {}
+
+    last_run = state.get("last_run_date")
+    setups = []
+    for s in (state.get("active_setups") or []):
+        ref, sl, tp = s.get("ref"), s.get("sl"), s.get("tp")
+        if not (ref and sl and tp):
+            continue
+        hit = s.get("hit") or {}
+        q = prices.get(s.get("code")) or {}
+        price = q.get("price")
+        status = (hit.get("kind") if hit else
+                  ("new" if s.get("date") == last_run and reg.get("ok")
+                   else "tracking"))
+        row = {
+            "code": s.get("code"), "name": s.get("name"), "date": s.get("date"),
+            "days": _biz_days_since(s.get("date"), now),
+            "ref": ref, "sl": sl, "tp": tp,
+            "ref_s": _px(ref), "sl_s": _px(sl), "tp_s": _px(tp),
+            "risk_pct": round((ref - sl) / ref * 100, 1),
+            "gain_pct": round((tp - ref) / ref * 100, 1),
+            "rr": round((tp - ref) / (ref - sl), 1) if ref > sl else None,
+            "status": status, "hit": hit or None,
+            "price": price, "price_s": _px(price) if price else None,
+            "change_pct": q.get("change_pct"),
+        }
+        if price:
+            row["dist_pct"] = round((price - ref) / ref * 100, 1)
+            # "Near entry": price is still within ¼ of the stop distance of the
+            # pullback reference — hasn't run up past it, hasn't faded most of the
+            # way to the stop. Deliberately conservative so the badge means
+            # "entering here still matches the setup", not just "above the stop".
+            band = 0.25 * (ref - sl)
+            row["buy_zone"] = bool(not hit and ref - band <= price <= ref + band)
+        setups.append(row)
+
+    # Open setups first (new before tracking), then closed; newest date within each.
+    order = {"new": 0, "tracking": 1, "tp": 2, "sl": 2}
+    setups.sort(key=lambda r: r["date"] or "", reverse=True)
+    setups.sort(key=lambda r: order.get(r["status"], 3))
+
+    return {
+        "as_of": last_run,
+        "generated_at": int(time.time()),
+        "regime": reg,
+        "regime_ok": bool(reg.get("ok")),
+        "setups": setups,
+        "open_count": sum(1 for r in setups if r["status"] in ("new", "tracking")),
+        "new_count": sum(1 for r in setups if r["status"] == "new"),
+        "buy_zone_count": sum(1 for r in setups if r.get("buy_zone")),
+        "sl_atr": SL_ATR, "tp_atr": TP_ATR, "max_hold": MAX_HOLD,
+    }
+
+
 def tick() -> bool:
     """Called every scanner sweep; does one scan per trading day. Returns True
     when a digest was sent."""
@@ -411,6 +501,7 @@ def tick() -> bool:
                for code, name, s in setups]
     state["active_setups"] = active
     state["last_run_date"] = today
+    state["last_regime"] = reg             # structured verdict for the /tw page
     state["last_digest_text"] = msg
     state["last_digest_plain"] = plain     # served by the LINE 「訊號」 command
     _save_state(state)
