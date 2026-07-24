@@ -68,6 +68,9 @@
         .crow { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
         .name { font-size: 17px; font-weight: 700; }
         .name .code { color: var(--muted); font-weight: 500; font-size: 13px; margin-left: 5px; }
+        .stag { font-size: 11px; font-weight: 700; padding: 2px 7px; border-radius: 999px; margin-left: 7px; vertical-align: middle; }
+        .stag.breakout { color: var(--gold); background: rgba(255,207,75,.14); border: 1px solid rgba(255,207,75,.35); }
+        .stag.pullback { color: var(--blue); background: rgba(56,189,248,.12); border: 1px solid rgba(56,189,248,.3); }
         .pill {
             font-size: 11.5px; font-weight: 700; padding: 3px 9px; border-radius: 999px;
             white-space: nowrap;
@@ -169,7 +172,8 @@
         {% for s in open_setups %}
         <div class="card {{ 'buy' if s.buy_zone }}">
             <div class="crow">
-                <div class="name">{{ s.name }}<span class="code">{{ s.code }}</span></div>
+                <div class="name">{{ s.name }}<span class="code">{{ s.code }}</span>
+                    <span class="stag {{ s.strategy }}">{{ s.strategy_tag }}</span></div>
                 {% if s.status == 'new' %}<span class="pill new">今日新訊號</span>
                 {% else %}<span class="pill track">追蹤中</span>{% endif %}
             </div>

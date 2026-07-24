@@ -46,6 +46,19 @@ COOLDOWN_DAYS = 10      # don't re-alert the same stock while it likely still ru
 MAX_SHOW = 10
 RETRY_SEC = 1800        # min gap between failed fetch attempts
 
+# 🚀 Momentum breakout — the optimised winner of a 5y real-TW50 sweep (~30
+# param sets): close breaks ABOVE the prior 60-session high while the market is
+# in an uptrend. SL 3×ATR / TP 5×ATR was the balance point — 57% WR, PF ~1.9,
+# ~+3%/trade, best mix of win-rate AND profit of everything tested. (Backtest is
+# optimistic: 5y bull window, survivorship, in-sample pick — forward will be
+# lower; see 台股策略回測 report.)
+BO_LOOKBACK = 60
+BO_SL_ATR = 3.0
+BO_TP_ATR = 5.0
+BO_MAX_HOLD = 60
+
+_KIND_TAG = {"pullback": "回踩", "breakout": "突破"}
+
 _UA = {"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15) AppleWebKit/537.36"}
 
 BACKTEST_NOTE = (
@@ -132,7 +145,25 @@ def setup(rows: list):
     if not atr:
         return None
     return {"ref": c, "sl": c - SL_ATR * atr, "tp": c + TP_ATR * atr,
-            "atr": atr, "turnover": c * v}
+            "atr": atr, "turnover": c * v, "kind": "pullback"}
+
+
+def setup_breakout(rows: list):
+    """Today's momentum-breakout setup on one stock, or None: the LAST (closed)
+    bar's close breaks ABOVE the highest high of the PRIOR 60 sessions (a clean
+    Donchian breakout, price-level independent). Levels off the close;
+    SL 3×ATR, TP 5×ATR."""
+    if len(rows) < BO_LOOKBACK + 15:
+        return None
+    t, o, h, l, c, v = rows[-1]
+    prior_high = max(r[2] for r in rows[-BO_LOOKBACK - 1:-1])   # prior N, excl. today
+    if c <= prior_high:
+        return None
+    atr = _atr14(rows)
+    if not atr:
+        return None
+    return {"ref": c, "sl": c - BO_SL_ATR * atr, "tp": c + BO_TP_ATR * atr,
+            "atr": atr, "turnover": c * v, "kind": "breakout"}
 
 
 def _px(v: float) -> str:
@@ -170,16 +201,16 @@ def build_digest(now, reg: dict, setups: list, pattern_blocked: int = 0,
         if setups:
             import tg_format
             shown = setups[:MAX_SHOW]
-            lines.append(f"🎯 今日訊號 {len(setups)} 檔 — 回踩20日線收紅:")
-            rows = [("代號", "名稱", "進場", "停損", "", "目標", "")]
+            lines.append(f"🎯 今日訊號 {len(setups)} 檔（回踩買點＋突破動能）:")
+            rows = [("代號", "名稱", "策略", "進場", "停損", "", "目標", "")]
             for code, name, s in shown:
                 risk = (s["ref"] - s["sl"]) / s["ref"] * 100
                 gain = (s["tp"] - s["ref"]) / s["ref"] * 100
-                rows.append((code, name, _px(s["ref"]),
-                             _px(s["sl"]), f"−{risk:.1f}%",
+                rows.append((code, name, _KIND_TAG.get(s.get("kind"), "回踩"),
+                             _px(s["ref"]), _px(s["sl"]), f"−{risk:.1f}%",
                              _px(s["tp"]), f"+{gain:.1f}%"))
-            lines.append(tg_format.pre_table(rows, align="llrrrrr"))
-            lines.append("進場=下一交易日開盤參考 · 停損 3×ATR · 目標 5×ATR")
+            lines.append(tg_format.pre_table(rows, align="lllrrrrr"))
+            lines.append("進場=下一交易日開盤參考 · 回踩 SL3×/TP5× · 突破 SL3×/TP5× ATR")
             if len(setups) > MAX_SHOW:
                 lines.append(f"…另有 {len(setups) - MAX_SHOW} 檔未列出")
             lines.append(f"⏱ 未到目標/停損時最長持有 {MAX_HOLD} 個交易日")
@@ -199,12 +230,12 @@ def build_digest_plain(now, reg: dict, setups: list) -> str:
     if reg.get("ok"):
         lines.append(f"✅ 大盤多頭 — 加權指數 {_px(reg['close'])} 站上100日均線")
         if setups:
-            lines.append(f"🎯 今日訊號 {len(setups)} 檔（強勢股回檔後買盤接手）:")
+            lines.append(f"🎯 今日訊號 {len(setups)} 檔（回檔買點＋突破動能）:")
             for code, name, s in setups[:MAX_SHOW]:
                 risk = (s["ref"] - s["sl"]) / s["ref"] * 100
                 gain = (s["tp"] - s["ref"]) / s["ref"] * 100
                 lines += ["",
-                          f"■ {code} {name}",
+                          f"■ {code} {name}（{_KIND_TAG.get(s.get('kind'), '回踩')}）",
                           f"　進場參考 {_px(s['ref'])}（明日開盤附近）",
                           f"　停損 {_px(s['sl'])}（約 −{risk:.1f}%）",
                           f"　目標 {_px(s['tp'])}（約 +{gain:.1f}%）"]
@@ -381,6 +412,8 @@ def web_view(now=None) -> dict:
         row = {
             "code": s.get("code"), "name": s.get("name"), "date": s.get("date"),
             "days": _biz_days_since(s.get("date"), now),
+            "strategy": s.get("strategy", "pullback"),
+            "strategy_tag": _KIND_TAG.get(s.get("strategy"), "回踩"),
             "ref": ref, "sl": sl, "tp": tp,
             "ref_s": _px(ref), "sl_s": _px(sl), "tp_s": _px(tp),
             "risk_pct": round((ref - sl) / ref * 100, 1),
@@ -454,7 +487,7 @@ def tick() -> bool:
     for code, name_en in TW50:
         try:
             rows = _yahoo_daily(f"{code}.TWO" if code in _TW_OTC else f"{code}.TW")
-            s = setup(rows)
+            s = setup_breakout(rows) or setup(rows)   # prefer the momentum breakout
         except Exception:  # noqa: BLE001 — one dead symbol must not kill the scan
             failures += 1
             continue
@@ -497,7 +530,8 @@ def tick() -> bool:
     active = [s for s in (state.get("active_setups") or [])
               if (cutoff - datetime.strptime(s["date"], "%Y-%m-%d").date()).days <= 30]
     active += [{"code": code, "name": name, "date": today,
-                "ref": s["ref"], "sl": s["sl"], "tp": s["tp"]}
+                "ref": s["ref"], "sl": s["sl"], "tp": s["tp"],
+                "strategy": s.get("kind", "pullback")}
                for code, name, s in setups]
     state["active_setups"] = active
     state["last_run_date"] = today

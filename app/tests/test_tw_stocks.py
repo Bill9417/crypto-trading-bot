@@ -87,6 +87,55 @@ def test_setup_insufficient_data():
     assert tw_stocks.setup(_uptrend_with_pullback(50)) is None
 
 
+def test_setup_tags_kind_pullback():
+    assert tw_stocks.setup(_uptrend_with_pullback())["kind"] == "pullback"
+
+
+# ── breakout (momentum) ───────────────────────────────────────────────────────
+def _rising_to_new_high(n=90):
+    """Steadily rising bars where the LAST close is the highest high of the
+    window — a fresh 60-session high (the breakout trigger)."""
+    rows = []
+    for i in range(n):
+        c = 100.0 + i                      # monotonic up ⇒ each close a new high
+        rows.append((86400 * i, c - 0.5, c + 0.4, c - 0.6, c, 1000))
+    return rows
+
+
+def test_setup_breakout_fires_on_fresh_high():
+    s = tw_stocks.setup_breakout(_rising_to_new_high())
+    assert s is not None and s["kind"] == "breakout"
+    ref, atr = s["ref"], s["atr"]
+    assert abs(s["sl"] - (ref - tw_stocks.BO_SL_ATR * atr)) < 1e-9
+    assert abs(s["tp"] - (ref + tw_stocks.BO_TP_ATR * atr)) < 1e-9
+    assert s["tp"] - ref > ref - s["sl"]           # 6×ATR target wider than 3×ATR stop
+
+
+def test_setup_breakout_rejects_below_high():
+    rows = _rising_to_new_high()
+    t, o, h, l, c, v = rows[-1]
+    # today closes well BELOW the recent high → no breakout
+    rows[-1] = (t, o, h, l, c - 20.0, v)
+    assert tw_stocks.setup_breakout(rows) is None
+
+
+def test_setup_breakout_insufficient_data():
+    assert tw_stocks.setup_breakout(_rising_to_new_high(40)) is None
+
+
+def test_digest_labels_both_strategies():
+    reg = {"ok": True, "close": 28000.0, "sma100": 27000.0, "mom20": 0.03}
+    pull = {"ref": 100.0, "sl": 94.0, "tp": 110.0, "atr": 2.0, "turnover": 2.0,
+            "kind": "pullback"}
+    brk = {"ref": 500.0, "sl": 470.0, "tp": 560.0, "atr": 10.0, "turnover": 9.0,
+           "kind": "breakout"}
+    msg = tw_stocks.build_digest(_now(), reg, [("2454", "聯發科", brk),
+                                               ("2330", "台積電", pull)])
+    assert "突破" in msg and "回踩" in msg          # both strategy tags present
+    plain = tw_stocks.build_digest_plain(_now(), reg, [("2454", "聯發科", brk)])
+    assert "突破" in plain
+
+
 # ── digest ───────────────────────────────────────────────────────────────────
 def _now():
     return datetime(2026, 7, 10, 14, 5, tzinfo=tw_stocks.TZ)   # a Friday
