@@ -4,31 +4,32 @@
 {# Quiet luxury nav (2026-07-05): no emoji, no rainbow — letterspaced small-caps,
    champagne accent on the active page only. Colour belongs to the regime chips. #}
 <nav class="tb-nav">
-    {# 台股 first (user's request) — public dad-facing TW entry page. Literal /tw
-       href (not url_for) keeps the nav from 500-ing on a web process that
-       predates the route. #}
+    {# Grouped nav (2026-07-24): overview · trading · markets · admin, split by
+       hairline dividers. Literal hrefs on routes a stale web process may predate
+       (/tw /stocks /strategies /copy /health) so url_for can't 500 the whole
+       nav. 台股 leads (user's request). #}
+    {# ── overview ── #}
     <a href="/tw" class="nav-pill stocks{% if request.endpoint == 'tw_page' %} active{% endif %}">台股</a>
     <a href="{{ url_for('index') }}" class="nav-pill home{% if request.endpoint == 'index' %} active{% endif %}">Dashboard</a>
+
+    <span class="nav-sep nav-gsep" aria-hidden="true"></span>
+    {# ── trading ── #}
+    <a href="/strategies" class="nav-pill strat2{% if request.endpoint in ('strategies', 'strategy2') %} active{% endif %}">Strategies</a>
+    <a href="{{ url_for('funnel') }}" class="nav-pill funnel{% if request.endpoint == 'funnel' %} active{% endif %}">Funnel</a>
+    <a href="{{ url_for('performance') }}" class="nav-pill perf{% if request.endpoint == 'performance' %} active{% endif %}">Performance</a>
+
+    <span class="nav-sep nav-gsep" aria-hidden="true"></span>
+    {# ── markets ── #}
+    <a href="{{ url_for('market') }}" class="nav-pill market{% if request.endpoint == 'market' %} active{% endif %}">Market</a>
+    <a href="/stocks" class="nav-pill stocks{% if request.endpoint == 'stocks_page' %} active{% endif %}">Stocks</a>
+    <a href="/copy" class="nav-pill strat2{% if request.endpoint == 'copy_page' %} active{% endif %}">跟單</a>
+
     {% if current_user.is_admin %}
+    <span class="nav-sep nav-gsep" aria-hidden="true"></span>
+    {# ── admin / ops (admin-only) ── #}
     <a href="{{ url_for('account') }}" class="nav-pill account{% if request.endpoint == 'account' %} active{% endif %}">Account</a>
     <a href="{{ url_for('bybit_page') }}" class="nav-pill bybit{% if request.endpoint == 'bybit_page' %} active{% endif %}">Bybit</a>
-    {% endif %}
-    <a href="{{ url_for('performance') }}" class="nav-pill perf{% if request.endpoint == 'performance' %} active{% endif %}">Performance</a>
-    <a href="{{ url_for('funnel') }}" class="nav-pill funnel{% if request.endpoint == 'funnel' %} active{% endif %}">Funnel</a>
-    <a href="{{ url_for('market') }}" class="nav-pill market{% if request.endpoint == 'market' %} active{% endif %}">Market</a>
-    {# literal /stocks (not url_for): templates hot-reload, so url_for would 500
-       every page on a web process that predates the stocks route #}
-    <a href="/stocks" class="nav-pill stocks{% if request.endpoint == 'stocks_page' %} active{% endif %}">Stocks</a>
-    {# literal /strategies (not url_for): the nav is on every page, so a web
-       process that predates this route would 500 site-wide on url_for. #}
-    <a href="/strategies" class="nav-pill strat2{% if request.endpoint in ('strategies', 'strategy2') %} active{% endif %}">Strategies</a>
-    {# literal /copy (not url_for): member-facing copy-trading console; literal
-       href keeps the nav from 500-ing on a web process that predates the route #}
-    <a href="/copy" class="nav-pill strat2{% if request.endpoint == 'copy_page' %} active{% endif %}">跟單</a>
-    {% if current_user.is_admin %}
     <a href="{{ url_for('admin_users') }}" class="nav-pill admin{% if request.endpoint == 'admin_users' %} active{% endif %}">Admin</a>
-    {# literal /health (not url_for): templates hot-reload, so url_for would 500
-       every page on a web process that predates the health route #}
     <a href="/health" class="nav-pill health{% if request.endpoint == 'health_page' %} active{% endif %}">Health</a>
     {% endif %}
     {# status chips + session controls wrap as ONE unit (never orphan a lone
