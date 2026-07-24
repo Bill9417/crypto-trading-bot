@@ -100,6 +100,24 @@ def _no_live_side_effects(request, monkeypatch, tmp_path):
     def _no_bybit_client():
         raise RuntimeError("strategy3_exec.client() called in tests — stub it")
     monkeypatch.setattr(strategy3_exec, "client", _no_bybit_client)
+    # Copy-trading: redirect the encrypted follower store + runtime status into
+    # tmp_path (never touch the real copy_followers.json), keep the master
+    # switch OFF, and make the two live-Bybit entry points die loudly so no
+    # test can validate against or place orders on a real follower account.
+    import config as _cfg0
+    import copy_engine
+    import copy_store
+    monkeypatch.setattr(copy_store, "STORE_FILE", str(tmp_path / "copy_followers.json"))
+    monkeypatch.setattr(copy_engine, "STATUS_FILE", str(tmp_path / "copy_status.json"))
+    monkeypatch.setattr(_cfg0, "COPY_TRADING_LIVE", False)
+    copy_engine._clients.clear()
+    def _no_copy_net(*a, **k):
+        raise RuntimeError("copy_engine live client called in tests — stub it")
+    # Both network seams die loudly by default; validate()'s own logic still
+    # runs (it catches the raise and returns a safe {ok:False}), so an unstubbed
+    # enroll test degrades to 'invalid key', never a real Bybit call.
+    monkeypatch.setattr(copy_engine, "_client", _no_copy_net)
+    monkeypatch.setattr(copy_engine, "_probe_client", _no_copy_net)
     # the S1→Bybit mirror must also stay OFF unless a test opts in
     import config as _cfg
     monkeypatch.setattr(_cfg, "S1_BYBIT_MIRROR", False)

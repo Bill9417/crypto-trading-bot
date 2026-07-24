@@ -3194,6 +3194,124 @@ def api_tw():
         return jsonify({"setups": [], "regime": {}, "error": str(e)}), 200
 
 
+# ── Copy trading — followers mirror the live Strategy-3 (Bybit) engine ────────
+def _copy_context() -> dict:
+    """Assemble the /copy page state: the member's own enrollment + (for admins)
+    every follower with runtime status. NEVER includes any secret/ciphertext."""
+    import config as _config
+    import copy_engine
+    import copy_store
+    import copy_vault
+    me = copy_store.get_public(current_user.id)
+    ctx = {
+        "vault_ok": copy_vault.available(),
+        "master_live": bool(getattr(_config, "COPY_TRADING_LIVE", False)),
+        "me": me,
+        "my_status": copy_engine.status_for(current_user.id) if me else {},
+        "min_margin": copy_store.MIN_MARGIN,
+        "max_margin": copy_store.MAX_MARGIN,
+        "s3_symbols": _config.STRATEGY3_SYMBOLS,
+        "is_admin": bool(current_user.is_admin),
+        "followers": None,
+    }
+    if current_user.is_admin:
+        rows = copy_store.list_public()
+        for r in rows:
+            r["status"] = copy_engine.status_for(r["user_id"])
+        ctx["followers"] = rows
+    return ctx
+
+
+@app.route("/copy")
+@login_required
+def copy_page():
+    """Copy-trading console: a member enrolls their own Bybit keys to mirror the
+    live S3 engine; admins approve/pause/remove followers. Login-gated; the
+    member view only ever touches the current user's own record."""
+    try:
+        ctx = _copy_context()
+    except Exception as e:  # noqa: BLE001 — never 500 this page
+        print(f"Copy page error: {e}")
+        ctx = {"vault_ok": False, "master_live": False, "me": None,
+               "my_status": {}, "min_margin": 5, "max_margin": 5000,
+               "s3_symbols": [], "is_admin": bool(current_user.is_admin),
+               "followers": None, "error": str(e)}
+    return render_template("copy.html", user=current_user, ctx=ctx)
+
+
+@app.route("/api/copy/enroll", methods=["POST"])
+@login_required
+def api_copy_enroll():
+    """Member submits/updates their OWN Bybit keys. Validated read-only before
+    storing; stored encrypted; ALWAYS lands disabled (admin must approve)."""
+    import copy_engine
+    import copy_store
+    import copy_vault
+    if not copy_vault.available():
+        return jsonify({"ok": False, "error": "伺服器加密尚未設定，暫時無法接收金鑰"}), 503
+    api_key = (request.form.get("api_key") or "").strip()
+    api_secret = (request.form.get("api_secret") or "").strip()
+    if not api_key or not api_secret:
+        return jsonify({"ok": False, "error": "請填入 API Key 與 Secret"}), 400
+    v = copy_engine.validate(api_key, api_secret)
+    if not v.get("ok"):
+        return jsonify({"ok": False, "error": v.get("error") or "金鑰驗證失敗"}), 400
+    rec = copy_store.upsert_keys(current_user.id, current_user.username,
+                                 api_key, api_secret, request.form.get("margin"))
+    return jsonify({"ok": True, "record": rec, "equity": v.get("equity")})
+
+
+@app.route("/api/copy/margin", methods=["POST"])
+@login_required
+def api_copy_margin():
+    import copy_store
+    rec = copy_store.set_margin(current_user.id, request.form.get("margin"))
+    if not rec:
+        return jsonify({"ok": False, "error": "尚未提交金鑰"}), 404
+    return jsonify({"ok": True, "record": rec})
+
+
+@app.route("/api/copy/revoke", methods=["POST"])
+@login_required
+def api_copy_revoke():
+    """A member removes their own keys — the only self-service deletion path."""
+    import copy_store
+    copy_store.remove(current_user.id)
+    return jsonify({"ok": True})
+
+
+def _copy_admin_uid():
+    try:
+        return int(request.form.get("user_id")), None
+    except (TypeError, ValueError):
+        return None, (jsonify({"ok": False, "error": "bad user_id"}), 400)
+
+
+@app.route("/api/copy/admin/toggle", methods=["POST"])
+@admin_required
+def api_copy_admin_toggle():
+    """Admin approve (enable) or pause (disable) a follower."""
+    import copy_store
+    uid, err = _copy_admin_uid()
+    if err:
+        return err
+    rec = copy_store.set_enabled(uid, request.form.get("enabled") == "true")
+    if not rec:
+        return jsonify({"ok": False, "error": "not found"}), 404
+    return jsonify({"ok": True, "record": rec})
+
+
+@app.route("/api/copy/admin/remove", methods=["POST"])
+@admin_required
+def api_copy_admin_remove():
+    import copy_store
+    uid, err = _copy_admin_uid()
+    if err:
+        return err
+    copy_store.remove(uid)
+    return jsonify({"ok": True})
+
+
 def build_briefing():
     """Computed 'today' briefing — BTC + US indices + altcoin breadth, with a
     short rule-based read. Reuses cached market_intel fetches and the existing

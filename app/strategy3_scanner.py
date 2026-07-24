@@ -159,6 +159,17 @@ def _tg(msg: str) -> None:
         print(f"[strategy3] telegram failed: {exc}")
 
 
+def _mirror(action: str, *args) -> None:
+    """Fan a live S3 action out to copy-trading followers, FULLY fail-soft —
+    the master's own trade has already happened, so nothing here (a bad key, a
+    down exchange, an import error) may ever raise into the S3 loop."""
+    try:
+        import copy_engine
+        getattr(copy_engine, action)(*args)
+    except Exception as exc:  # noqa: BLE001 — followers must never affect the master
+        print(f"[strategy3] copy-mirror {action} failed: {exc}")
+
+
 # Errors that deserve a retry on the next closed candle instead of burning the
 # flag: network blips, exchange hiccups and rate limits. Anything else (below
 # min size, insufficient balance, bad params) is treated as final for the flag.
@@ -240,6 +251,8 @@ def open_flip(symbol: str, direction: str, price: float, score, margin: float,
             f"— Bybit said: {res['leverage_warning']}\nSame {price * res.get('qty', 0):.0f} USDT "
             f"notional, but MORE margin may be locked than expected — check free balance "
             f"before the next flip.")
+    if not res.get("dry"):                       # only a REAL fill mirrors to followers
+        _mirror("mirror_open", symbol, direction, price, sl, leverage)
     return "opened"
 
 
@@ -256,6 +269,8 @@ def close_flip(symbol: str, why: str) -> bool:
     tag = "DRY-RUN " if res.get("dry") else ""
     print(f"[strategy3] {tag}CLOSED {symbol} — {why}")
     _tg(f"🔀 S3 {tag}EXIT · {symbol.split('/')[0]} (Bybit) — {why}")
+    if not res.get("dry"):                       # mirror the exit to followers
+        _mirror("mirror_close", symbol, why)
     return True
 
 
@@ -332,6 +347,7 @@ def manage_breakeven(sym: str, st: dict, pos: dict) -> None:
         print(f"[strategy3] break-even move failed {sym}: {exc}")
         return
     st["be_armed"] = True
+    _mirror("mirror_set_stop", sym, be_lvl)      # move followers' stops too
     print(f"[strategy3] {base}: break-even armed — stop moved to {be_lvl:.6g} "
           f"(entry {entry:.6g}, mark {mark:.6g})")
     _tg(f"🛡️ S3 · {base} is +{trig:.2%} — stop moved to break-even "

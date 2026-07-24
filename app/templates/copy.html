@@ -1,0 +1,247 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <title>Wolf Scanner — 跟單 Copy Trading</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=Noto+Sans+TC:wght@400;500;700;900&display=swap" rel="stylesheet">
+    <meta name="theme-color" content="#0e1018">
+    <link rel="stylesheet" href="/static/app.css?v={{ asset_ver }}">
+    <style>
+        :root { --cp-gold:#ffcf4b; --cp-blue:#38bdf8; --cp-green:#22c55e; --cp-red:#f05252; --cp-amber:#f59e0b; }
+        .cp-wrap, .cp-wrap * { box-sizing: border-box; }
+        .cp-wrap { max-width: 860px; margin: 0 auto; padding: 12px clamp(12px,4vw,20px) 60px; font-family:'Noto Sans TC','Inter',sans-serif; }
+        .cp-h1 { font-size: 22px; font-weight: 900; margin: 8px 0 2px; }
+        .cp-sub { color: var(--wolf-muted,#8a99ad); font-size: 13.5px; line-height:1.6; margin-bottom:16px; }
+        .cp-card { background: var(--wolf-card,#171b28); border:1px solid var(--wolf-border,#262c3d); border-radius:15px; padding:16px 17px; margin-bottom:14px; }
+        .cp-card h2 { font-size:15px; font-weight:800; margin:0 0 12px; letter-spacing:.3px; }
+        .cp-banner { border-radius:13px; padding:12px 15px; margin-bottom:14px; font-size:13.5px; font-weight:600; border:1px solid; }
+        .cp-banner.live { background:rgba(34,197,94,.12); border-color:rgba(34,197,94,.4); color:var(--cp-green); }
+        .cp-banner.off  { background:rgba(148,163,184,.1); border-color:var(--wolf-border,#262c3d); color:var(--wolf-muted,#8a99ad); }
+        .cp-warn { background:rgba(245,158,11,.08); border:1px solid rgba(245,158,11,.35); border-radius:13px; padding:13px 15px; margin-bottom:14px; font-size:12.8px; line-height:1.75; color:#f6d99a; }
+        .cp-warn b { color:#ffe6ad; }
+        .cp-field { margin-bottom:12px; }
+        .cp-field label { display:block; font-size:12px; font-weight:700; color:var(--wolf-muted,#8a99ad); margin-bottom:5px; letter-spacing:.4px; }
+        .cp-field input { width:100%; background:rgba(255,255,255,.04); border:1px solid var(--wolf-border,#262c3d); color:var(--wolf-text,#e6ecf5); font-size:14px; padding:10px 12px; border-radius:10px; font-family:inherit; }
+        .cp-field input:focus { outline:none; border-color:var(--cp-blue); }
+        .cp-hint { font-size:11.5px; color:var(--wolf-muted,#8a99ad); margin-top:4px; }
+        .cp-btn { appearance:none; border:none; cursor:pointer; font-family:inherit; font-weight:800; font-size:13.5px; padding:10px 18px; border-radius:10px; }
+        .cp-btn.primary { background:var(--cp-gold); color:#1a1205; }
+        .cp-btn.ghost { background:rgba(255,255,255,.05); color:var(--wolf-text,#e6ecf5); border:1px solid var(--wolf-border,#262c3d); }
+        .cp-btn.danger { background:rgba(240,82,82,.14); color:var(--cp-red); border:1px solid rgba(240,82,82,.4); }
+        .cp-btn:disabled { opacity:.5; cursor:not-allowed; }
+        .cp-btn.sm { padding:6px 12px; font-size:12px; }
+        .pillp { display:inline-block; font-size:11.5px; font-weight:800; padding:3px 10px; border-radius:999px; }
+        .pillp.active { background:rgba(34,197,94,.16); color:var(--cp-green); border:1px solid rgba(34,197,94,.4); }
+        .pillp.pending{ background:rgba(255,207,75,.16); color:var(--cp-gold); border:1px solid rgba(255,207,75,.4); }
+        .pillp.disabled{ background:rgba(148,163,184,.14); color:var(--wolf-muted,#8a99ad); border:1px solid var(--wolf-border,#262c3d); }
+        .pillp.error { background:rgba(240,82,82,.15); color:var(--cp-red); border:1px solid rgba(240,82,82,.4); }
+        .cp-kv { display:flex; justify-content:space-between; gap:12px; font-size:13px; padding:7px 0; border-bottom:1px solid rgba(255,255,255,.05); }
+        .cp-kv:last-child { border-bottom:none; }
+        .cp-kv .k { color:var(--wolf-muted,#8a99ad); }
+        .cp-kv .v { font-weight:700; font-variant-numeric:tabular-nums; }
+        .cp-msg { font-size:13px; margin-top:10px; min-height:18px; }
+        .cp-msg.ok { color:var(--cp-green); } .cp-msg.err { color:var(--cp-red); }
+        .cp-tbl { width:100%; border-collapse:collapse; font-size:12.5px; }
+        .cp-tbl th, .cp-tbl td { text-align:left; padding:9px 8px; border-bottom:1px solid rgba(255,255,255,.06); vertical-align:middle; }
+        .cp-tbl th { color:var(--wolf-muted,#8a99ad); font-size:11px; letter-spacing:.5px; text-transform:uppercase; }
+        .cp-tbl .num { text-align:right; font-variant-numeric:tabular-nums; }
+        .cp-scroll { overflow-x:auto; }
+        .cp-actions { display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
+        .cp-err-txt { color:var(--cp-red); font-size:11.5px; }
+    </style>
+</head>
+<body>
+    <div class="nav-standalone">{% include '_nav.html' %}</div>
+    <div class="cp-wrap">
+
+        <div class="cp-h1">🪞 跟單 Copy Trading</div>
+        <div class="cp-sub">
+            把你自己的 Bybit 帳戶連上 Strategy&nbsp;3（Vegas 旗標翻轉，目前 {{ ctx.s3_symbols|join('、') if ctx.s3_symbols else 'XAUT' }}）。
+            系統每次真實進出場，都會用你設定的保證金，在你自己的帳戶下同方向的單。
+        </div>
+
+        {# ── master switch state ── #}
+        {% if ctx.master_live %}
+        <div class="cp-banner live">🟢 跟單系統已開啟 — 已審核的跟單者會收到真實下單。</div>
+        {% else %}
+        <div class="cp-banner off">⚪ 跟單系統目前為<strong>準備模式</strong>（不會真的下單，只記錄）。管理員開啟 COPY_TRADING_LIVE 後才會真實執行。</div>
+        {% endif %}
+
+        {# ── security / risk notice ── #}
+        <div class="cp-warn">
+            <b>建立 API 金鑰前請務必：</b><br>
+            ① 只開 <b>合約交易</b> 權限，<b>務必關閉「提現 / 轉帳」</b>權限 — 這樣別人拿到也搬不走你的錢。<br>
+            ② 建議綁定 <b>IP 白名單</b>（只允許本系統的伺服器）。<br>
+            ③ 金鑰在伺服器以加密方式保存，不會出現在畫面、紀錄或訊息裡。<br>
+            <b>⚠️ 這是真實資金交易，可能虧損。</b>過去績效不代表未來，請自行評估、量力而為，本服務不構成投資建議。
+        </div>
+
+        {% if not ctx.vault_ok %}
+        <div class="cp-banner off">⚠️ 伺服器加密尚未設定，暫時無法接收金鑰。請聯絡管理員。</div>
+        {% endif %}
+
+        {# ── member self-service ── #}
+        <div class="cp-card">
+            <h2>我的跟單設定</h2>
+            {% if ctx.me %}
+                <div class="cp-kv"><span class="k">狀態</span><span class="v">
+                    {% if ctx.me.state == 'active' %}<span class="pillp active">✅ 已開啟</span>
+                    {% elif ctx.me.state == 'pending' %}<span class="pillp pending">⏳ 待管理員審核</span>
+                    {% else %}<span class="pillp disabled">⏸ 已暫停</span>{% endif %}
+                </span></div>
+                <div class="cp-kv"><span class="k">API 金鑰</span><span class="v">{{ ctx.me.key_fp }}</span></div>
+                <div class="cp-kv"><span class="k">每筆保證金</span><span class="v" id="cur-margin">{{ ctx.me.margin_usdt }} USDT</span></div>
+                {% if ctx.my_status and ctx.my_status.last_action %}
+                <div class="cp-kv"><span class="k">最近動作</span><span class="v">{{ ctx.my_status.last_action }}</span></div>
+                {% endif %}
+                {% if ctx.my_status and ctx.my_status.last_error %}
+                <div class="cp-kv"><span class="k">最近錯誤</span><span class="v cp-err-txt">{{ ctx.my_status.last_error }}</span></div>
+                {% endif %}
+
+                <div class="cp-field" style="margin-top:14px;">
+                    <label>調整每筆保證金（USDT，{{ ctx.min_margin }}–{{ ctx.max_margin }}）</label>
+                    <div class="cp-actions">
+                        <input type="number" id="margin-edit" value="{{ ctx.me.margin_usdt }}" min="{{ ctx.min_margin }}" max="{{ ctx.max_margin }}" step="1" style="max-width:160px;">
+                        <button class="cp-btn ghost sm" onclick="saveMargin()">儲存金額</button>
+                    </div>
+                </div>
+                <div class="cp-actions" style="margin-top:14px;">
+                    <button class="cp-btn ghost sm" onclick="toggleResubmit()">重新提交金鑰</button>
+                    <button class="cp-btn danger sm" onclick="revoke()">移除我的金鑰</button>
+                </div>
+                <div id="resubmit" style="display:none; margin-top:14px;"></div>
+            {% else %}
+                <div id="enroll-form"></div>
+            {% endif %}
+            <div class="cp-msg" id="cp-msg"></div>
+        </div>
+
+        {# ── admin panel ── #}
+        {% if ctx.is_admin %}
+        <div class="cp-card">
+            <h2>管理員 · 跟單者名單 {% if ctx.followers %}({{ ctx.followers|length }}){% endif %}</h2>
+            {% if ctx.followers %}
+            <div class="cp-scroll">
+            <table class="cp-tbl">
+                <thead><tr>
+                    <th>使用者</th><th>金鑰</th><th class="num">保證金</th><th>狀態</th><th>最近</th><th>操作</th>
+                </tr></thead>
+                <tbody>
+                {% for f in ctx.followers %}
+                <tr data-uid="{{ f.user_id }}">
+                    <td>{{ f.username }}</td>
+                    <td>{{ f.key_fp }}</td>
+                    <td class="num">{{ f.margin_usdt }}</td>
+                    <td>
+                        {% if f.state == 'active' %}<span class="pillp active">已開啟</span>
+                        {% elif f.state == 'pending' %}<span class="pillp pending">待審核</span>
+                        {% else %}<span class="pillp disabled">已暫停</span>{% endif %}
+                        {% if f.status and f.status.state == 'error' %}<span class="pillp error" title="{{ f.status.last_error }}">錯誤</span>{% endif %}
+                    </td>
+                    <td>{{ f.status.last_action if f.status and f.status.last_action else '—' }}</td>
+                    <td>
+                        <div class="cp-actions">
+                        {% if f.enabled %}
+                            <button class="cp-btn ghost sm" onclick="adminToggle({{ f.user_id }}, false)">暫停</button>
+                        {% else %}
+                            <button class="cp-btn primary sm" onclick="adminToggle({{ f.user_id }}, true)">開啟</button>
+                        {% endif %}
+                            <button class="cp-btn danger sm" onclick="adminRemove({{ f.user_id }}, '{{ f.username }}')">移除</button>
+                        </div>
+                    </td>
+                </tr>
+                {% endfor %}
+                </tbody>
+            </table>
+            </div>
+            {% else %}
+            <div class="cp-sub" style="margin:0;">目前沒有人提交金鑰。</div>
+            {% endif %}
+            <div class="cp-sub" style="margin:12px 0 0;">開啟一位跟單者＝核准他用真實資金跟單（還需系統主開關 COPY_TRADING_LIVE=true）。</div>
+        </div>
+        {% endif %}
+
+    </div>
+
+<script>
+const CSRF = "{{ csrf_token() }}";
+const MINM = {{ ctx.min_margin }}, MAXM = {{ ctx.max_margin }};
+const VAULT_OK = {{ 'true' if ctx.vault_ok else 'false' }};
+
+function post(url, data) {
+    const body = new URLSearchParams(data);
+    return fetch(url, { method:'POST', headers:{'X-CSRFToken':CSRF,
+        'Content-Type':'application/x-www-form-urlencoded'}, body })
+        .then(r => r.json().then(j => ({ok:r.ok, j})));
+}
+function msg(text, kind) {
+    const el = document.getElementById('cp-msg');
+    el.textContent = text; el.className = 'cp-msg ' + (kind||'');
+}
+
+function enrollFormHTML(marginDefault) {
+    return `
+      <div class="cp-field"><label>Bybit API Key</label>
+        <input id="in-key" autocomplete="off" spellcheck="false" placeholder="貼上 API Key"></div>
+      <div class="cp-field"><label>Bybit API Secret</label>
+        <input id="in-secret" type="password" autocomplete="new-password" spellcheck="false" placeholder="貼上 API Secret">
+        <div class="cp-hint">只需「合約交易」權限，關閉提現。金鑰驗證只做唯讀查詢，不會下單。</div></div>
+      <div class="cp-field"><label>每筆保證金（USDT）</label>
+        <input id="in-margin" type="number" value="${marginDefault||50}" min="${MINM}" max="${MAXM}" step="1" style="max-width:160px;"></div>
+      <button class="cp-btn primary" id="enroll-btn" onclick="enroll()" ${VAULT_OK?'':'disabled'}>提交並驗證金鑰</button>`;
+}
+
+function enroll() {
+    const key = (document.getElementById('in-key').value||'').trim();
+    const secret = (document.getElementById('in-secret').value||'').trim();
+    const margin = document.getElementById('in-margin').value;
+    if (!key || !secret) { msg('請填入 API Key 與 Secret', 'err'); return; }
+    const btn = document.getElementById('enroll-btn');
+    btn.disabled = true; msg('驗證中…');
+    post('/api/copy/enroll', {api_key:key, api_secret:secret, margin})
+        .then(({ok, j}) => {
+            if (ok && j.ok) {
+                msg('✅ 已收到並驗證成功' + (j.equity!=null?`（帳戶淨值約 ${Number(j.equity).toFixed(2)} USDT）`:'') + '，待管理員審核開啟。', 'ok');
+                setTimeout(() => location.reload(), 1400);
+            } else { msg('❌ ' + (j.error||'提交失敗'), 'err'); btn.disabled = false; }
+        }).catch(() => { msg('連線失敗', 'err'); btn.disabled = false; });
+}
+
+function toggleResubmit() {
+    const box = document.getElementById('resubmit');
+    if (box.style.display === 'none') { box.innerHTML = enrollFormHTML({{ ctx.me.margin_usdt if ctx.me else 50 }}); box.style.display = 'block'; }
+    else { box.style.display = 'none'; box.innerHTML=''; }
+}
+
+function saveMargin() {
+    const margin = document.getElementById('margin-edit').value;
+    post('/api/copy/margin', {margin}).then(({ok, j}) => {
+        if (ok && j.ok) { document.getElementById('cur-margin').textContent = j.record.margin_usdt + ' USDT'; msg('✅ 已更新保證金為 ' + j.record.margin_usdt + ' USDT', 'ok'); }
+        else msg('❌ ' + (j.error||'更新失敗'), 'err');
+    });
+}
+
+function revoke() {
+    if (!confirm('確定要移除你的 API 金鑰並停止跟單？')) return;
+    post('/api/copy/revoke', {}).then(() => location.reload());
+}
+
+function adminToggle(uid, enabled) {
+    post('/api/copy/admin/toggle', {user_id:uid, enabled:enabled?'true':'false'})
+        .then(() => location.reload());
+}
+function adminRemove(uid, name) {
+    if (!confirm('移除跟單者「'+name+'」？此動作會刪除其金鑰。')) return;
+    post('/api/copy/admin/remove', {user_id:uid}).then(() => location.reload());
+}
+
+// Render the enrollment form for a not-yet-enrolled member.
+(function () {
+    const holder = document.getElementById('enroll-form');
+    if (holder) holder.innerHTML = enrollFormHTML(50);
+})();
+</script>
+</body>
+</html>

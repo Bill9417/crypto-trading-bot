@@ -590,6 +590,12 @@ STRATEGY2_PREMIUM_TP2_R = float(os.getenv("STRATEGY2_PREMIUM_TP2_R", "2.0"))
 # By default the scanner is ALERT-ONLY. Real orders need STRATEGY3_LIVE=true
 # AND Bybit keys AND LIVE_TRADING=true (the master gate: false ⇒ dry-run logs).
 STRATEGY3_LIVE = _env_bool("STRATEGY3_LIVE", False)
+# 🪞 Copy-trading master switch. When true, each LIVE S3 action is mirrored onto
+# every ENABLED follower's own Bybit account (copy_engine, sized by the
+# follower's chosen margin). Default False ⇒ the engine only logs what it WOULD
+# copy. Two independent gates protect follower funds: this switch AND per-
+# follower admin approval — a follower never trades until BOTH are on.
+COPY_TRADING_LIVE = _env_bool("COPY_TRADING_LIVE", False)
 # Comma-separated base assets it may trade (must exist on BOTH Binance futures
 # — chart source — and Bybit linear perps — execution venue).
 STRATEGY3_SYMBOLS = [s.strip().upper() for s in

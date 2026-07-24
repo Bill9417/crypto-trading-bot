@@ -22,6 +22,9 @@
     {# literal /strategies (not url_for): the nav is on every page, so a web
        process that predates this route would 500 site-wide on url_for. #}
     <a href="/strategies" class="nav-pill strat2{% if request.endpoint in ('strategies', 'strategy2') %} active{% endif %}">Strategies</a>
+    {# literal /copy (not url_for): member-facing copy-trading console; literal
+       href keeps the nav from 500-ing on a web process that predates the route #}
+    <a href="/copy" class="nav-pill strat2{% if request.endpoint == 'copy_page' %} active{% endif %}">跟單</a>
     {% if current_user.is_admin %}
     <a href="{{ url_for('admin_users') }}" class="nav-pill admin{% if request.endpoint == 'admin_users' %} active{% endif %}">Admin</a>
     {# literal /health (not url_for): templates hot-reload, so url_for would 500
