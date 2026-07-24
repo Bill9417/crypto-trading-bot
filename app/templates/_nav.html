@@ -4,6 +4,10 @@
 {# Quiet luxury nav (2026-07-05): no emoji, no rainbow — letterspaced small-caps,
    champagne accent on the active page only. Colour belongs to the regime chips. #}
 <nav class="tb-nav">
+    {# 台股 first (user's request) — public dad-facing TW entry page. Literal /tw
+       href (not url_for) keeps the nav from 500-ing on a web process that
+       predates the route. #}
+    <a href="/tw" class="nav-pill stocks{% if request.endpoint == 'tw_page' %} active{% endif %}">台股</a>
     <a href="{{ url_for('index') }}" class="nav-pill home{% if request.endpoint == 'index' %} active{% endif %}">Dashboard</a>
     {% if current_user.is_admin %}
     <a href="{{ url_for('account') }}" class="nav-pill account{% if request.endpoint == 'account' %} active{% endif %}">Account</a>
@@ -15,9 +19,6 @@
     {# literal /stocks (not url_for): templates hot-reload, so url_for would 500
        every page on a web process that predates the stocks route #}
     <a href="/stocks" class="nav-pill stocks{% if request.endpoint == 'stocks_page' %} active{% endif %}">Stocks</a>
-    {# literal /tw (not url_for): public dad-facing TW entry page; literal href
-       keeps the nav from 500-ing on a web process that predates the route #}
-    <a href="/tw" class="nav-pill stocks{% if request.endpoint == 'tw_page' %} active{% endif %}">台股</a>
     {# literal /strategies (not url_for): the nav is on every page, so a web
        process that predates this route would 500 site-wide on url_for. #}
     <a href="/strategies" class="nav-pill strat2{% if request.endpoint in ('strategies', 'strategy2') %} active{% endif %}">Strategies</a>
