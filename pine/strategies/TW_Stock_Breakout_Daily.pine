@@ -1,0 +1,63 @@
+//@version=5
+// ════════════════════════════════════════════════════════════════════════════
+// 台股 突破動能策略 · 60日 Donchian Breakout (日線)
+//
+// 最佳化自 5 年真實 TW50 回測（約 30 組參數掃描，含台股交易成本、隔日開盤進場、
+// 最多 6 檔同時持有）。這組在「勝率」與「獲利」的平衡最好：
+//     勝率 ~57% · PF ~1.9 · 每筆 +3% · 年化 ~21% · 最大回檔 ~22%
+// 規則：大盤（加權指數）多頭時，個股收盤「突破前 60 日最高價」→ 隔日開盤買進，
+//       停損 3×ATR、目標 5×ATR、最長持有 60 個交易日。
+//
+// ⚠️ 回測偏樂觀：5 年多頭區間、用現在的 TW50 成分股（倖存者偏差）、且是掃描後
+//    挑最好的一組（in-sample）。實盤會較低，請把年化打折看待。勝率≠賺錢：同一份
+//    資料上「緊 TP 的高勝率」參數（71% 勝率）幾乎沒賺，均值回歸更是虧損。
+// 成本：commission 設 0.2925%（≈台股買 0.1425% + 賣 0.1425%+證交稅 0.3% 的來回均攤）。
+// ════════════════════════════════════════════════════════════════════════════
+strategy("台股 突破動能 60D (回測版)", overlay=true,
+     initial_capital=1000000,
+     default_qty_type=strategy.percent_of_equity, default_qty_value=16,
+     commission_type=strategy.commission.percent, commission_value=0.2925,
+     pyramiding=0, calc_on_every_tick=false, process_orders_on_close=false)
+
+// ── 參數 ──────────────────────────────────────────────────────────────────
+lookback  = input.int(60,  "突破回看天數 (Donchian)", minval=10)
+atrLen    = input.int(14,  "ATR 長度",               minval=5)
+slMult    = input.float(3.0, "停損 ATR 倍數", step=0.5)
+tpMult    = input.float(5.0, "目標 ATR 倍數", step=0.5)
+maxHold   = input.int(60,  "最長持有天數",           minval=5)
+useRegime = input.bool(true, "只在大盤多頭進場 (加權指數 > 100日線 且 20日動能為正)")
+
+// ── 大盤（加權指數）濾網 ────────────────────────────────────────────────────
+taiexC      = request.security("TWSE:TAIEX", "D", close)   // 找不到就改 "^TWII"
+taiexSMA100 = ta.sma(taiexC, 100)
+regimeOK    = not useRegime or (taiexC > taiexSMA100 and taiexC > taiexC[20])
+
+// ── 突破訊號 ────────────────────────────────────────────────────────────────
+priorHigh = ta.highest(high[1], lookback)   // 前 N 日最高（不含今天）
+atr       = ta.atr(atrLen)
+longSig   = close > priorHigh and regimeOK
+
+// 進場：process_orders_on_close=false ⇒ 隔日開盤成交（與回測一致）
+if longSig and strategy.position_size == 0
+    strategy.entry("BO", strategy.long)
+
+// 記錄進場當下的 ATR，讓停損/目標固定在進場價 ± N×ATR（不隨盤中 ATR 漂移）
+var float entryAtr = na
+if strategy.position_size == 0 and longSig
+    entryAtr := atr
+
+// ── 出場：停損 / 目標 / 時間停損 ────────────────────────────────────────────
+if strategy.position_size > 0
+    ep = strategy.position_avg_price
+    ea = na(entryAtr) ? atr : entryAtr
+    strategy.exit("出場", from_entry="BO",
+         stop  = ep - slMult * ea,
+         limit = ep + tpMult * ea)
+    if bar_index - strategy.opentrades.entry_bar_index(0) >= maxHold
+        strategy.close("BO", comment="時間停損")
+
+// ── 視覺 ────────────────────────────────────────────────────────────────────
+plot(priorHigh, "前60日高", color=color.new(color.orange, 30))
+bgcolor(regimeOK ? color.new(color.green, 92) : na, title="大盤多頭區間")
+plotshape(longSig and strategy.position_size == 0, title="突破買進",
+     style=shape.triangleup, location=location.belowbar, color=color.lime, size=size.tiny)
