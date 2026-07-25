@@ -144,3 +144,10 @@ def _no_live_side_effects(request, monkeypatch, tmp_path):
     monkeypatch.setattr(site_link, "STATE_FILE", str(tmp_path / "site_link.json"))
     monkeypatch.setattr(watchdog, "STATE_FILE", str(tmp_path / "watchdog.json"))
     monkeypatch.setattr(watchdog, "LOG_DIR", str(tmp_path / "logs"))
+    # the signal scorecard is months of accumulated measurement — a test that
+    # calls tick()/_save_state() must never be able to overwrite the real one
+    import signal_outcomes
+    monkeypatch.setattr(signal_outcomes, "STATE_FILE",
+                        str(tmp_path / "signal_outcomes.json"))
+    monkeypatch.setattr(signal_outcomes, "SIGNALS_FILE",
+                        str(tmp_path / "strategy2_signals.json"))

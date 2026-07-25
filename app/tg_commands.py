@@ -397,9 +397,10 @@ def _should_pin_guide(state: dict, cmd: str, dest_chat, delivered: bool, mid) ->
 
 
 # ── command dispatch ─────────────────────────────────────────────────────────
-def handle(cmd: str, args: str = "") -> str:
+def handle(cmd: str, args: str = "", owner: bool = False) -> str:
     """Command name (+ raw args) → reply text. Import-inside so one broken
-    dependency degrades that command, not the whole bot."""
+    dependency degrades that command, not the whole bot. owner=True unlocks
+    the private research detail inside otherwise-public replies."""
     if cmd in GUIDE_CMDS:
         return GUIDE
     if cmd in ("price", "p"):
@@ -458,7 +459,9 @@ def handle(cmd: str, args: str = "") -> str:
         return tw_intraday.snapshot_text()
     if cmd == "outcomes":
         import signal_outcomes
-        return signal_outcomes.report()
+        # Members see the scorecard; the exit-rule / cohort research is the
+        # owner's to read and to decide whether to publish.
+        return signal_outcomes.report(owner=owner)
     if cmd == "mom":
         import eth_mom
         return eth_mom.report()
@@ -703,7 +706,8 @@ def _poll_loop() -> None:
                 print(f"[tgcmd] denied /{cmd} from non-admin")
                 continue
             try:
-                reply = handle(cmd, args)
+                reply = handle(cmd, args, owner=str(
+                    (msg.get("from") or {}).get("id")) in OWNER_IDS)
             except Exception as exc:  # noqa: BLE001 — a broken handler must answer, not die
                 reply = f"⚠ {cmd} failed: {str(exc)[:200]}"
             if reply:
