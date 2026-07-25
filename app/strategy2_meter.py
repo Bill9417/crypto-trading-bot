@@ -176,7 +176,8 @@ def compute_meter(ohlcv) -> dict:
             vols = [float(c[5]) for c in window]
             vsum = sum(vols)
             if vsum > 0:
-                vmean = sum(float(c[4]) * v for c, v in zip(window, vols)) / vsum
+                vmean = sum(float(c[4]) * v
+                            for c, v in zip(window, vols, strict=True)) / vsum
                 states["volume"] = 1 if price > vmean else -1 if price < vmean else 0
                 speaks["volume"] = True
 

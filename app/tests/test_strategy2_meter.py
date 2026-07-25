@@ -201,12 +201,15 @@ def test_price_inside_the_tunnel_is_not_scored_bearish():
     closes = [float(c[4]) for c in _series(400, 400.0, -0.6)]
     from indicators import calculate_ema
     t144, t169 = calculate_ema(closes, 144), calculate_ema(closes, 169)
-    t288, t338 = calculate_ema(closes, 288), calculate_ema(closes, 338)
+    t338 = calculate_ema(closes, 338)
     assert t144 < t169, "downtrend precondition: the faster EMA sits lower"
 
     # park the last close between the inner tunnel's two lines
     rows = _series(400, 400.0, -0.6)
     inside = (t144 + t169) / 2.0
+    # the old test was `price < t169 and price < t338`; both hold here, so the
+    # old code scored this a full -1. That is the regression being pinned.
+    assert inside < t169 and inside < t338
     rows[-1] = [rows[-1][0], inside, inside + 0.2, inside - 0.2, inside, 1000.0]
     tunnel = next(f for f in strategy2_meter.compute_meter(rows)["factors"]
                   if f["key"] == "tunnel")
