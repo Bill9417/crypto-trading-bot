@@ -70,6 +70,32 @@ def test_fmt_winrate_reports_both_accounts():
     assert "勝率不代表賺錢" in msg                     # the honesty footer
 
 
+def test_fmt_winrate_labels_the_bybit_panel_as_the_whole_account():
+    """S1's mirror, S3 and manual trades all settle on that sub-account —
+    calling the panel 'S3' claimed a track record that wasn't S3's."""
+    msg = TG.fmt_winrate(_summary(), _summary())
+    assert "S1+S3+手動" in msg
+
+
+def test_fmt_winrate_split_is_owner_only():
+    trades = [{"symbol": "XAUTUSDT", "pnl": 3.0, "time": 1_784_900_000_000,
+               "notional": 1200.0, "lev": 50.0}]
+    public = TG.fmt_winrate(_summary(), _summary(trades=trades))
+    owner = TG.fmt_winrate(_summary(), _summary(trades=trades), owner=True)
+    assert "各策略實際損益" not in public
+    assert "各策略實際損益" in owner and "S3 翻轉引擎" in owner
+
+
+def test_fmt_winrate_survives_a_broken_split(monkeypatch):
+    import strategy_ledger
+    monkeypatch.setattr(strategy_ledger, "report",
+                        lambda *a, **k: (_ for _ in ()).throw(RuntimeError("nope")))
+    msg = TG.fmt_winrate(_summary(), _summary(trades=[{"symbol": "X", "pnl": 1.0,
+                                                       "time": 0}]), owner=True)
+    assert "勝率不代表賺錢" in msg              # the report still arrives
+    assert "拆帳暫時無法計算" in msg
+
+
 def test_fmt_winrate_degrades_on_error():
     msg = TG.fmt_winrate({"ok": False, "error": "boom"}, _summary(n_trades=0))
     assert "暫時無法取得（boom）" in msg

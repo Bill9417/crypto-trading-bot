@@ -241,6 +241,11 @@ def open_flip(symbol: str, direction: str, price: float, score, margin: float,
         _tg(f"⚠️ S3 order error {symbol.split('/')[0]} {direction.upper()}: {err}")
         return "skip"
     tag = "DRY-RUN " if res.get("dry") else ""
+    if not res.get("dry"):
+        # Recorded HERE, not inside X.open_flip — the S1 mirror calls that same
+        # function, and tagging it there would file S1's trades as S3's.
+        import strategy_ledger
+        strategy_ledger.record_open("S3", symbol, direction)
     print(f"[strategy3] {tag}OPENED {direction.upper()} {symbol} @ {price:.6g} "
           f"(score {score}, emergency SL {sl:.6g}, qty {res.get('qty')})")
     why = why or f"score {score}/100 · Vegas agrees · exit = opposite flag"
@@ -270,6 +275,8 @@ def close_flip(symbol: str, why: str) -> bool:
     print(f"[strategy3] {tag}CLOSED {symbol} — {why}")
     _tg(f"🔀 S3 {tag}EXIT · {symbol.split('/')[0]} (Bybit) — {why}")
     if not res.get("dry"):                       # mirror the exit to followers
+        import strategy_ledger
+        strategy_ledger.record_close("S3", symbol)
         _mirror("mirror_close", symbol, why)
     return True
 

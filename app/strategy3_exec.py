@@ -225,9 +225,18 @@ def closed_pnl_summary(limit: int = 1000) -> dict:
                 pnl = float(it.get("closedPnl") or 0.0)
             except (TypeError, ValueError):
                 pnl = 0.0
+            try:
+                qty = float(it.get("qty") or 0.0)
+                entry_px = float(it.get("avgEntryPrice") or 0.0)
+                lev = float(it.get("leverage") or 0.0)
+            except (TypeError, ValueError):
+                qty = entry_px = lev = 0.0
             raw.append({"symbol": it.get("symbol"),
                         "entry": str(it.get("avgEntryPrice") or ""),
                         "pnl": pnl,
+                        # size fingerprint — lets strategy_ledger infer the owner
+                        # of trades that closed before the ledger existed
+                        "notional": qty * entry_px, "lev": lev,
                         "time": int(it.get("updatedTime") or it.get("createdTime") or 0)})
         raw.sort(key=lambda r: (r["symbol"] or "", r["time"]))
         trades = []
@@ -236,9 +245,11 @@ def closed_pnl_summary(limit: int = 1000) -> dict:
             if cur and cur["symbol"] == r["symbol"] and cur["entry"] == r["entry"]:
                 cur["pnl"] += r["pnl"]
                 cur["time"] = max(cur["time"], r["time"])
+                cur["notional"] += r["notional"]      # partial closes re-add up
                 cur["parts"] += 1
             else:
                 cur = {"symbol": r["symbol"], "entry": r["entry"], "pnl": r["pnl"],
+                       "notional": r["notional"], "lev": r["lev"],
                        "time": r["time"], "parts": 1}
                 trades.append(cur)
         for t in trades:
@@ -322,7 +333,8 @@ def closed_pnl_summary(limit: int = 1000) -> dict:
             "by_symbol": by_symbol,
             "hourly": hour_agg,
             "trades": [{"symbol": t["symbol"], "pnl": t["pnl"], "time": t["time"],
-                        "parts": t["parts"]} for t in trades[:80]],
+                        "parts": t["parts"], "notional": round(t["notional"], 4),
+                        "lev": t["lev"]} for t in trades[:80]],
         }
     except Exception as exc:  # noqa: BLE001
         return {"ok": False, "error": str(exc)[:300]}

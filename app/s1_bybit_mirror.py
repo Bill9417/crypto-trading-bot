@@ -195,6 +195,11 @@ def mirror_open(binance_symbol: str, direction: str, price: float,
                           "entry": float(price), "sl": float(sl_price),
                           "ts": time.time()}
             _save(state)
+            # this row is deleted on close, so ownership is recorded separately
+            # — otherwise the closed trade is indistinguishable from S3's and
+            # the operator's own trades on the same account
+            import strategy_ledger
+            strategy_ledger.record_open("S1", sym, d)
             tp_note = ""
             if tp2_price:
                 tp_err = _set_tp(sym, float(tp2_price))
@@ -309,6 +314,8 @@ def mirror_close(binance_symbol: str, kind: str = "") -> bool:
                     return False
                 closed = qty
         _save(state)
+        import strategy_ledger
+        strategy_ledger.record_close("S1", sym)
         if X.is_live():
             note = f"已平倉 x{closed:g}" if closed else "Bybit 端已自行出場（停損先觸發）"
             _tg(f"{sym.split('/')[0]} 出場（{kind or 'close'}）— {note}")

@@ -171,13 +171,18 @@ def _pnl(v):
         return "?"
 
 
-def fmt_winrate(binance: dict, bybit: dict) -> str:
+def fmt_winrate(binance: dict, bybit: dict, owner: bool = False) -> str:
     """The /winrate report — REAL exchange records, fees included, not the
-    simulated tracker. Sections degrade to the error text on an API blip."""
+    simulated tracker. Sections degrade to the error text on an API blip.
+
+    The Bybit panel is the whole SUB-ACCOUNT: S1's mirror, S3's flip engine and
+    the operator's own manual trades all settle there, so its headline is not
+    any one strategy's track record. owner=True appends the per-strategy split
+    (see strategy_ledger)."""
     import tg_format
     lines = ["🎯 勝率 · 真實帳戶成交\n"]
     for icon, name, s in (("🟨", "Binance · S1/S2", binance),
-                          ("🟧", "Bybit · S3", bybit)):
+                          ("🟧", "Bybit · S1+S3+手動（整個子帳戶）", bybit)):
         lines.append(f"{icon} {name}")
         if not (s or {}).get("ok"):
             lines.append(f"暫時無法取得（{(s or {}).get('error', 'no data')}）\n")
@@ -201,6 +206,13 @@ def fmt_winrate(binance: dict, bybit: dict) -> str:
         lines.append("")
     lines.append("⚠️ 勝率不代表賺錢 — 90% 勝率但那 10% 賠很大照樣虧。"
                  "要跟獲利因子（PF）和淨值一起看。")
+    if owner and (bybit or {}).get("ok") and (bybit or {}).get("trades"):
+        try:
+            import strategy_ledger
+            split = strategy_ledger.report(bybit["trades"])
+        except Exception as exc:  # noqa: BLE001 — a broken split must not eat the report
+            split = f"（各策略拆帳暫時無法計算：{str(exc)[:80]}）"
+        lines += ["", split]
     return "\n".join(lines)
 
 
@@ -409,7 +421,7 @@ def handle(cmd: str, args: str = "", owner: bool = False) -> str:
         import executor
         import strategy3_exec
         return fmt_winrate(executor.realized_pnl_summary(),
-                           strategy3_exec.closed_pnl_summary())
+                           strategy3_exec.closed_pnl_summary(), owner=owner)
     if cmd in ("positions", "pos"):
         import executor
         import strategy3_exec
@@ -643,7 +655,10 @@ def _handle_callback(cb: dict) -> None:
         _answer_callback(cb_id, "⛔ 無權限")
         return
     try:
-        reply = handle(cmd, args)
+        # a refresh tap must resolve the same owner view as the original reply,
+        # or the per-strategy split silently vanishes on refresh
+        reply = handle(cmd, args, owner=str(
+            (cb.get("from") or {}).get("id")) in OWNER_IDS)
     except Exception as exc:  # noqa: BLE001 — a broken handler must answer, not die
         reply = f"⚠ {cmd} failed: {str(exc)[:200]}"
     if reply:

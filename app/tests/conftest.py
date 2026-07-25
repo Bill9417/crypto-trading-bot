@@ -151,3 +151,8 @@ def _no_live_side_effects(request, monkeypatch, tmp_path):
                         str(tmp_path / "signal_outcomes.json"))
     monkeypatch.setattr(signal_outcomes, "SIGNALS_FILE",
                         str(tmp_path / "strategy2_signals.json"))
+    # strategy attribution: the only record of which engine owned a closed
+    # trade. A test that overwrote it would erase real P&L history.
+    import strategy_ledger
+    monkeypatch.setattr(strategy_ledger, "LEDGER_FILE",
+                        str(tmp_path / "strategy_ledger.json"))
