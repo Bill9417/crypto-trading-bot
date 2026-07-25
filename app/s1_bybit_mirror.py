@@ -83,6 +83,41 @@ def _tg(msg: str) -> None:
         print(f"[s1-mirror] telegram failed: {exc}")
 
 
+def _s3_reserve() -> float:
+    """Margin to leave untouched so S3 can still enter when its flag flips.
+
+    Both engines share one sub-account, and S1 is the one that should give way:
+    S3 trades a single symbol off a slow 30m signal and cannot re-enter if it
+    misses the flip, while S1 fires often and skipping one mirror costs almost
+    nothing. Without this S1 could hold 10 positions and leave S3 unable to
+    find its 30 USDT.
+
+    Only symbols S3 is FLAT on are reserved for — an open position's margin is
+    already inside 'used', so counting it again would reserve twice. Fail-soft
+    and conservative: if positions can't be read, reserve for everything.
+    Override with S1_BYBIT_RESERVE_USDT (0 disables)."""
+    import config
+    override = os.getenv("S1_BYBIT_RESERVE_USDT")
+    if override not in (None, ""):
+        try:
+            return max(0.0, float(override))
+        except ValueError:
+            pass
+    total = 0.0
+    for base in (getattr(config, "STRATEGY3_SYMBOLS", None) or []):
+        try:
+            margin = float(config.strategy3_params(base).get("margin") or 0.0)
+        except Exception:  # noqa: BLE001 — unknown symbol, nothing to reserve
+            continue
+        try:
+            if X.get_position(f"{base}/USDT:USDT"):
+                continue                    # already open → margin already used
+        except Exception:  # noqa: BLE001 — can't tell, so assume it needs room
+            pass
+        total += margin
+    return total
+
+
 def _available_usdt() -> float:
     """Bybit unified available balance; 0.0 on any error (→ entry is skipped,
     the safe direction)."""
@@ -180,9 +215,10 @@ def mirror_open(binance_symbol: str, direction: str, price: float,
             except Exception:  # noqa: BLE001 — open_flip still checks properly
                 pass
             avail = _available_usdt()
-            if avail < margin * MARGIN_BUFFER:
+            need = margin * MARGIN_BUFFER + _s3_reserve()
+            if avail < need:
                 _tg(f"{sym.split('/')[0]} 可用保證金不足（{avail:.1f} < "
-                    f"{margin * MARGIN_BUFFER:.1f} USDT），略過鏡單")
+                    f"{need:.1f} USDT，含保留給 S3 的額度），略過鏡單")
                 return False
 
         res = X.open_flip(sym, d, float(price), float(sl_price),
