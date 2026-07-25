@@ -1,0 +1,77 @@
+//@version=5
+// ════════════════════════════════════════════════════════════════════════════
+// 台股 突破動能 · RUNNER 版（移動停利 5×ATR）— 高獲利、低勝率
+//
+// 和 TW_Stock_Breakout_Daily 同一個進場（大盤多頭 + 收盤突破前 60 日最高），
+// 差別只在出場：不設固定目標，改用「跟著最高點往上移的 5×ATR 移動停損」，
+// 讓趨勢單能一路抱到真正結束。
+//
+// 5 年真實 TW50 回測（同時最多 4 檔、含台股成本）:
+//     年化 ~40% · 最大回檔 ~15% · PF ~5.9 · 勝率 45%
+//
+// ⚠️⚠️ 買這個策略前，一定要懂它的個性 —— 它和「高勝率」完全相反：
+//   · 勝率只有 45%，**中位數的交易是小賠 1%**（多數單子不賺錢）
+//   · 全部獲利的 81% 來自最好的 5 筆；最大一筆 +373%
+//   · 如果少抓到最好的 3 筆，年化就從 40% 掉到 15%
+//   → 結論：**每一個訊號都要照做、賺的單子要抱住**。挑單、提早獲利了結，
+//     就只會拿到那堆小賠、拿不到那幾筆大賺 —— 反而比固定停利版更差。
+//   · 一年只有約 13 筆訊號，要有耐心。
+//
+// 穩健度檢查（都通過）: 移動停損 4~7×ATR 都是 32~40% 年化（是高原不是尖點）；
+// 前半段與後半段各自都賺（+53% / +31%）。但仍是 5 年多頭 + 現有成分股回測，
+// 實盤請打折看待。想要「贏比較多次、賺少一點」請改用固定停利版。
+// ════════════════════════════════════════════════════════════════════════════
+strategy("台股 突破動能 RUNNER (移動停利)", overlay=true,
+     initial_capital=1000000,
+     default_qty_type=strategy.percent_of_equity, default_qty_value=24,  // ≈4 檔
+     commission_type=strategy.commission.percent, commission_value=0.2925,
+     pyramiding=0, calc_on_every_tick=false, process_orders_on_close=false)
+
+lookback  = input.int(60,   "突破回看天數",           minval=10)
+atrLen    = input.int(14,   "ATR 長度",               minval=5)
+slMult    = input.float(3.0, "初始停損 ATR 倍數",     step=0.5)
+trailMult = input.float(5.0, "移動停利 ATR 倍數",     step=0.5,
+     tooltip="4~7 都在回測的高原區。數字越小出場越快、勝率略高但總獲利較低。")
+maxHold   = input.int(150,  "最長持有天數",           minval=20)
+useRegime = input.bool(true, "只在大盤多頭進場")
+
+// ── 大盤濾網 ────────────────────────────────────────────────────────────────
+taiexC      = request.security("TWSE:TAIEX", "D", close)   // 找不到就改 "^TWII"
+taiexSMA100 = ta.sma(taiexC, 100)
+regimeOK    = not useRegime or (taiexC > taiexSMA100 and taiexC > taiexC[20])
+
+// ── 進場 ────────────────────────────────────────────────────────────────────
+priorHigh = ta.highest(high[1], lookback)
+atr       = ta.atr(atrLen)
+longSig   = close > priorHigh and regimeOK
+
+var float entryAtr  = na
+var float peakSince = na
+
+if longSig and strategy.position_size == 0
+    entryAtr  := atr
+    peakSince := high
+    strategy.entry("BO", strategy.long)
+
+// ── 出場：移動停損（只升不降）+ 時間停損 ────────────────────────────────────
+var float trailStop = na
+if strategy.position_size > 0
+    peakSince := math.max(nz(peakSince, high), high)
+    ea        = na(entryAtr) ? atr : entryAtr
+    raw       = peakSince - trailMult * atr           // 用當下 ATR 貼合波動
+    floorStop = strategy.position_avg_price - slMult * ea
+    trailStop := math.max(nz(trailStop, floorStop), raw, floorStop)   // 只升不降
+    strategy.exit("移動停利", from_entry="BO", stop=trailStop)
+    if bar_index - strategy.opentrades.entry_bar_index(0) >= maxHold
+        strategy.close("BO", comment="時間停損")
+else
+    trailStop := na
+    peakSince := na
+
+// ── 視覺 ────────────────────────────────────────────────────────────────────
+plot(priorHigh, "前60日高", color=color.new(color.orange, 40))
+plot(strategy.position_size > 0 ? trailStop : na, "移動停損",
+     color=color.new(color.red, 0), style=plot.style_linebr, linewidth=2)
+bgcolor(regimeOK ? color.new(color.green, 93) : na, title="大盤多頭")
+plotshape(longSig and strategy.position_size == 0, title="突破買進",
+     style=shape.triangleup, location=location.belowbar, color=color.lime, size=size.tiny)

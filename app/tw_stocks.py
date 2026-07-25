@@ -57,6 +57,17 @@ BO_SL_ATR = 3.0
 BO_TP_ATR = 5.0
 BO_MAX_HOLD = 60
 
+# 🏃 "Runner" trailing stop — the HIGHEST-PROFIT variant found (5y TW50):
+# replace the fixed target with a 5×ATR stop trailing the highest high since
+# entry. Backtest at 4 concurrent positions: ~40% CAGR, ~15% maxDD, PF ~5.9.
+# It passed both robustness checks (trail 4–7 is a plateau, not a spike; both
+# halves of the window profitable) — BUT it is the OPPOSITE of high win rate:
+# only ~45% of trades win, the MEDIAN trade loses ~1%, and the top 5 trades
+# produced 81% of all profit. Miss the best 3 and CAGR falls 40%→15%. It only
+# works if every signal is taken and winners are held through deep pullbacks.
+# Tracked here as extra info on each setup; the primary target stays TP_ATR.
+TRAIL_ATR = 5.0
+
 _KIND_TAG = {"pullback": "回踩", "breakout": "突破"}
 
 _UA = {"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15) AppleWebKit/537.36"}
@@ -164,6 +175,35 @@ def setup_breakout(rows: list):
         return None
     return {"ref": c, "sl": c - BO_SL_ATR * atr, "tp": c + BO_TP_ATR * atr,
             "atr": atr, "turnover": c * v, "kind": "breakout"}
+
+
+def update_trail(rec: dict, rows: list) -> bool:
+    """Refresh one tracked setup's runner trail from fresh daily bars.
+
+    Sets rec['peak'] (highest high since the entry bar) and rec['trail']
+    (peak − TRAIL_ATR×ATR14, ratcheted — a trailing stop never moves down).
+    Returns True when the record changed. Pure/fail-soft: unparseable dates or
+    short histories leave the record untouched."""
+    if not rows or not rec.get("date"):
+        return False
+    try:
+        start = datetime.strptime(rec["date"], "%Y-%m-%d").date()
+    except Exception:  # noqa: BLE001
+        return False
+    since = [r for r in rows
+             if datetime.fromtimestamp(r[0], TZ).date() >= start]
+    if not since:
+        return False
+    atr = _atr14(rows)
+    if not atr:
+        return False
+    peak = max(max(r[2] for r in since), rec.get("peak") or 0.0)
+    trail = peak - TRAIL_ATR * atr
+    # a trailing stop only ratchets UP, and never below the original stop
+    trail = max(trail, rec.get("trail") or 0.0, rec.get("sl") or 0.0)
+    changed = (rec.get("peak") != peak) or (rec.get("trail") != trail)
+    rec["peak"], rec["trail"] = peak, trail
+    return changed
 
 
 def _px(v: float) -> str:
@@ -423,6 +463,11 @@ def web_view(now=None) -> dict:
             "price": price, "price_s": _px(price) if price else None,
             "change_pct": q.get("change_pct"),
         }
+        trail = s.get("trail")
+        if trail and trail > sl:          # only show once it has ratcheted above SL
+            row["trail"] = trail
+            row["trail_s"] = _px(trail)
+            row["trail_locked"] = trail > ref     # profit already locked in
         if price:
             row["dist_pct"] = round((price - ref) / ref * 100, 1)
             # "Near entry": price is still within ¼ of the stop distance of the
@@ -483,6 +528,13 @@ def tick() -> bool:
     reg = regime(taiex)
     names = _chinese_names()
     alerted = state.get("alerted") or {}
+    # Runner trails are refreshed from the SAME bars this loop already fetches —
+    # no extra Yahoo requests. Grouped by code so a symbol updates in one pass.
+    tracking = {}
+    for rec in (state.get("active_setups") or []):
+        if not rec.get("hit"):
+            tracking.setdefault(rec.get("code"), []).append(rec)
+    trails_moved = 0
     setups, blocked, skipped, failures = [], 0, 0, 0
     for code, name_en in TW50:
         try:
@@ -492,6 +544,12 @@ def tick() -> bool:
             failures += 1
             continue
         time.sleep(0.12)          # polite spacing for EVERY Yahoo request
+        for rec in tracking.get(code, ()):        # ratchet this symbol's trails
+            try:
+                if update_trail(rec, rows):
+                    trails_moved += 1
+            except Exception:  # noqa: BLE001 — a trail must never break the scan
+                pass
         if not s:
             continue
         if not reg["ok"]:
@@ -518,7 +576,7 @@ def tick() -> bool:
     if line_push.enabled():                # 爸爸的 LINE — card carousel when
         line_push.send_tw_digest(now, reg, setups, plain)   # there are picks
     print(f"[twstocks] {today}: regime={'BULL' if reg.get('ok') else 'OFF'} "
-          f"setups={len(setups)} sent={sent}")
+          f"setups={len(setups)} sent={sent} trails_moved={trails_moved}")
 
     for code, _n, _s in setups:
         alerted[code] = today
@@ -531,7 +589,9 @@ def tick() -> bool:
               if (cutoff - datetime.strptime(s["date"], "%Y-%m-%d").date()).days <= 30]
     active += [{"code": code, "name": name, "date": today,
                 "ref": s["ref"], "sl": s["sl"], "tp": s["tp"],
-                "strategy": s.get("kind", "pullback")}
+                "strategy": s.get("kind", "pullback"),
+                # runner trail seeded at entry; ratchets up on later scans
+                "peak": s["ref"], "trail": s["ref"] - TRAIL_ATR * s["atr"]}
                for code, name, s in setups]
     state["active_setups"] = active
     state["last_run_date"] = today

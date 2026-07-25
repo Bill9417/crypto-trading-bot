@@ -123,6 +123,76 @@ def test_setup_breakout_insufficient_data():
     assert tw_stocks.setup_breakout(_rising_to_new_high(40)) is None
 
 
+def _bars_from(date_str, closes):
+    """Daily bars starting at date_str (Taipei), h=c+1, l=c-1."""
+    d0 = datetime.strptime(date_str, "%Y-%m-%d").replace(tzinfo=tw_stocks.TZ)
+    return [(int((d0.timestamp()) + 86400 * i), c, c + 1.0, c - 1.0, c, 1000)
+            for i, c in enumerate(closes)]
+
+
+def test_update_trail_ratchets_up_with_new_highs():
+    rows = _bars_from("2026-01-01", [100.0 + i for i in range(40)])   # steady climb
+    rec = {"code": "X", "date": "2026-01-01", "ref": 100.0, "sl": 90.0}
+    assert tw_stocks.update_trail(rec, rows) is True
+    first_trail, first_peak = rec["trail"], rec["peak"]
+    assert first_peak == max(r[2] for r in rows)
+    assert first_trail == first_peak - tw_stocks.TRAIL_ATR * tw_stocks._atr14(rows)
+
+    # price climbs further → trail must move UP
+    rows2 = rows + _bars_from("2026-02-10", [140.0 + i for i in range(5)])
+    tw_stocks.update_trail(rec, rows2)
+    assert rec["peak"] > first_peak and rec["trail"] > first_trail
+
+
+def test_update_trail_never_moves_down():
+    rows = _bars_from("2026-01-01", [100.0 + i for i in range(40)])
+    rec = {"code": "X", "date": "2026-01-01", "ref": 100.0, "sl": 90.0}
+    tw_stocks.update_trail(rec, rows)
+    high_water = rec["trail"]
+    # now the stock falls back hard — a trailing stop must NOT follow it down
+    rows2 = rows + _bars_from("2026-02-10", [110.0, 105.0, 100.0])
+    tw_stocks.update_trail(rec, rows2)
+    assert rec["trail"] == high_water
+
+
+def test_update_trail_never_below_original_stop():
+    rows = _bars_from("2026-01-01", [100.0] * 30)      # flat → raw trail is low
+    rec = {"code": "X", "date": "2026-01-01", "ref": 100.0, "sl": 96.0}
+    tw_stocks.update_trail(rec, rows)
+    assert rec["trail"] >= 96.0
+
+
+def test_update_trail_failsoft_on_bad_input():
+    rows = _bars_from("2026-01-01", [100.0 + i for i in range(40)])
+    assert tw_stocks.update_trail({"date": "not-a-date"}, rows) is False
+    assert tw_stocks.update_trail({"date": "2026-01-01"}, []) is False
+    # entry date AFTER the last bar → nothing to measure
+    assert tw_stocks.update_trail({"date": "2030-01-01", "sl": 1}, rows) is False
+
+
+def test_web_view_exposes_ratcheted_trail(monkeypatch, tmp_path):
+    import stocks_data
+    monkeypatch.setattr(tw_stocks, "STATE_FILE", str(tmp_path / "tw.json"))
+    monkeypatch.setattr(stocks_data, "tw_quote_map", lambda: {})
+    tw_stocks._save_state({
+        "last_run_date": "2026-07-24",
+        "last_regime": {"ok": True},
+        "active_setups": [
+            # trail ratcheted ABOVE entry → profit locked
+            {"code": "2330", "name": "台積電", "date": "2026-07-10", "ref": 1000.0,
+             "sl": 900.0, "tp": 1200.0, "trail": 1080.0, "peak": 1250.0},
+            # trail still at/below the original stop → not shown yet
+            {"code": "2317", "name": "鴻海", "date": "2026-07-10", "ref": 200.0,
+             "sl": 180.0, "tp": 240.0, "trail": 180.0, "peak": 205.0},
+        ],
+    })
+    v = tw_stocks.web_view(now=FRIDAY)
+    by = {s["code"]: s for s in v["setups"]}
+    assert by["2330"]["trail"] == 1080.0 and by["2330"]["trail_locked"] is True
+    assert by["2330"]["trail_s"] == "1,080"
+    assert "trail" not in by["2317"]           # hidden until it clears the stop
+
+
 def test_digest_labels_both_strategies():
     reg = {"ok": True, "close": 28000.0, "sma100": 27000.0, "mom20": 0.03}
     pull = {"ref": 100.0, "sl": 94.0, "tp": 110.0, "atr": 2.0, "turnover": 2.0,
