@@ -1,5 +1,5 @@
 // ════════════════════════════════════════════════════════════════════════════
-//  WHALE FLOW & MACRO v2 — lower-pane companion (separate panel under candles)
+//  WHALE FLOW & MACRO v3 — lower-pane companion (separate panel under candles)
 //
 //  WHAT IT ACTUALLY MEASURES (honest version):
 //  TradingView cannot see whale wallets, order books, or exchange long/short
@@ -15,19 +15,51 @@
 //    Mirror for lows (bullish ▲). Markers confirm `pivot length` bars after
 //    the pivot — delayed, but they never repaint once shown.
 //  ③ OPEN INTEREST READ — the closest thing to "opening long or short",
-//    now AGGREGATED across Binance + Bybit + OKX (avg of each venue's Δ%,
-//    so different contract units can't distort the sum) and smoothed:
+//    AGGREGATED across Binance + Bybit + OKX (avg of each venue's Δ%, so
+//    different contract units can't distort the sum) and smoothed:
 //       OI ↑ + price ↑  = new LONGS opening        (green strip)
 //       OI ↑ + price ↓  = new SHORTS opening       (red strip)
 //       OI ↓ + price ↑  = shorts CLOSING (squeeze) (teal strip)
 //       OI ↓ + price ↓  = longs CLOSING (flush)    (orange strip)
-//    Feeds use TradingView's <EXCHANGE>:<BASE>USDT.P_OI symbols. Remember OI
-//    alone can't say WHO opened — every long has a short on the other side —
-//    which is why it's paired with the delta above.
+//    OI alone can't say WHO opened — every long has a short on the other side
+//    — which is why it's paired with the delta above.
 //  ④ DXY LINK — rolling correlation of RETURNS (× 100, orange line) between
 //    this symbol and the US Dollar Index, plus DXY trend in the table.
-//    Crypto/DXY correlation is TYPICALLY inverse but unstable — treat it as
-//    context, not a rule. DXY doesn't trade weekends → line goes quiet then.
+//    Crypto/DXY correlation is TYPICALLY inverse but unstable — context, not
+//    a rule.
+//
+// ─── WHAT CHANGED IN v3 (all four were measurement defects, not cosmetics) ───
+//  1. DXY CORRELATION WAS WRONG, NOT JUST "QUIET", ON WEEKENDS. Crypto trades
+//     24/7; DXY does not. request.security repeats the last DXY close on every
+//     closed-market bar, so the old code computed retDxy = 0 for each of them
+//     and fed those into the correlation. Those are not observations that "the
+//     dollar didn't move" — they are the ABSENCE of data, and on 15m with a
+//     200-bar window a weekend fills most of the window with fake zeros,
+//     dragging the reading toward 0 ("no relationship") when the truth is "no
+//     data". v3 requests DXY with gaps=barmerge.gaps_on, pairs each DXY return
+//     with the crypto return over the SAME span (not one chart bar against a
+//     two-day dollar move), drops pairs that straddle a gap longer than
+//     Max Return Gap, and keeps its own O(1) rolling Pearson over just those
+//     valid pairs. It shows "…" until it has a real minimum sample.
+//  2. CVD SILENTLY MIXED TWO DIFFERENT ESTIMATORS. Beyond TradingView's
+//     intrabar history limit the delta falls back to a close-position estimate.
+//     The old CVD accumulated both without distinction, so a divergence could
+//     compare a true-delta pivot against an estimated one. v3 tracks which
+//     estimator produced every bar, shows it in the table, and draws
+//     divergences that involve an estimated pivot as HOLLOW markers.
+//  3. DIVERGENCES HAD NO SIGNIFICANCE FLOOR. A high 0.0001% above the previous
+//     high counted as a "higher high". v3 requires the price pivots to differ
+//     by a minimum multiple of ATR and the CVD pivots by a minimum multiple of
+//     typical bar delta, both adjustable.
+//  4. VENUE DISAGREEMENT WAS HIDDEN BY THE AVERAGE. Binance +1.2% against OKX
+//     −1.1% averaged to ≈0 and printed "Flat", when a genuine venue split is
+//     itself information. v3 counts how many venues agree on direction, shows
+//     it (e.g. "3 ex · 2↑1↓"), and can optionally refuse to call a state
+//     without a majority.
+//  Also: the whale threshold now ranks a bar against PRIOR bars instead of a
+//  window containing itself; Whale Bias reads n/a (line breaks) when the window
+//  holds no whale bars at all, instead of printing 0 = "Neutral"; and the OI
+//  state has an ATR-relative deadband so a flat tape stops reading as bullish.
 //
 //  Defaults tuned for 15m. For 30m charts: Percentile Lookback 100, Bias
 //  Window 48, Correlation Length 100 (same time windows), Intrabar TF "1"
@@ -40,26 +72,33 @@ indicator("Whale Flow & Macro", overlay=false, format=format.price, precision=1)
 // ║  INPUTS                                                ║
 // ╚═══════════════════════════════════════════════════════╝
 gW = "① Whale Flow"
-ltfInput  = input.timeframe("1", "Intrabar Timeframe", group=gW, tooltip="Lower timeframe used to split each chart bar into buy/sell volume. '1' is the most precise. TradingView limits intrabar history — bars beyond the limit automatically fall back to a close-position estimate (on 30m, '3' stretches the covered history 3×).")
-whalePct  = input.int(90, "Whale Percentile", minval=70, maxval=99, group=gW, tooltip="A bar is a 'whale bar' when its volume is at or above this percentile of the lookback window. 90 = top 10% of bars.")
+ltfInput  = input.timeframe("1", "Intrabar Timeframe", group=gW, tooltip="Lower timeframe used to split each chart bar into buy/sell volume. '1' is the most precise. TradingView limits intrabar history — bars beyond the limit automatically fall back to a close-position estimate (on 30m, '3' stretches the covered history 3×). The table always tells you which one produced the current bar.")
+whalePct  = input.int(90, "Whale Percentile", minval=70, maxval=99, group=gW, tooltip="A bar is a 'whale bar' when its volume is at or above this percentile of the PRIOR bars. 90 = bigger than 90% of recent bars.")
 pctLen    = input.int(200, "Percentile Lookback (bars)", minval=50, maxval=1000, group=gW, tooltip="200 bars ≈ 2 days on 15m. Use 100 on 30m for the same window.")
 biasLen   = input.int(96, "Whale Bias Window (bars)", minval=20, maxval=500, group=gW, tooltip="Rolling window for the Whale Bias line. 96 bars = 1 day on 15m; use 48 on 30m.")
 biasTh    = input.int(40, "Bias Flip Threshold (±)", minval=10, maxval=90, group=gW, tooltip="Whale Bias crossing above +threshold / below −threshold fires the flip alerts and colors the table state.")
-showDiv   = input.bool(true, "CVD Divergence Markers", group=gW, inline="div", tooltip="Compares consecutive price pivots against cumulative volume delta at those pivots. Higher price high + lower CVD high = bearish divergence ▼ (rally without real buying); mirror for bullish ▲. Markers appear 'pivot length' bars after the pivot (confirmation lag — no repaint).")
-divLen    = input.int(5, "", minval=3, maxval=20, group=gW, inline="div")
+
+gDv = "① b CVD Divergence"
+showDiv   = input.bool(true, "CVD Divergence Markers", group=gDv, inline="div", tooltip="Compares consecutive price pivots against cumulative volume delta at those pivots. Higher price high + lower CVD high = bearish divergence ▼ (rally without real buying); mirror for bullish ▲. Markers appear 'pivot length' bars after the pivot (confirmation lag — no repaint). HOLLOW markers mean at least one of the two pivots came from the estimated delta, not true intrabar data.")
+divLen    = input.int(5, "", minval=3, maxval=20, group=gDv, inline="div")
+divMinAtr = input.float(0.25, "Min Price Pivot Separation (× ATR)", minval=0.0, maxval=3.0, step=0.05, group=gDv, tooltip="How much higher the new high must actually be before it counts as a higher high. 0 reproduces the old behaviour, where a hair's difference qualified and markers fired constantly.")
+divMinCvd = input.float(0.15, "Min CVD Separation (× avg bar delta)", minval=0.0, maxval=3.0, step=0.05, group=gDv, tooltip="Same idea on the volume-delta side: the CVD pivot must differ by this multiple of a typical bar's delta magnitude.")
 
 gO = "② Open Interest"
 showOI     = input.bool(true, "Show OI Positioning Strip", group=gO, tooltip="Colored squares along the top of the pane: green = new longs, red = new shorts, teal = shorts closing, orange = longs closing.")
 useBinance = input.bool(true, "Binance", inline="ven", group=gO)
 useBybit   = input.bool(true, "Bybit",   inline="ven", group=gO)
 useOkx     = input.bool(true, "OKX",     inline="ven", group=gO, tooltip="Venues aggregated for the OI read. Each venue contributes its own Δ% (not raw contracts), so different contract units can't distort the average. A venue that doesn't list this coin simply returns nothing and is skipped.")
+oiMajority = input.bool(true, "Require Venue Majority", group=gO, tooltip="ON: a state is only called when more than half the reporting venues agree on the direction of their OI change. OFF: the average decides on its own, which can print 'Flat' when venues are in fact strongly split — the split itself is usually worth seeing.")
 oiSmoothLen= input.int(3, "OI Read Smoothing (EMA)", minval=1, maxval=20, group=gO, tooltip="Per-bar OI flips constantly on 15m. A short EMA on the aggregated Δ% (and on price change) makes the strip a readable regime instead of noise. 1 = raw per-bar.")
+oiDead     = input.float(0.05, "Price Deadband (× ATR)", minval=0.0, maxval=1.0, step=0.01, group=gO, tooltip="Price moves smaller than this fraction of ATR count as flat rather than up. Without it, a dead tape reads as 'longs opening' purely because the change was +0.00001.")
 oiOverride = input.symbol("", "OI Symbol Override", group=gO, tooltip="Leave empty for the aggregated read. Set a specific *_OI symbol to use ONLY that feed instead.")
 
 gD = "③ DXY Link"
 showDxy    = input.bool(true, "Show DXY Correlation Line", group=gD)
 dxySym     = input.symbol("TVC:DXY", "Dollar Index Symbol", group=gD)
-corrLen    = input.int(200, "Correlation Length (bars)", minval=30, maxval=1000, group=gD, tooltip="Rolling correlation of bar RETURNS (statistically sounder than raw price). 200 bars ≈ 2 days on 15m; use 100 on 30m. Crypto/DXY correlation is unstable — expect it to wander.")
+corrLen    = input.int(200, "Correlation Length (valid pairs)", minval=30, maxval=1000, group=gD, tooltip="Window length counted in bars where the dollar ACTUALLY traded — closed-market bars are skipped entirely rather than counted as zero-return. 200 ≈ 2 dollar-trading days on 15m.")
+dxyMaxGap  = input.int(8, "Max Return Gap (bars)", minval=1, maxval=200, group=gD, tooltip="Return pairs spanning a longer dollar-market gap than this are dropped, so a single weekend-sized dollar move is never compared against one 15m crypto candle. Raise it to keep the Monday-open observation, lower it for stricter matching.")
 dxyTrendLen= input.int(50, "DXY Trend EMA", minval=10, maxval=200, group=gD)
 
 gP = "④ Panel"
@@ -74,6 +113,8 @@ AMBR = #ffb300
 TEAL = #4dd0e1
 ORNG = #ff9800
 
+atrRef = ta.atr(14)
+
 // ╔═══════════════════════════════════════════════════════╗
 // ║  ① VOLUME DELTA + WHALE BARS                           ║
 // ╚═══════════════════════════════════════════════════════╝
@@ -83,19 +124,27 @@ f_delta() =>
 
 deltaArr = request.security_lower_tf(syminfo.tickerid, ltfInput, f_delta())
 
-// fallback for bars beyond the intrabar history limit: estimate the buy share
-// from where the bar closed inside its own range
-float rawDelta = deltaArr.size() > 0 ? deltaArr.sum() : (high == low ? 0.0 : nz(volume) * (2 * (close - low) / (high - low) - 1))
+// Beyond TradingView's intrabar history limit the array comes back empty and
+// we fall back to estimating the buy share from where the bar closed inside
+// its own range. The two methods do NOT measure the same thing, so which one
+// produced a bar is tracked and shown rather than blended silently.
+bool  isEst    = deltaArr.size() == 0
+float rawDelta = not isEst ? deltaArr.sum() : (high == low ? 0.0 : nz(volume) * (2 * (close - low) / (high - low) - 1))
 float deltaPct = nz(volume) > 0 ? rawDelta / volume * 100 : 0.0
 
-whaleThr = ta.percentile_nearest_rank(volume, pctLen, whalePct)
+// rank this bar against the bars BEFORE it — a percentile window containing
+// the bar itself lets a single huge print raise its own bar for admission
+whaleThr = ta.percentile_nearest_rank(volume[1], pctLen, whalePct)
 isWhale  = not na(whaleThr) and nz(volume) >= whaleThr
 
 whaleSigned = isWhale ? rawDelta : 0.0
 whaleAbs    = isWhale ? math.abs(rawDelta) : 0.0
 biasNum     = math.sum(whaleSigned, biasLen)
 biasDen     = math.sum(whaleAbs, biasLen)
-whaleBias   = biasDen > 0 ? biasNum / biasDen * 100 : 0.0
+// na (not 0) when the window holds no whale bars — "we haven't seen size" and
+// "size traded and cancelled out" are different statements
+float whaleBias = biasDen > 0 ? biasNum / biasDen * 100 : na
+float biasAlert = nz(whaleBias)
 
 var int lastWhaleBar = na
 var int lastWhaleDir = 0
@@ -108,27 +157,47 @@ if isWhale
 // ╚═══════════════════════════════════════════════════════╝
 var float cvd = 0.0
 cvd += rawDelta
+cvdRef = ta.sma(math.abs(rawDelta), 50)      // typical bar delta, for the floor
 
 divPH = ta.pivothigh(high, divLen, divLen)
 divPL = ta.pivotlow(low, divLen, divLen)
 
 var float prevPH    = na
 var float prevPHcvd = na
+var bool  prevPHest = false
 var float prevPL    = na
 var float prevPLcvd = na
+var bool  prevPLest = false
 
-bearDiv = false
-bullDiv = false
+bool bearDiv = false
+bool bullDiv = false
+bool bearEst = false
+bool bullEst = false
+
+// values as they stood AT the pivot, which is divLen bars back at confirmation
+float atrAtPivot = nz(atrRef[divLen])
+float cvdAtPivot = cvd[divLen]
+float refAtPivot = nz(cvdRef[divLen])
+bool  estAtPivot = isEst[divLen]
+
 if not na(divPH)
-    if not na(prevPH) and divPH > prevPH and cvd[divLen] < prevPHcvd
+    priceOk = not na(prevPH) and (divPH - prevPH) > atrAtPivot * divMinAtr
+    cvdOk   = not na(prevPHcvd) and (prevPHcvd - cvdAtPivot) > refAtPivot * divMinCvd
+    if priceOk and cvdOk
         bearDiv := true
+        bearEst := estAtPivot or prevPHest
     prevPH    := divPH
-    prevPHcvd := cvd[divLen]
+    prevPHcvd := cvdAtPivot
+    prevPHest := estAtPivot
 if not na(divPL)
-    if not na(prevPL) and divPL < prevPL and cvd[divLen] > prevPLcvd
+    priceOkL = not na(prevPL) and (prevPL - divPL) > atrAtPivot * divMinAtr
+    cvdOkL   = not na(prevPLcvd) and (cvdAtPivot - prevPLcvd) > refAtPivot * divMinCvd
+    if priceOkL and cvdOkL
         bullDiv := true
+        bullEst := estAtPivot or prevPLest
     prevPL    := divPL
-    prevPLcvd := cvd[divLen]
+    prevPLcvd := cvdAtPivot
+    prevPLest := estAtPivot
 
 // ╔═══════════════════════════════════════════════════════╗
 // ║  ② OPEN INTEREST — aggregated Δ% across venues         ║
@@ -143,41 +212,116 @@ dByb = f_oiDeltaPct("BYBIT:"   + baseCoin + "USDT.P_OI")
 dOkx = f_oiDeltaPct("OKX:"     + baseCoin + "USDT.P_OI")
 dMan = f_oiDeltaPct(oiOverride == "" ? syminfo.tickerid + "_OI" : oiOverride)   // manual feed, or chart's own feed as last-resort fallback
 
-float sumD = 0.0
-int   cntD = 0
-if useBinance and not na(dBin)
-    sumD += dBin
-    cntD += 1
-if useBybit and not na(dByb)
-    sumD += dByb
-    cntD += 1
-if useOkx and not na(dOkx)
-    sumD += dOkx
-    cntD += 1
+// each venue contributes (delta, counted?, up?, down?) so the aggregate keeps
+// the direction split, not just the average
+f_venue(bool on, float d) =>
+    ok = on and not na(d)
+    [ok ? d : 0.0, ok ? 1 : 0, ok and d > 0 ? 1 : 0, ok and d < 0 ? 1 : 0]
+
+[aD, aC, aP, aN] = f_venue(useBinance, dBin)
+[bD, bC, bP, bN] = f_venue(useBybit,   dByb)
+[cD, cC, cP, cN] = f_venue(useOkx,     dOkx)
+float sumD = aD + bD + cD
+int   cntD = aC + bC + cC
+int   posD = aP + bP + cP
+int   negD = aN + bN + cN
 
 float oiRawDelta = oiOverride != "" ? dMan : cntD > 0 ? sumD / cntD : dMan
-string venueTxt  = oiOverride != "" ? "manual" : cntD > 0 ? str.tostring(cntD) + " ex" : "chart"
+string venueTxt  = oiOverride != "" ? "manual" : cntD > 0 ? str.tostring(cntD) + " ex · " + str.tostring(posD) + "↑" + str.tostring(negD) + "↓" : "chart"
 oiOk = not na(oiRawDelta)
+
+// Venue agreement. Averaging Binance +1.2% with OKX −1.1% yields ≈0 and prints
+// "Flat" — but venues pulling in opposite directions is a real, and usually
+// interesting, condition rather than a quiet one.
+bool oiSplit  = cntD > 1 and posD > 0 and negD > 0 and math.max(posD, negD) * 2 <= cntD
+bool oiAgreed = cntD <= 1 or oiOverride != "" or math.max(posD, negD) * 2 > cntD
 
 // smoothed regime read (per-bar OI flips constantly on 15m)
 oiDeltaS  = ta.ema(nz(oiRawDelta), oiSmoothLen)
 priceChgS = ta.ema(ta.change(close), oiSmoothLen)
+// a dead tape must not read as "up" just because the change was +0.00001
+float pDead = nz(atrRef) * oiDead
+int   pDir  = priceChgS > pDead ? 1 : priceChgS < -pDead ? -1 : 0
 
 // 1 = longs opening, 2 = shorts opening, 3 = shorts closing, 4 = longs closing
-int oiState = not oiOk ? 0 : oiDeltaS > 0 ? (priceChgS >= 0 ? 1 : 2) : oiDeltaS < 0 ? (priceChgS >= 0 ? 3 : 4) : 0
-color oiCol = oiState == 1 ? BUY : oiState == 2 ? SELL : oiState == 3 ? TEAL : oiState == 4 ? ORNG : color.new(color.gray, 60)
-string oiTxt = oiState == 1 ? "Longs opening" : oiState == 2 ? "Shorts opening" : oiState == 3 ? "Shorts closing" : oiState == 4 ? "Longs closing" : oiOk ? "Flat" : "n/a on this chart"
+bool oiUsable = oiOk and (oiAgreed or not oiMajority)
+int oiState = not oiUsable or pDir == 0 ? 0 : oiDeltaS > 0 ? (pDir > 0 ? 1 : 2) : oiDeltaS < 0 ? (pDir > 0 ? 3 : 4) : 0
+color oiCol = oiState == 1 ? BUY : oiState == 2 ? SELL : oiState == 3 ? TEAL : oiState == 4 ? ORNG : oiSplit ? AMBR : color.new(color.gray, 60)
+string oiTxt = oiState == 1 ? "Longs opening" : oiState == 2 ? "Shorts opening" : oiState == 3 ? "Shorts closing" : oiState == 4 ? "Longs closing" : not oiOk ? "n/a on this chart" : oiSplit ? "Venues split" : "Flat"
 
 // ╔═══════════════════════════════════════════════════════╗
-// ║  ③ DXY LINK — correlation of returns                   ║
+// ║  ③ DXY LINK — correlation over DOLLAR-TRADING bars     ║
 // ╚═══════════════════════════════════════════════════════╝
-dxy    = request.security(dxySym, timeframe.period, close, ignore_invalid_symbol=true)
-dxyOk  = not na(dxy)
-retSym = close / close[1] - 1
-retDxy = dxy / nz(dxy[1], dxy) - 1
-corr   = ta.correlation(retSym, retDxy, corrLen) * 100
-dxyEma = ta.ema(dxy, dxyTrendLen)
-dxyUp  = dxyOk and dxy > dxyEma
+// gaps_on so a closed dollar market returns na instead of repeating its last
+// close. Repeated closes look like "the dollar was flat", which is a fabricated
+// observation, and enough of them will drive any correlation toward zero.
+dxyRaw = request.security(dxySym, timeframe.period, close, gaps=barmerge.gaps_on, ignore_invalid_symbol=true)
+bool dxyFresh = not na(dxyRaw)
+
+var float dxyHeld = na
+if dxyFresh
+    dxyHeld := dxyRaw
+dxyOk = not na(dxyHeld)
+
+// Pair each dollar return with the crypto return over the SAME span, so a
+// two-day dollar move is never matched against one 15m candle.
+var float prevDxy   = na
+var float prevClose = na
+var int   prevBar   = na
+float rx = na
+float ry = na
+if dxyFresh
+    // a huge sentinel rather than na — it fails the gap test on its own and
+    // keeps the expression free of na type-inference surprises
+    gap = na(prevBar) ? 999999 : bar_index - prevBar
+    if not na(prevDxy) and prevDxy > 0 and not na(prevClose) and prevClose > 0 and gap <= dxyMaxGap
+        rx := close / prevClose - 1
+        ry := dxyRaw / prevDxy - 1
+    prevDxy   := dxyRaw
+    prevClose := close
+    prevBar   := bar_index
+
+// O(1) rolling Pearson over just the valid pairs
+var array<float> cxA = array.new<float>()
+var array<float> cyA = array.new<float>()
+var float sX  = 0.0
+var float sY  = 0.0
+var float sXX = 0.0
+var float sYY = 0.0
+var float sXY = 0.0
+
+if not na(rx) and not na(ry)
+    array.push(cxA, rx)
+    array.push(cyA, ry)
+    sX  += rx
+    sY  += ry
+    sXX += rx * rx
+    sYY += ry * ry
+    sXY += rx * ry
+    if array.size(cxA) > corrLen
+        ox = array.shift(cxA)
+        oy = array.shift(cyA)
+        sX  -= ox
+        sY  -= oy
+        sXX -= ox * ox
+        sYY -= oy * oy
+        sXY -= ox * oy
+
+int   nPair  = array.size(cxA)
+minN         = math.max(30, corrLen / 4)   // untyped: int/int division differs by Pine version
+float varX   = nPair * sXX - sX * sX
+float varY   = nPair * sYY - sY * sY
+float denomC = varX > 0 and varY > 0 ? math.sqrt(varX * varY) : 0.0
+float corr   = nPair >= minN and denomC > 0 ? (nPair * sXY - sX * sY) / denomC * 100 : na
+
+dxyEma = ta.ema(dxyHeld, dxyTrendLen)
+dxyUp  = dxyOk and not na(dxyEma) and dxyHeld > dxyEma
+// how long since the dollar last printed — the honest way to say "stale"
+var int lastDxyBar = na
+if dxyFresh
+    lastDxyBar := bar_index
+dxyAge = na(lastDxyBar) ? 999999 : bar_index - lastDxyBar
+bool dxyStale = dxyAge > dxyMaxGap
 
 // ╔═══════════════════════════════════════════════════════╗
 // ║  PLOTS                                                 ║
@@ -185,56 +329,76 @@ dxyUp  = dxyOk and dxy > dxyEma
 colDelta = isWhale ? (rawDelta >= 0 ? color.new(BUY, 0) : color.new(SELL, 0)) : (rawDelta >= 0 ? color.new(BUY, 72) : color.new(SELL, 72))
 plot(deltaPct, "Delta % of Volume", style=plot.style_columns, color=colDelta)
 
-biasCol = whaleBias >= biasTh ? color.new(BUY, 0) : whaleBias <= -biasTh ? color.new(SELL, 0) : color.new(color.silver, 20)
+biasCol = na(whaleBias) ? color.new(color.gray, 40) : whaleBias >= biasTh ? color.new(BUY, 0) : whaleBias <= -biasTh ? color.new(SELL, 0) : color.new(color.silver, 20)
 plot(whaleBias, "Whale Bias", color=biasCol, linewidth=2)
 
-plot(showDxy and dxyOk ? corr : na, "DXY Correlation ×100", color=color.new(ORNG, 20), linewidth=1)
+// dimmed while the dollar market is shut, so a held reading can't be mistaken
+// for a live one
+corrCol = dxyStale ? color.new(ORNG, 70) : color.new(ORNG, 20)
+plot(showDxy and dxyOk ? corr : na, "DXY Correlation ×100", color=corrCol, linewidth=1)
 
 hline(0, "Zero", color=color.new(color.gray, 60))
 hline(40, "", color=color.new(color.gray, 80), linestyle=hline.style_dotted)
 hline(-40, "", color=color.new(color.gray, 80), linestyle=hline.style_dotted)
 
 plotshape(showOI and oiOk, "OI State Strip", shape.square, location.top, color=oiCol, size=size.tiny)
-plotshape(showDiv and bearDiv, "Bearish CVD Divergence", shape.triangledown, location.bottom, color.new(SELL, 0), size=size.tiny)
-plotshape(showDiv and bullDiv, "Bullish CVD Divergence", shape.triangleup,   location.bottom, color.new(BUY, 0),  size=size.tiny)
+// filled = both pivots measured from true intrabar delta; hollow = at least one
+// came from the close-position estimate, so trust it less
+plotshape(showDiv and bearDiv and not bearEst, "Bearish CVD Divergence", shape.triangledown, location.bottom, color.new(SELL, 0), size=size.tiny)
+plotshape(showDiv and bullDiv and not bullEst, "Bullish CVD Divergence", shape.triangleup,   location.bottom, color.new(BUY, 0),  size=size.tiny)
+plotshape(showDiv and bearDiv and bearEst, "Bearish CVD Divergence (estimated)", shape.triangledown, location.bottom, color.new(SELL, 55), size=size.tiny)
+plotshape(showDiv and bullDiv and bullEst, "Bullish CVD Divergence (estimated)", shape.triangleup,   location.bottom, color.new(BUY, 55),  size=size.tiny)
 
 // ╔═══════════════════════════════════════════════════════╗
 // ║  SUMMARY TABLE                                         ║
 // ╚═══════════════════════════════════════════════════════╝
 f_pos(p) => p == "Top Left" ? position.top_left : p == "Bottom Right" ? position.bottom_right : p == "Bottom Left" ? position.bottom_left : position.top_right
 
-var table tbl = table.new(f_pos(tblPos), 2, 6, bgcolor=color.new(#0d0d12, 15), border_color=color.new(color.gray, 65), border_width=1, frame_color=color.new(color.gray, 45), frame_width=1)
+var table tbl = table.new(f_pos(tblPos), 2, 8, bgcolor=color.new(#0d0d12, 15), border_color=color.new(color.gray, 65), border_width=1, frame_color=color.new(color.gray, 45), frame_width=1)
 
 if barstate.islast and showTbl
-    biasTxt = whaleBias >= biasTh ? "LONG lean" : whaleBias <= -biasTh ? "SHORT lean" : "Neutral"
-    biasC   = whaleBias >= biasTh ? BUY : whaleBias <= -biasTh ? SELL : AMBR
+    biasTxt = na(whaleBias) ? "no whale bars" : whaleBias >= biasTh ? "LONG lean" : whaleBias <= -biasTh ? "SHORT lean" : "Neutral"
+    biasC   = na(whaleBias) ? color.gray : whaleBias >= biasTh ? BUY : whaleBias <= -biasTh ? SELL : AMBR
+    biasVal = na(whaleBias) ? "—" : str.tostring(math.round(whaleBias)) + " · "
     whaleAgoTxt = na(lastWhaleBar) ? "—" : str.tostring(bar_index - lastWhaleBar) + " bars ago " + (lastWhaleDir > 0 ? "▲" : "▼")
     whaleAgoCol = na(lastWhaleBar) ? color.gray : lastWhaleDir > 0 ? BUY : SELL
+    srcTxt = isEst ? "estimated (no intrabar)" : "true intrabar " + ltfInput
+    srcCol = isEst ? AMBR : BUY
     corrTxt = na(corr) ? "…" : str.tostring(corr, "#")
-    dxyTxt  = dxyOk ? (dxyUp ? "Rising" : "Falling") + " · corr " + corrTxt : "n/a"
-    dxyC    = dxyOk ? (dxyUp ? SELL : BUY) : color.gray   // rising dollar = usual crypto headwind (tendency, not a rule)
+    dxyTxt  = not dxyOk ? "n/a" : (dxyUp ? "Rising" : "Falling") + " · corr " + corrTxt + (dxyStale ? " (mkt shut)" : "")
+    dxyC    = not dxyOk ? color.gray : dxyStale ? color.new(color.silver, 30) : dxyUp ? SELL : BUY   // rising dollar = usual crypto headwind (tendency, not a rule)
+    // transparent tally — which components lean which way, no composite score
+    int leanL = (na(whaleBias) ? 0 : whaleBias >= biasTh ? 1 : 0) + (oiState == 1 or oiState == 3 ? 1 : 0)
+    int leanS = (na(whaleBias) ? 0 : whaleBias <= -biasTh ? 1 : 0) + (oiState == 2 or oiState == 4 ? 1 : 0)
+    leanTxt = leanL == 0 and leanS == 0 ? "no clear lean" : str.tostring(leanL) + " long / " + str.tostring(leanS) + " short"
+    leanC   = leanL > leanS ? BUY : leanS > leanL ? SELL : AMBR
 
     table.cell(tbl, 0, 0, "WHALE & MACRO", text_color=color.white, text_size=tblSize, text_halign=text.align_left, bgcolor=color.new(#1c1c28, 0))
     table.cell(tbl, 1, 0, "", bgcolor=color.new(#1c1c28, 0))
     table.cell(tbl, 0, 1, " Whale Bias", text_color=color.silver, text_size=tblSize, text_halign=text.align_left)
-    table.cell(tbl, 1, 1, str.tostring(math.round(whaleBias)) + " · " + biasTxt + " ", text_color=biasC, text_size=tblSize, text_halign=text.align_right)
+    table.cell(tbl, 1, 1, biasVal + biasTxt + " ", text_color=biasC, text_size=tblSize, text_halign=text.align_right)
     table.cell(tbl, 0, 2, " Last Whale Bar", text_color=color.silver, text_size=tblSize, text_halign=text.align_left)
     table.cell(tbl, 1, 2, whaleAgoTxt + " ", text_color=whaleAgoCol, text_size=tblSize, text_halign=text.align_right)
-    table.cell(tbl, 0, 3, " OI Read", text_color=color.silver, text_size=tblSize, text_halign=text.align_left)
-    table.cell(tbl, 1, 3, oiTxt + " ", text_color=oiCol, text_size=tblSize, text_halign=text.align_right)
-    table.cell(tbl, 0, 4, " OI Δ (smoothed)", text_color=color.silver, text_size=tblSize, text_halign=text.align_left)
-    table.cell(tbl, 1, 4, (oiOk ? str.tostring(oiDeltaS, "#.###") + "% · " + venueTxt : "—") + " ", text_color=oiCol, text_size=tblSize, text_halign=text.align_right)
-    table.cell(tbl, 0, 5, " DXY", text_color=color.silver, text_size=tblSize, text_halign=text.align_left)
-    table.cell(tbl, 1, 5, dxyTxt + " ", text_color=dxyC, text_size=tblSize, text_halign=text.align_right)
+    table.cell(tbl, 0, 3, " Delta Source", text_color=color.silver, text_size=tblSize, text_halign=text.align_left)
+    table.cell(tbl, 1, 3, srcTxt + " ", text_color=srcCol, text_size=tblSize, text_halign=text.align_right)
+    table.cell(tbl, 0, 4, " OI Read", text_color=color.silver, text_size=tblSize, text_halign=text.align_left)
+    table.cell(tbl, 1, 4, oiTxt + " ", text_color=oiCol, text_size=tblSize, text_halign=text.align_right)
+    table.cell(tbl, 0, 5, " OI Δ (smoothed)", text_color=color.silver, text_size=tblSize, text_halign=text.align_left)
+    table.cell(tbl, 1, 5, (oiOk ? str.tostring(oiDeltaS, "#.###") + "% · " + venueTxt : "—") + " ", text_color=oiCol, text_size=tblSize, text_halign=text.align_right)
+    table.cell(tbl, 0, 6, " DXY", text_color=color.silver, text_size=tblSize, text_halign=text.align_left)
+    table.cell(tbl, 1, 6, dxyTxt + " ", text_color=dxyC, text_size=tblSize, text_halign=text.align_right)
+    table.cell(tbl, 0, 7, " Components", text_color=color.silver, text_size=tblSize, text_halign=text.align_left)
+    table.cell(tbl, 1, 7, leanTxt + " ", text_color=leanC, text_size=tblSize, text_halign=text.align_right)
 
 // ╔═══════════════════════════════════════════════════════╗
 // ║  ALERTS                                                ║
 // ╚═══════════════════════════════════════════════════════╝
 alertcondition(isWhale and rawDelta > 0, "Whale Buy Bar",  "Top-percentile volume bar hit the BUY side")
 alertcondition(isWhale and rawDelta < 0, "Whale Sell Bar", "Top-percentile volume bar hit the SELL side")
-alertcondition(ta.crossover(whaleBias, biasTh),   "Whale Bias Flip Long",  "Whale flow bias crossed above the long threshold")
-alertcondition(ta.crossunder(whaleBias, -biasTh), "Whale Bias Flip Short", "Whale flow bias crossed below the short threshold")
+alertcondition(ta.crossover(biasAlert, biasTh),   "Whale Bias Flip Long",  "Whale flow bias crossed above the long threshold")
+alertcondition(ta.crossunder(biasAlert, -biasTh), "Whale Bias Flip Short", "Whale flow bias crossed below the short threshold")
 alertcondition(oiState == 1 and oiState[1] != 1, "New Longs Opening",  "Aggregated OI rising with price rising — new longs entering")
 alertcondition(oiState == 2 and oiState[1] != 2, "New Shorts Opening", "Aggregated OI rising with price falling — new shorts entering")
+alertcondition(oiSplit and not oiSplit[1], "OI Venues Split", "Venues disagree on the direction of open interest — localised flow rather than a market-wide move")
 alertcondition(bearDiv, "Bearish CVD Divergence", "Higher price high without higher cumulative delta — rally not backed by real buying")
 alertcondition(bullDiv, "Bullish CVD Divergence", "Lower price low without lower cumulative delta — selloff not backed by real selling")
