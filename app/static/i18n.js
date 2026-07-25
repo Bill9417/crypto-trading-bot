@@ -42,6 +42,8 @@
     "Vegas Slope": "Vegas 斜率",
     "Tunnel Position": "通道位置",
     "Trendline Break": "趨勢線突破",
+    "Volume Bias": "成交量偏向",
+    "abstain": "無意見",
     "Live chart": "即時圖表",
     "Recent score": "近期分數",
 

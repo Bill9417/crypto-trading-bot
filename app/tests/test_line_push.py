@@ -526,3 +526,34 @@ def test_send_tw_digest_disabled_returns_false(monkeypatch):
     reg = {"ok": True, "close": 28000.0, "sma100": 27000.0, "mom20": 0.03}
     assert line_push.send_tw_digest(NOW, reg, [("2330", "台積電", S)], "x") is False
     assert not calls
+
+
+# ── 開機/關機通知 gating ──────────────────────────────────────────────────────
+# These two fire on EVERY ./run_all.sh restart, so they are off by default.
+def test_lifecycle_notice_is_silent_by_default(monkeypatch):
+    calls = _cap(monkeypatch)
+    monkeypatch.setattr(config, "LINE_LIFECYCLE_NOTICE", False)
+    assert line_push.send_lifecycle(line_push.START_MSG) is False
+    assert line_push.send_lifecycle(line_push.STOP_MSG) is False
+    assert not calls, "a restart must not push anything to 爸爸's group"
+
+
+def test_lifecycle_notice_can_be_switched_back_on(monkeypatch):
+    calls = _cap(monkeypatch)
+    monkeypatch.setattr(config, "LINE_LIFECYCLE_NOTICE", True)
+    assert line_push.send_lifecycle(line_push.START_MSG) is True
+    assert len(calls) == 1
+    assert "已啟動" in calls[0][1]["messages"][0]["text"]
+
+
+def test_default_is_off_so_a_bare_env_stays_quiet():
+    """The flag ships OFF — the user turns it on deliberately, not by omission."""
+    assert config._env_bool("LINE_LIFECYCLE_NOTICE", False) is False
+
+
+def test_silencing_the_notice_does_not_silence_normal_pushes(monkeypatch):
+    """The 14:00 digest and SL/TP hits are the whole point of the integration."""
+    calls = _cap(monkeypatch)
+    monkeypatch.setattr(config, "LINE_LIFECYCLE_NOTICE", False)
+    assert line_push.send("🇹🇼 台股掃描") is True
+    assert len(calls) == 1

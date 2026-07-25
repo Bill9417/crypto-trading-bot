@@ -157,6 +157,14 @@ def _env_bool(name: str, default: bool) -> bool:
         return default
     return val.strip().lower() in ("1", "true", "yes", "on")
 
+# 📱 LINE 開機/關機通知 — the "系統已啟動 / 已停止" pair the S2 scanner sends on
+# startup and shutdown. OFF by default: during testing every ./run_all.sh
+# restart fired both, which is noise in 爸爸's group and burns the 200/month
+# push quota for nothing. Set LINE_LIFECYCLE_NOTICE=true in app/.env to
+# re-enable. This does NOT affect webhook re-registration — sync_webhook()
+# still runs on every start, so the rotating tunnel URL stays pointed correctly.
+LINE_LIFECYCLE_NOTICE = _env_bool("LINE_LIFECYCLE_NOTICE", False)
+
 LIVE_TRADING = _env_bool("LIVE_TRADING", False)   # master switch — False = dry-run
 USE_TESTNET = _env_bool("USE_TESTNET", True)       # route to Binance testnet when live
 BINANCE_API_KEY = os.getenv("BINANCE_API_KEY", "")

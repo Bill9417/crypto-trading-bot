@@ -538,8 +538,11 @@ def main() -> None:
     try:
         import line_push
         if line_push.enabled():
+            # sync_webhook() ALWAYS runs — it re-points LINE at the current
+            # quick-tunnel URL, which changes on every restart. Only the
+            # 已啟動 notice is optional (LINE_LIFECYCLE_NOTICE, default off).
             line_push.sync_webhook()
-            line_push.send(line_push.START_MSG)
+            line_push.send_lifecycle(line_push.START_MSG)
     except Exception as exc:  # noqa: BLE001 — LINE must never block startup
         print(f"[strategy2] line start notice failed: {exc}")
     client = SafeBinanceClient(
@@ -720,9 +723,11 @@ if __name__ == "__main__":
         pass
     finally:
         # 📱 LINE 關機通知 — covers stop, Ctrl+C and crashes alike.
+        # Off by default (LINE_LIFECYCLE_NOTICE); every restart during testing
+        # sent one of these, which is noise in 爸爸's group.
         try:
             import line_push
             if line_push.enabled():
-                line_push.send(line_push.STOP_MSG)
+                line_push.send_lifecycle(line_push.STOP_MSG)
         except Exception:  # noqa: BLE001 — dying anyway
             pass

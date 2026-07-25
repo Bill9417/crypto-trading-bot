@@ -447,6 +447,24 @@ def send(text: str) -> bool:
     return _push_messages(msgs)
 
 
+def send_lifecycle(text: str) -> bool:
+    """開機/關機通知 — gated by LINE_LIFECYCLE_NOTICE, which defaults to OFF.
+
+    Kept separate from send() because these two messages fire on EVERY
+    ./run_all.sh restart. While iterating that is pure noise in 爸爸's group,
+    and each one spends a push from the 200/month quota to say nothing he
+    asked for. Set LINE_LIFECYCLE_NOTICE=true in app/.env to turn them back on.
+
+    Deliberately does NOT gate webhook re-registration: sync_webhook() must
+    still run on every start or LINE keeps posting to the previous
+    quick-tunnel URL, which dies with the old process. Silencing a notice
+    should never cost you inbound messages.
+    """
+    if not config.LINE_LIFECYCLE_NOTICE:
+        return False
+    return send(text)
+
+
 # ── Flex Message cards — 進場/停損/目標 as a tappable carousel ────────────────
 # Flex Messages render fine in group chats (unlike Rich Menus). Used only for
 # the "here are today's picks" case: a multi-stock list is where a card beats

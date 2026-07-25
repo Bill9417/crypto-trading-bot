@@ -160,15 +160,12 @@
 
                 <div>
                     <p class="panel-title" style="margin-bottom:8px;">Factors</p>
-                    <div class="factor-list" id="s2-factors">
-                        <div class="factor-row"><span><span class="fac-label">EMA Stack</span><span class="fac-weight">(25)</span></span><span class="fac-state neutral" data-key="ema_stack">—</span></div>
-                        <div class="factor-row"><span><span class="fac-label">Price vs EMA200</span><span class="fac-weight">(20)</span></span><span class="fac-state neutral" data-key="price_ema200">—</span></div>
-                        <div class="factor-row"><span><span class="fac-label">SMC Structure</span><span class="fac-weight">(25)</span></span><span class="fac-state neutral" data-key="smc">—</span></div>
-                        <div class="factor-row"><span><span class="fac-label">Vegas Slope</span><span class="fac-weight">(15)</span></span><span class="fac-state neutral" data-key="vegas">—</span></div>
-                        <div class="factor-row"><span><span class="fac-label">Tunnel Position</span><span class="fac-weight">(10)</span></span><span class="fac-state neutral" data-key="tunnel">—</span></div>
-                        <div class="factor-row"><span><span class="fac-label">Trendline Break</span><span class="fac-weight">(5)</span></span><span class="fac-state neutral" data-key="trendline">—</span></div>
-                    </div>
-                    <div class="insuff" id="s2-insuff">⚠ Insufficient history — fewer than ~345 candles; some factors are neutral.</div>
+                    <!-- Rows are built from the API response, not hardcoded.
+                         They used to be written out here with their weights
+                         baked in (25/20/…), which is exactly how this page
+                         drifted away from strategy2_meter.py and the chart. -->
+                    <div class="factor-list" id="s2-factors"></div>
+                    <div class="insuff" id="s2-insuff">⚠ Insufficient history — fewer than ~365 candles; some factors are neutral or abstaining.</div>
                 </div>
 
                 <div>
@@ -178,8 +175,9 @@
 
                 <p class="note">A confluence METER, not a prediction or a trade command — it mirrors the on-chart
                    indicator: 0–100 directional agreement across EMA stack, price vs EMA200, SMC structure, Vegas
-                   slope, the Double Tunnel and (chart-only) trendline breaks. The trendline factor is held neutral
-                   server-side, so the range is ≈3–98.</p>
+                   slope, the Double Tunnel, volume bias and (chart-only) trendline breaks. The trendline engine has
+                   no server-side equivalent, so that factor <em>abstains</em> — its weight leaves the denominator
+                   rather than counting as a neutral vote, which is why 0 and 100 are reachable.</p>
             </div>
 
             <!-- ── Lightweight-Charts TV.pine mirror (candles + colour-coded EMA stack) ── -->
@@ -286,9 +284,29 @@
             biasEl.className = 'bias-chip ' + (d.bias || 'neutral');
             priceEl.textContent = fmtPrice(d.price);
             insuffEl.style.display = d.insufficient ? 'block' : 'none';
+            // Build the rows from the payload so labels and weights always come
+            // from the server. An abstaining factor (one that cannot be computed
+            // — the trendline engine has no server-side equivalent) says so
+            // instead of showing "neutral", which would read as a real vote.
+            var facWrap = document.getElementById('s2-factors');
+            facWrap.textContent = '';
             (d.factors || []).forEach(function (f) {
-                var el = document.querySelector('.fac-state[data-key="' + f.key + '"]');
-                if (el) { el.textContent = stateText(f.text); el.className = 'fac-state ' + f.text; }
+                var row = document.createElement('div');
+                row.className = 'factor-row';
+                var left = document.createElement('span');
+                var lab = document.createElement('span');
+                lab.className = 'fac-label';
+                lab.textContent = f.label;
+                var wt = document.createElement('span');
+                wt.className = 'fac-weight';
+                wt.textContent = '(' + f.weight + ')';
+                left.appendChild(lab); left.appendChild(wt);
+                var st = document.createElement('span');
+                st.className = 'fac-state ' + (f.abstain ? 'neutral' : f.text);
+                st.textContent = f.abstain ? 'abstain' : stateText(f.text);
+                if (f.abstain) { st.style.opacity = '0.55'; }
+                row.appendChild(left); row.appendChild(st);
+                facWrap.appendChild(row);
             });
             history.push(score);
             if (history.length > 40) history.shift();

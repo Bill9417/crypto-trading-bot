@@ -157,3 +157,21 @@ def test_maybe_trade_skips_low_conviction(monkeypatch):
 def test_atr_none_without_history():
     assert L._atr(None) is None
     assert L._atr([[0, 1, 2, 0.5, 1, 9]] * 3, period=14) is None  # too few bars
+
+
+# ── LINE lifecycle wiring (see test_line_push.py for the gate itself) ────────
+def test_scanner_start_syncs_the_webhook_even_when_the_notice_is_off():
+    """THE TRAP: the quick-tunnel URL rotates on every restart, so
+    sync_webhook() must run unconditionally. If a future edit ever folds it
+    inside the LINE_LIFECYCLE_NOTICE check, LINE keeps posting to the dead
+    URL and 爸爸's replies silently stop arriving — a far worse bug than the
+    noisy notice this flag was added to remove."""
+    import inspect
+    import strategy2_scanner
+    src = inspect.getsource(strategy2_scanner.main)
+    sync = src.index("sync_webhook()")
+    notice = src.index("send_lifecycle(")
+    assert sync < notice, "sync_webhook must precede the optional notice"
+    # and it must not be nested under a lifecycle-notice conditional
+    line = next(l for l in src.split("\n") if "sync_webhook()" in l)
+    assert "LINE_LIFECYCLE_NOTICE" not in line
