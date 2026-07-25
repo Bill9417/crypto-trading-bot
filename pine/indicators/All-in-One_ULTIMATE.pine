@@ -13,9 +13,70 @@
 //  ★ CLEAN CHART MODE (① Modules, default ON) — one switch that hides the
 //    visual noise so the S/R zones and trend are readable: EMA 50/100,
 //    Tunnel 2, SMC structure lines, order blocks, FVG, and the volume-profile
-//    histogram bars (POC/VAH/VAL price lines stay). Trendlines capped at
-//    2 active + 2 broken per side. CALCULATIONS ARE UNCHANGED — the
-//    Confidence Meter score is identical with it on or off.
+//    histogram bars (POC/VAH/VAL price lines stay). Surplus trendlines are
+//    DIMMED, not deleted. CALCULATIONS ARE UNCHANGED — the Confidence Meter
+//    score is identical with it on or off (this is now true; see v2 note 2).
+//
+// ════════════════════════════════════════════════════════════════════════════
+//  WHAT CHANGED IN v2 — measurement fixes, not cosmetics
+//  Every item below is a case where the indicator reported something that was
+//  not true. Behaviour changes are called out so nothing surprises you.
+//
+//  1. MTF BIAS PANEL REPAINTED, and the code claimed it didn't.
+//     request.security(..., lookahead_off) returns the CURRENTLY FORMING
+//     higher-timeframe bar in realtime. So the 1H row could read LONG, you act
+//     on it, the 1H candle closes bearish — and the history then shows a bar
+//     where that LONG never existed. The panel now reads the last CLOSED HTF
+//     bar (expr[1] + lookahead_on), which is identical on history and in
+//     realtime. VISIBLE CHANGE: rows update when each HTF bar closes, not tick
+//     by tick. That lag is real information, not a downgrade.
+//
+//  2. CLEAN CHART MODE SILENTLY CHANGED THE SCORE. It capped the trendline
+//     engine to 2 lines per side, so lines that would have been broken were
+//     already retired and their break never fired — moving the Confidence
+//     Meter's TL factor and the score itself. Clean Mode now caps DRAWING
+//     only; the engine always runs at your settings.
+//
+//  3. THE TUNNEL FACTOR WAS BEARISH-BIASED. Bull required a close above
+//     dt_ma1 — the tunnel's UPPER line in an uptrend. Bear required a close
+//     below dt_ma2, which in a downtrend is ALSO the upper line. So a close
+//     sitting INSIDE the tunnel scored a full -1 while the mirror-image bull
+//     case scored 0. Both sides now require price fully outside both tunnels.
+//
+//  4. THE SCORE COULD NOT REACH 0 OR 100. The trendline factor holds 5 of the
+//     100 weight points but only spoke on the exact bar of a break — roughly
+//     one bar in a thousand. The other 999 it contributed 0 while still
+//     sitting in the denominator, so 95 and 100 meant the same thing. A break
+//     now stays on the books for a memory window, and when a factor has NO
+//     OPINION (no recent break; volume window not yet full) its weight is
+//     removed from the denominator instead of being counted as a neutral vote.
+//
+//  5. S/R ZONES REGISTERED PHANTOM BREAKS. "Which side was price on last bar"
+//     was measured against the CURRENT anchor — but the anchor moves when a
+//     new swing is absorbed. A re-anchor could flip the recorded side and log
+//     a break that never happened; two of those retire the zone. Now compared
+//     against the anchor as it stood on the previous bar.
+//
+//  6. S/R ZONES DECAYED WHILE PRICE SAT INSIDE THEM. A bar closing inside a
+//     zone was neither a touch nor a break, so the zone's activity clock kept
+//     running — it could expire at the exact moment it mattered most.
+//
+//  7. A FRESH, UNTESTED PIVOT COULD EVICT YOUR STRONGEST LEVEL. At capacity
+//     the weakest zone was deleted unconditionally to make room for a new one
+//     of strength 2 — the opposite of "only the strongest N are kept". The
+//     newcomer must now out-rank what it replaces (strength discounted by
+//     distance from price, so stale far-away levels still lose).
+//
+//  8. Smaller: S/R merged into the FIRST zone in range rather than the
+//     NEAREST; the MTF panel hard-coded 20/50/100/200/144/288 and ignored your
+//     EMA and Tunnel inputs while claiming to be "scored the SAME way"; the
+//     High-Confidence alerts ignored "Confirm Signals on Bar Close" and fired
+//     intrabar; the signal layer's permanent direction lock meant a second
+//     LONG could never fire until a SHORT had (valid setups vanished because
+//     of unrelated history) — now an explicit bar cooldown, default 0; the
+//     Volume Profile's "Structure: Buyers dominant" was a POC-position claim
+//     dressed up as order flow; the Regime row implied signals were blocked
+//     even with the ADX filter switched off.
 // ════════════════════════════════════════════════════════════════════════════
 //@version=6
 indicator("All-in-One ULTIMATE", overlay=true, max_lines_count=500, max_boxes_count=500, max_labels_count=500, max_bars_back=5000)
@@ -126,9 +187,11 @@ tlBaseWidth = input.int(1, "Line Width", minval=1, maxval=4, group=gT, tooltip="
 utcol      = input.color(color.lime, "Up", inline="tcol", group=gT)
 dtcol      = input.color(color.red,  "Down", inline="tcol", group=gT)
 
-// Clean mode caps the number of lines drawn (計算不變,只是少畫幾條)
-maxActiveTL_e = cleanMode ? math.min(maxActiveTL, 2) : maxActiveTL
-keepBroken_e  = cleanMode ? math.min(keepBroken, 2)  : keepBroken
+cleanKeepTL = input.int(2, "Clean Mode: lines shown per side", minval=1, maxval=10, group=gT, tooltip="While CLEAN CHART MODE is on, only this many active (and this many broken) trendlines per side stay visible. The rest are made transparent.\n\nv2: this is a DRAWING cap. Previously Clean Mode capped the trendline ENGINE, which retired lines early — so a break that would have fired never did, and the Confidence Meter's score quietly differed between Clean Mode on and off. The engine now always runs at your 'Max Active Lines' setting.")
+
+// v2 FIX (note 2): the engine runs at the user's settings in BOTH modes.
+maxActiveTL_e = maxActiveTL
+keepBroken_e  = keepBroken
 
 // ╔═══════════════════════════════════════════════════════╗
 // ║  ④ MSB + ORDER BLOCK (legacy EmreKb)                   ║
@@ -282,6 +345,7 @@ type TLine
     int    touches
     bool   isUp
     bool   broken
+    bool   capped     // retired by the active-line cap, not broken by price
 
 f_priceAt2(float basePrice, float slope, int baseBar, int targetBar) =>
     basePrice + slope * (targetBar - baseBar)
@@ -333,6 +397,7 @@ f_retire_oldest(bool isUp) =>
             t = array.get(tlines, i)
             if t.isUp == isUp and not t.broken
                 t.broken := true
+                t.capped := true
                 line.set_extend(t.ln, extend.none)
                 line.set_style(t.ln, line.style_dotted)
                 line.set_color(t.ln, color.new(t.isUp ? utcol : dtcol, 60))
@@ -404,7 +469,7 @@ if time >= starttime and showTL and newPivotUp
             endP = f_priceAt2(uv2, slopeU, up2, bar_index)
             newln = line.new(up2 - prd, uv2, bar_index, endP, color=utcol, width=tlBaseWidth, extend=extend.right)
             newlb = (showTLlabels and not hideText) ? label.new(bar_index, endP, "TL ×2", style=label.style_label_left, color=color.new(color.black, 100), textcolor=utcol, size=size.tiny) : na
-            array.push(tlines, TLine.new(newln, newlb, slopeU, uv2, up2, 2, true, false))
+            array.push(tlines, TLine.new(newln, newlb, slopeU, uv2, up2, 2, true, false, false))
             f_retire_oldest(true)
 
 if time >= starttime and showTL and newPivotDown
@@ -444,7 +509,7 @@ if time >= starttime and showTL and newPivotDown
             endP = f_priceAt2(dv2, slopeD, dp2, bar_index)
             newln = line.new(dp2 - prd, dv2, bar_index, endP, color=dtcol, width=tlBaseWidth, extend=extend.right)
             newlb = (showTLlabels and not hideText) ? label.new(bar_index, endP, "TL ×2", style=label.style_label_left, color=color.new(color.black, 100), textcolor=dtcol, size=size.tiny) : na
-            array.push(tlines, TLine.new(newln, newlb, slopeD, dv2, dp2, 2, false, false))
+            array.push(tlines, TLine.new(newln, newlb, slopeD, dv2, dp2, 2, false, false, false))
             f_retire_oldest(false)
 
 var bool tlBrokeUp = false
@@ -484,6 +549,42 @@ if showTL and array.size(tlines) > 0
                     label.set_text(t.lb, hideText ? "" : "TL ×" + str.tostring(t.touches))
     f_prune_broken()
 
+    // ── Clean Mode hides the surplus WITHOUT touching the engine (v2 note 2) ──
+    // Walk newest-first; the first cleanKeepTL active and cleanKeepTL broken
+    // lines per side stay visible, everything older goes fully transparent.
+    // Breaks still register on hidden lines, so the score is unaffected.
+    if cleanMode and array.size(tlines) > 0
+        int upAct = 0
+        int dnAct = 0
+        int upBrk = 0
+        int dnBrk = 0
+        // names are deliberately distinct from the loops above and from the S/R
+        // block below — Pine resolves siblings by name and a collision here
+        // would silently repaint the wrong drawing
+        for ti = 0 to array.size(tlines) - 1
+            TLine tl = array.get(tlines, array.size(tlines) - 1 - ti)
+            int tlRank = 0
+            if tl.broken
+                if tl.isUp
+                    upBrk += 1
+                    tlRank := upBrk
+                else
+                    dnBrk += 1
+                    tlRank := dnBrk
+            else
+                if tl.isUp
+                    upAct += 1
+                    tlRank := upAct
+                else
+                    dnAct += 1
+                    tlRank := dnAct
+            color tlCol = tl.isUp ? utcol : dtcol
+            int tlVis = tl.capped ? 60 : tl.broken ? 55 : 0
+            int tlTr  = tlRank <= cleanKeepTL ? tlVis : 100
+            line.set_color(tl.ln, color.new(tlCol, tlTr))
+            if not na(tl.lb)
+                label.set_textcolor(tl.lb, color.new(tlCol, tlTr))
+
 plotshape(showTL and tlBreakAlerts and tlBrokeUp,   "TL Break Up",   shape.xcross, location.belowbar, color.new(utcol, 0), size=size.tiny)
 plotshape(showTL and tlBreakAlerts and tlBrokeDown, "TL Break Down", shape.xcross, location.abovebar, color.new(dtcol, 0), size=size.tiny)
 alertcondition(tlBrokeUp,   "Up Trendline Broken",   "Price closed below an up trendline")
@@ -516,50 +617,79 @@ type SRZone
     box    bx
     label  lb
     float  anchor
+    float  prevAnchor   // v2: the anchor as it stood LAST bar — see note 5
     float  halfH
     float  volSum
     int    pivots
     int    touches
     int    breaks
     int    lastActive
+    int    bornBar
 
 var array<SRZone> srZones = array.new<SRZone>()
 srAtr = ta.atr(50)
+// ATR is na for the first 50 bars; fall back to a price-proportional width so
+// the earliest zones get a real height instead of an na-sized box.
+srAtrSafe = nz(srAtr, close * 0.005)
 
 f_srStrength(SRZone z) => z.pivots * 2 + z.touches
 
-f_srRetireWeakest() =>
+// Relevance = strength, discounted by distance from price (in ATR, capped at 4
+// points). A level that has held seven times but sits 10 ATR away is no longer
+// what you are trading against; a level right under price matters even if new.
+f_srRelevance(float anchor, float strength) =>
+    float d = math.abs(close - anchor) / math.max(srAtrSafe, syminfo.mintick)
+    strength - math.min(4.0, d)
+
+// v2 FIX (note 7): this used to delete the weakest zone unconditionally to make
+// room, so a brand-new untested pivot (strength 2) could evict a level that had
+// held seven times — the opposite of the "only the strongest N are kept"
+// promise in the tooltip. The newcomer must now out-rank what it replaces.
+// Returns true if there is room for a new zone.
+f_srMakeRoom(float newPrice) =>
+    bool room = true
     if srZones.size() >= srMaxZones
-        wIdx = 0
-        wVal = 1000000
+        int   wIdx = 0
+        float wVal = 1e30
         for [i, z] in srZones
-            s = f_srStrength(z)
+            float s = f_srRelevance(z.anchor, float(f_srStrength(z)))
             if s < wVal
                 wVal := s
                 wIdx := i
-        SRZone w = srZones.get(wIdx)
-        box.delete(w.bx)
-        label.delete(w.lb)
-        srZones.remove(wIdx)
+        if f_srRelevance(newPrice, 2.0) >= wVal
+            SRZone w = srZones.get(wIdx)
+            box.delete(w.bx)
+            label.delete(w.lb)
+            srZones.remove(wIdx)
+        else
+            room := false
+    room
 
+// v2 FIX (note 8): merge into the NEAREST zone in range, not the first one the
+// array happens to hold — merging into an arbitrary neighbour dragged anchors
+// toward levels the swing had nothing to do with.
 f_srAbsorb(float price, float vol) =>
-    merged = false
-    for z in srZones
-        if math.abs(price - z.anchor) <= srMergeMult * srAtr
-            z.anchor := (z.anchor * z.volSum + price * vol) / (z.volSum + vol)
-            z.volSum += vol
-            z.pivots += 1
-            z.lastActive := bar_index
-            merged := true
-            break
-    merged
+    int   best  = -1
+    float bestD = 1e30
+    for [i, z] in srZones
+        float d = math.abs(price - z.anchor)
+        if d <= srMergeMult * srAtrSafe and d < bestD
+            bestD := d
+            best  := i
+    if best >= 0
+        SRZone hit = srZones.get(best)
+        hit.anchor := (hit.anchor * hit.volSum + price * vol) / (hit.volSum + vol)
+        hit.volSum += vol
+        hit.pivots += 1
+        hit.lastActive := bar_index
+    best >= 0
 
 f_srSpawn(float price, float vol) =>
-    f_srRetireWeakest()
-    float halfH = srHeightMult * srAtr / 2
-    box bx = box.new(bar_index - srLen, price + halfH, bar_index + 15, price - halfH, border_width=1, bgcolor=color.new(color.gray, 85), border_color=color.new(color.gray, 60))
-    label lb = srShowLabels and not hideText ? label.new(bar_index + 15, price, "", style=label.style_label_left, color=color.new(color.black, 100), textcolor=color.gray, size=size.tiny) : label(na)
-    srZones.push(SRZone.new(bx, lb, price, halfH, vol, 1, 0, 0, bar_index))
+    if f_srMakeRoom(price)
+        float halfH = srHeightMult * srAtrSafe / 2
+        box bx = box.new(bar_index - srLen, price + halfH, bar_index + 15, price - halfH, border_width=1, bgcolor=color.new(color.gray, 85), border_color=color.new(color.gray, 60))
+        label lb = srShowLabels and not hideText ? label.new(bar_index + 15, price, "", style=label.style_label_left, color=color.new(color.black, 100), textcolor=color.gray, size=size.tiny) : label(na)
+        srZones.push(SRZone.new(bx, lb, price, price, halfH, vol, 1, 0, 0, bar_index, bar_index))
 
 srPh = ta.pivothigh(srLen, srLen)
 srPl = ta.pivotlow(srLen, srLen)
@@ -592,10 +722,17 @@ if showSR
         SRZone z = srZones.get(zi)
         float zTop = z.anchor + z.halfH
         float zBot = z.anchor - z.halfH
-        int prevSide = close[1] > z.anchor ? 1 : -1
-        int currSide = close    > z.anchor ? 1 : -1
+        // v2 FIX (note 5): prevSide must be measured against the anchor as it
+        // stood LAST bar. The anchor moves when a swing is absorbed, so
+        // comparing close[1] to the freshly-moved anchor could flip the
+        // recorded side and log a break that never happened — and two of those
+        // retire the zone. Detection is also skipped on the zone's birth bar,
+        // where the "previous side" predates the zone's existence.
+        bool live = bar_index > z.bornBar
+        int prevSide = close[1] > z.prevAnchor ? 1 : -1
+        int currSide = close    > z.anchor     ? 1 : -1
         bool closedOutside = close > zTop or close < zBot
-        if currSide != prevSide and closedOutside
+        if live and currSide != prevSide and closedOutside
             // clean break: close flipped sides and ended fully beyond the zone
             z.breaks += 1
             z.lastActive := bar_index
@@ -603,11 +740,17 @@ if showSR
                 srBreakUp := true
             else
                 srBreakDn := true
-        else if high >= zBot and low <= zTop and currSide == prevSide and closedOutside
+        else if live and high >= zBot and low <= zTop and currSide == prevSide and closedOutside
             // touch: the bar entered the zone but closed back out on the same side — the zone held
             z.touches += 1
             z.lastActive := bar_index
             srTouch := true
+        else if live and not closedOutside
+            // v2 FIX (note 6): a bar closing INSIDE the zone is neither a touch
+            // nor a break, and the old code let the activity clock keep running
+            // through it — a zone price was parked in could decay out from
+            // under you at the exact moment it mattered most. Inside = active.
+            z.lastActive := bar_index
         if z.breaks >= srMaxBreaks or bar_index - z.lastActive > srDecayBars
             box.delete(z.bx)
             label.delete(z.lb)
@@ -631,6 +774,7 @@ if showSR
                 label.set_text(z.lb, hideText ? "" : (isSup ? "S ×" : "R ×") + str.tostring(s) + (isKey ? "  " + str.tostring(z.anchor, format.mintick) : ""))
                 label.set_textcolor(z.lb, color.new(baseCol, isKey ? 0 : 45))
                 label.set_size(z.lb, isKey ? size.small : size.tiny)
+            z.prevAnchor := z.anchor      // v2 note 5: remember it for next bar
             zi += 1
 
 alertcondition(srAlerts and srTouch,   "S/R Zone Touch",      "Price tested a reactive S/R zone and it held")
@@ -1281,6 +1425,8 @@ confirmClose= input.bool(true, "Confirm Signals on Bar Close", group=gSC, toolti
 useAdxFilter= input.bool(true, "ADX Regime Filter ≥", group=gSC, inline="adx", tooltip="Blocks Long/Short signals while ADX is below the threshold (ranging market). Does NOT change the confidence score itself — the panel's Regime row shows the current state.")
 adxTh       = input.int(20, "", minval=10, maxval=50, group=gSC, inline="adx")
 adxLen      = input.int(14, "ADX Length", minval=5, maxval=50, group=gSC)
+tlMemBars   = input.int(20, "Trendline Break Memory (bars)", minval=0, maxval=200, group=gSC, tooltip="How long a trendline break keeps voting in the score.\n\nv2 fix: this factor used to speak ONLY on the exact bar of a break — about one bar in a thousand — yet it still occupied 5 of the meter's 100 weight points on every other bar. The score therefore could never reach 0 or 100, and a reading of 95 meant the same thing as 100.\n\nA break now counts for this many bars. When there is no break to report the factor ABSTAINS: its weight is removed from the denominator instead of being scored as a neutral vote. Set to 0 for break-bar-only (still abstains in between, so the scale stays honest).")
+sigCooldown = input.int(0, "Min Bars Between Signals", minval=0, maxval=500, group=gSC, tooltip="Minimum bars between two Long/Short markers. 0 = no cooldown.\n\nv2 fix: the old code held a permanent direction lock — after one LONG fired, no further LONG could EVER fire until a SHORT had. A valid second long setup silently vanished because of unrelated history. The arm-and-fire logic already prevents duplicate signals from one structure break, so the lock was redundant as well as lossy.")
 
 // factor weights (sum = 100)
 wEMAstack = 20
@@ -1296,8 +1442,28 @@ fEMAstack = emaFast > emaMed and emaMed > emaSlow and emaSlow > emaTrend ? 1 : e
 fEMA200   = close > emaTrend ? 1 : close < emaTrend ? -1 : 0
 fSMC      = internalTrend.bias == BULLISH ? 1 : internalTrend.bias == BEARISH ? -1 : 0
 fVegas    = ta.change(vegasEMA200) > 0 ? 1 : ta.change(vegasEMA200) < 0 ? -1 : 0
-fTunnel   = close > dt_ma1 and close > dt_ma3 ? 1 : close < dt_ma2 and close < dt_ma4 ? -1 : 0
-fTrendln  = tlBrokeDown ? 1 : tlBrokeUp ? -1 : 0
+
+// v2 FIX (note 3): the old test was `close > dt_ma1 and close > dt_ma3` for
+// bull but `close < dt_ma2 and close < dt_ma4` for bear. In an uptrend dt_ma1
+// (144) is the tunnel's UPPER line, so bull correctly required price fully
+// above it — but in a downtrend dt_ma2 (169) is ALSO the upper line, so bear
+// only required price below the tunnel's TOP. A close sitting INSIDE the
+// tunnel scored a full -1 while its mirror-image bull case scored 0. Taking
+// max/min makes the two sides answer the same question.
+t1Top = math.max(dt_ma1, dt_ma2)
+t1Bot = math.min(dt_ma1, dt_ma2)
+t2Top = math.max(dt_ma3, dt_ma4)
+t2Bot = math.min(dt_ma3, dt_ma4)
+fTunnel   = close > t1Top and close > t2Top ? 1 : close < t1Bot and close < t2Bot ? -1 : 0
+
+// v2 FIX (note 4): a break now stays on the books for tlMemBars. tlFresh also
+// drives the abstain logic below — no recent break means this factor has no
+// opinion, which is NOT the same as voting neutral.
+sinceUpBrk = nz(ta.barssince(tlBrokeUp),   999999)
+sinceDnBrk = nz(ta.barssince(tlBrokeDown), 999999)
+tlFresh   = math.min(sinceUpBrk, sinceDnBrk) <= tlMemBars
+// an up-trendline breaking is a BEARISH event (price closed below support)
+fTrendln  = not tlFresh ? 0 : sinceDnBrk == sinceUpBrk ? 0 : sinceDnBrk < sinceUpBrk ? 1 : -1
 // Volume Bias: price vs the volume-weighted mean price of the last volBiasLen bars.
 // This is the score's POC stand-in. The drawn Volume Profile can't be used here:
 // it is computed on the LAST bar only, so feeding it into the score would make
@@ -1307,19 +1473,48 @@ volMean   = math.sum(close * volume, volBiasLen) / math.sum(volume, volBiasLen)
 fVolume   = na(volMean) ? 0 : close > volMean ? 1 : close < volMean ? -1 : 0
 
 // weighted net, normalized to 0–100 (50 = neutral)
-netRaw = fEMAstack*wEMAstack + fEMA200*wEMA200 + fSMC*wSMC + fVegas*wVegas + fTunnel*wTunnel + fTrendln*wTrendln + fVolume*wVolume
-confScore = 50 + netRaw / 2.0
+//
+// v2 FIX (note 4): a factor that ABSTAINS has its weight removed from the
+// denominator; a factor that votes 0 because it is genuinely undecided keeps
+// its weight. The distinction matters — "no trendline has broken recently" is
+// silence, whereas "the EMAs are not stacked" is a real neutral reading.
+// Only two factors can abstain:
+//   · trendlines — nothing has broken inside the memory window
+//   · volume     — the rolling window has not filled yet, or the symbol
+//                  reports no volume at all (many indices and FX feeds)
+// When both are speaking, activeW is 100 and this is arithmetically identical
+// to the old `50 + netRaw / 2`. Nothing about your existing readings shifts
+// except that the ends of the scale are now reachable.
+volSpeaks = not na(volMean)
+activeW   = wEMAstack + wEMA200 + wSMC + wVegas + wTunnel + (tlFresh ? wTrendln : 0) + (volSpeaks ? wVolume : 0)
+netRaw    = fEMAstack*wEMAstack + fEMA200*wEMA200 + fSMC*wSMC + fVegas*wVegas + fTunnel*wTunnel + fTrendln*wTrendln + fVolume*wVolume
+confScore = activeW > 0 ? 50 + 50.0 * netRaw / activeW : 50.0
 confScore := math.max(0, math.min(100, confScore))
+
+// the two gates, named once instead of being re-derived at six call sites
+confScoreLongGate  = scoreLongTh
+confScoreShortGate = 100 - scoreShortTh
+
+// v2 FIX (note 8): "Confirm Signals on Bar Close" used to gate only the
+// Long/Short markers. The High-Confidence alerts evaluated intrabar, so they
+// could fire on a score the bar never actually closed at. They now share the
+// same window. (Historical bars are always confirmed, so history is unchanged.)
+sigWindow = not confirmClose or barstate.isconfirmed
 
 // threshold CROSSINGS (events) — the "High Confidence" alerts fire once when the
 // score enters the zone, not on every bar it stays there
-scoreLong  = showScore and confScore >= scoreLongTh        and nz(confScore[1], 50) <  scoreLongTh
-scoreShort = showScore and confScore <= (100 - scoreShortTh) and nz(confScore[1], 50) >  (100 - scoreShortTh)
+scoreLong  = showScore and sigWindow and confScore >= confScoreLongGate and nz(confScore[1], 50) <  confScoreLongGate
+scoreShort = showScore and sigWindow and confScore <= confScoreShortGate and nz(confScore[1], 50) >  confScoreShortGate
 
 // ── retain the original arm-and-fire entry markers, now confirmed by score ──
 var bool longArmed2 = false
 var bool shortArmed2 = false
-var int lastSig = 0
+// v2 FIX (note 8): `lastSig` used to hold a PERMANENT direction lock — once a
+// LONG fired, no further LONG could ever fire until a SHORT had. In a sustained
+// uptrend that silenced every subsequent long setup, and whether it unlocked
+// depended on unrelated history (a short that got blocked by the ADX filter
+// never cleared it). Replaced by an explicit bar cooldown, default 0.
+var int lastSigBar = -1000000
 
 if msbFlipUp
     longArmed2 := true
@@ -1331,18 +1526,18 @@ if msbFlipDown
 // regime + repaint filters
 [dmiPlus, dmiMinus, adxVal] = ta.dmi(adxLen, adxLen)
 regimeOK  = not useAdxFilter or adxVal >= adxTh
-sigWindow = not confirmClose or barstate.isconfirmed   // historical bars are always confirmed
 
 longSig = false
 shortSig = false
 if showSIG and sigWindow
-    if longArmed2 and trendUp and regimeOK and confScore >= scoreLongTh and lastSig != 1
+    cooledDown = bar_index - lastSigBar >= sigCooldown
+    if longArmed2 and trendUp and regimeOK and confScore >= confScoreLongGate and cooledDown
         longSig := true
-        lastSig := 1
+        lastSigBar := bar_index
         longArmed2 := false
-    if shortArmed2 and trendDown and regimeOK and confScore <= (100 - scoreShortTh) and lastSig != -1
+    if shortArmed2 and trendDown and regimeOK and confScore <= confScoreShortGate and cooledDown
         shortSig := true
-        lastSig := -1
+        lastSigBar := bar_index
         shortArmed2 := false
 
 // plotshape 'text' must be a const, so we use two variants gated by hideText
@@ -1383,12 +1578,15 @@ var table infoPanel = table.new(f_panelpos(panelPos), 2, 12, bgcolor=color.new(#
 
 if barstate.islast and showPanel
     // score → accent color + bias text
-    scoreCol = confScore >= scoreLongTh ? #26a69a : confScore <= (100 - scoreShortTh) ? #ef5350 : #ffb300
-    biasTxt  = confScore >= scoreLongTh ? "LONG" : confScore <= (100 - scoreShortTh) ? "SHORT" : "Neutral"
+    scoreCol = confScore >= confScoreLongGate ? #26a69a : confScore <= confScoreShortGate ? #ef5350 : #ffb300
+    biasTxt  = confScore >= confScoreLongGate ? "LONG" : confScore <= confScoreShortGate ? "SHORT" : "Neutral"
     trendTxt = close > emaTrend ? "Above 200" : "Below 200"
     trendCol = close > emaTrend ? #26a69a : #ef5350
-    regTxt   = adxVal >= adxTh ? "Trending · " + str.tostring(adxVal, "#") : "Ranging · " + str.tostring(adxVal, "#")
-    regCol   = adxVal >= adxTh ? color.white : #ffb300
+    // v2 FIX (note 8): with the ADX filter switched off, "Ranging" in orange
+    // read as "signals are blocked right now" when nothing was being blocked.
+    regState = adxVal >= adxTh ? "Trending" : "Ranging"
+    regTxt   = regState + " · " + str.tostring(adxVal, "#") + (useAdxFilter ? "" : " (filter off)")
+    regCol   = not useAdxFilter ? color.silver : adxVal >= adxTh ? color.white : #ffb300
     activeTL = 0
     for t in tlines
         if not t.broken
@@ -1426,10 +1624,13 @@ if barstate.islast and showPanel
         table.cell(infoPanel, 1, 8, f_facTxt(fVegas) + " ", text_color=f_facCol(fVegas), text_size=panelSize, text_halign=text.align_right)
         table.cell(infoPanel, 0, 9, " Tunnel",       text_color=color.silver, text_size=panelSize, text_halign=text.align_left)
         table.cell(infoPanel, 1, 9, f_facTxt(fTunnel) + " ", text_color=f_facCol(fTunnel), text_size=panelSize, text_halign=text.align_right)
+        // abstaining factors say so, and show the weight the score is actually
+        // being computed on — "—" would hide the difference between a neutral
+        // vote and no vote at all (v2 note 4)
         table.cell(infoPanel, 0, 10, " TL Break",    text_color=color.silver, text_size=panelSize, text_halign=text.align_left)
-        table.cell(infoPanel, 1, 10, f_facTxt(fTrendln) + " ", text_color=f_facCol(fTrendln), text_size=panelSize, text_halign=text.align_right)
-        table.cell(infoPanel, 0, 11, " Volume",      text_color=color.silver, text_size=panelSize, text_halign=text.align_left)
-        table.cell(infoPanel, 1, 11, f_facTxt(fVolume) + " ", text_color=f_facCol(fVolume), text_size=panelSize, text_halign=text.align_right)
+        table.cell(infoPanel, 1, 10, (tlFresh ? f_facTxt(fTrendln) : "abstain") + " ", text_color=tlFresh ? f_facCol(fTrendln) : color.new(color.gray, 30), text_size=panelSize, text_halign=text.align_right)
+        table.cell(infoPanel, 0, 11, activeW < 100 ? " Volume  ·  of " + str.tostring(activeW) : " Volume", text_color=color.silver, text_size=panelSize, text_halign=text.align_left)
+        table.cell(infoPanel, 1, 11, (volSpeaks ? f_facTxt(fVolume) : "abstain") + " ", text_color=volSpeaks ? f_facCol(fVolume) : color.new(color.gray, 30), text_size=panelSize, text_halign=text.align_right)
 
 // ════════════════════════════════════════════════════════════════════════════
 //  MULTI-TIMEFRAME BIAS — reusable scorer + request.security fetch
@@ -1440,25 +1641,41 @@ if barstate.islast and showPanel
 //  uses the price-based subset (weights re-normalized to 100). It's a bias
 //  read, not the full confidence meter.
 // ════════════════════════════════════════════════════════════════════════════
+// v2 FIX (note 8): this used to hard-code 20/50/100/200/144/288/360 while the
+// comment above claimed each timeframe is "scored the SAME way" as the chart.
+// Change EMA Fast to 21 or the tunnel type to SMA and the claim became false.
+// It now reads your actual inputs, and mirrors the corrected tunnel test and
+// the abstain rule from the chart-timeframe meter.
 f_tfScore() =>
-    eF = ta.ema(close, 20)
-    eM = ta.ema(close, 50)
-    eS = ta.ema(close, 100)
-    eT = ta.ema(close, 200)
-    m1 = ta.ema(close, 144)
-    m3 = ta.ema(close, 288)
-    veg = ta.sma(ta.ema(close, 200), 5)
-    vMean = math.sum(close * volume, 360) / math.sum(volume, 360)
+    eF  = ta.ema(close, ema20len)
+    eM  = ta.ema(close, ema50len)
+    eS  = ta.ema(close, ema100len)
+    eT  = ta.ema(close, ema200len)
+    m1  = f_ma(close, dt_ma1Period, dt_ma1Type)
+    m2  = f_ma(close, dt_ma2Period, dt_ma2Type)
+    m3  = f_ma(close, dt_ma3Period, dt_ma3Type)
+    m4  = f_ma(close, dt_ma4Period, dt_ma4Type)
+    veg = ta.sma(ta.ema(close, 200), 5)          // Vegas is EMA200 by definition
+    vMean = math.sum(close * volume, volBiasLen) / math.sum(volume, volBiasLen)
     s1 = eF > eM and eM > eS and eS > eT ? 1 : eF < eM and eM < eS and eS < eT ? -1 : 0   // EMA stack (30)
     s2 = close > eT ? 1 : close < eT ? -1 : 0                                              // price vs 200 (25)
     s3 = ta.change(veg) > 0 ? 1 : ta.change(veg) < 0 ? -1 : 0                              // Vegas slope (20)
-    s4 = close > m1 and close > m3 ? 1 : close < m1 and close < m3 ? -1 : 0                // tunnel (15)
+    // same max/min symmetry fix as the chart-TF tunnel factor (v2 note 3)
+    s4 = close > math.max(m1, m2) and close > math.max(m3, m4) ? 1 : close < math.min(m1, m2) and close < math.min(m3, m4) ? -1 : 0   // tunnel (15)
     s5 = na(vMean) ? 0 : close > vMean ? 1 : close < vMean ? -1 : 0                        // volume bias (10)
+    aw  = 30 + 25 + 20 + 15 + (na(vMean) ? 0 : 10)   // volume abstains, it does not vote neutral
     net = s1*30 + s2*25 + s3*20 + s4*15 + s5*10
-    math.max(0, math.min(100, 50 + net / 2.0))
+    math.max(0, math.min(100, 50 + 50.0 * net / aw))
+
+// Returns the score of the LAST CLOSED bar on the requested timeframe.
+// Paired with lookahead_on this is the standard non-repainting idiom: the same
+// value appears on history and in realtime.
+f_tfScorePrev() =>
+    s = f_tfScore()
+    s[1]
 
 gMTF = "⑬ Multi-Timeframe Bias"
-showMTF   = input.bool(true, "Show MTF Bias Panel", group=gMTF, tooltip="Small table showing the direction on three timeframes at once (default 15m / 30m / 1H), scored the same way as the confidence meter's price factors. The bottom row lights up only when all three agree.\n\nThis is the one panel that tells you something your chart timeframe cannot: whether the bigger picture agrees with what you're looking at.")
+showMTF   = input.bool(true, "Show MTF Bias Panel", group=gMTF, tooltip="Small table showing the direction on three timeframes at once (default 15m / 30m / 1H), scored the same way as the confidence meter's price factors. The bottom row lights up only when all three agree.\n\nThis is the one panel that tells you something your chart timeframe cannot: whether the bigger picture agrees with what you're looking at.\n\nv2: reads the LAST CLOSED bar on each timeframe. It used to read the bar still forming, which meant a 1H row could show LONG for 50 minutes and then leave no trace of it once the candle closed bearish. Rows now step when each higher-timeframe candle closes — the header says 'closed bars' as a reminder.\n\nSet timeframes at or ABOVE your chart timeframe. A row below it is marked ↓ and answers nothing this panel is for.")
 mtfTf1    = input.timeframe("15", "Timeframe 1", group=gMTF, inline="tf")
 mtfTf2    = input.timeframe("30", "Timeframe 2", group=gMTF, inline="tf")
 mtfTf3    = input.timeframe("60", "Timeframe 3", group=gMTF, inline="tf")
@@ -1466,10 +1683,28 @@ mtfLongTh = input.int(65, "Long Threshold", minval=50, maxval=100, group=gMTF, t
 mtfPos    = input.string("Middle Right", "Position", ["Top Right","Top Left","Bottom Right","Bottom Left","Middle Right","Middle Left"], group=gMTF)
 mtfSize   = input.string(size.small, "Text Size", [size.tiny, size.small, size.normal], group=gMTF)
 
-// non-repainting HTF fetch: confirmed values only, gaps filled forward
-mtfScore1 = request.security(syminfo.tickerid, mtfTf1, f_tfScore(), lookahead=barmerge.lookahead_off)
-mtfScore2 = request.security(syminfo.tickerid, mtfTf2, f_tfScore(), lookahead=barmerge.lookahead_off)
-mtfScore3 = request.security(syminfo.tickerid, mtfTf3, f_tfScore(), lookahead=barmerge.lookahead_off)
+// ── v2 FIX (note 1): THIS PANEL USED TO REPAINT ─────────────────────────────
+// The old line was `request.security(..., f_tfScore(), lookahead_off)` under a
+// comment reading "non-repainting HTF fetch: confirmed values only". That is
+// not what lookahead_off does. It prevents FUTURE data leaking into history —
+// it does nothing about realtime. On the forming bar, request.security returns
+// the higher-timeframe bar AS IT IS CURRENTLY DEVELOPING. So on a 5m chart the
+// 1H row could read LONG for 50 minutes, you act on it, the 1H candle closes
+// bearish, and the chart's own history then shows no LONG ever existed there.
+// Every reading you could act on was the one reading that never got recorded.
+//
+// `f_tfScorePrev()` (the score of the last CLOSED HTF bar) with lookahead_on is
+// the standard non-repainting idiom: identical on history and in realtime.
+// The cost is honest lag — a 1H row updates once an hour. That lag was always
+// there; the old version just hid it behind a number that kept moving.
+mtfScore1 = request.security(syminfo.tickerid, mtfTf1, f_tfScorePrev(), lookahead=barmerge.lookahead_on)
+mtfScore2 = request.security(syminfo.tickerid, mtfTf2, f_tfScorePrev(), lookahead=barmerge.lookahead_on)
+mtfScore3 = request.security(syminfo.tickerid, mtfTf3, f_tfScorePrev(), lookahead=barmerge.lookahead_on)
+
+// This panel answers "does the bigger picture agree?" — a timeframe BELOW your
+// chart cannot answer that, and the confirmed-bar idiom is not meaningful there
+// either. Such rows are marked so the panel never implies more than it knows.
+f_tfBelowChart(string tf) => timeframe.in_seconds(tf) < timeframe.in_seconds()
 
 // alignment: +1 all-long, -1 all-short, 0 mixed
 f_mtfDir(float sc) => sc >= mtfLongTh ? 1 : sc <= (100 - mtfLongTh) ? -1 : 0
@@ -1490,14 +1725,17 @@ f_mtfRow(int rowN, string tfName, float sc) =>
     dir = f_mtfDir(sc)
     txt = dir == 1 ? "LONG" : dir == -1 ? "SHORT" : "Neutral"
     col = dir == 1 ? #26a69a : dir == -1 ? #ef5350 : #ffb300
-    table.cell(mtfPanel, 0, rowN, " " + f_tfLabel(tfName), text_color=color.silver, text_size=mtfSize, text_halign=text.align_left)
-    table.cell(mtfPanel, 1, rowN, str.tostring(math.round(sc)), text_color=color.white, text_size=mtfSize, text_halign=text.align_center)
+    below = f_tfBelowChart(tfName)
+    table.cell(mtfPanel, 0, rowN, " " + f_tfLabel(tfName) + (below ? " ↓" : ""), text_color=below ? color.new(color.silver, 45) : color.silver, text_size=mtfSize, text_halign=text.align_left)
+    table.cell(mtfPanel, 1, rowN, na(sc) ? "…" : str.tostring(math.round(sc)), text_color=color.white, text_size=mtfSize, text_halign=text.align_center)
     table.cell(mtfPanel, 2, rowN, txt + " ", text_color=col, text_size=mtfSize, text_halign=text.align_right)
 
 if barstate.islast and showMTF
+    // header states the basis, so the panel never reads as a live tick-by-tick
+    // number when it is deliberately a closed-bar number (v2 note 1)
     table.cell(mtfPanel, 0, 0, "MTF BIAS", text_color=color.white, text_size=mtfSize, text_halign=text.align_left, bgcolor=color.new(#1c1c28, 0))
     table.cell(mtfPanel, 1, 0, "", bgcolor=color.new(#1c1c28, 0))
-    table.cell(mtfPanel, 2, 0, "", bgcolor=color.new(#1c1c28, 0))
+    table.cell(mtfPanel, 2, 0, "closed bars ", text_color=color.new(color.silver, 35), text_size=size.tiny, text_halign=text.align_right, bgcolor=color.new(#1c1c28, 0))
     f_mtfRow(1, mtfTf1, mtfScore1)
     f_mtfRow(2, mtfTf2, mtfScore2)
     f_mtfRow(3, mtfTf3, mtfScore3)
@@ -1693,8 +1931,17 @@ if barstate.islast and (vpShow or vpShowPanel)
                 float vaWpct = vaW / pocPrice * 100
                 string posTxt = close > vahPrice ? "ABOVE · Premium" : close < valPrice ? "BELOW · Discount" : "INSIDE · Balanced"
                 color  posCol = close > vahPrice ? color.new(#ef5350, 0) : close < valPrice ? color.new(#26a69a, 0) : color.new(#ffb300, 0)
-                float  pocPos = pocIdx / (vpRows - 1.0)
-                string strTxt = pocPos > 0.66 ? "Buyers dominant" : pocPos < 0.34 ? "Sellers dominant" : "Two-sided"
+                // v2 FIX (note 8): this row used to print "Buyers dominant" /
+                // "Sellers dominant" purely from where the POC sat in the price
+                // range. That is a LOCATION, not order flow — a POC near the
+                // highs is just as consistent with distribution into strength as
+                // with buyers in control, and the panel already measures flow
+                // one row up. It now reports what it actually knows: where the
+                // heaviest-traded price sits inside the window, and where it
+                // sits inside the value area (skew) — both defined quantities.
+                float  pocPos  = (pocPrice - lo) / math.max(hi - lo, syminfo.mintick)
+                float  vaSkew  = (pocPrice - valPrice) / math.max(vahPrice - valPrice, syminfo.mintick)
+                string strTxt  = (pocPos > 0.66 ? "Upper" : pocPos < 0.34 ? "Lower" : "Middle") + " third · VA " + str.tostring(vaSkew * 100, "#") + "%"
 
                 color th = color.new(#2962ff, 0)
                 color bg = color.new(chart.bg_color, 15)
@@ -1722,10 +1969,10 @@ if barstate.islast and (vpShow or vpShowPanel)
                 table.cell(vpTable, 0, 5, " VA Width", text_color = fg, bgcolor = bg, text_size = ts, text_halign = text.align_left)
                 table.cell(vpTable, 1, 5, str.tostring(vaW, format.mintick) + " (" + str.tostring(vaWpct, "#.##") + "%) ", text_color = fg, bgcolor = bg, text_size = ts, text_halign = text.align_right)
 
-                table.cell(vpTable, 0, 6, " Buy / Sell", text_color = fg, bgcolor = bg, text_size = ts, text_halign = text.align_left)
+                table.cell(vpTable, 0, 6, " Buy / Sell est.", text_color = fg, bgcolor = bg, text_size = ts, text_halign = text.align_left)
                 table.cell(vpTable, 1, 6, str.tostring(buyPct, "#.#") + "% / " + str.tostring(selPct, "#.#") + "% ", text_color = buyPct >= selPct ? vpBuyCol : vpSellCol, bgcolor = bg, text_size = ts, text_halign = text.align_right)
 
-                table.cell(vpTable, 0, 7, " Structure", text_color = fg, bgcolor = bg, text_size = ts, text_halign = text.align_left)
+                table.cell(vpTable, 0, 7, " POC in Range", text_color = fg, bgcolor = bg, text_size = ts, text_halign = text.align_left)
                 table.cell(vpTable, 1, 7, strTxt + " ", text_color = fg, bgcolor = bg, text_size = ts, text_halign = text.align_right)
 
                 table.cell(vpTable, 0, 8, " Lookback", text_color = fg, bgcolor = bg, text_size = ts, text_halign = text.align_left)
