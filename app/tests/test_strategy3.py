@@ -420,6 +420,14 @@ def test_bybit_account_snapshot_no_keys(monkeypatch):
                     "live": False, "balance": None, "positions": []}
 
 
+def _reset_account_cache(monkeypatch):
+    """account_snapshot() caches ~5s so N open dashboard tabs polling /api/bybit
+    don't each hit Bybit — but that cache is module-level and outlives a single
+    test, so every test exercising a fresh fetch must clear it first."""
+    import strategy3_exec as X
+    monkeypatch.setattr(X, "_account_cache", {"ts": 0.0, "data": None})
+
+
 def test_bybit_account_snapshot_success(monkeypatch):
     """Regression for the /bybit web page: balance must parse Bybit's unified
     totalEquity/totalAvailableBalance/totalPerpUPL fields, and positions must
@@ -455,6 +463,7 @@ def test_bybit_account_snapshot_success(monkeypatch):
     # pin the coin list — the user turns symbols on/off in .env, and this test's
     # fixtures assume SOL is "ours" (same preflight trap as the coin-list tests)
     monkeypatch.setattr(X.config, "STRATEGY3_SYMBOLS", ["SOL", "HYPE", "XAUT"])
+    _reset_account_cache(monkeypatch)
 
     snap = X.account_snapshot()
     assert snap["ok"] is True
@@ -478,11 +487,47 @@ def test_bybit_account_snapshot_error_is_not_fatal(monkeypatch):
     monkeypatch.setattr(X, "keys_present", lambda: True)
     monkeypatch.setattr(X, "is_live", lambda: True)
     monkeypatch.setattr(X, "client", lambda: BoomEx())
+    _reset_account_cache(monkeypatch)
 
     snap = X.account_snapshot()
     assert snap["ok"] is False
     assert "connection reset" in snap["error"]
     assert snap["positions"] == []
+
+
+def test_bybit_account_snapshot_is_cached_then_bypassed_with_force(monkeypatch):
+    """THE FIX: uncached, this was called fresh on every /api/bybit hit — polled
+    every 8-15s per open dashboard tab, on top of strategy3_scanner's own 45s
+    loop and bot.py's guardian, each a separate process with its own Bybit
+    client unaware of the others. That's what was tripping Bybit's 10006
+    'Too many visits' — not any single loop being too fast on its own."""
+    import strategy3_exec as X
+
+    calls = {"n": 0}
+
+    class CountingEx:
+        def fetch_balance(self):
+            calls["n"] += 1
+            return {"info": {"result": {"list": [{
+                "totalEquity": "100.0", "totalWalletBalance": "100.0",
+                "totalAvailableBalance": "100.0", "totalPerpUPL": "0.0"}]}}}
+
+        def fetch_positions(self, symbols, params=None):
+            return []
+
+    monkeypatch.setattr(X, "keys_present", lambda: True)
+    monkeypatch.setattr(X, "is_live", lambda: True)
+    monkeypatch.setattr(X, "client", lambda: CountingEx())
+    _reset_account_cache(monkeypatch)
+
+    first = X.account_snapshot()
+    second = X.account_snapshot()          # within the TTL — must reuse, not re-fetch
+    assert calls["n"] == 1
+    assert second == first
+
+    fresh = X.account_snapshot(force=True)  # force= bypasses the cache
+    assert calls["n"] == 2
+    assert fresh == first
 
 
 # ── V2 anti-chop break-even (HYPE by default) ────────────────────────────────

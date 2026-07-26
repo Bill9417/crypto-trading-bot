@@ -24,6 +24,7 @@ Safety model:
 """
 import math
 import os
+import threading
 import time
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
@@ -33,6 +34,19 @@ import ccxt
 import config
 
 _client = None
+
+# account_snapshot() does 2 Bybit REST calls (fetch_balance + fetch_positions).
+# Uncached, it was called fresh on every /api/bybit hit — polled every 8s by
+# the /bybit page and every 15s by the home dashboard's account strip, PER
+# OPEN TAB, from the web process alone. That ran concurrently with
+# strategy3_scanner.py's own 45s loop and bot.py's guardian (both separate
+# processes with their own independent Bybit client), and none of the three
+# knew about the others — each paced itself as if it had the whole quota.
+# Bybit's "Too many visits" (10006) is enforced per API key, not per process.
+# Same fix executor.py already uses for the Binance account snapshot.
+_account_cache: dict = {"ts": 0.0, "data": None}
+_account_cache_lock = threading.Lock()
+ACCOUNT_CACHE_TTL = 5.0  # seconds
 
 
 def keys_present() -> bool:
@@ -83,15 +97,23 @@ def qty_for(price: float, margin: float, leverage: int,
     return qty, ""
 
 
-def account_snapshot() -> dict:
+def account_snapshot(*, force: bool = False) -> dict:
     """Read-only Bybit balance + open positions across config.STRATEGY3_SYMBOLS —
     same shape as executor.account_snapshot() so the web page can show BOTH
     live accounts side by side. Works whenever keys exist, independent of
     LIVE_TRADING/STRATEGY3_LIVE, so the page shows the real account even in
-    alert-only mode. NEVER sends an order."""
+    alert-only mode. NEVER sends an order.
+
+    Cached ~5s (force=True bypasses it) — see the module-level comment by
+    _account_cache for why this matters here specifically."""
     if not keys_present():
         return {"ok": False, "error": "No Bybit API keys configured.",
                 "live": False, "balance": None, "positions": []}
+    now = time.time()
+    with _account_cache_lock:
+        cached = _account_cache["data"]
+        if not force and cached is not None and (now - _account_cache["ts"]) < ACCOUNT_CACHE_TTL:
+            return cached
     try:
         ex = client()
         raw = ex.fetch_balance()
@@ -144,8 +166,12 @@ def account_snapshot() -> dict:
                 "sl": float(sl) if sl not in ("", "0") else None,
                 "engine": "s1鏡" if p.get("symbol") in mirror_symbols else "s3",
             })
-        return {"ok": True, "error": None, "live": is_live(),
+        data = {"ok": True, "error": None, "live": is_live(),
                 "balance": balance, "positions": positions}
+        with _account_cache_lock:
+            _account_cache["ts"] = now
+            _account_cache["data"] = data
+        return data
     except Exception as exc:  # noqa: BLE001 — a read-only page must never 500 on an API blip
         return {"ok": False, "error": str(exc)[:300], "live": is_live(),
                 "balance": None, "positions": []}
@@ -431,6 +457,8 @@ def open_flip(symbol: str, direction: str, price: float, sl_price: float,
         return res
 
     res.update(ok=True, qty=qty, order_id=(order or {}).get("id"))
+    with _account_cache_lock:
+        _account_cache["data"] = None               # force fresh snapshot
     # belt-and-braces: make sure the stop really rests on the position
     try:
         time.sleep(1.0)
@@ -457,6 +485,8 @@ def close_flip(symbol: str) -> dict:
             "positionIdx": 0, "reduceOnly": True,
         })
         res["ok"] = True
+        with _account_cache_lock:
+            _account_cache["data"] = None            # force fresh snapshot
     except Exception as exc:  # noqa: BLE001
         res["error"] = str(exc)[:300]
     return res
