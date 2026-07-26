@@ -5,6 +5,7 @@ account-wide P&L total measures none of them. These tests pin the recording
 and the attribution, including the cases where attribution must admit it is
 guessing.
 """
+import config
 import strategy_ledger as L
 
 T = 1_784_900_000.0
@@ -96,10 +97,35 @@ def test_attribute_falls_back_to_inference_and_says_so():
 
 
 def test_inference_uses_the_configured_s3_symbols(monkeypatch):
-    import config
     monkeypatch.setattr(config, "STRATEGY3_SYMBOLS", ["XAUT"])
     assert L.infer("XAUTUSDT", 1200, 50) == "S3"
     assert L.infer("BTCUSDT", 1200, 50) == L.MANUAL     # not an S3 symbol today
+
+
+def test_manual_only_symbols_win_even_inside_s1s_own_window():
+    """THE REGRESSION: SPCX is a Bybit stock perp the owner scalps by hand.
+    On 2026-07-26 one scalp happened to close at 97.6 USDT notional / 10x —
+    squarely inside S1's ~100 USDT/≤10x fingerprint — and got filed as an S1
+    loss it never was. config.MANUAL_ONLY_SYMBOLS must win outright, size
+    match or not."""
+    assert "SPCX" in config.MANUAL_ONLY_SYMBOLS       # ships in the default set
+    assert L.infer("SPCXUSDT", 97.6, 10) == L.MANUAL
+    assert L.infer("SPCX/USDT:USDT", 100.0, 10) == L.MANUAL   # any symbol spelling
+
+
+def test_manual_only_symbols_beats_the_s3_check_too(monkeypatch):
+    """Defence in depth: even if a manual ticker ever collided with
+    STRATEGY3_SYMBOLS, the manual override must still win."""
+    monkeypatch.setattr(config, "STRATEGY3_SYMBOLS", ["SPCX"])
+    assert L.infer("SPCXUSDT", 1200, 50) == L.MANUAL
+
+
+def test_manual_only_symbols_is_configurable(monkeypatch):
+    """The user can add a future manually-traded ticker without a code edit."""
+    monkeypatch.setattr(config, "MANUAL_ONLY_SYMBOLS", {"NVDA"})
+    assert L.infer("NVDAUSDT", 100.0, 10) == L.MANUAL
+    # and SPCX is no longer special-cased once the set is overridden
+    assert L.infer("SPCXUSDT", 97.6, 10) == "S1"
 
 
 # ── summary + report ─────────────────────────────────────────────────────────

@@ -146,6 +146,18 @@ LINE_CHANNEL_SECRET = os.getenv("LINE_CHANNEL_SECRET", "").strip()
 # this usually stays empty. No groups + no LINE_TO = broadcast to 1:1 friends.
 LINE_TO = [s.strip() for s in os.getenv("LINE_TO", "").split(",") if s.strip()]
 
+# Bybit tickers the OWNER trades manually and that must NEVER be attributed to
+# S1/S3 by strategy_ledger.infer()'s size/leverage fingerprint. 2026-07-26:
+# SPCX landed inside S1's ~100 USDT/≤10x window by coincidence and got
+# mis-filed. All three defaults are Binance TradFi stock/ETF perps (EQUITY /
+# KR_EQUITY underlyingType) — S1 structurally cannot trade them regardless of
+# sizing (see EXCLUDE_TRADFI_PERPS), so this is a correctness fix, not a guess.
+# Add more (comma-separated bases, e.g. "SPCX,IBM,NVDA") if you manually trade
+# a symbol whose size happens to land in S1's window.
+MANUAL_ONLY_SYMBOLS = {s.strip().upper() for s in
+                       os.getenv("MANUAL_ONLY_SYMBOLS", "SPCX,IBM,SKHYNIX").split(",")
+                       if s.strip()}
+
 # ── Live trading (Binance Futures USD-M) ──────────────────────────────────
 # SAFETY: LIVE_TRADING defaults to False. While False the bot is in DRY-RUN —
 # it logs the exact order it WOULD place (and sends a Telegram note) but sends

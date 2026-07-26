@@ -122,9 +122,18 @@ def infer(symbol: str, notional: float, leverage: float) -> str:
     the size/leverage fingerprint each engine leaves — S1 mirrors at a fixed
     ~100 USDT notional on ≤10x, S3 only ever touches XAUT. It is a guess and is
     labelled as one: it already mis-filed a real S1 position that happened to be
-    mid-scale-out, which is exactly why the ledger above exists."""
+    mid-scale-out, which is exactly why the ledger above exists.
+
+    2026-07-26: SPCX (a Bybit stock perp the owner scalps by hand) landed
+    inside S1's notional/leverage window by coincidence and got tagged S1.
+    config.MANUAL_ONLY_SYMBOLS is checked FIRST and wins outright — those
+    symbols are TradFi tickers S1/S3 cannot structurally trade
+    (EXCLUDE_TRADFI_PERPS), so this is a correctness override, not a guess."""
     import config
     sym = norm(symbol)
+    base = sym[:-4] if sym.endswith("USDT") else sym
+    if base in getattr(config, "MANUAL_ONLY_SYMBOLS", ()):
+        return MANUAL
     s3_syms = {norm(s) + "USDT" if not norm(s).endswith("USDT") else norm(s)
                for s in (getattr(config, "STRATEGY3_SYMBOLS", None) or [])}
     if sym in s3_syms:
