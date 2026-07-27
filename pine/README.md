@@ -16,6 +16,7 @@ live; porting a change into the bot is a separate, explicit step.
 | File | What it is | Status |
 |------|-----------|--------|
 | `TV_strategy_XAUT_30min.pine` | **"Vegas Flag Flip — XAUT 30m"** — the exact rules the live bot runs on gold (flag + Vegas entry, exit on opposite flag, emergency SL 1.5%, 50x, 1500 USDT order size). | **LIVE — XAUT trades this on Bybit.** Since 2026-07-11 the bot also *reads* Bybit candles (data follows execution), so a `BYBIT:XAUTUSDT.P` chart matches the bot exactly. |
+| `TV_strategy_BTC_15min.pine` | **BTC Trend-Flip — 15m.** Same confluence engine as All-in-One ULTIMATE v2 / `/strategy2` (EMA stack, EMA200, SMC structure, Vegas slope, Tunnel, Volume — 20/15/25/15/10/10), but MSB + the SMC-structure factor deliberately use Pine's own centred `ta.pivothigh`/`ta.pivotlow(5,5)` instead of the indicator's EmreKb zigzag or smc.py's asymmetric leg — chosen so the .pine implements EXACTLY what the Python backtest tested, no engine-swap. No break-even, no fixed TP (copied from the one thing that's worked here — HYPE V3/ETH_MOM): emergency SL only, ride to the opposite signal. 3.2y real Binance BTC/USDT 15m (112,128 bars): 270 trades, 23.7% WR, PF 1.45, +84.2% (uncompounded), maxDD −17.6%, **every one of 4 independent ~10-month folds profitable and PF>1**. ⚠ The stop-loss % is a genuine wide plateau (0.5–1.5% all clear); the ATR chop-gate (0.30%) and ADX filter (25–26) are narrow sweet spots, not plateaus — immediate neighbors fail a fold. Fold2 (the 2024 bull run) carries 59% of the total return — expect long flat stretches. | Testing only — NOT live. Nothing in this repo currently trades BTC. |
 | `TV_strategy_HYPE_15min.pine` | HYPE 15m trend-catcher (formerly "V3"): break-even OFF, ATR chop-gate 0.6, SL 2.5%, **25x max** (a 2.5% stop at 50x sits outside liquidation). Walk-forward tested +715 USDT / 13 months, ~31% win rate. | Testing only — NOT live. |
 | `TV_strategy_ETH_MOM_2h.pine` | **ETH 14-day momentum** — one rule: long above the close 14 days ago, short below, checked every closed 2h bar. Non-repainting, fees modeled. 2-year test: +770 on 500 USDT notional, all 8 quarters positive at N=168 (neighbors +150–300 — expect those, not the headline); ~30% win rate, trend-style. | Testing only — NOT live. The only ETH system we've tested that made honest money. |
 | `TV_strategy_ETH_SOL_PAIRS.pine` | **Pairs hedge** — market-neutral ETH/SOL spread mean-reversion (z-score of the log ratio; long the cheap leg, short the rich one, both 500 USDT). Non-repainting by construction. | Testing only — NOT live. ⚠ Honest 1-year sim: ~+35–110 USDT/yr best case, last 4 months negative in every config. |
@@ -52,6 +53,10 @@ win-rate backtest was lookahead repainting). All remain in git history
   big trend rides is its nature — expect losing streaks.
 - **HYPE**: `strategies/TV_strategy_HYPE_15min.pine` on HYPEUSDT **15m**,
   defaults correct (650 qty, 25x).
+- **BTC**: `strategies/TV_strategy_BTC_15min.pine` on `BTCUSDT`/`BTCUSDT.P`
+  **15m**, defaults correct (500 USDT, SL 1.0%, ATR gate 0.30%, ADX ≥26,
+  20x/5% margin). Low win rate (~24%) by design — most profit lives in a
+  few long trend rides; expect flat stretches between them.
 - **US stocks**: `strategies/US_Stock_Precision_Trend.pine` on any liquid
   US name, **1D**. Deep Backtesting mode needs the Generate/Update click
   before the tester shows trades.

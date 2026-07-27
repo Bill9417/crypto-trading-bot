@@ -1,0 +1,251 @@
+// ════════════════════════════════════════════════════════════════════════════
+//  BTC TREND-FLIP — 15m
+//
+//  Same confluence engine as the All-in-One ULTIMATE indicator (EMA stack,
+//  price vs EMA200, SMC structure, Vegas slope, Double Tunnel, Volume Bias —
+//  20/15/25/15/10/10, the Trendline factor's 5 weight abstains, same as the
+//  live /strategy2 meter), but the market-structure engine is DELIBERATELY
+//  NOT the indicator's EmreKb zigzag+fib port. It's Pine's own centred
+//  ta.pivothigh/ta.pivotlow(5,5), because that is EXACTLY what the Python
+//  backtest that produced the numbers below used — no engine-swap between
+//  what was tested and what ships. (The house got burned by that once
+//  already: the OCC pair strategy's 78% win-rate TV backtest turned out to
+//  be lookahead repaint; the honest port ran ~22%. This file is built so
+//  that can't happen again — the SMC-structure factor and the MSB flip
+//  share ONE pivot detector, in both the Python replay and here.)
+//
+//  EXIT PHILOSOPHY — copied from the one thing that's actually worked in
+//  this repo (HYPE V3, ETH momentum): NO break-even, NO fixed take-profit.
+//  Emergency stop only; a winning trade rides until the opposite signal
+//  fires. Break-even was tried on HYPE and made win rate go UP and money go
+//  DOWN (72% WR, −112 USDT over 13mo) because it caps the few big trend
+//  rides that pay for every small loss. Same logic applies here.
+//
+//  REAL DATA — 3.2 years of Binance BTC/USDT PERPETUAL 15m candles
+//  (2023-05-15 → 2026-07-26, 112,128 bars), non-repainting (every factor is
+//  a closed-bar recursive filter or a confirmed pivot; entries fill at the
+//  signal bar's CLOSE — matches process_orders_on_close below), 0.055%
+//  taker commission per side modeled (Bybit), swept for a config that holds
+//  up across FOUR independent ~10-month slices of history, not just the
+//  aggregate:
+//
+//                    fold1        fold2        fold3        fold4     TOTAL
+//                 (23-05→24-03)(24-03→24-12)(24-12→25-10)(25-10→26-07)
+//    trades            86           45           76           63        270
+//    win rate         18.6%        31.1%        26.3%        22.2%     23.7%
+//    profit factor     1.23         2.72         1.18         1.20      1.45
+//    return           +8.2%       +50.0%        +5.9%        +7.2%    +84.2%
+//    max drawdown    −17.6%        −7.9%       −11.4%        −8.2%    −17.6%
+//
+//  Every fold profitable, every fold PF > 1 — but fold2 (the 2024 bull run
+//  to ATH) carries 59% of the total return. That's not cherry-picking, it's
+//  the nature of this system: 180 of 270 exits were "opposite signal fired"
+//  (a real trend reversal), only 90 were stop-outs — most trades end because
+//  the trend structurally flipped, not because they got clipped. But it
+//  means MOST of the edge lives in a MINORITY of big, correctly-caught
+//  trends, same as HYPE V3 and ETH_MOM. Expect long flat/choppy stretches.
+//
+//  WHAT WAS SWEPT AND HOW FRAGILE EACH PIECE IS — read this before trusting
+//  the headline numbers:
+//    • Emergency SL%: WIDE, genuine plateau. 0.5%–1.5% (and even 2.5%) all
+//      clear "every fold profitable AND PF>1". Not fragile.
+//    • ATR%% chop-gate (skip new entries when ATR(14)/close > this): NARROW.
+//      0.30% clears all 4 folds; its immediate neighbors 0.28% and 0.32% do
+//      NOT (2/4 and 3/4). This is closer to a sweet spot than a plateau —
+//      a real overfitting risk despite the strong headline PF. Treat it as
+//      a hypothesis, not a proven edge, same posture this account already
+//      holds toward S1 (failed its own 360-day walk-forward) and S2
+//      (negative expectancy in the exit-rule lab).
+//    • ADX(14) regime filter: adx ≥ 25–26 clears all 4 folds; 22–24 score
+//      HIGHER raw PF/return but miss one fold; ≥27 falls off a cliff. Same
+//      "sweet spot, not plateau" caveat as the chop-gate.
+//  Bottom line: the STOP WIDTH is robust. The two entry GATES are tuned
+//  tighter than this repo's own standard for "not fragile." Paper-trade
+//  before sizing this up.
+//
+//  DEPLOYMENT: BTCUSDT (or BTCUSDT.P) 15m chart only. Order size below is a
+//  placeholder (500 USDT) — pick your own. A 1.0% stop wants leverage that
+//  keeps liquidation meaningfully past it: at 20x, liquidation sits ~5% away
+//  (5x buffer over the stop) — comfortable. Don't push leverage past ~40x on
+//  this (liquidation ~2.5% away starts crowding a 1% stop, the same trap
+//  that forced HYPE V3's leverage cap).
+//
+//  NOTE: TradingView testing only — this file does NOT drive the live bot.
+//  Nothing in this repo currently trades BTC. If this tests well on your own
+//  replay and you want it live, that's a separate, explicit change.
+// ════════════════════════════════════════════════════════════════════════════
+//@version=6
+strategy("BTC Trend-Flip — 15m", overlay=true,
+     initial_capital=1000,
+     default_qty_type=strategy.cash, default_qty_value=500,
+     margin_long=5, margin_short=5,
+     commission_type=strategy.commission.percent, commission_value=0.055,
+     slippage=2, process_orders_on_close=true,
+     max_labels_count=500)
+
+// ╔═══════════════════════════════════════════════════════╗
+// ║  INPUTS                                                ║
+// ╚═══════════════════════════════════════════════════════╝
+gR = "① Risk"
+emergSLPct = input.float(1.0, "Emergency stop-loss %", minval=0.2, maxval=10, step=0.1, group=gR,
+     tooltip="Swept 0.5–1.5% (and 2.5%) all cleared 'every fold profitable AND PF>1' on 3.2y of real BTC 15m — this is the robust part of the config. No break-even, no fixed take-profit: a winner rides to the opposite signal. That's deliberate — see the header.") / 100
+
+gC = "② Anti-chop entry gates (⚠ narrower than the SL — read the header)"
+atrGateMax = input.float(0.30, "Skip new entries when ATR(14)/close % >", minval=0.1, maxval=2, step=0.02, group=gC,
+     tooltip="0.30% cleared all 4 folds; 0.28% and 0.32% did not. Narrow — a real overfitting risk, not a proven plateau. Exits are never blocked by this.")
+adxTh = input.int(26, "ADX Regime Filter ≥", minval=10, maxval=50, group=gC,
+     tooltip="25–26 cleared all 4 folds; 22–24 scored higher raw PF but missed one fold; ≥27 falls off a cliff. Same 'sweet spot, not plateau' caveat as the ATR gate.")
+adxLen = input.int(14, "ADX Length", minval=5, maxval=50, group=gC)
+pivotLen = input.int(5, "Pivot length (MSB + SMC structure)", minval=2, maxval=20, group=gC,
+     tooltip="Bars each side confirming a swing pivot — feeds BOTH the market-structure flip and the SMC-structure factor below, deliberately sharing one detector (see header).")
+
+gF = "③ Confluence score (same weights as /strategy2 and All-in-One ULTIMATE v2)"
+scoreLongTh = input.int(70, "Long Threshold", minval=50, maxval=100, group=gF)
+scoreShortTh = input.int(70, "Short Threshold", minval=50, maxval=100, group=gF)
+volBiasLen = input.int(360, "Volume Bias Length", minval=20, maxval=5000, group=gF)
+
+gD = "④ Backtest window"
+useDate = input.bool(false, "Limit date range", group=gD)
+startDate = input.time(timestamp("1 Jan 2023 00:00 +0000"), "From", group=gD)
+endDate = input.time(timestamp("1 Jan 2030 00:00 +0000"), "To", group=gD)
+inWindow = not useDate or (time >= startDate and time <= endDate)
+
+// ╔═══════════════════════════════════════════════════════╗
+// ║  CONFLUENCE FACTORS — identical maths to TV.pine /      ║
+// ║  All-in-One ULTIMATE v2 / app/strategy2_meter.py        ║
+// ╚═══════════════════════════════════════════════════════╝
+emaFast  = ta.ema(close, 20)
+emaMed   = ta.ema(close, 50)
+emaSlow  = ta.ema(close, 100)
+emaTrend = ta.ema(close, 200)
+
+dt_ma1 = ta.ema(close, 144)
+dt_ma2 = ta.ema(close, 169)
+dt_ma3 = ta.ema(close, 288)
+dt_ma4 = ta.ema(close, 338)
+
+vegasEMA200 = ta.sma(ta.ema(close, 200), 5)
+fVegas = ta.change(vegasEMA200) > 0 ? 1 : ta.change(vegasEMA200) < 0 ? -1 : 0
+
+fEMAstack = emaFast > emaMed and emaMed > emaSlow and emaSlow > emaTrend ? 1 :
+     emaFast < emaMed and emaMed < emaSlow and emaSlow < emaTrend ? -1 : 0
+fEMA200 = close > emaTrend ? 1 : close < emaTrend ? -1 : 0
+fTunnel = close > math.max(dt_ma1, dt_ma2) and close > math.max(dt_ma3, dt_ma4) ? 1 :
+     close < math.min(dt_ma1, dt_ma2) and close < math.min(dt_ma3, dt_ma4) ? -1 : 0
+
+volSum = math.sum(volume, volBiasLen)
+volMean = volSum > 0 ? math.sum(close * volume, volBiasLen) / volSum : na
+volReady = not na(volMean) and bar_index >= volBiasLen - 1
+fVolume = volReady ? (close > volMean ? 1 : close < volMean ? -1 : 0) : 0
+volumeActiveW = volReady ? 10 : 0
+
+// ── ONE shared centred-pivot detector feeds BOTH the MSB flip and the SMC
+// structure factor — deliberately, so what this backtest tested and what
+// this chart draws can never quietly diverge (see header).
+pivHi = ta.pivothigh(high, pivotLen, pivotLen)
+pivLo = ta.pivotlow(low, pivotLen, pivotLen)
+
+// -- Break-of-Structure market state: a close crossing the most recent
+// CONFIRMED pivot flips state and consumes that pivot (needs a fresh one to
+// flip back). --
+var float lastPivHi = na
+var float lastPivLo = na
+var string mkt = na
+if not na(pivHi)
+    lastPivHi := pivHi
+if not na(pivLo)
+    lastPivLo := pivLo
+if not na(lastPivHi) and close > lastPivHi and mkt != "bull"
+    mkt := "bull"
+    lastPivHi := na
+else if not na(lastPivLo) and close < lastPivLo and mkt != "bear"
+    mkt := "bear"
+    lastPivLo := na
+
+// -- SMC structure factor: swing HH/HL/LH/LL off the last TWO confirmed
+// pivots each side — standard Dow-theory structure read. --
+var float sh0 = na
+var float sh1 = na
+var float sl0 = na
+var float sl1 = na
+if not na(pivHi)
+    sh1 := sh0
+    sh0 := pivHi
+if not na(pivLo)
+    sl1 := sl0
+    sl0 := pivLo
+fSMC = 0
+if not na(sh0) and not na(sh1) and not na(sl0) and not na(sl1)
+    hh = sh0 > sh1
+    hl = sl0 > sl1
+    lh = sh0 < sh1
+    ll = sl0 < sl1
+    fSMC := (hh and hl) ? 1 : (lh and ll) ? -1 : (hh and ll) ? -1 : (lh and hl) ? 1 : 0
+
+// ── score — abstains removed from the denominator (not counted as neutral),
+// matching the v2 indicator fix and the /strategy2 meter exactly. Trendline
+// (5 weight) always abstains here — same as the meter, see its docstring. ──
+activeW = 20 + 15 + 25 + 15 + 10 + volumeActiveW   // EMAstack+EMA200+SMC+Vegas+Tunnel(+Volume)
+netRaw = fEMAstack * 20 + fEMA200 * 15 + fSMC * 25 + fVegas * 15 + fTunnel * 10 + fVolume * 10
+confScore = activeW > 0 ? math.max(0, math.min(100, 50 + 50.0 * netRaw / activeW)) : 50.0
+
+// ╔═══════════════════════════════════════════════════════╗
+// ║  SIGNAL — rising edge of the full condition (score +    ║
+// ║  price-vs-EMA200 + market structure), fires once per     ║
+// ║  setup. Same edge-detection app/strategy2_meter.py's     ║
+// ║  compute_signal() uses — this IS what was backtested.    ║
+// ╚═══════════════════════════════════════════════════════╝
+longOk  = confScore >= scoreLongTh and fEMA200 > 0 and mkt == "bull"
+shortOk = confScore <= (100 - scoreShortTh) and fEMA200 < 0 and mkt == "bear"
+longFlag  = longOk and not longOk[1]
+shortFlag = shortOk and not shortOk[1]
+
+// ╔═══════════════════════════════════════════════════════╗
+// ║  TRADE LOGIC                                             ║
+// ╚═══════════════════════════════════════════════════════╝
+atrPct = ta.atr(14) / close * 100
+[dmiP, dmiM, adxVal] = ta.dmi(adxLen, adxLen)
+gated = atrPct <= atrGateMax and adxVal >= adxTh
+
+if inWindow and (barstate.isconfirmed or barstate.ishistory)
+    // opposite signal closes the position at once — this IS the exit; there
+    // is no break-even and no fixed TP (see header for why)
+    if strategy.position_size > 0 and shortFlag
+        strategy.close("Long", comment="opp signal")
+    if strategy.position_size < 0 and longFlag
+        strategy.close("Short", comment="opp signal")
+    if longFlag and gated and strategy.position_size <= 0
+        strategy.entry("Long", strategy.long)
+    if shortFlag and gated and strategy.position_size >= 0
+        strategy.entry("Short", strategy.short)
+
+avg = strategy.position_avg_price
+if strategy.position_size > 0
+    strategy.exit("SL-L", from_entry="Long", stop=avg * (1 - emergSLPct))
+if strategy.position_size < 0
+    strategy.exit("SL-S", from_entry="Short", stop=avg * (1 + emergSLPct))
+
+// ╔═══════════════════════════════════════════════════════╗
+// ║  VISUALS                                                 ║
+// ╚═══════════════════════════════════════════════════════╝
+plot(vegasEMA200, "Vegas EMA200", color=fVegas >= 0 ? color.new(color.green, 0) : color.new(color.red, 0), linewidth=2)
+t1a = plot(dt_ma1, "Tunnel1-A", color=color.new(color.orange, 60))
+t1b = plot(dt_ma2, "Tunnel1-B", color=color.new(color.orange, 60))
+fill(t1a, t1b, color=dt_ma1 > dt_ma2 ? color.new(color.orange, 85) : color.new(color.red, 88))
+
+activeStop = strategy.position_size > 0 ? avg * (1 - emergSLPct) :
+     strategy.position_size < 0 ? avg * (1 + emergSLPct) : na
+plot(activeStop, "Stop level", color=color.new(color.fuchsia, 0), style=plot.style_linebr, linewidth=1)
+
+plotshape(longFlag, "Long Signal", shape.triangleup, location.belowbar, color.rgb(0, 230, 118), text="LONG", textcolor=color.white, size=size.small)
+plotshape(shortFlag, "Short Signal", shape.triangledown, location.abovebar, color.rgb(255, 23, 68), text="SHORT", textcolor=color.white, size=size.small)
+plotchar((longFlag or shortFlag) and not gated, "Signal blocked by anti-chop gate", "🚫", location.belowbar, color.new(color.orange, 20), size=size.tiny)
+
+wrongSym = not str.contains(syminfo.ticker, "BTC")
+wrongTf = timeframe.period != "15"
+var table warnTbl = table.new(position.bottom_right, 1, 1)
+if barstate.islast and (wrongSym or wrongTf)
+    msg = wrongSym ? "⚠ This is tuned for BTC only — results elsewhere are meaningless" :
+         "⚠ Tuned for the 15m chart (current: " + timeframe.period + ")"
+    table.cell(warnTbl, 0, 0, msg,
+         text_color=color.orange, bgcolor=color.new(color.black, 20), text_size=size.small)
