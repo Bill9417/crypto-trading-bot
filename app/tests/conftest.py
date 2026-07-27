@@ -156,6 +156,14 @@ def _no_live_side_effects(request, monkeypatch, tmp_path):
     import strategy_ledger
     monkeypatch.setattr(strategy_ledger, "LEDGER_FILE",
                         str(tmp_path / "strategy_ledger.json"))
+    # paper_tracker's forward record — a test must never overwrite the real
+    # accumulating track record, and its own tick() hits the real Binance
+    # API (fetch_ohlcv/top_symbols via backtest.py) with no other guard.
+    import paper_tracker
+    monkeypatch.setattr(paper_tracker, "STATE_FILE", str(tmp_path / "paper_tracker_state.json"))
+    monkeypatch.setattr(paper_tracker, "_last_tick", 0.0)
+    if request.module.__name__ != "test_paper_tracker":
+        monkeypatch.setattr(paper_tracker, "_fetch_universe", lambda progress=lambda *a: None: ({}, []))
     # tw_financials hits the real TWSE OpenAPI (no key needed = no test guard
     # against it otherwise) every time tw_stocks.web_view() runs its real
     # body. Stub to the safe empty shape; a test that wants real-looking

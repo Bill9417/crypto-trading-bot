@@ -677,6 +677,15 @@ def update_pending_signals():
         s1_bybit_mirror.guardian_tick()
     except Exception as exc:  # noqa: BLE001
         print(f"[s1-mirror] guardian tick error: {exc}")
+    # 📝 forward paper-tracker (no real orders) — self-paced inside to hourly;
+    # a bug here must never touch a real trade. Imported here, not at module
+    # level: paper_tracker imports backtest, which imports bot — a module-
+    # level import here would be a circular import.
+    try:
+        import paper_tracker
+        paper_tracker.tick()
+    except Exception as exc:  # noqa: BLE001
+        print(f"[paper-tracker] tick error: {exc}")
     with app.app_context():
         try:
             # Get both PENDING and TP1_PARTIAL signals

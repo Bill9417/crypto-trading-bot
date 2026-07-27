@@ -17,6 +17,10 @@ the command was typed in:
     /twnow      live 台股 snapshot: TAIEX, TW50 leaders, tracked setups
     /liq        BTC/ETH liquidations: 24h tallies, recent prints with
                 prices, and the estimated 🧲 liquidation map
+    /paper      S1 forward paper-tracker status (no real money) — the full
+                live strategy vs a longs-only variant, tracked forward in
+                real time since the 2026-07-27 walk-forward found shorts
+                carrying S1's whole negative expectancy
     /clean [h]  ADMIN-ONLY: delete the bot's messages older than h hours
                 (default 24; Telegram forbids deleting anything older than
                 48h, and only messages sent since the ledger exists are
@@ -74,7 +78,7 @@ ADMIN_CACHE_SEC = 300
 # attached to a reply DO stay tappable indefinitely (they're part of that
 # specific message, not a suggestion bar), which is the closer fit here.
 REFRESHABLE_CMDS = {"positions", "price", "signals", "winrate", "alerts",
-                    "liq", "whale", "twnow"}
+                    "liq", "whale", "twnow", "paper"}
 _admin_cache = {"ts": 0.0, "ids": set()}
 
 
@@ -337,11 +341,12 @@ HELP = ("🤖 指令列表\n"
         "/whaleadd <0x地址> [名稱] · /whalerm <地址> — 管理追蹤清單（限管理員）\n"
         "/outcomes — 訊號成績單: 每個訊號 48h 後的真實結果\n"
         "/mom — ETH 14 日動能紙上前測戰績\n"
+        "/paper — S1 前測戰績（紙上模擬, 無真實下單）: 完整版 vs 只做多版\n"
         "/resume — 解除 S3 熔斷（限管理員）· /halt [原因] — 手動熔斷\n"
         "/clean [小時] — 刪除 bot 超過 N 小時的舊訊息（預設 24, 上限 47, 限管理員）\n"
         "/cleanall — 一次清掉記錄功能上線前的全部舊訊息（限管理員, 需確認）\n"
         "/help — 顯示這份清單\n"
-        "\n💡 /positions /price /signals /winrate /alerts /liq /whale /twnow "
+        "\n💡 /positions /price /signals /winrate /alerts /liq /whale /twnow /paper "
         "的回覆下方有 🔄 按鈕，點一下就能直接更新，不用重打指令")
 
 
@@ -477,6 +482,9 @@ def handle(cmd: str, args: str = "", owner: bool = False) -> str:
     if cmd == "mom":
         import eth_mom
         return eth_mom.report()
+    if cmd == "paper":
+        import paper_tracker
+        return paper_tracker.report_tg()
     if cmd == "resume":
         import strategy3_risk
         if strategy3_risk.clear_halt():
