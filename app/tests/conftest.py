@@ -156,3 +156,14 @@ def _no_live_side_effects(request, monkeypatch, tmp_path):
     import strategy_ledger
     monkeypatch.setattr(strategy_ledger, "LEDGER_FILE",
                         str(tmp_path / "strategy_ledger.json"))
+    # tw_financials hits the real TWSE OpenAPI (no key needed = no test guard
+    # against it otherwise) every time tw_stocks.web_view() runs its real
+    # body. Stub to the safe empty shape; a test that wants real-looking
+    # numbers overrides this with its own monkeypatch. test_tw_financials is
+    # exempt — same reason as test_telegram_utils above: it tests summary()'s
+    # own parsing against a patched requests layer, not through this stub.
+    if request.module.__name__ != "test_tw_financials":
+        import tw_financials
+        monkeypatch.setattr(tw_financials, "summary", lambda code: {
+            "rev_yoy": None, "rev_month": None, "eps_cur": None,
+            "eps_yoy": None, "eps_season": None, "next_deadline": ""})

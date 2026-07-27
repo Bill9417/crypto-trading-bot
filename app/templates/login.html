@@ -94,7 +94,16 @@
             transition: all 0.3s;
         }
         .btn-primary:hover { background: #00b8e6; transform: translateY(-1px); box-shadow: 0 5px 15px rgba(0, 210, 255, 0.3); color: #000; }
-        
+
+        .btn-tg {
+            display: flex; align-items: center; justify-content: center; gap: 8px;
+            width: 100%; padding: 13px; margin-top: 12px; border-radius: 12px;
+            background: rgba(0, 210, 255, 0.08); border: 1px solid rgba(0, 210, 255, 0.35);
+            color: var(--wolf-blue); font-weight: 700; font-size: 0.92rem;
+            text-decoration: none; transition: all 0.2s;
+        }
+        .btn-tg:hover { background: rgba(0, 210, 255, 0.16); color: var(--wolf-blue); transform: translateY(-1px); }
+
         .alert { border-radius: 12px; font-size: 0.9rem; font-weight: 600; border: 1px solid var(--wolf-border); }
         .label-text { font-size: 0.7rem; font-weight: 800; color: var(--wolf-muted); margin-bottom: 8px; letter-spacing: 1px; }
         .text-muted { color: var(--wolf-muted) !important; }
@@ -141,6 +150,9 @@
                 <input type="password" name="password" class="form-control" placeholder="Enter password" required autocomplete="current-password">
             </div>
             <button type="submit" class="btn btn-primary w-100 mb-4">LOG IN TO DASHBOARD</button>
+            {% if invite_url %}
+            <a href="{{ invite_url }}" class="btn-tg" rel="noopener" target="_blank">🚀 加入 Telegram 訊號群</a>
+            {% endif %}
             <div class="text-center">
                 {% if registration_enabled %}
                 <span class="text-muted small">New to the pack? <a href="{{ url_for('register') }}" class="text-decoration-none fw-bold" style="color: var(--wolf-blue);">Join the Hunt</a></span>

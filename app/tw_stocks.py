@@ -437,6 +437,16 @@ def web_view(now=None) -> dict:
     except Exception:  # noqa: BLE001 — live price is a bonus, never required
         prices = {}
 
+    financials = {}
+    try:
+        import tw_financials
+        for s in (state.get("active_setups") or []):
+            code = s.get("code")
+            if code and code not in financials:
+                financials[code] = tw_financials.summary(code)
+    except Exception:  # noqa: BLE001 — 財報 is a bonus, never required
+        financials = {}
+
     last_run = state.get("last_run_date")
     setups = []
     for s in (state.get("active_setups") or []):
@@ -462,6 +472,7 @@ def web_view(now=None) -> dict:
             "status": status, "hit": hit or None,
             "price": price, "price_s": _px(price) if price else None,
             "change_pct": q.get("change_pct"),
+            "fin": financials.get(s.get("code")) or None,
         }
         trail = s.get("trail")
         if trail and trail > sl:          # only show once it has ratcheted above SL

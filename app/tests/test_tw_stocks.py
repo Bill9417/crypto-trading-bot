@@ -556,6 +556,29 @@ def test_web_view_survives_quote_failure(monkeypatch, tmp_path):
     monkeypatch.setattr(stocks_data, "tw_quote_map", boom)
     v = tw_stocks.web_view(now=FRIDAY)             # must not raise
     assert len(v["setups"]) == 4
+
+
+def test_web_view_attaches_financials_per_setup(monkeypatch, tmp_path):
+    """conftest's autouse guard stubs tw_financials.summary to all-None —
+    this proves web_view actually calls it and attaches the result per
+    setup (keyed correctly by code), not just that the page doesn't crash."""
+    import stocks_data
+    import tw_financials
+    _seed_web_state(monkeypatch, tmp_path)
+    monkeypatch.setattr(stocks_data, "tw_quote_map", lambda: {})
+    fake = {
+        "2330": {"rev_yoy": 32.4, "rev_month": "2026-06", "eps_cur": 11.0,
+                 "eps_yoy": 25.0, "eps_season": "2026 Q2", "next_deadline": "2026-08-14"},
+        "2317": {"rev_yoy": None, "rev_month": None, "eps_cur": None,
+                 "eps_yoy": None, "eps_season": None, "next_deadline": "2026-08-14"},
+    }
+    monkeypatch.setattr(tw_financials, "summary", lambda code: fake.get(code, {}))
+
+    v = tw_stocks.web_view(now=FRIDAY)
+    by = {s["code"]: s for s in v["setups"]}
+    assert by["2330"]["fin"]["rev_yoy"] == 32.4
+    assert by["2330"]["fin"]["eps_season"] == "2026 Q2"
+    assert by["2317"]["fin"]["rev_yoy"] is None       # attached, correctly all-None
     assert all(s.get("price") is None for s in v["setups"])
 
 

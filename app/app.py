@@ -1791,11 +1791,13 @@ def welcome():
 
 @app.route("/login", methods=['GET', 'POST'])
 def login():
+    import config as _config
     if request.method == 'POST':
         ip = request.remote_addr or "unknown"
         if _login_blocked(ip):
             flash('Too many failed attempts. Try again in a few minutes.', 'danger')
-            return render_template("login.html", registration_enabled=ALLOW_PUBLIC_REGISTRATION), 429
+            return render_template("login.html", registration_enabled=ALLOW_PUBLIC_REGISTRATION,
+                                   invite_url=_config.TELEGRAM_INVITE_URL), 429
         username = request.form.get('username')
         password = request.form.get('password')
         user = User.query.filter_by(username=username).first()
@@ -1809,7 +1811,8 @@ def login():
             _record_login_fail(ip)
             flash('Login failed. Check your username and password.', 'danger')
 
-    return render_template("login.html", registration_enabled=ALLOW_PUBLIC_REGISTRATION)
+    return render_template("login.html", registration_enabled=ALLOW_PUBLIC_REGISTRATION,
+                           invite_url=_config.TELEGRAM_INVITE_URL)
 
 @app.route("/logout")
 @login_required
@@ -3175,6 +3178,7 @@ def tw_page():
     PUBLIC (no login) so it opens straight from the LINE link; shows only the
     same setups already broadcast to the family LINE group, nothing account-
     related. Read-only and fully fail-soft — never 500s."""
+    import config as _config
     import tw_stocks
     try:
         data = tw_stocks.web_view()
@@ -3182,7 +3186,7 @@ def tw_page():
         print(f"TW page error: {e}")
         data = {"setups": [], "regime": {}, "regime_ok": False,
                 "as_of": None, "error": str(e)}
-    return render_template("tw.html", tw=data)
+    return render_template("tw.html", tw=data, invite_url=_config.TELEGRAM_INVITE_URL)
 
 
 @app.route("/api/tw")

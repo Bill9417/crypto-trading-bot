@@ -102,6 +102,11 @@
         .trail b { color: var(--text); }
         .trail.locked { background: rgba(34,197,94,.09); border-color: rgba(34,197,94,.32); color: #86e0aa; }
         .trail.locked b { color: var(--green); }
+        .fin { margin-top: 8px; font-size: 12.5px; color: var(--muted); background: rgba(255,255,255,.03);
+               border: 1px solid var(--line); border-radius: 10px; padding: 8px 11px; line-height: 1.6; }
+        .fin .up { color: var(--green); font-weight: 700; }
+        .fin .dn { color: var(--red); font-weight: 700; }
+        .fin .next { display: block; margin-top: 3px; color: rgba(154,167,189,.75); font-size: 11px; }
         .meta { margin-top: 10px; font-size: 12px; color: var(--muted); display: flex; justify-content: space-between; gap: 10px; }
         .hit { margin-top: 9px; font-size: 13px; font-weight: 700; }
         .hit.tp { color: var(--green); } .hit.sl { color: var(--red); }
@@ -117,6 +122,16 @@
         .disc { margin-top: 14px; font-size: 12px; color: var(--muted); text-align: center; line-height: 1.7; }
         .foot { margin-top: 18px; text-align: center; font-size: 11.5px; color: rgba(154,167,189,.7); }
         .foot a { color: var(--blue); text-decoration: none; }
+
+        .tg-cta {
+            display: flex; align-items: center; justify-content: center; gap: 8px;
+            margin-top: 22px; padding: 14px; border-radius: 15px;
+            background: linear-gradient(160deg, rgba(56,189,248,.16), rgba(56,189,248,.05));
+            border: 1px solid rgba(56,189,248,.4);
+            color: var(--blue); font-weight: 800; font-size: 14.5px;
+            text-decoration: none;
+        }
+        .tg-cta:active { transform: translateY(1px) scale(.99); }
 
         /* Back-to-Dashboard bar — only shown to a logged-in owner, never to dad */
         .topbar { display: flex; margin-bottom: 6px; }
@@ -220,6 +235,17 @@
             </div>
             {% endif %}
 
+            {% if s.fin and (s.fin.rev_yoy is not none or s.fin.eps_yoy is not none) %}
+            <div class="fin">
+                📊
+                {%- if s.fin.rev_yoy is not none %} {{ s.fin.rev_month }} 營收年增
+                    <span class="num {{ 'up' if s.fin.rev_yoy >= 0 else 'dn' }}">{{ '%+.1f' % s.fin.rev_yoy }}%</span>{% endif -%}
+                {%- if s.fin.eps_yoy is not none %}{{ ' ·' if s.fin.rev_yoy is not none }} {{ s.fin.eps_season }} EPS 年增
+                    <span class="num {{ 'up' if s.fin.eps_yoy >= 0 else 'dn' }}">{{ '%+.1f' % s.fin.eps_yoy }}%</span>{% endif -%}
+                {% if s.fin.next_deadline %}<span class="next">下次公告財報期限約 {{ s.fin.next_deadline }}（法定截止日，公司常提前公告）</span>{% endif %}
+            </div>
+            {% endif %}
+
             <div class="meta">
                 <span>設定於 {{ s.date }} · 第 {{ s.days }} 天</span>
                 {% if s.rr %}<span>風報比 1：{{ s.rr }}</span>{% endif %}
@@ -265,6 +291,10 @@
         4. 最多抱 {{ tw.max_hold or 40 }} 個交易日，沒到目標也先出場。<br>
         5. 停損 {{ tw.sl_atr or 3 }}×ATR、目標 {{ tw.tp_atr or 5 }}×ATR（ATR＝股價近期平均波動幅度）。
     </div>
+
+    {% if invite_url %}
+    <a href="{{ invite_url }}" class="tg-cta" rel="noopener" target="_blank">🚀 加入 Telegram 訊號群組</a>
+    {% endif %}
 
     <div class="disc">
         ⚠️ 訊號來自歷史回測，過去績效不代表未來。<br>
