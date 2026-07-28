@@ -19,9 +19,25 @@ judge it, so not yet independently confirmed. This gives both the current
 full strategy and the longs-only hypothesis a genuine forward track record
 instead of re-slicing history a third time.
 
-Two tracked variants:
+Three tracked variants:
     s1_full        — exactly what's live today (longs + shorts)
     s1_longs_only  — same rules, only takes LONG signals
+    s1_lowvol      — same rules, only when the SYMBOL's own ATR is below
+                     LOWVOL_MAX_ATR_PCT of its price at entry
+
+The lowvol variant came out of s1_regime_lab.py (2026-07-28) and is the
+strongest of the three hypotheses on historical evidence: expectancy rises
+monotonically as the volatility ceiling tightens (+0.03R at <1.5% → +0.13R
+at <1.2% → +0.17R at <1.0% → +0.28R at <0.8%), so it's a plateau rather
+than one lucky threshold; the surviving trades span 31 different symbols
+(so it is NOT a disguised "only trade BTC/ETH" filter); and BOTH directions
+turn positive once it's applied — which is why longs_only is kept as a
+control rather than promoted. The direction effect looks like a proxy for
+this one: shorts were simply taken on more volatile coins more often.
+
+All three still have to earn a FORWARD record here before any of it goes
+near real money — the historical read is hypothesis-generation on ~124
+trades, not proof.
 
 One deliberate difference from backtest.simulate_trade: a position that
 never hits SL/TP1 within the hold cap is FORCE-CLOSED at mark-to-market
@@ -53,7 +69,13 @@ TOP_N_TRADE = 30              # today's top-N by volume (forward tracking doesn'
 MAX_WAIT_BARS = BT.MAX_WAIT_BARS      # same as the historical sim
 MAX_HOLD_BARS = BT.MAX_HOLD_BARS
 
-VARIANTS = ("s1_full", "s1_longs_only")
+VARIANTS = ("s1_full", "s1_longs_only", "s1_lowvol")
+
+# Ceiling for the lowvol variant: the symbol's own ATR(14) as a % of its
+# price at entry. 1.0 sits in the middle of the tested plateau (0.8-1.2 all
+# improved 4/6 folds) rather than at its best-scoring edge (0.6 scored
+# highest but on only 10 trades) — deliberately not tuned to the peak.
+LOWVOL_MAX_ATR_PCT = 1.0
 
 _last_tick = 0.0
 
@@ -77,8 +99,15 @@ def _save(state: dict) -> None:
     os.replace(tmp, STATE_FILE)
 
 
-def _wants(variant: str, is_long: bool) -> bool:
-    return is_long or variant != "s1_longs_only"
+def _wants(variant: str, is_long: bool, oh: list) -> bool:
+    """Does `variant` take this signal? `oh` is the same candle window
+    evaluate() just judged, so the volatility read is as-of the entry bar."""
+    if variant == "s1_longs_only":
+        return is_long
+    if variant == "s1_lowvol":
+        atr_pct = BT._atr_pct(oh)
+        return atr_pct is not None and atr_pct < LOWVOL_MAX_ATR_PCT
+    return True
 
 
 def _drop_tradfi_perps(symbols):
@@ -223,7 +252,7 @@ def tick(force=False, progress=lambda *a: None) -> bool:
             if not res:
                 continue
             is_long, entry, sl, tp1, tp2, eff = res
-            if not _wants(variant, is_long):
+            if not _wants(variant, is_long, oh):
                 continue
             book.setdefault("pending", {})[sym] = {
                 "symbol": sym.split("/")[0], "dir": "LONG" if is_long else "SHORT",
@@ -254,7 +283,11 @@ def report_tg() -> str:
         n_open = len(book.get("open", {}))
         n_pending = len(book.get("pending", {}))
         s = stats(variant)
-        label = "S1 (full, as live)" if variant == "s1_full" else "S1 longs-only (hypothesis)"
+        label = {
+            "s1_full": "S1 (full, as live)",
+            "s1_longs_only": "S1 longs-only (control)",
+            "s1_lowvol": f"S1 low-vol only (<{LOWVOL_MAX_ATR_PCT:g}% ATR)",
+        }.get(variant, variant)
         if s["total"] == 0:
             lines.append(f"\n{label}: no closed trades yet ({n_open} open, {n_pending} pending)")
             continue

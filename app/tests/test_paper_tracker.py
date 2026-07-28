@@ -135,6 +135,63 @@ def test_tick_longs_only_variant_skips_short_signals(monkeypatch, tmp_path):
     assert "FAKE/USDT:USDT" not in state["variants"]["s1_longs_only"].get("pending", {})
 
 
+# ── the low-volatility variant (s1_regime_lab's surviving hypothesis) ────────
+def _quiet_candles(n):
+    """Tight ranges → ATR well under 1% of price."""
+    return [_candle(i * HOUR, 100.0, 100.2, 99.8, 100.0) for i in range(n)]
+
+
+def _wild_candles(n):
+    """Wide ranges → ATR far above 1% of price."""
+    return [_candle(i * HOUR, 100.0, 105.0, 95.0, 100.0) for i in range(n)]
+
+
+def test_wants_lowvol_accepts_quiet_and_rejects_volatile():
+    quiet, wild = _quiet_candles(60), _wild_candles(60)
+    assert PT._wants("s1_lowvol", True, quiet) is True
+    assert PT._wants("s1_lowvol", True, wild) is False
+    # the other variants ignore volatility entirely
+    assert PT._wants("s1_full", True, wild) is True
+    assert PT._wants("s1_longs_only", True, wild) is True
+
+
+def test_wants_lowvol_is_direction_agnostic():
+    """THE POINT of this variant vs longs_only: the regime lab found both
+    directions turn positive once volatility is controlled, so this gate
+    must not quietly become a second longs-only filter."""
+    quiet = _quiet_candles(60)
+    assert PT._wants("s1_lowvol", True, quiet) is True
+    assert PT._wants("s1_lowvol", False, quiet) is True
+
+
+def test_wants_lowvol_abstains_on_unusable_history():
+    """Too few bars to compute ATR → skip, never default to 'take it'."""
+    assert PT._wants("s1_lowvol", True, _quiet_candles(3)) is False
+
+
+def test_tick_lowvol_variant_skips_a_volatile_symbol(monkeypatch, tmp_path):
+    monkeypatch.setattr(PT, "STATE_FILE", str(tmp_path / "paper.json"))
+    wild = _wild_candles(BT.WINDOW)
+    _stub_universe(monkeypatch, {"FAKE/USDT:USDT": wild})
+    monkeypatch.setattr(BT, "evaluate", lambda oh, ema, reg: (True, 100.0, 95.0, 110.0, 120.0, 7))
+
+    PT.tick(force=True)
+    state = PT._load()
+    assert "FAKE/USDT:USDT" in state["variants"]["s1_full"]["pending"]
+    assert "FAKE/USDT:USDT" not in state["variants"]["s1_lowvol"].get("pending", {})
+
+
+def test_tick_lowvol_variant_takes_a_quiet_symbol(monkeypatch, tmp_path):
+    monkeypatch.setattr(PT, "STATE_FILE", str(tmp_path / "paper.json"))
+    quiet = _quiet_candles(BT.WINDOW)
+    _stub_universe(monkeypatch, {"FAKE/USDT:USDT": quiet})
+    monkeypatch.setattr(BT, "evaluate", lambda oh, ema, reg: (True, 100.0, 95.0, 110.0, 120.0, 7))
+
+    PT.tick(force=True)
+    state = PT._load()
+    assert "FAKE/USDT:USDT" in state["variants"]["s1_lowvol"]["pending"]
+
+
 def test_tick_respects_the_throttle_unless_forced(monkeypatch, tmp_path):
     monkeypatch.setattr(PT, "STATE_FILE", str(tmp_path / "paper.json"))
     monkeypatch.setattr(PT, "_last_tick", 9e18)   # "just ticked, far in the future"
