@@ -23,7 +23,10 @@ Safety rails (this account also runs Strategy 3 AND the owner's manual trades):
   • Symbols Binance lists but Bybit doesn't are skipped with one note.
   • Obeys the LIVE_TRADING master switch via strategy3_exec.is_live() —
     everything dry-run-logs when it is off.
-  • Every action/skip/error sends one 🪞 note to the owner's Alerts topic.
+  • Every action/skip/error sends one 🪞 note to the 📈 S1 交易訊號 topic — the
+    same place bot.py's "✅ 進場成交" card lands, so a skipped mirror (e.g. a
+    symbol Binance lists but Bybit doesn't) sits right next to the signal it
+    explains instead of in a separate Alerts topic nobody thinks to check.
 
 All entry points are exception-safe: a Bybit blip must never break S1's own
 Binance execution or signal tracking.
@@ -75,10 +78,14 @@ def _save(state: dict) -> None:
 
 
 def _tg(msg: str) -> None:
+    """One 🪞 note to the SAME topic bot.py's S1 follow-cards go to (not
+    Alerts) — a skipped mirror needs to sit next to the trade it explains,
+    or nobody connects the two (see the 2026-07-27 DODOX confusion this
+    fixed: 'filled' card in S1 signals, the actual reason in Alerts)."""
     try:
         import telegram_utils
         telegram_utils.send_message(f"🪞 S1鏡單(Bybit) · {msg}",
-                                    force=True, channel="alerts")
+                                    force=True, channel="s1signals")
     except Exception as exc:  # noqa: BLE001 — a note must never break execution
         print(f"[s1-mirror] telegram failed: {exc}")
 
