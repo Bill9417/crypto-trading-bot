@@ -27,6 +27,12 @@ STRATEGIES = ("S1", "S3")
 MANUAL = "manual"
 UNKNOWN = "unknown"
 
+# Order sizes S1's Bybit mirror used in the PAST, newest first. A closed
+# trade's size fingerprint is whatever was configured when it was placed, so
+# inference has to know the history — see infer()'s docstring. Append the old
+# value here whenever S1_BYBIT_ORDER_USDT changes.
+PAST_S1_ORDER_USDT = (100.0,)     # 100 → 50 on 2026-07-29
+
 
 def norm(symbol: str) -> str:
     """'PENGU/USDT:USDT' | 'PENGU/USDT' | 'PENGUUSDT' → 'PENGUUSDT'."""
@@ -128,7 +134,15 @@ def infer(symbol: str, notional: float, leverage: float) -> str:
     inside S1's notional/leverage window by coincidence and got tagged S1.
     config.MANUAL_ONLY_SYMBOLS is checked FIRST and wins outright — those
     symbols are TradFi tickers S1/S3 cannot structurally trade
-    (EXCLUDE_TRADFI_PERPS), so this is a correctness override, not a guess."""
+    (EXCLUDE_TRADFI_PERPS), so this is a correctness override, not a guess.
+
+    2026-07-29: S1_BYBIT_ORDER_USDT was lowered 100 → 50. Matching ONLY the
+    current setting silently re-filed every historical ~100 USDT S1 trade as
+    'manual' — the exact attribution corruption this module exists to
+    prevent. Past order sizes are therefore matched too (PAST_S1_ORDER_USDT):
+    a trade's fingerprint is whatever the size was WHEN IT WAS PLACED, and
+    that history doesn't change just because today's config did. Add the old
+    value here whenever the order size changes again."""
     import config
     sym = norm(symbol)
     base = sym[:-4] if sym.endswith("USDT") else sym
@@ -138,10 +152,12 @@ def infer(symbol: str, notional: float, leverage: float) -> str:
                for s in (getattr(config, "STRATEGY3_SYMBOLS", None) or [])}
     if sym in s3_syms:
         return "S3"
-    want = float(getattr(config, "S1_BYBIT_ORDER_USDT", 100.0) or 100.0)
     lev = float(getattr(config, "S1_BYBIT_LEVERAGE", 10) or 10)
-    if notional and 0.9 * want <= notional <= 1.1 * want and leverage <= lev:
-        return "S1"
+    if notional and leverage <= lev:
+        current = float(getattr(config, "S1_BYBIT_ORDER_USDT", 100.0) or 100.0)
+        for want in (current, *PAST_S1_ORDER_USDT):
+            if 0.9 * want <= notional <= 1.1 * want:
+                return "S1"
     return MANUAL
 
 

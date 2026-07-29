@@ -88,7 +88,11 @@ def test_attribute_prefers_the_record_over_the_guess():
     assert out[0]["strategy"] == "S1" and out[0]["attrib"] == "recorded"
 
 
-def test_attribute_falls_back_to_inference_and_says_so():
+def test_attribute_falls_back_to_inference_and_says_so(monkeypatch):
+    # Pin the order size: infer() reads it from the LIVE .env, so without
+    # this the test breaks the moment the operator resizes S1 (it did —
+    # 100 → 50 on 2026-07-29, which aborted a launch).
+    monkeypatch.setattr(config, "S1_BYBIT_ORDER_USDT", 100.0)
     out = L.attribute([_tr("XAUTUSDT", 1.0, T, notional=1200, lev=50),
                        _tr("AERGOUSDT", 0.7, T, notional=100.3, lev=10),
                        _tr("SKHYNIXUSDT", 8.2, T, notional=260.7, lev=25)])
@@ -113,6 +117,19 @@ def test_manual_only_symbols_win_even_inside_s1s_own_window():
     assert L.infer("SPCX/USDT:USDT", 100.0, 10) == L.MANUAL   # any symbol spelling
 
 
+def test_past_order_sizes_still_attribute_to_s1(monkeypatch):
+    """THE REGRESSION (2026-07-29): S1's order size was lowered 100 → 50.
+    Matching only the CURRENT size silently re-filed every historical ~100
+    USDT S1 trade as 'manual' — the precise attribution corruption this
+    module exists to prevent. A trade's fingerprint is the size that was
+    configured when it was PLACED; that history doesn't change retroactively."""
+    monkeypatch.setattr(config, "S1_BYBIT_ORDER_USDT", 50.0)
+    assert 100.0 in L.PAST_S1_ORDER_USDT
+    assert L.infer("AERGOUSDT", 49.5, 10) == "S1"     # today's size
+    assert L.infer("AERGOUSDT", 100.3, 10) == "S1"    # yesterday's size, still S1
+    assert L.infer("AERGOUSDT", 260.7, 25) == L.MANUAL  # neither → genuinely manual
+
+
 def test_manual_only_symbols_beats_the_s3_check_too(monkeypatch):
     """Defence in depth: even if a manual ticker ever collided with
     STRATEGY3_SYMBOLS, the manual override must still win."""
@@ -123,6 +140,7 @@ def test_manual_only_symbols_beats_the_s3_check_too(monkeypatch):
 def test_manual_only_symbols_is_configurable(monkeypatch):
     """The user can add a future manually-traded ticker without a code edit."""
     monkeypatch.setattr(config, "MANUAL_ONLY_SYMBOLS", {"NVDA"})
+    monkeypatch.setattr(config, "S1_BYBIT_ORDER_USDT", 100.0)   # pin: reads live .env
     assert L.infer("NVDAUSDT", 100.0, 10) == L.MANUAL
     # and SPCX is no longer special-cased once the set is overridden
     assert L.infer("SPCXUSDT", 97.6, 10) == "S1"
