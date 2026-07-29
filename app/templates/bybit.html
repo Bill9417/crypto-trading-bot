@@ -267,7 +267,8 @@
         }
 
         refresh();
-        setInterval(refresh, 8000);
+        // Real Bybit account endpoint — never poll it from a hidden tab.
+        wolfPoll(refresh, 8000);
     </script>
 </body>
 </html>

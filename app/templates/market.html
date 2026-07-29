@@ -700,8 +700,8 @@
         render(BOOT);
         renderNews(BOOT.news || [], BOOT.news_sentiment || null);
         loadLiquidations();
-        setInterval(refreshIntel, 60000);
-        setInterval(loadLiquidations, 30000);
+        wolfPoll(refreshIntel, 60000);
+        wolfPoll(loadLiquidations, 30000);
 
         // 🌍 Recent Big Events — mirror of what the event radar sent to the
         // Telegram Events topic (read from the radar's own state file).
@@ -738,7 +738,7 @@
             }).catch(() => {});
         }
         loadEvents();
-        setInterval(loadEvents, 300000);
+        wolfPoll(loadEvents, 300000);
     </script>
 </body>
 </html>

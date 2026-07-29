@@ -479,8 +479,9 @@
         if(_lsSel){ _lsSel.addEventListener('change', lsDescUpdate); lsDescUpdate(); }
         refresh();
         loadHistory();
-        setInterval(refresh, 6000);
-        setInterval(loadHistory, 30000);
+        // Real Binance account endpoints — never poll them from a hidden tab.
+        wolfPoll(refresh, 6000);
+        wolfPoll(loadHistory, 30000);
     </script>
 </body>
 </html>

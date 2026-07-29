@@ -1345,7 +1345,7 @@
         /* ── Boot: honour #hash deep link, default to overview ── */
         const startTab = (location.hash || '#overview').slice(1);
         activateTab(['overview', 'binance', 'bybit', 'signals', 'log'].includes(startTab) ? startTab : 'overview');
-        setInterval(() => { if (tabInit.log && document.getElementById('tab-log').classList.contains('active')) fetchPerformanceLive(); }, 30000);
+        wolfPoll(() => { if (tabInit.log && document.getElementById('tab-log').classList.contains('active')) fetchPerformanceLive(); }, 30000);
     </script>
 </body>
 </html>

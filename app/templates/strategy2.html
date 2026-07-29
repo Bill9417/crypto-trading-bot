@@ -517,8 +517,10 @@
             loadChart(sym);
             updateTVLink(sym);
             load();
-            if (pollTimer) clearInterval(pollTimer);
-            pollTimer = setInterval(load, 30000);
+            // .stop() (not clearInterval) — wolfPoll hands back a handle and
+            // also de-registers it from the shared visibility listener.
+            if (pollTimer) pollTimer.stop();
+            pollTimer = wolfPoll(load, 30000);
         }
 
         sel.addEventListener('change', function () { setSymbol(sel.value); });
@@ -651,12 +653,12 @@
         loadLiveStatus();          // live-trading rules / mode pill
         loadChart(currentSymbol);  // chart last (guarded; can't block the data above)
         updateTVLink(currentSymbol);
-        pollTimer = setInterval(load, 30000);
-        setInterval(loadSignals, 30000);
-        setInterval(loadLiveStatus, 30000);
-        // refresh the 1h chart on a slow cadence (and only when visible) so we don't
-        // tax the shared REST client the live bot also uses.
-        setInterval(function () { if (!document.hidden) loadChart(currentSymbol); }, 120000);
+        pollTimer = wolfPoll(load, 30000);
+        wolfPoll(loadSignals, 30000);
+        wolfPoll(loadLiveStatus, 30000);
+        // refresh the 1h chart on a slow cadence so we don't tax the shared REST
+        // client the live bot also uses (wolfPoll handles the visibility skip).
+        wolfPoll(function () { loadChart(currentSymbol); }, 120000);
     })();
     </script>
 </body>

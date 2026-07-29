@@ -399,7 +399,7 @@ async function loadFunnel(btn) {
 render(INITIAL);
 renderS1Card(INITIAL_S1);
 renderS3Card(INITIAL_S3);
-setInterval(() => loadFunnel(), 30000);
+wolfPoll(() => loadFunnel(), 30000);
 </script>
 </body>
 </html>
