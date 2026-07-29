@@ -92,6 +92,23 @@ def _no_live_side_effects(request, monkeypatch, tmp_path):
     monkeypatch.setattr(bybit_data, "_exchange", _no_exchange)
     monkeypatch.setattr(bybit_data, "_bases", {})
     monkeypatch.setattr(bybit_data, "_tickers", {})
+    # market_intel powers /market from public endpoints — no keys, but its ccxt
+    # client and urllib helpers would still reach Binance/DefiLlama/RSS from a
+    # plain page test, which is slow, flaky and (for Binance) shares the live
+    # bot's IP rate-limit budget. Every producer is fail-soft, so killing the
+    # three network seams degrades to empty panels + an errors list: exactly
+    # the offline behaviour tests want. The cache is cleared so results never
+    # leak between tests. No module exemption here: a test that wants live-ish
+    # behaviour monkeypatches its own fake over these, which already wins
+    # (this fixture runs first). An exemption would instead silently hand that
+    # module the real network — which is how this guard got written.
+    import market_intel
+    def _no_net(*a, **k):
+        raise RuntimeError("no network in tests")
+    monkeypatch.setattr(market_intel, "_exchange", _no_exchange)
+    monkeypatch.setattr(market_intel, "_get_json", _no_net)
+    monkeypatch.setattr(market_intel, "_get_text", _no_net)
+    market_intel._CACHE.clear()
     # strategy3_exec.client() is the EXECUTION venue (real Bybit keys live in
     # .env, which the test process loads) — any test path that reaches it
     # unstubbed must die loudly, not silently place/read real orders. Tests

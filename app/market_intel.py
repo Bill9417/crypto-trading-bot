@@ -15,6 +15,7 @@ Every fetch is fail-soft: on any error it returns whatever it has plus an
 A small in-memory TTL cache keeps the page snappy and avoids rate limits.
 """
 
+import concurrent.futures as _cf
 import json
 import re
 import time
@@ -520,23 +521,62 @@ def econ_calendar(ttl: float = 21600.0) -> dict:
 
 
 # ── top-level aggregator used by the web route ──────────────────────────────
+def _gather(jobs: dict, fallback: dict) -> dict:
+    """Run independent upstream fetches concurrently, fail-soft per job.
+
+    These are all read-only HTTP GETs to *different* providers, so running
+    them serially just adds their latencies together — a cold /market took
+    ~8.9s that way. Each producer already handles its own errors; this only
+    has to catch a hard raise so one dead feed can't take the page with it.
+    """
+    out = dict(fallback)
+    with _cf.ThreadPoolExecutor(max_workers=len(jobs), thread_name_prefix="mktintel") as pool:
+        futures = {pool.submit(fn): name for name, fn in jobs.items()}
+        for fut in _cf.as_completed(futures):
+            name = futures[fut]
+            try:
+                out[name] = fut.result()
+            except Exception as e:  # noqa: BLE001 — one dead feed must not kill the page
+                out[name] = dict(fallback[name])
+                out[name]["errors"] = [f"{name}: {e}"]
+    return out
+
+
 def market_intel(top_n: int = 15, pos_n: int = 6) -> dict:
-    bf = binance_futures(top_n=top_n)
+    # Stage 1 — everything that needs no input from another feed.
+    first = _gather(
+        {
+            "bf": lambda: binance_futures(top_n=top_n),
+            "dl": defillama,
+            "nw": news,
+            "gm": global_market,
+            "fg": fear_greed,
+            "st": stocks,
+            "cal": econ_calendar,
+        },
+        {
+            "bf": {"rows": [], "errors": []}, "dl": {"chains": [], "total_tvl": 0.0, "errors": []},
+            "nw": {"items": [], "errors": []}, "gm": {"errors": []},
+            "fg": {"errors": []}, "st": {"rows": [], "errors": []}, "cal": {"events": []},
+        },
+    )
+    bf, dl, nw = first["bf"], first["dl"], first["nw"]
+    gm, fg, st, cal = first["gm"], first["fg"], first["st"], first["cal"]
+
+    # Stage 2 — the two panels that need the futures rows to know what to ask for.
     rows = bf.get("rows", [])
     # Reuse the top futures coins (by volume) for the positioning panel.
     pos_symbols = tuple(f"{r['base']}USDT" for r in rows[:pos_n] if r.get("base"))
-    ls = long_short(pos_symbols) if pos_symbols else {"rows": [], "errors": []}
-    dl = defillama()
-    nw = news()
-    gm = global_market()
-    oc_delta = oi_change(tuple(r["symbol"] for r in rows))
+    second = _gather(
+        {
+            "ls": (lambda: long_short(pos_symbols)) if pos_symbols else (lambda: {"rows": [], "errors": []}),
+            "oc": lambda: oi_change(tuple(r["symbol"] for r in rows)),
+        },
+        {"ls": {"rows": [], "errors": []}, "oc": {"rows": {}, "errors": []}},
+    )
+    ls, oc_delta = second["ls"], second["oc"]
     for r in rows:
-        r["oi_change_24h_pct"] = oc_delta["rows"].get(r["symbol"])
-    # Fear & Greed + US stock indices: already built for the dashboard briefing
-    # but never surfaced on the Market Intel page itself — cheap to include
-    # since both are cached separately and don't add a new upstream call here.
-    fg = fear_greed()
-    st = stocks()
+        r["oi_change_24h_pct"] = oc_delta.get("rows", {}).get(r["symbol"])
     errors = (bf.get("errors", []) + dl.get("errors", [])
               + nw.get("errors", []) + ls.get("errors", []) + gm.get("errors", [])
               + oc_delta.get("errors", [])[:2]     # cap: 15 symbols could spam the bar
@@ -551,7 +591,7 @@ def market_intel(top_n: int = 15, pos_n: int = 6) -> dict:
         "stocks": st.get("rows", []),
         # Calendar failures stay silent (events just don't render) — a dead feed
         # shouldn't paint the page's error bar red.
-        "calendar": econ_calendar().get("events", []),
+        "calendar": cal.get("events", []),
         "news": nw.get("items", []),
         "news_sentiment": nw.get("sentiment"),
         "errors": errors,

@@ -58,8 +58,11 @@ def test_admin_page_redirects_member_not_json(monkeypatch):
 def test_equity_panel_hidden_from_members():
     # The /performance template must not even render the equity-curve panel
     # (canvas + fetch) for non-admins — defence in depth beside the API 403.
+    # Anchor to the app package, not the cwd — a bare relative path only
+    # resolves when pytest is started from inside app/.
     from pathlib import Path
-    src = Path("templates/performance.html").read_text(encoding="utf-8")
+    tpl = Path(APP.__file__).resolve().parent / "templates" / "performance.html"
+    src = tpl.read_text(encoding="utf-8")
     start = src.index("Equity curve")
     guard = src.rindex("{% if user.is_admin %}", 0, start)
     end = src.index("{% endif %}", start)

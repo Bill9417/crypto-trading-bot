@@ -1,3 +1,4 @@
+import gzip
 import json
 import os
 import secrets
@@ -734,6 +735,67 @@ ASSET_VER = "20260725"
 @app.context_processor
 def inject_csrf_token():
     return {"csrf_token": csrf_token, "asset_ver": ASSET_VER}
+
+
+# ── gzip responses ──────────────────────────────────────────────────────────
+# The dashboard renders ~500KB of HTML (signal tables + inline CSS/JS) and was
+# being shipped raw over the Cloudflare tunnel on every load. Text compresses
+# ~80-87%, so this is the single biggest latency win available and it costs a
+# few ms of CPU. Implemented with the stdlib rather than flask-compress on
+# purpose: requirements.txt is deliberately pinned ("a live-money bot must not
+# absorb surprise upgrades") and this is ~30 lines we fully control.
+#
+# Fail-soft by design: any error compressing returns the original response, so
+# a bad edge case degrades to today's behaviour instead of a 500.
+_GZIP_MIN_BYTES = 1024          # below this, framing overhead outweighs the win
+_GZIP_TYPES = (
+    "text/html", "text/css", "text/plain", "text/xml", "text/javascript",
+    "application/json", "application/javascript", "application/manifest+json",
+    "image/svg+xml",
+)
+
+
+@app.after_request
+def compress_response(response):
+    try:
+        if "gzip" not in request.headers.get("Accept-Encoding", "").lower():
+            return response
+        # Never touch an already-encoded body, a streamed feed, or an empty one.
+        if response.headers.get("Content-Encoding"):
+            return response
+        if response.mimetype == "text/event-stream" or response.status_code < 200 or response.status_code in (204, 304):
+            return response
+        if response.mimetype not in _GZIP_TYPES:
+            return response
+        # Static files come back in passthrough mode (a file wrapper); reading
+        # them requires opting out of it first. The wrapper then has to be
+        # closed by hand — get_data() drains it into memory but never releases
+        # the descriptor, so without this every /static hit leaks an open file
+        # until GC. CI's `-W error::Warning` surfaced it as an unraisable
+        # ResourceWarning; on the live server it would have been a slow FD leak.
+        source = response.response if response.direct_passthrough else None
+        if source is not None:
+            response.direct_passthrough = False
+        data = response.get_data()          # materialises the body, drains source
+        if source is not None:
+            closer = getattr(source, "close", None)
+            if callable(closer):
+                closer()
+        if len(data) < _GZIP_MIN_BYTES:
+            return response
+        packed = gzip.compress(data, 6)
+        if len(packed) >= len(data):    # already-compressed payload (e.g. a png)
+            return response
+        response.set_data(packed)
+        response.headers["Content-Encoding"] = "gzip"
+        response.headers["Content-Length"] = str(len(packed))
+        # Critical for any cache in front of us (the tunnel, a browser, a proxy):
+        # without this a gzipped body can be replayed to a client that can't read
+        # it. Flask already varies on Cookie, so add rather than overwrite.
+        response.vary.add("Accept-Encoding")
+    except Exception as e:  # noqa: BLE001 — compression must never break a page
+        print(f"gzip skipped: {e}")
+    return response
 
 
 @app.before_request
