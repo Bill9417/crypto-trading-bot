@@ -1,13 +1,26 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
     "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<!-- Auto-heal agent for the Wolf Scanner stack.
-     Install:  cp launchd/com.wolfman.wolfscanner.autoheal.plist ~/Library/LaunchAgents/
-               launchctl load ~/Library/LaunchAgents/com.wolfman.wolfscanner.autoheal.plist
-     Remove:   launchctl unload ~/Library/LaunchAgents/com.wolfman.wolfscanner.autoheal.plist
-     Runs autoheal.sh at login and every 5 minutes. NOTE: LaunchAgents run
-     after LOGIN — enable automatic login on a headless Mac mini so a power
-     cut fully self-recovers. -->
+<!-- Auto-heal agent for the Wolf Scanner stack. THIS IS A TEMPLATE.
+
+     __PROJECT_DIR__ is substituted with the repo's real location by
+     launchd/install_autoheal.sh — run that instead of copying this by hand:
+
+         ./launchd/install_autoheal.sh
+
+     It regenerates the plist from wherever the repo currently sits, installs
+     it to ~/Library/LaunchAgents, reloads the agent and verifies it can
+     actually execute. Re-run it after moving the project; that is the only
+     step a move needs.
+
+     WHY A TEMPLATE. This file used to carry a hardcoded absolute path. When
+     the project lived under ~/Desktop the agent failed on every single run for
+     16 days (4550x "Operation not permitted", exit 126) because macOS TCC
+     blocks launchd-spawned processes from reading ~/Desktop, ~/Documents and
+     ~/Downloads. Keep the project out of those three directories.
+
+     NOTE: LaunchAgents run after LOGIN — enable automatic login on a headless
+     Mac mini so a power cut fully self-recovers. -->
 <plist version="1.0">
 <dict>
     <key>Label</key>
@@ -15,15 +28,15 @@
     <key>ProgramArguments</key>
     <array>
         <string>/bin/bash</string>
-        <string>/Users/wolfman/Desktop/交易/crypto/autoheal.sh</string>
+        <string>__PROJECT_DIR__/autoheal.sh</string>
     </array>
     <key>RunAtLoad</key>
     <true/>
     <key>StartInterval</key>
     <integer>300</integer>
     <key>StandardOutPath</key>
-    <string>/Users/wolfman/Desktop/交易/crypto/app/logs/autoheal.log</string>
+    <string>__PROJECT_DIR__/app/logs/autoheal.log</string>
     <key>StandardErrorPath</key>
-    <string>/Users/wolfman/Desktop/交易/crypto/app/logs/autoheal.log</string>
+    <string>__PROJECT_DIR__/app/logs/autoheal.log</string>
 </dict>
 </plist>

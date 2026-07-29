@@ -132,3 +132,53 @@ def test_missing_log_file_is_reported_not_crashed(tmp_path):
     entries = {e["name"]: e for e in A._log_health(base)}
     assert entries["bot.log"]["exists"] is False
     assert entries["bot.log"]["recent_errors"] == 0
+
+
+# ── launchd agent config ────────────────────────────────────────────────────
+# The plist used to carry a hardcoded absolute path into ~/Desktop. That is
+# what let the agent rot silently for 16 days. It is now a template that
+# install_autoheal.sh fills in from the repo's real location, so a move is a
+# one-command fix. These guard the regression.
+def _repo_root():
+    from pathlib import Path
+    return Path(A.__file__).resolve().parent.parent
+
+
+def test_launchd_plist_is_a_template_not_a_hardcoded_path():
+    plist = _repo_root() / "launchd" / "com.wolfman.wolfscanner.autoheal.plist"
+    body = plist.read_text(encoding="utf-8")
+    assert "__PROJECT_DIR__" in body, "template placeholder missing"
+    assert "/Users/" not in body, "a machine-specific absolute path crept back in"
+
+
+def test_launchd_template_still_declares_the_agent_correctly():
+    import plistlib
+    from xml.sax.saxutils import escape
+    plist = _repo_root() / "launchd" / "com.wolfman.wolfscanner.autoheal.plist"
+    filled = plist.read_text(encoding="utf-8").replace("__PROJECT_DIR__", escape("/tmp/x"))
+    d = plistlib.loads(filled.encode("utf-8"))
+    assert d["Label"] == "com.wolfman.wolfscanner.autoheal"
+    assert d["ProgramArguments"] == ["/bin/bash", "/tmp/x/autoheal.sh"]
+    assert d["StandardOutPath"] == "/tmp/x/app/logs/autoheal.log"
+    assert d["StartInterval"] == 300
+    assert d["RunAtLoad"] is True
+
+
+def test_installer_escapes_xml_so_an_ampersand_in_the_path_cannot_break_it():
+    """A '&' in a directory name produced 'unknown ampersand-escape sequence'
+    and a plist launchd will not load. Caught in sandbox testing."""
+    import plistlib
+    from xml.sax.saxutils import escape
+    plist = _repo_root() / "launchd" / "com.wolfman.wolfscanner.autoheal.plist"
+    hostile = "/Users/w/交易 & more/crypto"
+    filled = plist.read_text(encoding="utf-8").replace("__PROJECT_DIR__", escape(hostile))
+    d = plistlib.loads(filled.encode("utf-8"))          # must not raise
+    assert d["ProgramArguments"][1] == f"{hostile}/autoheal.sh"
+
+
+def test_installer_and_migration_scripts_are_executable():
+    root = _repo_root()
+    for rel in ("launchd/install_autoheal.sh", "migrate_off_desktop.sh"):
+        p = root / rel
+        assert p.exists(), f"{rel} missing"
+        assert p.stat().st_mode & 0o111, f"{rel} is not executable"
