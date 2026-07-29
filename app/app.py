@@ -2495,7 +2495,12 @@ def api_bybit_close():
 # `ps` and reads files; it never starts, stops or restarts anything (restarts
 # are always done by the operator with ./run_all.sh).
 
-_HEALTH_LOGS = ("app.log", "bot.log", "strategy2.log", "strategy3.log")
+# autoheal.log is here deliberately: the launchd auto-restart agent failed on
+# EVERY run for 16 days (macOS blocks launchd-spawned bash from reading anything
+# under ~/Desktop) and nobody saw it, because the one log that would have said so
+# was the one log /health never opened. A watchdog nobody watches is not a
+# watchdog.
+_HEALTH_LOGS = ("app.log", "bot.log", "strategy2.log", "strategy3.log", "autoheal.log")
 
 # (key, command regex, source files that make the process stale when edited
 # after it started — i.e. the running code no longer matches the disk).
@@ -2583,9 +2588,27 @@ def _ps_snapshot():
 
 
 def _log_health(base):
-    """Size / last write / recent error lines per stack log (tail ~64 KB each)."""
+    """Size / last write / error lines per stack log (tail ~64 KB each).
+
+    NOTE ON THE WINDOW: these lines carry no timestamps, so "errors" means
+    "inside the last 64 KB", not "in the last hour". On a chatty log that is
+    roughly the last few minutes; on a quiet one it can reach back weeks — the
+    strategy3 rate-limit errors kept showing here for 13 days after they
+    stopped. Read the count next to written_ago_sec, never on its own.
+
+    The pattern matches whole-word `error` plus the shell/OS failures that a
+    launchd agent produces, which the old regex missed entirely: 4550 copies of
+    "Operation not permitted" scored zero. Verified against all five live logs —
+    the added alternatives introduce no false positives on trading output such
+    as "volume gate failed".
+    """
     import re
-    err_re = re.compile(r"error|traceback|exception|critical", re.IGNORECASE)
+    err_re = re.compile(
+        r"traceback|exception|critical|fatal|"
+        r"operation not permitted|permission denied|command not found|"
+        r"no such file|cannot execute|\berror\b",
+        re.IGNORECASE,
+    )
     logs = []
     for name in _HEALTH_LOGS:
         path = os.path.join(base, "logs", name)
