@@ -181,6 +181,62 @@ def test_tick_lowvol_variant_skips_a_volatile_symbol(monkeypatch, tmp_path):
     assert "FAKE/USDT:USDT" not in state["variants"]["s1_lowvol"].get("pending", {})
 
 
+# ── the single-target exit (s1_lowvol_3r) ───────────────────────────────────
+def _single_pos(entry=100.0, sl=95.0, tp2=115.0, dir_="LONG", last_ts=0):
+    p = _pending(entry, sl, 110.0, tp2, dir_, last_ts)
+    p["exit"] = "single"
+    p["opened_ts"] = last_ts
+    return p
+
+
+def test_single_exit_ignores_tp1_and_rides_to_the_wide_target():
+    """THE POINT of this variant: passing through the old TP1 must NOT book
+    half or arm a breakeven stop — the whole position rides to the target."""
+    pos = _single_pos(entry=100.0, sl=95.0, tp2=115.0)
+    candles = [
+        _candle(HOUR, 100, 111, 100, 110),        # sails through the old TP1 (110)
+        _candle(2 * HOUR, 110, 109, 99, 100),      # back to entry — old rule exits here
+    ]
+    assert PT._manage_open(pos, candles) is None   # still open, no breakeven exit
+    assert pos["partial"] is False
+
+    pos2 = _single_pos(entry=100.0, sl=95.0, tp2=115.0)
+    hit = [_candle(HOUR, 100, 116, 100, 115)]
+    closed = PT._manage_open(pos2, hit)
+    assert closed["reason"] == "target" and closed["win"] is True
+
+
+def test_single_exit_takes_the_full_loss_at_the_stop():
+    pos = _single_pos(entry=100.0, sl=95.0, tp2=115.0)
+    closed = PT._manage_open(pos, [_candle(HOUR, 100, 101, 94, 95)])
+    assert closed["reason"] == "sl" and closed["win"] is False
+
+
+def test_single_exit_stop_wins_a_bar_that_spans_both():
+    """Conservative fill on an ambiguous bar — same assumption the historical
+    simulator makes, so forward and backtest numbers stay comparable."""
+    pos = _single_pos(entry=100.0, sl=95.0, tp2=115.0)
+    closed = PT._manage_open(pos, [_candle(HOUR, 100, 116, 94, 100)])
+    assert closed["reason"] == "sl"
+
+
+def test_tick_sets_a_3r_target_for_the_lowvol_3r_variant(monkeypatch, tmp_path):
+    monkeypatch.setattr(PT, "STATE_FILE", str(tmp_path / "paper.json"))
+    quiet = _quiet_candles(BT.WINDOW)
+    _stub_universe(monkeypatch, {"FAKE/USDT:USDT": quiet})
+    # entry 100, sl 95 -> risk 5 -> a 3R target sits at 115
+    monkeypatch.setattr(BT, "evaluate", lambda oh, ema, reg: (True, 100.0, 95.0, 110.0, 120.0, 7))
+
+    PT.tick(force=True)
+    state = PT._load()
+    plain = state["variants"]["s1_lowvol"]["pending"]["FAKE/USDT:USDT"]
+    wide = state["variants"]["s1_lowvol_3r"]["pending"]["FAKE/USDT:USDT"]
+    assert plain["exit"] == "bracket" and plain["tp2"] == 120.0   # untouched
+    assert wide["exit"] == "single"
+    assert wide["tp2"] == 100.0 + 5.0 * PT.SINGLE_TARGET_R        # 115.0
+    assert wide["sl"] == 95.0                                      # stop unchanged
+
+
 def test_tick_lowvol_variant_takes_a_quiet_symbol(monkeypatch, tmp_path):
     monkeypatch.setattr(PT, "STATE_FILE", str(tmp_path / "paper.json"))
     quiet = _quiet_candles(BT.WINDOW)

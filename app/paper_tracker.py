@@ -19,25 +19,35 @@ judge it, so not yet independently confirmed. This gives both the current
 full strategy and the longs-only hypothesis a genuine forward track record
 instead of re-slicing history a third time.
 
-Three tracked variants:
+Four tracked variants:
     s1_full        — exactly what's live today (longs + shorts)
     s1_longs_only  — same rules, only takes LONG signals
     s1_lowvol      — same rules, only when the SYMBOL's own ATR is below
                      LOWVOL_MAX_ATR_PCT of its price at entry
+    s1_lowvol_3r   — that same entry filter PLUS a different exit: no 50%
+                     partial, no breakeven move, one wide target at
+                     SINGLE_TARGET_R x risk. The best candidate found so far.
 
-The lowvol variant came out of s1_regime_lab.py (2026-07-28) and is the
-strongest of the three hypotheses on historical evidence: expectancy rises
-monotonically as the volatility ceiling tightens (+0.03R at <1.5% → +0.13R
-at <1.2% → +0.17R at <1.0% → +0.28R at <0.8%), so it's a plateau rather
-than one lucky threshold; the surviving trades span 31 different symbols
-(so it is NOT a disguised "only trade BTC/ETH" filter); and BOTH directions
-turn positive once it's applied — which is why longs_only is kept as a
-control rather than promoted. The direction effect looks like a proxy for
-this one: shorts were simply taken on more volatile coins more often.
+The lowvol variant came out of s1_regime_lab.py (2026-07-28): expectancy
+rises monotonically as the volatility ceiling tightens (+0.03R at <1.5% →
++0.13R at <1.2% → +0.17R at <1.0% → +0.28R at <0.8%), so it's a plateau
+rather than one lucky threshold; the surviving trades span 31 different
+symbols (so it is NOT a disguised "only trade BTC/ETH" filter); and BOTH
+directions turn positive once it's applied — which is why longs_only is
+kept as a control rather than promoted. The direction effect looks like a
+proxy: shorts were simply taken on more volatile coins more often.
 
-All three still have to earn a FORWARD record here before any of it goes
-near real money — the historical read is hypothesis-generation on ~124
-trades, not proof.
+s1_lowvol_3r adds the exit half, from s1_exit_lab.py (2026-07-29). Holding
+entries fixed and varying only the exit, S1's live bracket caps EVERY
+winner at 1.5R gross while losers cost a full ~1.05R — in 127 trades it has
+never once returned more than 1.44R. On the low-vol subset all 11 tested
+exit rules turn positive, and a single wide target scores best (+0.231R vs
++0.080R for the current bracket on the same 50 trades).
+
+⚠️ NONE of this is proof. ~127 trades, ~30 gates and exit rules tested;
+re-running the same collection a day apart moved the baseline by 0.07R on
+universe drift alone. That is why these run forward here instead of being
+switched on live — the whole point is to stop trusting re-sliced history.
 
 One deliberate difference from backtest.simulate_trade: a position that
 never hits SL/TP1 within the hold cap is FORCE-CLOSED at mark-to-market
@@ -69,13 +79,19 @@ TOP_N_TRADE = 30              # today's top-N by volume (forward tracking doesn'
 MAX_WAIT_BARS = BT.MAX_WAIT_BARS      # same as the historical sim
 MAX_HOLD_BARS = BT.MAX_HOLD_BARS
 
-VARIANTS = ("s1_full", "s1_longs_only", "s1_lowvol")
+VARIANTS = ("s1_full", "s1_longs_only", "s1_lowvol", "s1_lowvol_3r")
 
-# Ceiling for the lowvol variant: the symbol's own ATR(14) as a % of its
+# Ceiling for the lowvol variants: the symbol's own ATR(14) as a % of its
 # price at entry. 1.0 sits in the middle of the tested plateau (0.8-1.2 all
 # improved 4/6 folds) rather than at its best-scoring edge (0.6 scored
 # highest but on only 10 trades) — deliberately not tuned to the peak.
 LOWVOL_MAX_ATR_PCT = 1.0
+
+# s1_lowvol_3r's single target, in multiples of the trade's own risk
+# (|entry - stop|). From s1_exit_lab: on low-vol entries EVERY tested exit
+# rule turned positive, and a single wide target scored highest (+0.231R vs
+# +0.080R for S1's current bracket on the same 50 trades).
+SINGLE_TARGET_R = 3.0
 
 _last_tick = 0.0
 
@@ -104,7 +120,7 @@ def _wants(variant: str, is_long: bool, oh: list) -> bool:
     evaluate() just judged, so the volatility read is as-of the entry bar."""
     if variant == "s1_longs_only":
         return is_long
-    if variant == "s1_lowvol":
+    if variant in ("s1_lowvol", "s1_lowvol_3r"):
         atr_pct = BT._atr_pct(oh)
         return atr_pct is not None and atr_pct < LOWVOL_MAX_ATR_PCT
     return True
@@ -143,12 +159,28 @@ def _manage_open(pos: dict, oh1h: list):
     is_long = pos["dir"] == "LONG"
     entry, sl, tp1, tp2 = pos["entry"], pos["sl"], pos["tp1"], pos["tp2"]
     tp1_pct = ((tp1 - entry) / entry * 100) if is_long else ((entry - tp1) / entry * 100)
+    single = pos.get("exit") == "single"
     for c in oh1h:
         if c[0] <= pos["last_ts"]:
             continue
         pos["last_ts"] = c[0]
         pos["bars"] += 1
         hi, lo = c[2], c[3]
+        if single:
+            # One target, no partial, no breakeven move — the whole position
+            # lives or dies on SL vs a single wide target (s1_exit_lab's
+            # "single target 3R"). Stop is checked first: on a bar that spans
+            # both, assume the worse fill.
+            if (lo <= sl) if is_long else (hi >= sl):
+                pnl = ((sl - entry) / entry * 100) if is_long else ((entry - sl) / entry * 100)
+                return _close(pos, pnl, c[0], "sl")
+            if (hi >= tp2) if is_long else (lo <= tp2):
+                pnl = ((tp2 - entry) / entry * 100) if is_long else ((entry - tp2) / entry * 100)
+                return _close(pos, pnl, c[0], "target")
+            if pos["bars"] >= MAX_HOLD_BARS:
+                mtm = ((c[4] - entry) / entry * 100) if is_long else ((entry - c[4]) / entry * 100)
+                return _close(pos, mtm, c[0], "time")
+            continue
         if not pos["partial"]:
             sl_hit = (lo <= sl) if is_long else (hi >= sl)
             if sl_hit:
@@ -254,10 +286,20 @@ def tick(force=False, progress=lambda *a: None) -> bool:
             is_long, entry, sl, tp1, tp2, eff = res
             if not _wants(variant, is_long, oh):
                 continue
+            entry, sl, tp1, tp2 = float(entry), float(sl), float(tp1), float(tp2)
+            exit_style = "single" if variant == "s1_lowvol_3r" else "bracket"
+            if exit_style == "single":
+                # One wide target at SINGLE_TARGET_R x the trade's own risk.
+                # tp1 stays as-is: _fill_pending uses it for the "target
+                # printed before the entry filled -> cancel" rule, which is
+                # about the resting order, not the exit plan.
+                risk = abs(entry - sl)
+                tp2 = entry + (risk * SINGLE_TARGET_R if is_long
+                               else -risk * SINGLE_TARGET_R)
             book.setdefault("pending", {})[sym] = {
                 "symbol": sym.split("/")[0], "dir": "LONG" if is_long else "SHORT",
-                "lights": int(eff), "entry": float(entry), "sl": float(sl),
-                "tp1": float(tp1), "tp2": float(tp2),
+                "lights": int(eff), "entry": entry, "sl": sl,
+                "tp1": tp1, "tp2": tp2, "exit": exit_style,
                 "last_ts": ts, "wait_bars": 0, "bars": 0, "partial": False,
             }
 
@@ -287,6 +329,7 @@ def report_tg() -> str:
             "s1_full": "S1 (full, as live)",
             "s1_longs_only": "S1 longs-only (control)",
             "s1_lowvol": f"S1 low-vol only (<{LOWVOL_MAX_ATR_PCT:g}% ATR)",
+            "s1_lowvol_3r": f"S1 low-vol + {SINGLE_TARGET_R:g}R single target",
         }.get(variant, variant)
         if s["total"] == 0:
             lines.append(f"\n{label}: no closed trades yet ({n_open} open, {n_pending} pending)")
