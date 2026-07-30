@@ -6,11 +6,18 @@ closed, because that is what actually sets the tone for 台股's 09:00 open.
 
 WHEN IT FIRES. The US closes 16:00 New York = 04:00 台北 (05:00 in winter) —
 a notification nobody wants. So the data is not captured at the close; it is
-simply READ at SEND_HOUR (08:00 台北, one hour before the TWSE open), by which
-point Yahoo's `regularMarketPrice` still holds the final regular-session
-close: 08:00 台北 is 20:00 New York, comfortably after the close and long
-before the next pre-market opens at 04:00 ET. Moving SEND_HOUR past ~16:00
-台北 would start reading pre-market prices instead — don't.
+simply READ inside a window starting at SEND_HOUR (08:00–13:00 台北, i.e. before
+the TWSE open), by which point Yahoo's `regularMarketPrice` still holds the
+final regular-session close: 08:00 台北 is 20:00 New York, comfortably after
+the close and long before the next pre-market opens at 04:00 ET.
+
+That window is BOUNDED at both ends, and `session_complete()` re-checks the
+data itself before anything is sent. Both exist because of one incident: a
+scanner restarted at 23:44 台北 on 2026-07-30 hit an unbounded `hour >= 8`
+gate and published live 11:44 ET intraday prices under a 美股收盤 header.
+Yahoo's `regularMarketTime` tracks 'now' while a market is open, so nothing in
+the PRICES themselves reveals that they are mid-session — only the timestamp
+does. Never widen the window past ~16:00 台北; New York pre-market opens then.
 
 WHAT IT SAYS. Four indices + VIX + the 10-year yield, then the two things a
 Taiwanese reader actually opens the message for: 台積電's ADR (1 ADR = 5 台股
@@ -46,6 +53,11 @@ TZ_NY = ZoneInfo("America/New_York")
 STATE_FILE = os.path.join(os.path.dirname(__file__), "us_market_state.json")
 
 SEND_HOUR = int(os.getenv("US_CLOSE_SEND_HOUR", "8"))   # 台北 local, pre-open
+# The window is BOUNDED on purpose — see _due(). 08:00–13:00 台北 by default:
+# late enough that last night's close is final, early enough to still be
+# useful before the TWSE close, and nowhere near a live New York session.
+SEND_WINDOW_HOURS = int(os.getenv("US_CLOSE_SEND_WINDOW_HOURS", "5"))
+CLOSE_HOUR_NY = 16              # 16:00 ET — the regular-session close
 RETRY_SEC = 900                 # min gap between failed fetch attempts
 _TIMEOUT = 15
 _UA = {"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15) AppleWebKit/537.36"}
@@ -152,6 +164,29 @@ def session_date(quotes: dict) -> str:
     if not ts:
         return ""
     return datetime.fromtimestamp(ts, TZ_NY).strftime("%Y-%m-%d")
+
+
+def session_complete(quotes: dict, now_ny=None) -> bool:
+    """True only when the session being quoted has actually FINISHED.
+
+    Yahoo's `regularMarketTime` tracks 'now' while a market is open and pins to
+    the close once it isn't, so a mid-session read is indistinguishable from a
+    close by PRICE alone. This is the check that tells them apart, and it is
+    load-bearing: on 2026-07-30 a scanner restart at 23:44 台北 published live
+    11:44 ET prices under a 美股收盤 header.
+
+    It asks "has 16:00 ET on the quote's own date passed in real time?" rather
+    than "is the timestamp itself at/after 16:00?". The latter would wrongly
+    reject early closes (the day after Thanksgiving, 24 December), which stamp
+    13:00 ET and are final regardless.
+    """
+    ts = (quotes.get("^GSPC") or {}).get("ts")
+    if not ts:
+        return False
+    now_ny = now_ny or datetime.now(TZ_NY)
+    close = datetime.fromtimestamp(ts, TZ_NY).replace(
+        hour=CLOSE_HOUR_NY, minute=0, second=0, microsecond=0)
+    return now_ny >= close
 
 
 def breadth(rows: list) -> dict:
@@ -378,10 +413,21 @@ def build_holiday_plain(now) -> str:
 
 # ── orchestration ────────────────────────────────────────────────────────────
 def _due(state: dict, now) -> bool:
-    """One send per TWSE trading morning, from SEND_HOUR onwards. Weekends are
+    """One send per TWSE trading morning, inside a BOUNDED window. Weekends are
     skipped: there is no 台股 open to prepare for, and Friday's US close is
-    reported on Monday morning instead."""
-    if now.weekday() >= 5 or now.hour < SEND_HOUR:
+    reported on Monday morning instead.
+
+    The upper bound is the point. This gate started as `now.hour >= SEND_HOUR`,
+    copied from tw_stocks._due where that shape is correct — the 13:30 TW close
+    is final, so every later hour reads the same closing bar. For the US it is
+    not: 23:00 台北 is the middle of the New York session. A scanner restarted
+    at 23:44 台北 passed `hour >= 8` and fired immediately on live intraday
+    prices. Missing a morning because the stack was down beats mislabelling a
+    live session as a close.
+    """
+    if now.weekday() >= 5:
+        return False
+    if not SEND_HOUR <= now.hour < SEND_HOUR + SEND_WINDOW_HOURS:
         return False
     return state.get("last_run_date") != now.strftime("%Y-%m-%d")
 
@@ -419,6 +465,14 @@ def tick() -> bool:
     sess = session_date(quotes)
     if not sess:
         print("[usmarket] no S&P timestamp — cannot identify the session, retrying")
+        _save_state(state)
+        return False
+    # Independent of the clock gate above, and deliberately so: _due() decides
+    # WHEN we look, this decides whether what we found is actually a close.
+    # Either one alone would have prevented the 2026-07-30 mislabel; a wrong
+    # SEND_HOUR would still be caught here.
+    if not session_complete(quotes):
+        print(f"[usmarket] {sess} still trading — not a close yet, retrying")
         _save_state(state)
         return False
 

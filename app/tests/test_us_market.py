@@ -79,6 +79,40 @@ def test_session_date_empty_without_a_timestamp():
     assert um.session_date({}) == ""
 
 
+# ── session_complete: the 2026-07-30 mislabel ────────────────────────────────
+# A scanner restarted at 23:44 台北 published live 11:44 ET prices under a
+# 美股收盤 header. Yahoo's regularMarketTime tracks 'now' while a market is
+# open, so the prices alone look exactly like a close — only the clock tells.
+LIVE_TS = datetime(2026, 7, 30, 11, 44, tzinfo=TZ_NY).timestamp()
+
+
+def test_session_incomplete_while_new_york_is_still_trading():
+    q = quotes(**{"^GSPC": _q(7393.0, 7316.15, LIVE_TS)})
+    now_ny = datetime(2026, 7, 30, 11, 44, tzinfo=TZ_NY)      # 23:44 台北
+    assert um.session_complete(q, now_ny) is False
+
+
+def test_session_complete_after_the_bell():
+    q = quotes(**{"^GSPC": _q(7393.0, 7316.15, LIVE_TS)})
+    assert um.session_complete(q, datetime(2026, 7, 30, 16, 0, tzinfo=TZ_NY)) is True
+    # …and the following 08:00 台北, which is when it normally runs
+    assert um.session_complete(q, datetime(2026, 7, 30, 20, 5, tzinfo=TZ_NY)) is True
+
+
+def test_session_complete_accepts_an_early_close():
+    """Half-days (day after Thanksgiving, 24 Dec) stamp 13:00 ET and are final.
+    Testing 'is the timestamp past 16:00?' would reject them; testing 'has
+    16:00 passed in real time?' does not."""
+    early = datetime(2026, 11, 27, 13, 0, tzinfo=TZ_NY).timestamp()
+    q = quotes(**{"^GSPC": _q(7393.0, 7316.15, early)})
+    assert um.session_complete(q, datetime(2026, 11, 27, 14, 0, tzinfo=TZ_NY)) is False
+    assert um.session_complete(q, datetime(2026, 11, 27, 20, 0, tzinfo=TZ_NY)) is True
+
+
+def test_session_complete_false_without_a_timestamp():
+    assert um.session_complete({}) is False
+
+
 # ── breadth ──────────────────────────────────────────────────────────────────
 def test_breadth_counts_and_ranks_movers():
     b = um.breadth(rows(("NVDA", 9.2), ("AMD", 7.8), ("AVGO", 5.1),
@@ -229,6 +263,9 @@ def test_holiday_message_states_the_closure():
 @pytest.mark.parametrize("when,state,due", [
     (datetime(2026, 7, 30, 8, 0, tzinfo=TZ), {}, True),                    # Thu 08:00
     (datetime(2026, 7, 30, 7, 59, tzinfo=TZ), {}, False),                  # too early
+    (datetime(2026, 7, 30, 12, 59, tzinfo=TZ), {}, True),                  # window edge
+    (datetime(2026, 7, 30, 13, 0, tzinfo=TZ), {}, False),                  # window shut
+    (datetime(2026, 7, 30, 23, 44, tzinfo=TZ), {}, False),                 # NY mid-session
     (datetime(2026, 8, 1, 9, 0, tzinfo=TZ), {}, False),                    # Saturday
     (datetime(2026, 8, 2, 9, 0, tzinfo=TZ), {}, False),                    # Sunday
     (datetime(2026, 7, 30, 9, 0, tzinfo=TZ),
@@ -238,6 +275,29 @@ def test_holiday_message_states_the_closure():
 ])
 def test_due_gate(when, state, due):
     assert um._due(state, when) is due
+
+
+def test_a_late_restart_does_not_fire(monkeypatch, sent):
+    """The 2026-07-30 incident end to end: the stack comes up at 23:44 台北,
+    New York is mid-session, and the digest must stay silent."""
+    _at(monkeypatch, datetime(2026, 7, 30, 23, 44, tzinfo=TZ))
+    monkeypatch.setattr(um, "fetch_quotes",
+                        lambda symbols=None: quotes(**{"^GSPC": _q(7393.0, 7316.15, LIVE_TS)}))
+    assert um.tick() is False
+    assert sent["tg"] == [] and sent["line"] == []
+
+
+def test_session_check_catches_a_misconfigured_send_hour(monkeypatch, sent):
+    """Belt and braces: even with the clock gate opened onto a live session,
+    session_complete() still refuses to call it a close."""
+    monkeypatch.setattr(um, "SEND_HOUR", 23)
+    monkeypatch.setattr(um, "SEND_WINDOW_HOURS", 2)
+    _at(monkeypatch, datetime(2026, 7, 30, 23, 44, tzinfo=TZ))
+    monkeypatch.setattr(um, "fetch_quotes",
+                        lambda symbols=None: quotes(**{"^GSPC": _q(7393.0, 7316.15, LIVE_TS)}))
+    assert um.tick() is False
+    assert sent["tg"] == [] and sent["line"] == []
+    assert "last_run_date" not in um._load_state()     # tomorrow still gets its send
 
 
 def test_monday_reports_fridays_close():
