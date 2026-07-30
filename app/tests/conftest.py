@@ -155,6 +155,12 @@ def _no_live_side_effects(request, monkeypatch, tmp_path):
     monkeypatch.setattr(_cfg, "LINE_CHANNEL_SECRET", "")
     monkeypatch.setattr(_cfg, "LINE_CHANNEL_ACCESS_TOKEN", "")
     monkeypatch.setattr(_cfg, "LINE_TO", [])
+    # 美股收盤 digest: redirect its state file (a test that ran tick() would
+    # otherwise mark today as sent and silently suppress the real 08:00 push)
+    # and kill its Yahoo seam — fetch_quotes is the module's only network.
+    import us_market
+    monkeypatch.setattr(us_market, "STATE_FILE", str(tmp_path / "us_market_state.json"))
+    monkeypatch.setattr(us_market, "fetch_quotes", _no_net)
     # site-link announcer + watchdog write real state/log files — redirect
     import site_link
     import watchdog

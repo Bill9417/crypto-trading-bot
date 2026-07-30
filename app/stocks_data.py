@@ -305,6 +305,16 @@ def tw_quote_map():
     return out
 
 
+def us_quote_rows():
+    """The US100 rows from the same cache build_stocks() uses — for the 美股收盤
+    digest's breadth/movers, so an open /stocks page and the 08:00 push never
+    double-fetch. Perp columns are deliberately absent (the digest is about the
+    stock session); [] rather than a raise if Yahoo is down."""
+    us_open = _in_session("America/New_York", (9, 30), (16, 0))
+    data, _err = _cached("us", 30 if us_open else 600, _fetch_us)
+    return list((data or {}).get("rows") or [])
+
+
 def build_stocks():
     tw_open = _in_session("Asia/Taipei", (9, 0), (13, 30))
     us_open = _in_session("America/New_York", (9, 30), (16, 0))

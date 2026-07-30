@@ -39,6 +39,7 @@ import tech_news
 import tg_commands
 import tw_intraday
 import tw_stocks
+import us_market
 import watchdog
 import whale_tracker
 import strategy2_live as S2L
@@ -652,6 +653,12 @@ def main() -> None:
             tw_intraday.tick()
         except Exception as exc:  # noqa: BLE001 — intraday must never kill the loop
             print(f"[strategy2] tw intraday error: {exc}")
+        # 🇺🇸 美股收盤 — last night's US session in Chinese at 08:00 台北, one
+        # hour before the TWSE open (no-op every other sweep and at weekends).
+        try:
+            us_market.tick()
+        except Exception as exc:  # noqa: BLE001 — digest must never kill the loop
+            print(f"[strategy2] us market error: {exc}")
         # 📋 台股週結 — honest Sunday-morning TP/SL scorecard to LINE
         # (self-paced no-op except Sunday mornings).
         try:

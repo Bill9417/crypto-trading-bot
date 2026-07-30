@@ -78,7 +78,7 @@ ADMIN_CACHE_SEC = 300
 # attached to a reply DO stay tappable indefinitely (they're part of that
 # specific message, not a suggestion bar), which is the closer fit here.
 REFRESHABLE_CMDS = {"positions", "price", "signals", "winrate", "alerts",
-                    "liq", "whale", "twnow", "paper"}
+                    "liq", "whale", "twnow", "paper", "us"}
 _admin_cache = {"ts": 0.0, "ids": set()}
 
 
@@ -336,6 +336,7 @@ HELP = ("🤖 指令列表\n"
         "/report — 今日帳戶+市場日報（擁有者專用, 只私訊回覆）\n"
         "/tw — 最新台股掃描（大盤狀態 + 設定）\n"
         "/twnow — 台股即時: TAIEX + 漲跌幅前三 + 追蹤設定現價\n"
+        "/us — 🇺🇸 昨夜美股收盤摘要（指數 + 台積電 ADR + 費半）\n"
         "/liq — BTC/ETH 清算: 24h統計 + 最近清算價 + 🧲清算地圖\n"
         "/whale — 🐳 巨鯨追蹤: 每個地址的即時持倉（Hyperliquid）\n"
         "/whaleadd <0x地址> [名稱] · /whalerm <地址> — 管理追蹤清單（限管理員）\n"
@@ -471,6 +472,11 @@ def handle(cmd: str, args: str = "", owner: bool = False) -> str:
         st = tw_stocks._load_state()
         return (st.get("last_digest_text")
                 or "尚未有台股掃描 — 每個交易日 14:00 (台北) 自動發送。")
+    if cmd in ("us", "usmarket"):
+        import us_market
+        st = us_market._load_state()
+        return (st.get("last_text")
+                or "尚未有美股收盤摘要 — 每個交易日 08:00 (台北) 自動發送。")
     if cmd in ("twnow", "twlive"):
         import tw_intraday
         return tw_intraday.snapshot_text()

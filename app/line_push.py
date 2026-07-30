@@ -42,12 +42,14 @@ MAX_LEN = 4900          # LINE text-message limit is 5000 chars
 BATCH = 5               # API limit: 5 message objects per call
 
 WELCOME_GROUP = ("✅ 已連接台股訊號！\n"
-                 "每個交易日 14:00 會收到台股掃描（進場參考/停損/目標），\n"
+                 "每個交易日 08:00 會收到美股收盤摘要（開盤前參考），\n"
+                 "14:00 收到台股掃描（進場參考/停損/目標），\n"
                  "盤中觸到停損或目標也會即時提醒。\n"
                  "輸入「說明」可查看指令。")
 
 HELP_MSG = ("📖 台股天地指令：\n"
             "訊號 — 今日台股掃描結果\n"
+            "美股 — 昨夜美股收盤摘要\n"
             "現況 — 即時大盤與追蹤個股\n"
             "期貨 — 台指期趨勢與關鍵價位\n"
             "網址 — 網站儀表板連結\n"
@@ -68,6 +70,7 @@ STOP_MSG = ("🛑 台股訊號系統已停止\n"
 # message. Max 13 items; each label ≤20 chars.
 QUICK_REPLY = {"items": [
     {"type": "action", "action": {"type": "message", "label": "📊 訊號", "text": "訊號"}},
+    {"type": "action", "action": {"type": "message", "label": "🇺🇸 美股", "text": "美股"}},
     {"type": "action", "action": {"type": "message", "label": "📈 現況", "text": "現況"}},
     {"type": "action", "action": {"type": "message", "label": "📉 期貨", "text": "期貨"}},
     {"type": "action", "action": {"type": "message", "label": "🔗 網址", "text": "網址"}},
@@ -199,6 +202,14 @@ def _command_reply(text: str):
                     or "今日還沒有台股掃描 — 每個交易日 14:00 後更新。")
         except Exception as exc:  # noqa: BLE001 — a broken command stays silent
             print(f"[line] 訊號 command failed: {exc}")
+            return None
+    if t in ("美股", "美國", "us"):
+        try:
+            import us_market
+            return (us_market._load_state().get("last_plain")
+                    or "今天還沒有美股收盤摘要 — 每個交易日 08:00 前後更新。")
+        except Exception as exc:  # noqa: BLE001 — a broken command stays silent
+            print(f"[line] 美股 command failed: {exc}")
             return None
     if t in ("現況", "即時", "now"):
         try:
