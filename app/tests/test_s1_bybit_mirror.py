@@ -121,9 +121,18 @@ def test_open_no_duplicate_when_already_tracked(monkeypatch, tmp_path):
 
 
 # ── TP1: half off + breakeven ────────────────────────────────────────────────
+def _now_open(monkeypatch, side="long", qty=0.0285, sl=3430.0):
+    """_wire defaults get_position to None so mirror_open's 'untracked position'
+    guard lets the open through. Once open, the position DOES exist — say so,
+    or TP1 correctly reconciles the row away as already-closed."""
+    monkeypatch.setattr(X, "get_position",
+                        lambda s: {"side": side, "qty": qty, "entry": 3500.0, "sl": sl})
+
+
 def test_tp1_closes_half_and_moves_stop_to_entry(monkeypatch, tmp_path):
     calls = _wire(monkeypatch, tmp_path)
     M.mirror_open("ETH/USDT:USDT", "long", 3500.0, 3430.0)     # qty ≈ 0.02857
+    _now_open(monkeypatch)
     assert M.mirror_tp1("ETH/USDT:USDT", "LONG", 3500.0)
     (a, k), = calls["orders"]
     assert a[2] == "sell" and k["params"]["reduceOnly"] is True
@@ -141,6 +150,7 @@ def test_tp1_untracked_symbol_is_ignored(monkeypatch, tmp_path):
 def test_tp1_records_breakeven_for_guardian(monkeypatch, tmp_path):
     _wire(monkeypatch, tmp_path)
     M.mirror_open("ETH/USDT:USDT", "long", 3500.0, 3430.0)
+    _now_open(monkeypatch)
     M.mirror_tp1("ETH/USDT:USDT", "LONG", 3500.0)
     assert M._load()["ETH/USDT:USDT"]["sl"] == 3500.0  # guardian re-arms at BE
 
@@ -165,6 +175,71 @@ def test_guardian_leaves_protected_positions_alone(monkeypatch, tmp_path):
                                    "sl": 3430.0})              # stop is fine
     assert M.guardian_tick() == 0
     assert calls["stops"] == []
+
+
+# ── stale-row reconciliation (the 2026-07-28 ATOM/AVAX incident) ─────────────
+# Both were opened by the mirror and then closed BY HAND on Bybit. Nothing
+# noticed for three days: the guardian only re-armed stops and skipped a flat
+# symbol, so the rows sat there until S1 hit TP1 and fired reduce-only orders
+# at nothing (110017 / 10001). The quiet half was worse — mirror_open refuses
+# a symbol that is still tracked, so neither could ever be mirrored again.
+def test_guardian_forgets_a_position_closed_by_hand(monkeypatch, tmp_path):
+    calls = _wire(monkeypatch, tmp_path)
+    M.mirror_open("ETH/USDT:USDT", "long", 3500.0, 3430.0)
+    assert "ETH/USDT:USDT" in M._load()
+    monkeypatch.setattr(X, "get_position", lambda s: None)     # closed by hand
+    M.guardian_tick()
+    assert M._load() == {}
+    assert any("已無倉位" in m for m in calls["tg"])
+
+
+def test_forgotten_symbol_can_be_mirrored_again(monkeypatch, tmp_path):
+    """The damaging half: a stale row made the symbol permanently
+    un-mirrorable, silently ('skip duplicate open' is a print, not an alert)."""
+    calls = _wire(monkeypatch, tmp_path)
+    M.mirror_open("ETH/USDT:USDT", "long", 3500.0, 3430.0)
+    monkeypatch.setattr(X, "get_position", lambda s: None)
+    M.guardian_tick()
+    assert M.mirror_open("ETH/USDT:USDT", "long", 3600.0, 3520.0) is True
+    assert len(calls["opens"]) == 2                            # re-entry allowed
+
+
+def test_guardian_keeps_a_position_it_does_not_own(monkeypatch, tmp_path):
+    """A flat reading forgets; an OPPOSITE-side position must not be touched
+    or forgotten — that is somebody else's trade on a shared account."""
+    _wire(monkeypatch, tmp_path)
+    M.mirror_open("ETH/USDT:USDT", "long", 3500.0, 3430.0)
+    monkeypatch.setattr(X, "get_position",
+                        lambda s: {"side": "short", "qty": 5.0, "entry": 3500.0,
+                                   "sl": None})
+    assert M.guardian_tick() == 0
+    assert "ETH/USDT:USDT" in M._load()                        # still tracked
+
+
+def test_guardian_does_not_forget_on_an_api_failure(monkeypatch, tmp_path):
+    """get_position RAISES on an API error rather than returning None, so a
+    None is a real 'flat'. Prove a raise leaves the row alone — forgetting it
+    would silently stop guarding a live position's stop-loss."""
+    _wire(monkeypatch, tmp_path)
+    M.mirror_open("ETH/USDT:USDT", "long", 3500.0, 3430.0)
+
+    def _boom(s):
+        raise RuntimeError("bybit 10006 rate limit")
+    monkeypatch.setattr(X, "get_position", _boom)
+    assert M.guardian_tick() == 0
+    assert "ETH/USDT:USDT" in M._load()
+
+
+def test_tp1_reconciles_instead_of_erroring_on_a_closed_position(monkeypatch, tmp_path):
+    """What the owner actually saw: TP1 three days after the position was
+    closed by hand. No reduce-only order, no stop move, no error alert."""
+    calls = _wire(monkeypatch, tmp_path)
+    M.mirror_open("ETH/USDT:USDT", "long", 3500.0, 3430.0)
+    monkeypatch.setattr(X, "get_position", lambda s: None)
+    assert M.mirror_tp1("ETH/USDT:USDT", "long", 3500.0) is False
+    assert calls["orders"] == [] and calls["stops"] == []
+    assert not any("失敗" in m for m in calls["tg"])
+    assert M._load() == {}
 
 
 def test_guardian_is_paced(monkeypatch, tmp_path):

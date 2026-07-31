@@ -261,6 +261,33 @@ def mirror_open(binance_symbol: str, direction: str, price: float,
         return False
 
 
+def _forget(sym: str, why: str) -> None:
+    """Drop a tracked row whose Bybit position is gone, and say so plainly.
+
+    Anything that closes a mirrored position OUTSIDE mirror_close — closing it
+    by hand, or an exchange fill while the bot is down — used to leave the row
+    behind forever: guardian_tick() only ever re-armed stops and skipped a flat
+    symbol. Two things then went wrong, days apart, from that one stale row:
+
+      · mirror_tp1 fired reduce-only orders at a position that no longer
+        existed (Bybit 110017 'current position is zero' / 10001 'can not set
+        tp/sl for zero position') — noisy, but harmless;
+      · mirror_open refuses to re-enter a symbol that is still tracked
+        ('skip duplicate open'), so the symbol became quietly un-mirrorable
+        FOREVER. That is the damaging half, and it made no noise at all.
+
+    Callers must only reach here on a definitive flat reading: get_position()
+    raises on an API failure rather than returning None, so a None is real.
+    """
+    state = _load()
+    if state.pop(sym, None) is None:
+        return
+    _save(state)
+    import strategy_ledger
+    strategy_ledger.record_close("S1", sym)
+    _tg(f"{sym.split('/')[0]} Bybit 端已無倉位（{why}）— 停止追蹤，此標的之後可再進場")
+
+
 def mirror_tp1(binance_symbol: str, direction: str, entry_price: float) -> bool:
     """TP1 hit on S1 → close HALF on Bybit, move the stop to breakeven."""
     if not enabled():
@@ -270,6 +297,14 @@ def mirror_tp1(binance_symbol: str, direction: str, entry_price: float) -> bool:
         state = _load()
         t = state.get(sym)
         if not t:
+            return False
+
+        # The position can be gone by now (closed by hand, or filled while the
+        # bot was down). Firing reduce-only orders at a flat symbol only yields
+        # error alerts, so reconcile instead — same courtesy mirror_close
+        # already extends.
+        if X.is_live() and not X.get_position(sym):
+            _forget(sym, "TP1 前已平倉")
             return False
 
         step, min_qty, _mn = X._market_limits(sym)
@@ -308,7 +343,11 @@ def guardian_tick() -> int:
     position WE opened: if its Bybit stop-loss is gone (attach failed once,
     or removed by hand), re-arm it at the tracked level (original SL, or
     breakeven after TP1). The same belt-and-braces S3 gives its own symbols —
-    this is what makes the mirror safe to ignore. Returns stops re-armed."""
+    this is what makes the mirror safe to ignore. Returns stops re-armed.
+
+    It is also the reconciler: a tracked symbol that is FLAT on Bybit is
+    forgotten here (see _forget), which is the only thing that notices a
+    position closed outside mirror_close."""
     global _last_guard
     if not enabled() or not X.is_live():
         return 0
@@ -317,11 +356,14 @@ def guardian_tick() -> int:
         return 0
     _last_guard = now
     fixed = 0
-    for sym, t in _load().items():
+    for sym, t in list(_load().items()):
         try:
             pos = X.get_position(sym)
-            if not pos or pos.get("side") != t.get("side") or pos.get("sl"):
-                continue                     # flat / not ours / already protected
+            if not pos:                      # gone — reconcile, don't just skip
+                _forget(sym, "已由其他方式平倉")
+                continue
+            if pos.get("side") != t.get("side") or pos.get("sl"):
+                continue                     # not ours / already protected
             slp = float(t.get("sl") or 0)
             if not slp:
                 continue
