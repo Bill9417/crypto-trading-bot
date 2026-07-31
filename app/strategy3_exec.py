@@ -31,6 +31,7 @@ from zoneinfo import ZoneInfo
 
 import ccxt
 
+import bybit_mode
 import config
 
 _client = None
@@ -368,19 +369,26 @@ def closed_pnl_summary(limit: int = 1000) -> dict:
 
 def get_position(symbol: str) -> dict | None:
     """Our open Bybit position on symbol, or None.
-    {'side','qty','entry','mark','sl'} — mark is None if Bybit omits it."""
+    {'side','qty','entry','mark','sl','idx'} — mark is None if Bybit omits it,
+    idx is the live positionIdx (0 one-way, 1/2 hedge)."""
     ex = client()
     for p in ex.fetch_positions([symbol]):
         qty = float(p.get("contracts") or 0)
         if qty > 0:
-            sl = str((p.get("info") or {}).get("stopLoss") or "").strip()
+            info = p.get("info") or {}
+            sl = str(info.get("stopLoss") or "").strip()
             mark = p.get("markPrice")
+            # A live position's own index is the one authoritative reading of
+            # this symbol's mode — the placeholder rows Bybit returns for a FLAT
+            # symbol show both hedge indices regardless, so they cannot be used.
+            bybit_mode.learn_from_idx(symbol, info.get("positionIdx"))
             return {
                 "side": p.get("side"),                      # 'long' / 'short'
                 "qty": qty,
                 "entry": float(p.get("entryPrice") or 0),
                 "mark": float(mark) if mark else None,
                 "sl": float(sl) if sl not in ("", "0") else None,
+                "idx": int(info.get("positionIdx") or 0),
             }
     return None
 
@@ -445,15 +453,16 @@ def open_flip(symbol: str, direction: str, price: float, sl_price: float,
 
     side = "buy" if direction == "long" else "sell"
     try:
-        order = ex.create_order(symbol, "market", side, qty, params={
-            "positionIdx": 0,                       # one-way mode
-            "stopLoss": ex.price_to_precision(symbol, sl_price),
-        })
+        # positionIdx tracks the POSITION (direction), not the order side, and
+        # is retried under the other position mode if Bybit rejects it — see
+        # bybit_mode. A hedge-mode symbol used to simply lose the trade.
+        order = bybit_mode.send_with_mode(symbol, direction, lambda pidx:
+            ex.create_order(symbol, "market", side, qty, params={
+                "positionIdx": pidx,
+                "stopLoss": ex.price_to_precision(symbol, sl_price),
+            }))
     except Exception as exc:  # noqa: BLE001
-        msg = str(exc)
-        if "position idx not match" in msg.lower() or "10001" in msg:
-            msg += " — is the Bybit account in One-Way position mode?"
-        res["error"] = msg[:300]
+        res["error"] = str(exc)[:300]
         return res
 
     res.update(ok=True, qty=qty, order_id=(order or {}).get("id"))
@@ -481,9 +490,13 @@ def close_flip(symbol: str) -> dict:
         return res
     side = "sell" if pos["side"] == "long" else "buy"
     try:
-        client().create_order(symbol, "market", side, pos["qty"], params={
-            "positionIdx": 0, "reduceOnly": True,
-        })
+        # pos["side"], not `side`: the index belongs to the position we are
+        # reducing. Passing the order side here would aim a reduce-only sell at
+        # the SHORT book in hedge mode and close nothing at all.
+        bybit_mode.send_with_mode(symbol, pos["side"], lambda pidx:
+            client().create_order(symbol, "market", side, pos["qty"], params={
+                "positionIdx": pidx, "reduceOnly": True,
+            }))
         res["ok"] = True
         with _account_cache_lock:
             _account_cache["data"] = None            # force fresh snapshot
@@ -492,23 +505,31 @@ def close_flip(symbol: str) -> dict:
     return res
 
 
-def set_stop(symbol: str, sl_price: float) -> None:
+def set_stop(symbol: str, sl_price: float, pos: dict = None) -> None:
     """Set/OVERWRITE the position's stop-loss via the v5 trading-stop endpoint.
     Unlike ensure_stop (which only fills a MISSING stop), this replaces an
     existing one — used by the break-even jump. Raises on failure so callers
-    can retry next poll. No-op (logged) when not live."""
+    can retry next poll. No-op (logged) when not live.
+
+    Pass `pos` (a fresh get_position result) to skip the extra fetch; it is
+    needed at all only because a hedge-mode trading-stop must name the side it
+    applies to."""
     if not is_live():
         print(f"[s3-exec][DRY-RUN] move stop {symbol} → {sl_price:.6g} (no order sent)")
         return
     ex = client()
+    if pos is None:
+        pos = get_position(symbol)
+    if not pos:
+        raise RuntimeError(f"no open position on {symbol} to stop")
     market_id = ex.market(symbol)["id"]
-    body = {"category": "linear", "symbol": market_id, "positionIdx": 0,
-            "tpslMode": "Full", "stopLoss": ex.price_to_precision(symbol, sl_price)}
     setter = getattr(ex, "private_post_v5_position_trading_stop", None) or \
         getattr(ex, "privatePostV5PositionTradingStop", None)
     if setter is None:
         raise RuntimeError("no trading-stop endpoint in this ccxt build")
-    setter(body)
+    bybit_mode.send_with_mode(symbol, pos["side"], lambda pidx: setter({
+        "category": "linear", "symbol": market_id, "positionIdx": pidx,
+        "tpslMode": "Full", "stopLoss": ex.price_to_precision(symbol, sl_price)}))
     print(f"[s3-exec] moved stop on {symbol} → {sl_price:.6g}")
 
 
@@ -527,7 +548,7 @@ def ensure_stop(symbol: str, sl_price: float = None, pos: dict = None) -> None:
         slp = config.STRATEGY3_EMERGENCY_SL_PCT
         sl_price = pos["entry"] * (1 - slp) if pos["side"] == "long" else pos["entry"] * (1 + slp)
     try:
-        set_stop(symbol, sl_price)
+        set_stop(symbol, sl_price, pos=pos)         # reuse the fetch above
         print(f"[s3-exec] guardian re-armed stop on {symbol} @ {sl_price:.6g}")
     except RuntimeError as exc:
         print(f"[s3-exec] {exc} — naked position on {symbol}!")

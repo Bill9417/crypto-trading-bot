@@ -36,6 +36,7 @@ import math
 import os
 import time
 
+import bybit_mode
 import config
 import strategy3_exec as X
 
@@ -145,15 +146,18 @@ def _reduce(sym: str, pos_side: str, qty: float) -> str:
         return ""
     side = "sell" if pos_side == "long" else "buy"
     try:
-        X.client().create_order(sym, "market", side, qty, params={
-            "positionIdx": 0, "reduceOnly": True,
-        })
+        # pos_side, never `side`: in hedge mode the index names the position
+        # being reduced, so the order side would pick the wrong book entirely.
+        bybit_mode.send_with_mode(sym, pos_side, lambda pidx:
+            X.client().create_order(sym, "market", side, qty, params={
+                "positionIdx": pidx, "reduceOnly": True,
+            }))
         return ""
     except Exception as exc:  # noqa: BLE001
         return str(exc)[:300]
 
 
-def _set_tp(sym: str, tp_price: float) -> str:
+def _set_tp(sym: str, tp_price: float, pos_side: str = "long") -> str:
     """Attach a Full-mode take-profit to the position server-side (same v5
     trading-stop endpoint set_stop uses; omitted fields stay unchanged, so
     this never disturbs the resting stop-loss). '' on success."""
@@ -163,14 +167,14 @@ def _set_tp(sym: str, tp_price: float) -> str:
     try:
         ex = X.client()
         market_id = ex.market(sym)["id"]
-        body = {"category": "linear", "symbol": market_id, "positionIdx": 0,
-                "tpslMode": "Full",
-                "takeProfit": ex.price_to_precision(sym, tp_price)}
         setter = getattr(ex, "private_post_v5_position_trading_stop", None) or \
             getattr(ex, "privatePostV5PositionTradingStop", None)
         if setter is None:
             return "no trading-stop endpoint in this ccxt build"
-        setter(body)
+        bybit_mode.send_with_mode(sym, pos_side, lambda pidx: setter({
+            "category": "linear", "symbol": market_id, "positionIdx": pidx,
+            "tpslMode": "Full",
+            "takeProfit": ex.price_to_precision(sym, tp_price)}))
         return ""
     except Exception as exc:  # noqa: BLE001
         return str(exc)[:200]
@@ -245,7 +249,7 @@ def mirror_open(binance_symbol: str, direction: str, price: float,
             strategy_ledger.record_open("S1", sym, d)
             tp_note = ""
             if tp2_price:
-                tp_err = _set_tp(sym, float(tp2_price))
+                tp_err = _set_tp(sym, float(tp2_price), d)
                 if tp_err:
                     # SL still protects the position; TP just falls back to the
                     # bot-driven close — surface it so the owner knows.
@@ -303,7 +307,8 @@ def mirror_tp1(binance_symbol: str, direction: str, entry_price: float) -> bool:
         # bot was down). Firing reduce-only orders at a flat symbol only yields
         # error alerts, so reconcile instead — same courtesy mirror_close
         # already extends.
-        if X.is_live() and not X.get_position(sym):
+        pos = X.get_position(sym) if X.is_live() else None
+        if X.is_live() and not pos:
             _forget(sym, "TP1 前已平倉")
             return False
 
@@ -319,7 +324,7 @@ def mirror_tp1(binance_symbol: str, direction: str, entry_price: float) -> bool:
                 _save(state)
         # breakeven stop on the remainder either way (matches S1's live bracket)
         try:
-            X.set_stop(sym, float(entry_price))
+            X.set_stop(sym, float(entry_price), pos=pos)   # side only — no refetch
             t["sl"] = float(entry_price)               # guardian re-arms at BE now
             _save(state)
         except Exception as exc:  # noqa: BLE001 — the guardian retries next pass

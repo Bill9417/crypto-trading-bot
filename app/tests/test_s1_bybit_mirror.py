@@ -37,7 +37,8 @@ def _wire(monkeypatch, tmp_path, *, live=True, markets=("ETH/USDT:USDT",),
     monkeypatch.setattr(X, "client", lambda: _Ex())
     monkeypatch.setattr(X, "get_position", lambda s: position)
     monkeypatch.setattr(X, "_market_limits", lambda s: (0.01, 0.01, 5.0))
-    monkeypatch.setattr(X, "set_stop", lambda s, p: calls["stops"].append((s, p)))
+    monkeypatch.setattr(X, "set_stop",
+                        lambda s, p, pos=None: calls["stops"].append((s, p)))
 
     def fake_open(sym, d, price, sl, margin, lev):
         calls["opens"].append({"sym": sym, "dir": d, "price": price, "sl": sl,
@@ -45,8 +46,9 @@ def _wire(monkeypatch, tmp_path, *, live=True, markets=("ETH/USDT:USDT",),
         return {"ok": True, "dry": not live, "qty": margin * lev / price}
     monkeypatch.setattr(X, "open_flip", fake_open)
     calls["tps"] = []
-    monkeypatch.setattr(M, "_set_tp",
-                        lambda sym, tp: calls["tps"].append((sym, tp)) or "")
+    monkeypatch.setattr(  # pos_side is recorded: hedge mode indexes by it
+        M, "_set_tp",
+        lambda sym, tp, pos_side="long": calls["tps"].append((sym, tp, pos_side)) or "")
     monkeypatch.setattr(M, "_tg", lambda msg: calls["tg"].append(msg))
     monkeypatch.setattr(M, "_last_guard", 0.0)
     return calls
@@ -72,12 +74,14 @@ def test_open_uses_fixed_100_usdt_order_value(monkeypatch, tmp_path):
     t = M._load()["ETH/USDT:USDT"]
     assert t["side"] == "long"                        # tracked for later close
     assert t["sl"] == 3430.0                          # guardian knows the level
-    assert calls["tps"] == [("ETH/USDT:USDT", 3640.0)]  # TP2 rests SERVER-SIDE
+    # TP2 rests SERVER-SIDE, tagged with the POSITION side so a hedge-mode
+    # symbol attaches it to the long book rather than the short one.
+    assert calls["tps"] == [("ETH/USDT:USDT", 3640.0, "long")]
 
 
 def test_open_tp_attach_failure_keeps_position_and_warns(monkeypatch, tmp_path):
     calls = _wire(monkeypatch, tmp_path)
-    monkeypatch.setattr(M, "_set_tp", lambda sym, tp: "boom")
+    monkeypatch.setattr(M, "_set_tp", lambda sym, tp, pos_side="long": "boom")
     assert M.mirror_open("ETH/USDT:USDT", "long", 3500.0, 3430.0, 3640.0)
     assert "ETH/USDT:USDT" in M._load()               # position kept (SL protects)
     assert any("掛終標失敗" in m for m in calls["tg"])

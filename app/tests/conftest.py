@@ -138,6 +138,12 @@ def _no_live_side_effects(request, monkeypatch, tmp_path):
     # the S1→Bybit mirror must also stay OFF unless a test opts in
     import config as _cfg
     monkeypatch.setattr(_cfg, "S1_BYBIT_MIRROR", False)
+    # Learned Bybit position modes: redirect the file AND reset the in-process
+    # cache, or a test that trips the hedge-retry would teach the real engines
+    # that a live symbol is hedge mode and mis-index the next real order.
+    import bybit_mode
+    monkeypatch.setattr(bybit_mode, "STATE_FILE", str(tmp_path / "bybit_mode.json"))
+    monkeypatch.setattr(bybit_mode, "_cache", {"loaded": False, "modes": {}})
     # LINE push (dad's 台股 messages) — same single-choke-point treatment as
     # telegram: send() logic still runs, nothing leaves the process. The
     # webhook's subscription file is redirected so tests never touch the

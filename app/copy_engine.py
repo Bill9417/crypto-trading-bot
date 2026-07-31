@@ -22,6 +22,7 @@ import time
 
 import ccxt
 
+import bybit_mode
 import config
 import copy_store
 import strategy3_exec as X
@@ -176,10 +177,15 @@ def mirror_open(symbol: str, direction: str, price: float, sl_price: float,
             except Exception as exc:  # noqa: BLE001 — 110043 not-modified is benign
                 if "110043" not in str(exc) and "not modified" not in str(exc).lower():
                     print(f"[copy] {name}: set_leverage warn {symbol}: {exc}")
-            order = c.create_order(symbol, "market", side, qty, params={
-                "positionIdx": 0,
-                "stopLoss": c.price_to_precision(symbol, sl_price),
-            })
+            # Followers run their own accounts, so their position mode is
+            # cached under their own uid — never inherited from ours.
+            order = bybit_mode.send_with_mode(
+                bybit_mode.scope_key(uid, symbol), direction,
+                lambda pidx, c=c, qty=qty, side=side:
+                c.create_order(symbol, "market", side, qty, params={
+                    "positionIdx": pidx,
+                    "stopLoss": c.price_to_precision(symbol, sl_price),
+                }))
             summary["done"] += 1
             _write_status(uid, state="active", last_error=None, last_qty=qty,
                           last_order_id=(order or {}).get("id"),
@@ -211,8 +217,14 @@ def mirror_close(symbol: str, why: str = "") -> dict:
                               last_action=f"CLOSE {symbol} (flat)")
                 continue
             close_side = "sell" if pos["side"] == "long" else "buy"
-            c.create_order(symbol, "market", close_side, pos["qty"],
-                           params={"positionIdx": 0, "reduceOnly": True})
+            # pos["side"], not close_side — the index names the position being
+            # reduced. Getting this backwards on a follower's account would
+            # leave their position open with somebody else's money at risk.
+            bybit_mode.send_with_mode(
+                bybit_mode.scope_key(uid, symbol), pos["side"],
+                lambda pidx, c=c, pos=pos, close_side=close_side:
+                c.create_order(symbol, "market", close_side, pos["qty"],
+                               params={"positionIdx": pidx, "reduceOnly": True}))
             summary["done"] += 1
             _write_status(uid, state="active", last_error=None,
                           last_action=f"CLOSE {symbol}")
@@ -234,17 +246,20 @@ def mirror_set_stop(symbol: str, sl_price: float) -> dict:
         summary["total"] += 1
         try:
             c = _client(key, secret)
-            if not _position(c, symbol):
+            fpos = _position(c, symbol)
+            if not fpos:
                 summary["done"] += 1
                 continue
             market_id = c.market(symbol)["id"]
-            body = {"category": "linear", "symbol": market_id, "positionIdx": 0,
-                    "tpslMode": "Full",
-                    "stopLoss": c.price_to_precision(symbol, sl_price)}
             setter = getattr(c, "private_post_v5_position_trading_stop", None) or \
                 getattr(c, "privatePostV5PositionTradingStop", None)
             if setter:
-                setter(body)
+                bybit_mode.send_with_mode(
+                    bybit_mode.scope_key(uid, symbol), fpos["side"],
+                    lambda pidx, c=c, setter=setter, market_id=market_id:
+                    setter({"category": "linear", "symbol": market_id,
+                            "positionIdx": pidx, "tpslMode": "Full",
+                            "stopLoss": c.price_to_precision(symbol, sl_price)}))
             summary["done"] += 1
             _write_status(uid, state="active", last_error=None,
                           last_action=f"STOP {symbol} → {sl_price:.6g}")
@@ -270,8 +285,8 @@ def _position(c, symbol: str):
 
 def _mark_order_error(uid, name, api_key, exc, action) -> None:
     msg = str(exc)
-    if "position idx" in msg.lower() or "10001" in msg:
-        msg += "（Bybit 帳戶需設為 One-Way 單向持倉）"
+    if "position idx" in msg.lower():
+        msg += "（持倉模式不符，已自動改用另一種模式重試仍失敗）"
     if isinstance(exc, ccxt.AuthenticationError):
         _drop_client(api_key)                 # key changed/revoked — stop reusing
         msg = "金鑰失效或被撤銷，請重新提交"
