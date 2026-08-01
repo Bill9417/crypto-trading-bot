@@ -15,6 +15,14 @@ def _candle(ts, o, h, l_, c, v=100.0):
     return [ts, o, h, l_, c, v]
 
 
+def _with_forming(bars):
+    """`bars` plus a trailing still-forming candle, the way ccxt actually
+    returns a live feed. closed_bars() drops it, so the tracker sees exactly
+    `bars` — supplying only `bars` would leave it one short of BT.WINDOW."""
+    nxt = (bars[-1][0] + HOUR) if bars else 0
+    return bars + [_candle(nxt, 100, 100, 100, 100, 1.0)]
+
+
 def _pending(entry=100.0, sl=95.0, tp1=110.0, tp2=120.0, dir_="LONG", last_ts=0):
     return {"symbol": "FAKE", "dir": dir_, "lights": 6, "entry": entry, "sl": sl,
             "tp1": tp1, "tp2": tp2, "last_ts": last_ts, "wait_bars": 0,
@@ -113,7 +121,8 @@ def _stub_universe(monkeypatch, oh1h_by_symbol, btc_reg=None):
 
 def test_tick_opens_a_pending_position_on_a_fresh_signal(monkeypatch, tmp_path):
     monkeypatch.setattr(PT, "STATE_FILE", str(tmp_path / "paper.json"))
-    oh1h = [_candle(i * HOUR, 100, 100, 100, 100) for i in range(BT.WINDOW)]
+    oh1h = _with_forming([_candle(i * HOUR, 100, 100, 100, 100)
+                          for i in range(BT.WINDOW)])
     _stub_universe(monkeypatch, {"FAKE/USDT:USDT": oh1h})
     monkeypatch.setattr(BT, "evaluate", lambda oh, ema, reg: (True, 100.0, 95.0, 110.0, 120.0, 7))
 
@@ -125,7 +134,8 @@ def test_tick_opens_a_pending_position_on_a_fresh_signal(monkeypatch, tmp_path):
 
 def test_tick_longs_only_variant_skips_short_signals(monkeypatch, tmp_path):
     monkeypatch.setattr(PT, "STATE_FILE", str(tmp_path / "paper.json"))
-    oh1h = [_candle(i * HOUR, 100, 100, 100, 100) for i in range(BT.WINDOW)]
+    oh1h = _with_forming([_candle(i * HOUR, 100, 100, 100, 100)
+                          for i in range(BT.WINDOW)])
     _stub_universe(monkeypatch, {"FAKE/USDT:USDT": oh1h})
     monkeypatch.setattr(BT, "evaluate", lambda oh, ema, reg: (False, 100.0, 105.0, 90.0, 80.0, 7))
 
@@ -171,7 +181,7 @@ def test_wants_lowvol_abstains_on_unusable_history():
 
 def test_tick_lowvol_variant_skips_a_volatile_symbol(monkeypatch, tmp_path):
     monkeypatch.setattr(PT, "STATE_FILE", str(tmp_path / "paper.json"))
-    wild = _wild_candles(BT.WINDOW)
+    wild = _with_forming(_wild_candles(BT.WINDOW))
     _stub_universe(monkeypatch, {"FAKE/USDT:USDT": wild})
     monkeypatch.setattr(BT, "evaluate", lambda oh, ema, reg: (True, 100.0, 95.0, 110.0, 120.0, 7))
 
@@ -222,7 +232,7 @@ def test_single_exit_stop_wins_a_bar_that_spans_both():
 
 def test_tick_sets_a_3r_target_for_the_lowvol_3r_variant(monkeypatch, tmp_path):
     monkeypatch.setattr(PT, "STATE_FILE", str(tmp_path / "paper.json"))
-    quiet = _quiet_candles(BT.WINDOW)
+    quiet = _with_forming(_quiet_candles(BT.WINDOW))
     _stub_universe(monkeypatch, {"FAKE/USDT:USDT": quiet})
     # entry 100, sl 95 -> risk 5 -> a 3R target sits at 115
     monkeypatch.setattr(BT, "evaluate", lambda oh, ema, reg: (True, 100.0, 95.0, 110.0, 120.0, 7))
@@ -239,7 +249,7 @@ def test_tick_sets_a_3r_target_for_the_lowvol_3r_variant(monkeypatch, tmp_path):
 
 def test_tick_lowvol_variant_takes_a_quiet_symbol(monkeypatch, tmp_path):
     monkeypatch.setattr(PT, "STATE_FILE", str(tmp_path / "paper.json"))
-    quiet = _quiet_candles(BT.WINDOW)
+    quiet = _with_forming(_quiet_candles(BT.WINDOW))
     _stub_universe(monkeypatch, {"FAKE/USDT:USDT": quiet})
     monkeypatch.setattr(BT, "evaluate", lambda oh, ema, reg: (True, 100.0, 95.0, 110.0, 120.0, 7))
 
@@ -264,12 +274,13 @@ def test_tick_respects_the_throttle_unless_forced(monkeypatch, tmp_path):
 
 def test_full_lifecycle_pending_to_open_to_closed(monkeypatch, tmp_path):
     monkeypatch.setattr(PT, "STATE_FILE", str(tmp_path / "paper.json"))
-    base = [_candle(i * HOUR, 100, 100, 100, 100) for i in range(BT.WINDOW)]
+    base = _with_forming([_candle(i * HOUR, 100, 100, 100, 100)
+                          for i in range(BT.WINDOW)])
     _stub_universe(monkeypatch, {"FAKE/USDT:USDT": base})
     monkeypatch.setattr(BT, "evaluate", lambda oh, ema, reg: (True, 100.0, 95.0, 110.0, 120.0, 7))
     PT.tick(force=True)                                       # opens pending
 
-    fill_candle = [_candle((BT.WINDOW) * HOUR, 100, 101, 99, 100)]
+    fill_candle = _with_forming([_candle((BT.WINDOW + 1) * HOUR, 100, 101, 99, 100)])
     _stub_universe(monkeypatch, {"FAKE/USDT:USDT": fill_candle})
     monkeypatch.setattr(BT, "evaluate", lambda oh, ema, reg: None)
     PT.tick(force=True)                                       # fills
@@ -277,7 +288,7 @@ def test_full_lifecycle_pending_to_open_to_closed(monkeypatch, tmp_path):
     state = PT._load()
     assert "FAKE/USDT:USDT" in state["variants"]["s1_full"]["open"]
 
-    sl_candle = [_candle((BT.WINDOW + 1) * HOUR, 100, 100, 94, 95)]
+    sl_candle = _with_forming([_candle((BT.WINDOW + 3) * HOUR, 100, 100, 94, 95)])
     _stub_universe(monkeypatch, {"FAKE/USDT:USDT": sl_candle})
     PT.tick(force=True)                                       # stops out
 
@@ -293,3 +304,110 @@ def test_report_tg_handles_no_trades_yet(monkeypatch, tmp_path):
     text = PT.report_tg()
     assert "S1 (full, as live)" in text and "S1 longs-only" in text
     assert "no closed trades yet" in text
+
+
+# ── the forming-candle bug (found 2026-08-01, five silent days) ──────────────
+# ccxt returns the in-progress bar last. Everything here consumed it as final,
+# so evaluate() judged a PARTIAL bar (its volume is a fraction of a full hour's,
+# which fails S1's volume gate almost by construction) and _fill_pending /
+# _manage_open stamped last_ts from it, hiding the rest of that hour forever.
+# Result: 0 signals and 0 trades across all four variants for five days, with
+# no log line to say whether that was a quiet market or a broken tracker.
+def test_closed_bars_drops_the_forming_candle():
+    bars = [_candle(i * HOUR, 100, 100, 100, 100) for i in range(3)]
+    assert PT.closed_bars(bars) == bars[:-1]
+    assert PT.closed_bars([]) == []
+    assert PT.closed_bars([bars[0]]) == []
+
+
+def test_evaluate_never_sees_the_forming_bar(monkeypatch, tmp_path):
+    monkeypatch.setattr(PT, "STATE_FILE", str(tmp_path / "paper.json"))
+    closed = [_candle(i * HOUR, 100, 100, 100, 100) for i in range(BT.WINDOW)]
+    forming = _candle(BT.WINDOW * HOUR, 100, 100, 100, 100, 1.0)   # 1% of a bar's volume
+    _stub_universe(monkeypatch, {"FAKE/USDT:USDT": closed + [forming]})
+
+    seen = {}
+    def _eval(oh, ema, reg):
+        seen["last_ts"] = oh[-1][0]
+        seen["len"] = len(oh)
+        return None
+    monkeypatch.setattr(BT, "evaluate", _eval)
+    PT.tick(force=True)
+    assert seen["last_ts"] == closed[-1][0]        # the last CLOSED bar
+    assert seen["len"] == BT.WINDOW
+
+
+def test_a_partial_hour_is_re_read_once_it_closes():
+    """The second half of the bug: last_ts must not advance past a bar whose
+    high/low can still move, or the fill that prints later in that hour is
+    never seen."""
+    pos = _pending(entry=100.0, last_ts=0)
+    partial = _candle(HOUR, 105, 106, 102, 104)          # hasn't reached entry yet
+    assert PT._fill_pending(pos, PT.closed_bars([partial])) is None
+    assert pos["last_ts"] == 0                            # nothing consumed
+    final = _candle(HOUR, 105, 106, 99, 100)              # same hour, now closed
+    assert PT._fill_pending(pos, PT.closed_bars([final, _candle(2 * HOUR, 100, 100, 100, 100)])) == "filled"
+
+
+def test_a_failed_universe_fetch_retries_instead_of_burning_the_hour(monkeypatch, tmp_path):
+    """_last_tick used to be stamped BEFORE the fetch, so a broken fetch looked
+    exactly like a healthy tick and cost a full hour each time."""
+    monkeypatch.setattr(PT, "STATE_FILE", str(tmp_path / "paper.json"))
+    monkeypatch.setattr(PT, "_last_tick", 0.0)
+    monkeypatch.setattr(PT, "_fetch_universe", lambda progress=lambda *a: None: ({}, []))
+    assert PT.tick() is False
+    assert PT._last_tick == 0.0                    # not consumed
+
+    oh1h = _with_forming([_candle(i * HOUR, 100, 100, 100, 100) for i in range(BT.WINDOW)])
+    _stub_universe(monkeypatch, {"FAKE/USDT:USDT": oh1h})
+    monkeypatch.setattr(BT, "evaluate", lambda oh, ema, reg: None)
+    assert PT.tick() is True                       # next sweep proceeds
+    assert PT._last_tick > 0.0
+
+
+def test_every_tick_reports_what_it_did(monkeypatch, tmp_path, capsys):
+    """0 trades has to be evidence, not ambiguity."""
+    monkeypatch.setattr(PT, "STATE_FILE", str(tmp_path / "paper.json"))
+    oh1h = _with_forming([_candle(i * HOUR, 100, 100, 100, 100) for i in range(BT.WINDOW)])
+    _stub_universe(monkeypatch, {"FAKE/USDT:USDT": oh1h})
+    monkeypatch.setattr(BT, "evaluate", lambda oh, ema, reg: None)
+    PT.tick(force=True)
+    out = capsys.readouterr().out
+    assert "universe=1" in out and "evaluated=4" in out    # 1 symbol x 4 variants
+    assert "signals=0" in out and "new=0" in out
+
+
+# ── exit shape: the asymmetry these variants exist to attack ─────────────────
+def test_exit_shape_reports_best_worst_and_payoff(monkeypatch, tmp_path):
+    """S1's live bracket has never returned more than 1.44R in 127 trades while
+    a loser costs ~1.05R. Win rate and expectancy both hide that; best/worst
+    and the payoff ratio are what actually answer it."""
+    monkeypatch.setattr(PT, "STATE_FILE", str(tmp_path / "paper.json"))
+    PT._save({"variants": {v: {"open": {}, "closed": []} for v in PT.VARIANTS}
+              | {"s1_full": {"open": {}, "closed": [
+                  {"rr": 1.4}, {"rr": 1.2}, {"rr": -1.0}, {"rr": -1.0}]}}})
+    sh = PT.exit_shape("s1_full")
+    assert sh["n"] == 4
+    assert sh["best"] == 1.4 and sh["worst"] == -1.0
+    assert sh["avg_win"] == 1.3 and sh["avg_loss"] == -1.0
+    assert sh["payoff"] == 1.3
+
+
+def test_exit_shape_is_empty_before_any_trade(monkeypatch, tmp_path):
+    monkeypatch.setattr(PT, "STATE_FILE", str(tmp_path / "paper.json"))
+    sh = PT.exit_shape("s1_full")
+    assert sh["n"] == 0 and sh["best"] is None and sh["payoff"] is None
+
+
+def test_exit_shape_survives_an_all_wins_book(monkeypatch, tmp_path):
+    """No losses yet ⇒ no payoff ratio, rather than a divide-by-zero."""
+    monkeypatch.setattr(PT, "STATE_FILE", str(tmp_path / "paper.json"))
+    PT._save({"variants": {"s1_full": {"open": {}, "closed": [{"rr": 2.0}]}}})
+    sh = PT.exit_shape("s1_full")
+    assert sh["payoff"] is None and sh["avg_loss"] is None
+
+
+def test_report_carries_the_noise_caveat(monkeypatch, tmp_path):
+    monkeypatch.setattr(PT, "STATE_FILE", str(tmp_path / "paper.json"))
+    rep = PT.report_tg()
+    assert "紙上模擬" in rep and "0.07R" in rep

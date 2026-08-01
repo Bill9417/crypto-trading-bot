@@ -194,6 +194,19 @@ def mirror_open(binance_symbol: str, direction: str, price: float,
         sym = _sym(binance_symbol)
         d = _dir(direction)
 
+        # 🛑 Account-wide daily loss limit, checked FIRST — before any exchange
+        # call. No-op unless MAX_DAILY_LOSS_USDT is set. Entries only; an open
+        # mirror keeps its own stop and is never touched.
+        try:
+            import daily_risk
+            day_halt = daily_risk.entry_blocked()
+        except Exception as exc:  # noqa: BLE001 — the brake fails open
+            print(f"[s1-mirror] daily-risk gate error ({exc}) — allowing entry")
+            day_halt = ""
+        if day_halt:
+            _tg(f"{sym.split('/')[0]} 略過鏡單 — {day_halt}")
+            return False
+
         if sym not in (X.client().markets or {}):
             if sym not in _unlisted_warned:
                 _unlisted_warned.add(sym)
@@ -288,7 +301,7 @@ def _forget(sym: str, why: str) -> None:
         return
     _save(state)
     import strategy_ledger
-    strategy_ledger.record_close("S1", sym)
+    strategy_ledger.record_close("S1", sym, by=strategy_ledger.MANUAL)
     _tg(f"{sym.split('/')[0]} Bybit 端已無倉位（{why}）— 停止追蹤，此標的之後可再進場")
 
 
@@ -405,7 +418,10 @@ def mirror_close(binance_symbol: str, kind: str = "") -> bool:
                 closed = qty
         _save(state)
         import strategy_ledger
-        strategy_ledger.record_close("S1", sym)
+        # `closed` is 0 when the position had already vanished before we got
+        # here — that exit was not S1's either, so do not score it as one.
+        strategy_ledger.record_close("S1", sym,
+                                     by=None if closed else strategy_ledger.MANUAL)
         if X.is_live():
             note = f"已平倉 x{closed:g}" if closed else "Bybit 端已自行出場（停損先觸發）"
             _tg(f"{sym.split('/')[0]} 出場（{kind or 'close'}）— {note}")

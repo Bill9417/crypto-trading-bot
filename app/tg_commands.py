@@ -214,9 +214,12 @@ def fmt_winrate(binance: dict, bybit: dict, owner: bool = False) -> str:
         try:
             import strategy_ledger
             split = strategy_ledger.report(bybit["trades"])
+            fees = strategy_ledger.fee_report(bybit["trades"])
         except Exception as exc:  # noqa: BLE001 — a broken split must not eat the report
-            split = f"（各策略拆帳暫時無法計算：{str(exc)[:80]}）"
+            split, fees = f"（各策略拆帳暫時無法計算：{str(exc)[:80]}）", ""
         lines += ["", split]
+        if fees:
+            lines += ["", fees]
     return "\n".join(lines)
 
 

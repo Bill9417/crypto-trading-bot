@@ -167,6 +167,13 @@ def _no_live_side_effects(request, monkeypatch, tmp_path):
     import us_market
     monkeypatch.setattr(us_market, "STATE_FILE", str(tmp_path / "us_market_state.json"))
     monkeypatch.setattr(us_market, "fetch_quotes", _no_net)
+    # Account-wide daily loss brake: redirect its state file and reset the
+    # cache. It gates EVERY entry path, so a test must never be able to leave
+    # a real "already announced today" marker or a stale P&L reading behind.
+    import daily_risk
+    monkeypatch.setattr(daily_risk, "STATE_FILE", str(tmp_path / "daily_risk.json"))
+    monkeypatch.setattr(daily_risk, "_cache", {"ts": 0.0, "pnl": None, "day": ""})
+    monkeypatch.setattr(daily_risk, "MAX_DAILY_LOSS_USDT", 0.0)   # off unless opted in
     # site-link announcer + watchdog write real state/log files — redirect
     import site_link
     import watchdog

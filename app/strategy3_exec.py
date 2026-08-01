@@ -258,9 +258,16 @@ def closed_pnl_summary(limit: int = 1000) -> dict:
                 lev = float(it.get("leverage") or 0.0)
             except (TypeError, ValueError):
                 qty = entry_px = lev = 0.0
+            # Bybit's closedPnl is already NET of fees, and the fee legs are
+            # reported alongside — so gross = net + fees, which is the only way
+            # to see what share of the edge the exchange is taking.
+            try:
+                fees = float(it.get("openFee") or 0.0) + float(it.get("closeFee") or 0.0)
+            except (TypeError, ValueError):
+                fees = 0.0
             raw.append({"symbol": it.get("symbol"),
                         "entry": str(it.get("avgEntryPrice") or ""),
-                        "pnl": pnl,
+                        "pnl": pnl, "fees": fees,
                         # size fingerprint — lets strategy_ledger infer the owner
                         # of trades that closed before the ledger existed
                         "notional": qty * entry_px, "lev": lev,
@@ -271,16 +278,18 @@ def closed_pnl_summary(limit: int = 1000) -> dict:
         for r in raw:
             if cur and cur["symbol"] == r["symbol"] and cur["entry"] == r["entry"]:
                 cur["pnl"] += r["pnl"]
+                cur["fees"] += r["fees"]
                 cur["time"] = max(cur["time"], r["time"])
                 cur["notional"] += r["notional"]      # partial closes re-add up
                 cur["parts"] += 1
             else:
                 cur = {"symbol": r["symbol"], "entry": r["entry"], "pnl": r["pnl"],
-                       "notional": r["notional"], "lev": r["lev"],
+                       "fees": r["fees"], "notional": r["notional"], "lev": r["lev"],
                        "time": r["time"], "parts": 1}
                 trades.append(cur)
         for t in trades:
             t["pnl"] = round(t["pnl"], 6)
+            t["fees"] = round(t["fees"], 6)
         trades.sort(key=lambda x: x["time"], reverse=True)
 
         # daily net (last 14 days), booked on each grouped trade's close time

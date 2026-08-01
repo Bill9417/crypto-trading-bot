@@ -1521,9 +1521,24 @@ def performance():
                 "note": "5+ light confluence + BTC regime",
             }
 
+        # Reconciliation against the exchanges' own records. Computed here
+        # (not in the browser) so the page states the gap rather than leaving
+        # the reader to compare two tabs. Fail-soft: an API blip must never
+        # take the page down, and "cannot tell" is not "discrepancy".
+        try:
+            import executor as _ex
+            import strategy3_exec as _s3
+            reconcile = perf_reconcile(
+                wins + losses, wins,
+                _ex.realized_pnl_summary(), _s3.closed_pnl_summary(limit=400))
+        except Exception as exc:  # noqa: BLE001
+            print(f"[perf] reconcile unavailable: {exc}")
+            reconcile = {"verdict": None, "note": "", "tracked_closed": wins + losses}
+
         return render_template(
             "performance.html",
             records=records,
+            reconcile=reconcile,
             stats=stats,
             tier_stats=tier_stats,
             queued_signals=queued_signals,
@@ -2654,6 +2669,64 @@ def _log_health(base):
     return logs
 
 
+def perf_reconcile(tracked_closed: int, tracked_wins: int,
+                   real: dict, bybit: dict) -> dict:
+    """Compare the tracked signal record against the exchanges' own records.
+
+    /performance shows both and says they "differ on purpose" — true, but it
+    left the reader to spot the size of the gap. The tracked record contains
+    PHANTOM entries: signals the bot recorded and then scored even though the
+    order skipped, failed, or closed differently in reality. Stating the gap
+    makes those visible instead of merely disclosed.
+
+    Pure and total: takes already-fetched summaries, never raises, and returns
+    verdict=None when it genuinely cannot tell (an API error is not evidence
+    of a discrepancy).
+    """
+    real_ok = bool((real or {}).get("ok"))
+    by_ok = bool((bybit or {}).get("ok"))
+    real_n = int((real or {}).get("n_trades") or 0) if real_ok else 0
+    by_n = int((bybit or {}).get("n_trades") or 0) if by_ok else 0
+    exch_n = real_n + by_n
+    out = {
+        "tracked_closed": tracked_closed,
+        "tracked_wins": tracked_wins,
+        "exchange_trades": exch_n if (real_ok or by_ok) else None,
+        "exchange_net": (round(float((real or {}).get("net") or 0.0)
+                               + float((bybit or {}).get("net") or 0.0), 2)
+                         if (real_ok or by_ok) else None),
+        "verdict": None, "note": "",
+    }
+    if not (real_ok or by_ok):
+        out["note"] = "無法讀取交易所紀錄，暫時無法對帳。"
+        return out
+    if tracked_closed and exch_n == 0:
+        out["verdict"] = "phantom"
+        out["note"] = (f"追蹤紀錄有 {tracked_closed} 筆已結束訊號，"
+                       f"但交易所同期沒有任何成交 — 這些是<b>紙上紀錄</b>，"
+                       f"不是真實損益。")
+    elif tracked_closed > exch_n * 2 and exch_n:
+        out["verdict"] = "diverged"
+        out["note"] = (f"追蹤紀錄 {tracked_closed} 筆 vs 交易所 {exch_n} 筆成交 — "
+                       f"多數訊號沒有真的下單（跳過或失敗），"
+                       f"勝率請以交易所分頁為準。")
+    else:
+        out["verdict"] = "ok"
+        out["note"] = (f"追蹤 {tracked_closed} 筆 · 交易所 {exch_n} 筆成交 — "
+                       f"兩者本來就不同（追蹤的是策略，交易所是真錢）。")
+    return out
+
+
+def _daily_risk_status() -> dict:
+    """Account-wide daily loss brake, for the /health panel. Never raises —
+    this page must render even when the exchange is unreachable."""
+    try:
+        import daily_risk
+        return daily_risk.status()
+    except Exception as exc:  # noqa: BLE001
+        return {"enabled": False, "error": str(exc)[:150]}
+
+
 def build_health():
     """Full stack snapshot for /health — JSON-safe primitives only."""
     import re
@@ -2827,6 +2900,7 @@ def build_health():
         "logs": _log_health(base),
         "storage": storage,
         "pipeline": pipeline,
+        "daily_risk": _daily_risk_status(),
     }
 
 

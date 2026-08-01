@@ -137,6 +137,20 @@ def mirror_open(symbol: str, direction: str, price: float, sl_price: float,
     if not followers:
         return summary
 
+    # 🛑 Account-wide daily loss limit. The trigger is OUR account's day, which
+    # is the right reference: followers mirror our decisions, so if we have
+    # stopped opening, they stop too.
+    try:
+        import daily_risk
+        day_halt = daily_risk.entry_blocked()
+    except Exception as exc:  # noqa: BLE001 — fails open
+        print(f"[copy] daily-risk gate error ({exc}) — allowing entry")
+        day_halt = ""
+    if day_halt:
+        print(f"[copy] open skipped — {day_halt}")
+        _announce("開倉", symbol, direction, summary)
+        return summary
+
     # Exchange lot-step / minimums are only needed to place a REAL order. In
     # dry-run we just log an unfloored estimate, so we never touch the exchange.
     step = min_qty = min_notional = None

@@ -159,9 +159,18 @@
     {% endif %}
 
     {# ── 一句話解讀 ── #}
-    {% if us.read %}
+    {% if us.read or us.link_note %}
     <div class="seclabel">💡 一句話解讀</div>
-    <div class="card"><div style="font-size:14px;line-height:1.85;">{{ us.read }}</div></div>
+    <div class="card">
+        {% if us.read %}<div style="font-size:14px;line-height:1.85;">{{ us.read }}</div>{% endif %}
+        {# The measured version of "費半強對台股電子有利" — with its sample size
+           and, crucially, the base rate it has to beat to mean anything. #}
+        {% if us.link_note %}
+        <div class="note" style="margin-top:{{ '12px' if us.read else '0' }};">
+            📊 {{ us.link_note }}
+        </div>
+        {% endif %}
+    </div>
     {% endif %}
 
     <div class="guide">

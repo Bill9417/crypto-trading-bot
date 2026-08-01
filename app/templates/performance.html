@@ -514,6 +514,26 @@
         <div class="tab-pane" id="tab-signals">
             <p class="hint" style="margin:0 2px 12px;">The bot's <b>tracked/simulated</b> signal record — how the strategy performs on paper, independent of real order fills. Scope: <b>{{ perf_strategy.name }}</b>.</p>
 
+            {# Reconciliation against the exchanges. Saying the two "differ on
+               purpose" is true but left the SIZE of the gap to the reader —
+               and a tracked record full of signals the account never traded
+               reads as a track record when it is a simulation. #}
+            {% if reconcile and reconcile.verdict %}
+            <div class="hint" style="margin:0 2px 14px;padding:11px 13px;border-radius:10px;
+                 border:1px solid {{ '#f0525288' if reconcile.verdict == 'phantom'
+                                     else ('#f59e0b66' if reconcile.verdict == 'diverged' else '#8a99ad33') }};
+                 background:{{ 'rgba(240,82,82,.08)' if reconcile.verdict == 'phantom'
+                               else ('rgba(245,158,11,.07)' if reconcile.verdict == 'diverged' else 'rgba(138,153,173,.06)') }};">
+                {{ '⚠️' if reconcile.verdict != 'ok' else '✅' }} <b>對帳</b> ·
+                {{ reconcile.note | safe }}
+                {% if reconcile.exchange_net is not none %}
+                <br><span style="opacity:.8">交易所實際淨損益
+                    <b>{{ '%+.2f' % reconcile.exchange_net }}</b> USDT
+                    （Binance + Bybit 合計，含手續費）</span>
+                {% endif %}
+            </div>
+            {% endif %}
+
             <div class="stats-grid">
                 <div class="stat-card">
                     <div class="circular-progress">

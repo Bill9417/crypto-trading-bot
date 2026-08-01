@@ -82,8 +82,18 @@ def record_open(strategy: str, symbol: str, side: str = "",
         print(f"[ledger] record_open failed {symbol}: {exc}")
 
 
-def record_close(strategy: str, symbol: str, ts: float = None) -> None:
-    """Note that `strategy`'s position on `symbol` is flat."""
+def record_close(strategy: str, symbol: str, ts: float = None,
+                 by: str = None) -> None:
+    """Note that `strategy`'s position on `symbol` is flat.
+
+    `by` records WHO ended it — the strategy itself (default) or MANUAL when
+    the position was closed by hand on the exchange and the bot merely
+    reconciled afterwards. Ownership at OPEN is not the whole story: on
+    2026-07-28 the mirror opened ATOM and AVAX and the operator closed both by
+    hand hours later, so S1's record silently absorbed somebody else's exit
+    decision — ATOM ran to S1's TP1 on paper (+4.0%) but realised ~+0.7%. Any
+    expectancy computed over a mixture of the two is measuring neither.
+    """
     try:
         now = ts or time.time()
         sym = norm(symbol)
@@ -94,11 +104,62 @@ def record_close(strategy: str, symbol: str, ts: float = None) -> None:
         for r in reversed(rows):
             if r.get("symbol") == sym and not r.get("closed"):
                 r["closed"] = round(now, 3)
+                r["closed_by"] = by or strategy
                 break
         state["rows"] = rows
         _save(state)
     except Exception as exc:  # noqa: BLE001
         print(f"[ledger] record_close failed {symbol}: {exc}")
+
+
+def exit_kind(symbol: str, close_ts: float, rows: list = None):
+    """'S1' | 'S3' | 'manual' for the interval covering `close_ts`, or None.
+
+    Rows written before closed_by existed report the owning strategy, which is
+    the old (optimistic) assumption — `clean_only` below is what excludes them
+    from a strategy's honest record."""
+    sym = norm(symbol)
+    rows = rows if rows is not None else (_load().get("rows") or [])
+    best = None
+    for r in rows:
+        if r.get("symbol") != sym:
+            continue
+        opened = r.get("opened") or 0
+        closed = r.get("closed")
+        if close_ts < opened - GRACE_S:
+            continue
+        if closed is not None and close_ts > closed + GRACE_S:
+            continue
+        if best is None or opened > (best.get("opened") or 0):
+            best = r
+    if not best:
+        return None
+    return best.get("closed_by") or best.get("strategy")
+
+
+def intervention_stats(strategy: str = None, rows: list = None) -> dict:
+    """How many of a strategy's CLOSED positions it actually got to finish.
+
+    A high manual share means the live P&L is measuring the operator, not the
+    strategy — report it next to any win rate rather than burying it."""
+    rows = rows if rows is not None else (_load().get("rows") or [])
+    out = {"total": 0, "by_strategy": 0, "manual": 0, "unknown": 0}
+    for r in rows:
+        if not r.get("closed"):
+            continue
+        if strategy and r.get("strategy") != strategy:
+            continue
+        out["total"] += 1
+        by = r.get("closed_by")
+        if by is None:
+            out["unknown"] += 1          # predates closed_by — not assumed clean
+        elif by == MANUAL:
+            out["manual"] += 1
+        else:
+            out["by_strategy"] += 1
+    out["manual_pct"] = (round(out["manual"] / out["total"] * 100, 1)
+                         if out["total"] else 0.0)
+    return out
 
 
 # ── attribution ──────────────────────────────────────────────────────────────
@@ -214,6 +275,55 @@ def split_summary(trades: list) -> dict:
     return out
 
 
+def fee_drag(trades: list, strategy: str = None) -> dict:
+    """What share of the gross edge the exchange takes.
+
+    Bybit reports closedPnl already NET of fees, so a small account can look
+    strategy-negative while actually being gross-positive and cost-negative —
+    a different problem with a different fix (size up, trade less, or use
+    limit entries), and one that is invisible from net P&L alone.
+
+    {'n', 'gross', 'fees', 'net', 'fee_pct_of_gross', 'gross_avg', 'net_avg'}
+    fee_pct_of_gross is None when gross profit is <= 0 — there is no edge for
+    fees to be a fraction OF, and printing a percentage there would invent one.
+    """
+    rows = attribute(trades) if strategy else [dict(t) for t in (trades or [])]
+    if strategy:
+        rows = [t for t in rows if t.get("strategy") == strategy]
+    n = len(rows)
+    fees = sum(abs(float(t.get("fees") or 0.0)) for t in rows)
+    net = sum(float(t.get("pnl") or 0.0) for t in rows)
+    gross = net + fees
+    return {
+        "n": n,
+        "gross": round(gross, 4),
+        "fees": round(fees, 4),
+        "net": round(net, 4),
+        "fee_pct_of_gross": (round(fees / gross * 100, 1) if gross > 0 else None),
+        "gross_avg": round(gross / n, 4) if n else 0.0,
+        "net_avg": round(net / n, 4) if n else 0.0,
+    }
+
+
+def fee_report(trades: list, title: str = "🧾 手續費侵蝕") -> str:
+    """The fee-drag line for /winrate — stated only when there are fees to
+    report, and never as a percentage of a gross loss."""
+    d = fee_drag(trades)
+    if not d["n"] or d["fees"] <= 0:
+        return ""
+    lines = [title,
+             f"毛利 {d['gross']:+.2f} − 手續費 {d['fees']:.2f} = 淨利 {d['net']:+.2f} USDT",
+             f"平均每筆：毛 {d['gross_avg']:+.3f} → 淨 {d['net_avg']:+.3f} USDT"]
+    if d["fee_pct_of_gross"] is not None:
+        lines.append(f"手續費吃掉毛利的 <b>{d['fee_pct_of_gross']:.0f}%</b>")
+        if d["fee_pct_of_gross"] >= 50:
+            lines.append("⚠️ 超過一半 — 這是成本問題，不是策略問題："
+                         "單筆下太小、進出太頻繁，或該用限價單")
+    else:
+        lines.append("（毛利為負，手續費佔比無意義 — 問題不在成本）")
+    return "\n".join(lines)
+
+
 _LABEL = {"S1": "S1 訊號跟單", "S3": "S3 翻轉引擎", MANUAL: "手動交易"}
 
 
@@ -242,4 +352,15 @@ def report(trades: list, title: str = "📒 各策略實際損益（Bybit）") -
     thin = [_LABEL.get(k, k) for k in order if stats[k]["n"] < 30 and k != MANUAL]
     if thin:
         lines.append(f"（{'、'.join(thin)} 樣本太少，還看不出有沒有優勢）")
+
+    # A strategy's P&L only measures the STRATEGY when the strategy also chose
+    # the exit. Hand-closing a mirrored trade files the operator's decision
+    # under the bot's name, so the mix has to be stated next to the number.
+    for strat in ("S1", "S3"):
+        iv = intervention_stats(strat)
+        if iv["manual"]:
+            lines.append(
+                f"✋ {_LABEL.get(strat, strat)}：{iv['total']} 筆中有 "
+                f"<b>{iv['manual']} 筆是手動平倉</b>（{iv['manual_pct']:.0f}%）— "
+                f"這些的損益反映的是人的判斷，不是策略本身")
     return "\n".join(lines)

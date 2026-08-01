@@ -115,6 +115,25 @@ def _save(state: dict) -> None:
     os.replace(tmp, STATE_FILE)
 
 
+def closed_bars(oh1h: list) -> list:
+    """`oh1h` without its final, still-forming candle.
+
+    ccxt returns the in-progress bar as the last element. Everything here used
+    to consume it as if it were final, which broke the tracker two ways:
+
+      · evaluate() judged a partial bar — its volume is a fraction of a full
+        hour's, so S1's volume gate fails almost by construction. Five days of
+        hourly ticks produced ZERO signals across all four variants.
+      · _fill_pending / _manage_open stamped `last_ts` from the partial bar,
+        so the same hour was skipped on the next tick and any fill, stop or
+        target that printed later in that hour was never seen.
+
+    backtest.py avoids both by stopping its window at `n - 1`; this is the same
+    rule, applied once so the three call sites cannot drift apart.
+    """
+    return oh1h[:-1] if oh1h else []
+
+
 def _wants(variant: str, is_long: bool, oh: list) -> bool:
     """Does `variant` take this signal? `oh` is the same candle window
     evaluate() just judged, so the volatility read is as-of the entry bar."""
@@ -236,20 +255,25 @@ def tick(force=False, progress=lambda *a: None) -> bool:
     now = time.time()
     if not force and now - _last_tick < TICK_SEC:
         return False
-    _last_tick = now
 
     state = _load()
     data, btc_reg = _fetch_universe(progress)
     if not data:
+        # Deliberately BEFORE setting _last_tick: a failed universe fetch must
+        # retry on the next sweep, not burn the hour. It used to be stamped up
+        # front, which made a broken fetch look exactly like a healthy tick.
+        print("[paper] universe fetch returned nothing — retrying next sweep")
         return False
+    _last_tick = now
 
+    evaluated = signals = opened = 0
     for variant in VARIANTS:
         book = state["variants"][variant]
 
         # 1) advance pending (not-yet-filled) entries
         for sym in list(book.get("pending", {}) or {}):
             pos = book["pending"][sym]
-            oh1h = data.get(sym, {}).get("oh1h")
+            oh1h = closed_bars(data.get(sym, {}).get("oh1h") or [])
             if not oh1h:
                 continue
             result = _fill_pending(pos, oh1h)
@@ -262,7 +286,7 @@ def tick(force=False, progress=lambda *a: None) -> bool:
         # 2) advance open positions
         for sym in list(book.get("open", {}) or {}):
             pos = book["open"][sym]
-            oh1h = data.get(sym, {}).get("oh1h")
+            oh1h = closed_bars(data.get(sym, {}).get("oh1h") or [])
             if not oh1h:
                 continue
             closed = _manage_open(pos, oh1h)
@@ -275,17 +299,20 @@ def tick(force=False, progress=lambda *a: None) -> bool:
         for sym, d in data.items():
             if sym in busy:
                 continue
-            oh1h, ema4h = d["oh1h"], d["ema4h"]
+            oh1h, ema4h = closed_bars(d["oh1h"]), d["ema4h"]
             oh = oh1h[-BT.WINDOW:]
             if len(oh) < BT.WINDOW:
                 continue
+            evaluated += 1
             ts = oh1h[-1][0]
             res = BT.evaluate(oh, BT.as_of(ema4h, ts, None), BT.as_of(btc_reg, ts, "neutral"))
             if not res:
                 continue
+            signals += 1
             is_long, entry, sl, tp1, tp2, eff = res
             if not _wants(variant, is_long, oh):
                 continue
+            opened += 1
             entry, sl, tp1, tp2 = float(entry), float(sl), float(tp1), float(tp2)
             exit_style = "single" if variant == "s1_lowvol_3r" else "bracket"
             if exit_style == "single":
@@ -305,6 +332,13 @@ def tick(force=False, progress=lambda *a: None) -> bool:
 
     state["last_tick"] = now
     _save(state)
+    books = state["variants"]
+    print(f"[paper] tick: universe={len(data)} evaluated={evaluated} "
+          f"signals={signals} new={opened} · "
+          + " · ".join(
+              f"{v}:{len(books[v].get('pending', {}))}p/"
+              f"{len(books[v].get('open', {}))}o/{len(books[v].get('closed', []))}c"
+              for v in VARIANTS))
     return True
 
 
@@ -314,6 +348,32 @@ def stats(variant: str) -> dict:
     trades = [{"pnl": t["pnl"], "rr": t["rr"], "win": t["win"], "ts": t["closed_ts"],
                "dir": t["dir"], "lights": t["lights"]} for t in closed]
     return BT.summarize(trades, 0.0, 0.0, 0)
+
+
+def exit_shape(variant: str) -> dict:
+    """Where a variant's winners and losers actually land, in R.
+
+    The reason these variants exist: S1's live bracket has never returned more
+    than 1.44R in 127 historical trades while a loser costs a full ~1.05R, so
+    the question is not "does it win often" but "is the best winner allowed to
+    be bigger than the worst loser". Reporting only win rate and expectancy
+    hides exactly that.
+    """
+    closed = _load()["variants"].get(variant, {}).get("closed", [])
+    rs = [t.get("rr") for t in closed if isinstance(t.get("rr"), (int, float))]
+    wins = [r for r in rs if r > 0]
+    losses = [r for r in rs if r <= 0]
+    return {
+        "n": len(rs),
+        "best": round(max(rs), 2) if rs else None,
+        "worst": round(min(rs), 2) if rs else None,
+        "avg_win": round(sum(wins) / len(wins), 2) if wins else None,
+        "avg_loss": round(sum(losses) / len(losses), 2) if losses else None,
+        # >1 means the average winner outruns the average loser — the single
+        # number the exit change is trying to move.
+        "payoff": (round(abs(sum(wins) / len(wins)) / abs(sum(losses) / len(losses)), 2)
+                   if wins and losses and sum(losses) else None),
+    }
 
 
 def report_tg() -> str:
@@ -337,4 +397,13 @@ def report_tg() -> str:
         lines.append(f"\n{label}: {s['total']} closed · WR {s['win_rate']}% · "
                      f"E[R] {s['expectancy_r']:+.3f} · total {s['total_r']:+.2f}R "
                      f"({n_open} open, {n_pending} pending)")
+        # The asymmetry these variants exist to attack — not visible in WR or
+        # expectancy alone.
+        sh = exit_shape(variant)
+        if sh["best"] is not None:
+            payoff = f" · 賺賠比 {sh['payoff']:.2f}" if sh["payoff"] else ""
+            lines.append(f"   最大 {sh['best']:+.2f}R / 最差 {sh['worst']:+.2f}R{payoff}")
+
+    lines.append("\n⚠️ 紙上模擬，無真實下單。樣本夠多之前，任何差異都可能只是雜訊"
+                 "（同一份資料重測，光宇宙漂移就會動 0.07R）。")
     return "\n".join(lines)

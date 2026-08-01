@@ -43,7 +43,7 @@ import json
 import os
 import threading
 import time
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 import requests
@@ -348,6 +348,8 @@ def build_plain(snap: dict, now) -> str:
     read = read_line(snap)
     if read:
         lines += ["", f"💡 {read}"]
+    if snap.get("link_note"):
+        lines += [f"📊 {snap['link_note']}"]
     lines += ["", "⚠️ 資訊參考，非投資建議"]
     return "\n".join(lines)
 
@@ -399,6 +401,8 @@ def build_telegram(snap: dict, now) -> str:
     read = read_line(snap)
     if read:
         out += [tf.DIV, f"💡 {tf.esc(read)}"]
+    if snap.get("link_note"):
+        out.append(f"📊 {tf.esc(snap['link_note'])}")
     out.append("⚠️ 資訊參考，非投資建議")
     return "\n".join(out)
 
@@ -443,6 +447,138 @@ def _us_rows() -> list:
     except Exception as exc:  # noqa: BLE001 — breadth is a bonus, never fatal
         print(f"[usmarket] breadth unavailable: {exc}")
         return []
+
+
+# ── 費半 → 台積電: the measured version ──────────────────────────────────────
+# The 💡 line used to assert that a strong 費半 close is "偏正向" for 台股電子.
+# Directionally true, but unquantified — and the house rule everywhere else here
+# is that a claim ships with its sample. So measure it: on days 費半 closed
+# beyond ±SOX_THRESHOLD, did 2330 actually open above its previous close?
+#
+# ALWAYS reported next to the unconditional base rate. A 78% hit rate means
+# nothing on its own; it means a great deal against a 52% base. (First run on
+# 2 years of real bars: base 52% of 485 days, 費半 ≥ +2% → 78% of 102,
+# 費半 ≤ −2% → 9% of 82.)
+SOX_THRESHOLD = 2.0
+_LINK_TTL = 86400                # daily bars — recomputing more often is waste
+_link_lock = threading.Lock()
+_link_cache = {"ts": 0.0, "data": None}
+
+
+def _daily_2y(ysym: str) -> list:
+    """[(ts, open, close), …] of daily bars. Two years so each tail has a
+    usable sample; one year halves them."""
+    r = requests.get(
+        f"https://query1.finance.yahoo.com/v8/finance/chart/{ysym}",
+        params={"range": "2y", "interval": "1d"}, headers=_UA, timeout=_TIMEOUT)
+    r.raise_for_status()
+    res = r.json()["chart"]["result"][0]
+    q = res["indicators"]["quote"][0]
+    return [(t, q["open"][i], q["close"][i])
+            for i, t in enumerate(res.get("timestamp") or [])
+            if q["open"][i] is not None and q["close"][i] is not None]
+
+
+def measure_link(sox_rows: list, tw_rows: list, threshold: float = None) -> dict:
+    """Pure: hit rates for 2330's next open after a big 費半 move.
+
+    Uses each 台股 session's own PREVIOUS close as the reference, so "gapped up"
+    means what a Taiwanese reader means by 開高 — not a comparison against the
+    US session's own move.
+    """
+    threshold = SOX_THRESHOLD if threshold is None else threshold
+    day = {}
+    for i in range(1, len(sox_rows)):
+        prev, cur = sox_rows[i - 1][2], sox_rows[i][2]
+        if prev:
+            day[_d(sox_rows[i][0])] = (cur - prev) / prev * 100
+
+    tw = {_d(t): (o, c) for t, o, c in tw_rows}
+    dates = sorted(tw)
+    index = {d: i for i, d in enumerate(dates)}
+
+    def _next_after(d):
+        for x in dates:
+            if x > d:
+                return x
+        return None
+
+    def _rate(pred):
+        hits = n = 0
+        for ds, chg in day.items():
+            if not pred(chg):
+                continue
+            nd = _next_after(ds)
+            i = index.get(nd, 0) - 1 if nd else -1
+            if i < 0:
+                continue
+            n += 1
+            hits += 1 if tw[nd][0] > tw[dates[i]][1] else 0
+        return {"hits": hits, "n": n,
+                "pct": round(hits / n * 100) if n else None}
+
+    base_h = base_n = 0
+    for i in range(1, len(dates)):
+        base_n += 1
+        base_h += 1 if tw[dates[i]][0] > tw[dates[i - 1]][1] else 0
+
+    return {
+        "threshold": threshold,
+        "base": {"hits": base_h, "n": base_n,
+                 "pct": round(base_h / base_n * 100) if base_n else None},
+        "up": _rate(lambda c: c >= threshold),
+        "down": _rate(lambda c: c <= -threshold),
+    }
+
+
+def _d(ts) -> str:
+    """Session date key — UTC, and it must stay UTC for BOTH series.
+
+    Yahoo stamps a daily bar at its market's local open: 09:30 New York
+    (13:30/14:30 UTC) and 09:00 台北 (01:00 UTC). Both land on the same UTC
+    calendar day as their own session, so UTC aligns them correctly. Converting
+    to New York instead shifts every 台股 bar back a day — the TW sessions then
+    pair with the wrong US close, which quietly turned the measured 78% into
+    56% on identical sample sizes. Sample counts look fine when this is wrong;
+    only the hit rate moves.
+    """
+    return datetime.fromtimestamp(ts, timezone.utc).strftime("%Y-%m-%d")
+
+
+def sox_link() -> dict:
+    """measure_link() over live data, cached a day. {} if unavailable — every
+    caller must degrade to saying nothing rather than to an unmeasured claim."""
+    with _link_lock:
+        if _link_cache["data"] and time.time() - _link_cache["ts"] < _LINK_TTL:
+            return _link_cache["data"]
+        try:
+            out = measure_link(_daily_2y("%5ESOX"), _daily_2y("2330.TW"))
+            _link_cache.update(ts=time.time(), data=out)
+            return out
+        except Exception as exc:  # noqa: BLE001 — no claim beats a guessed one
+            print(f"[usmarket] sox link measure failed: {exc}")
+            return _link_cache["data"] or {}
+
+
+def link_sentence(snap: dict, link: dict) -> str:
+    """One measured sentence about today's 費半 move, or '' when today's move is
+    inside the threshold or the measurement is unavailable. Always carries the
+    sample size and the base rate — a hit rate without its base is not evidence.
+    """
+    if not link or not link.get("base"):
+        return ""
+    sox = next((i.get("chg_pct") for i in snap.get("indices", [])
+                if i.get("symbol") == "^SOX"), None)
+    if sox is None:
+        return ""
+    thr = link["threshold"]
+    side = link["up"] if sox >= thr else (link["down"] if sox <= -thr else None)
+    if not side or not side.get("n"):
+        return ""
+    word = "漲" if sox >= thr else "跌"
+    return (f"過去兩年費半單日{word}逾 {thr:g}% 共 {side['n']} 次，"
+            f"台積電隔個交易日開高的有 {side['pct']}%"
+            f"（一般日子是 {link['base']['pct']}%）")
 
 
 # ── read-only view for the public /us page ───────────────────────────────────
@@ -493,6 +629,8 @@ def web_view(now=None) -> dict:
             snap["live"] = not session_complete(quotes)
             snap["session_label"] = _session_label(snap, now)
             snap["read"] = read_line(snap)
+            snap["link"] = sox_link()
+            snap["link_note"] = link_sentence(snap, snap["link"])
             snap["market"] = market_status()
             snap["generated_at"] = int(time.time())
             snap["error"] = None
@@ -507,7 +645,8 @@ def web_view(now=None) -> dict:
                     "breadth": {"total": 0, "up": 0, "down": 0,
                                 "gainers": [], "losers": []},
                     "live": False, "session": "", "session_label": "",
-                    "read": "", "market": market_status(),
+                    "read": "", "link": {}, "link_note": "",
+                    "market": market_status(),
                     "generated_at": int(time.time()), "error": str(exc)[:200]}
 
 
@@ -550,6 +689,7 @@ def tick() -> bool:
         print(f"[usmarket] {today}: no new US session since {sess} — holiday notice")
     else:
         snap = build_snapshot(quotes, _us_rows())
+        snap["link_note"] = link_sentence(snap, sox_link())
         plain = build_plain(snap, now)
         msg = build_telegram(snap, now)
         state["last_session_date"] = sess

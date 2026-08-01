@@ -216,6 +216,18 @@ def open_flip(symbol: str, direction: str, price: float, score, margin: float,
     if halt:
         print(f"[strategy3] entry blocked by circuit breaker: {halt}")
         return "skip"
+    # 🛑 Account-wide daily loss limit — S3's own breaker only counts
+    # STRATEGY3_SYMBOLS, so it cannot see a bad day made by the other engines
+    # sharing this sub-account.
+    try:
+        import daily_risk
+        day_halt = daily_risk.entry_blocked()
+    except Exception as exc:  # noqa: BLE001 — fails open, same as above
+        print(f"[strategy3] daily-risk gate error ({exc}) — allowing entry")
+        day_halt = ""
+    if day_halt:
+        print(f"[strategy3] entry blocked by daily loss limit: {day_halt}")
+        return "skip"
     if X.is_live():
         try:
             if X.get_position(symbol):
