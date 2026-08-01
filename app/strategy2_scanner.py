@@ -295,26 +295,35 @@ def _digest_text(sigs: list) -> str:
     return "\n".join(lines)
 
 
-def _send_digest(sigs: list) -> bool:
+def _send_digest(sigs: list) -> str:
     """Send the digest on the DIGEST_SEC cadence (default every 30 min) instead
     of a message per signal. Only signals clearing the digest bar (conviction
     ≥ STRATEGY2_DIGEST_MIN_CONV, not counter-BTC) reach Telegram — the raw
     70/30 firehose measured ~49% TP1-first / 65% eventual-SL, and sending
     coin-flips is what made the topic's win rate feel awful. Everything still
-    shows on the /strategy2 page. Returns whether Telegram accepted it."""
+    shows on the /strategy2 page.
+
+    Returns 'sent' | 'suppressed' | 'failed'. Three outcomes, not two: this
+    used to return a bare False both when Telegram rejected the message AND
+    when every signal was deliberately held back, so the caller logged a quiet
+    market as "digest of 19 signal(s) FAILED". All 14 FAILED lines in
+    strategy2.log were that — zero were real send errors — which is exactly the
+    kind of false alarm that trains you to ignore the log.
+    """
     rows = [s for s in sigs if digest_worthy(s)]
     if not rows:
         if sigs:
             print(f"[strategy2] digest: all {len(sigs)} signal(s) below the "
                   f"topic bar (conv<{config.STRATEGY2_DIGEST_MIN_CONV} or "
                   f"counter-BTC) — nothing sent")
-        return False
+        return "suppressed"
     try:
-        return bool(telegram_utils.send_message(_digest_text(rows),
-                                                parse_mode="HTML", channel="signals"))
+        ok = telegram_utils.send_message(_digest_text(rows),
+                                         parse_mode="HTML", channel="signals")
+        return "sent" if ok else "failed"
     except Exception as exc:  # noqa: BLE001 — a failed alert must never kill the loop
-        print(f"[strategy2] digest send failed: {exc}")
-        return False
+        print(f"[strategy2] digest send failed: {telegram_utils.redact(exc)}")
+        return "failed"
 
 
 # ── candle cache ─────────────────────────────────────────────────────────────
@@ -706,9 +715,10 @@ def main() -> None:
         # (default every 30 min). Silent when nothing new fired in the window.
         if time.time() - last_digest >= DIGEST_SEC:
             if pending:
-                ok = _send_digest(pending)
-                print(f"[strategy2] digest of {len(pending)} signal(s) "
-                      f"{'sent' if ok else 'FAILED'}")
+                outcome = _send_digest(pending)
+                if outcome != "suppressed":       # suppression already logged
+                    print(f"[strategy2] digest of {len(pending)} signal(s) "
+                          f"{'sent' if outcome == 'sent' else 'FAILED'}")
                 pending.clear()
             last_digest = time.time()
         elapsed = time.time() - start

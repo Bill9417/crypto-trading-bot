@@ -41,8 +41,9 @@ never raises into the scanner loop.
 """
 import json
 import os
+import threading
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
 import requests
@@ -442,6 +443,72 @@ def _us_rows() -> list:
     except Exception as exc:  # noqa: BLE001 — breadth is a bonus, never fatal
         print(f"[usmarket] breadth unavailable: {exc}")
         return []
+
+
+# ── read-only view for the public /us page ───────────────────────────────────
+# Its own cache, not the digest's state file: the page wants whatever is true
+# NOW (a live session included), while the digest deliberately only ever speaks
+# about a finished one.
+_WEB_TTL_LIVE = 60          # US session open — the numbers move
+_WEB_TTL_IDLE = 600         # closed — the same close all night
+_web_lock = threading.Lock()
+_web_cache = {"ts": 0.0, "data": None}
+
+
+def market_status(now_ny=None) -> dict:
+    """Open/closed plus the next 09:30 ET open, for the page's status chip.
+    Clock-based, so a holiday still reads 'open' here — which is why `live`
+    below comes from the quote timestamp instead, never from this."""
+    now = now_ny or datetime.now(TZ_NY)
+    o = now.replace(hour=9, minute=30, second=0, microsecond=0)
+    c = now.replace(hour=CLOSE_HOUR_NY, minute=0, second=0, microsecond=0)
+    is_open = now.weekday() < 5 and o <= now < c
+    nxt = o
+    while nxt <= now or nxt.weekday() >= 5:
+        nxt += timedelta(days=1)
+    return {"open": is_open, "next_open_ts": nxt.timestamp(),
+            "hours": "09:30–16:00 紐約", "now_ny": now.strftime("%m-%d %H:%M")}
+
+
+def web_view(now=None) -> dict:
+    """Payload for the public /us page — the same snapshot the 08:00 digest
+    builds, plus whether it is a finished session or a live one.
+
+    `live` is the honest bit and it is computed from the quote timestamp, not
+    the clock: Yahoo's regularMarketPrice tracks the last trade while a market
+    is open, so an intraday read is indistinguishable from a close by price
+    alone. Publishing one as 收盤 is exactly the 2026-07-30 mistake; here the
+    page says 盤中 instead. Fail-soft — a Yahoo outage serves the last good
+    snapshot rather than an error page.
+    """
+    now = now or datetime.now(TZ)
+    with _web_lock:
+        cached = _web_cache["data"]
+        ttl = _WEB_TTL_LIVE if (cached or {}).get("live") else _WEB_TTL_IDLE
+        if cached and time.time() - _web_cache["ts"] < ttl:
+            return cached
+        try:
+            quotes = fetch_quotes()
+            snap = build_snapshot(quotes, _us_rows())
+            snap["live"] = not session_complete(quotes)
+            snap["session_label"] = _session_label(snap, now)
+            snap["read"] = read_line(snap)
+            snap["market"] = market_status()
+            snap["generated_at"] = int(time.time())
+            snap["error"] = None
+            _web_cache.update(ts=time.time(), data=snap)
+            return snap
+        except Exception as exc:  # noqa: BLE001 — the page must never 500
+            print(f"[usmarket] web_view failed: {exc}")
+            if cached:
+                return {**cached, "error": str(exc)[:200]}
+            return {"indices": [], "vix": {"price": None, "chg_pct": None},
+                    "tnx": {"price": None, "chg_pp": None}, "adr": {},
+                    "breadth": {"total": 0, "up": 0, "down": 0,
+                                "gainers": [], "losers": []},
+                    "live": False, "session": "", "session_label": "",
+                    "read": "", "market": market_status(),
+                    "generated_at": int(time.time()), "error": str(exc)[:200]}
 
 
 def tick() -> bool:

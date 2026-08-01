@@ -205,8 +205,32 @@ def test_strategy2_digest_silent_when_empty(monkeypatch):
     import strategy2_scanner as SC
     sent = []
     monkeypatch.setattr(SC.telegram_utils, "send_message", lambda m, *a, **k: sent.append(m))
-    SC._send_digest([])
+    assert SC._send_digest([]) == "suppressed"
     assert sent == []                          # nothing new → no message
+
+
+def test_digest_distinguishes_suppressed_from_failed(monkeypatch):
+    """A quiet market is not a broken pipeline. _send_digest used to return a
+    bare False for BOTH "every signal was deliberately held back" and "Telegram
+    rejected it", so the scanner logged 'digest of 19 signal(s) FAILED' on a
+    perfectly healthy sweep — all 14 such lines in strategy2.log were that, and
+    none were real errors."""
+    import strategy2_scanner as SC
+    monkeypatch.setattr(SC.telegram_utils, "send_message", lambda m, *a, **k: True)
+    monkeypatch.setattr(SC, "digest_worthy", lambda s: False)
+    below_bar = [{"base": "AAA", "direction": "long", "score": 40, "price": 1.0}]
+    assert SC._send_digest(below_bar) == "suppressed"
+
+    monkeypatch.setattr(SC, "digest_worthy", lambda s: True)
+    assert SC._send_digest(below_bar) == "sent"
+
+    monkeypatch.setattr(SC.telegram_utils, "send_message", lambda m, *a, **k: False)
+    assert SC._send_digest(below_bar) == "failed"
+
+    def _boom(*a, **k):
+        raise RuntimeError("telegram down")
+    monkeypatch.setattr(SC.telegram_utils, "send_message", _boom)
+    assert SC._send_digest(below_bar) == "failed"
 
 
 # ── TradFi stock perps (2026-07-03): the account has not signed Binance's

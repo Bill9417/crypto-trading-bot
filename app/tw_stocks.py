@@ -489,10 +489,13 @@ def web_view(now=None) -> dict:
             row["buy_zone"] = bool(not hit and ref - band <= price <= ref + band)
         setups.append(row)
 
-    # Open setups first (new before tracking), then closed; newest date within each.
+    # Open setups first (new before tracking), then closed. Within a status,
+    # anything still IN its buy zone floats up — on a page called 好進場點 the
+    # actionable ones belong at the top, not wherever their date lands. Newest
+    # date breaks the remaining ties (the pre-sort is stable).
     order = {"new": 0, "tracking": 1, "tp": 2, "sl": 2}
     setups.sort(key=lambda r: r["date"] or "", reverse=True)
-    setups.sort(key=lambda r: order.get(r["status"], 3))
+    setups.sort(key=lambda r: (order.get(r["status"], 3), not r.get("buy_zone")))
 
     return {
         "as_of": last_run,

@@ -1,6 +1,7 @@
 import gzip
 import json
 import os
+import re
 import secrets
 import time
 from datetime import datetime, timezone, timedelta
@@ -2587,6 +2588,23 @@ def _ps_snapshot():
     return rows
 
 
+_SECRET_RE = re.compile(
+    r"(bot)\d{6,}:[A-Za-z0-9_\-]{20,}"            # Telegram bot token in a URL
+    r"|(?i:(api[_-]?key|secret|token|password)=)[^\s&\"']+")
+
+
+def _scrub(line: str) -> str:
+    """Remove credentials from a log line before it is rendered in a browser.
+
+    This page tails raw logs, and requests embeds the full request URL in its
+    exception messages — so a Telegram error printed by any process put a LIVE
+    bot token into last_error, 220 chars being ample for a whole one. The
+    emitters redact at the source now, but this is the layer that also covers
+    lines already on disk and any future module that forgets.
+    """
+    return _SECRET_RE.sub(lambda m: (m.group(1) + "***") if m.group(1) else "***", line)
+
+
 def _log_health(base):
     """Size / last write / error lines per stack log (tail ~64 KB each).
 
@@ -2625,11 +2643,11 @@ def _log_health(base):
                     tail = f.read().decode("utf-8", "replace")
                 lines = [ln.strip() for ln in tail.splitlines() if ln.strip()]
                 if lines:
-                    entry["last_line"] = lines[-1][:220]
+                    entry["last_line"] = _scrub(lines[-1])[:220]
                 errs = [ln for ln in lines if err_re.search(ln)]
                 entry["recent_errors"] = len(errs)
                 if errs:
-                    entry["last_error"] = errs[-1][:220]
+                    entry["last_error"] = _scrub(errs[-1])[:220]
             except Exception:  # noqa: BLE001
                 pass
         logs.append(entry)
@@ -3272,6 +3290,24 @@ def tw_page():
         data = {"setups": [], "regime": {}, "regime_ok": False,
                 "as_of": None, "error": str(e)}
     return render_template("tw.html", tw=data, invite_url=_config.TELEGRAM_INVITE_URL)
+
+
+@app.route("/us")
+def us_page():
+    """美股．開盤前看盤 — the companion to /tw at the other end of the day.
+    PUBLIC for the same reason /tw is: it opens straight from a LINE link and
+    carries only public market data, nothing account-related. Read-only and
+    fail-soft — web_view() serves its last good snapshot rather than raising."""
+    import config as _config
+    import us_market
+    return render_template("us.html", us=us_market.web_view(),
+                           invite_url=_config.TELEGRAM_INVITE_URL)
+
+
+@app.route("/api/us")
+def api_us():
+    import us_market
+    return jsonify(us_market.web_view())
 
 
 @app.route("/api/tw")

@@ -1,0 +1,207 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <title>美股．開盤前看盤</title>
+    <meta name="theme-color" content="#0e1018">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700;900&display=swap" rel="stylesheet">
+    {% include '_public_style.html' %}
+</head>
+<body>
+<div class="wrap">
+
+    {% if current_user.is_authenticated %}
+    <div class="topbar"><a href="/" class="backlink">← 返回 Dashboard</a></div>
+    {% endif %}
+
+    <div class="head">
+        <h1>🇺🇸 美股．開盤前看盤</h1>
+        <div class="sub">台股開盤前，先看昨晚美國怎麼收</div>
+    </div>
+
+    <div class="tabs">
+        <a href="/tw">🇹🇼 台股</a>
+        <a href="/us" class="on">🇺🇸 美股</a>
+    </div>
+
+    {% set live = us.live %}
+
+    {# ── 收盤 / 盤中 狀態 ──
+       `live` comes from the QUOTE TIMESTAMP, never the clock: while a market is
+       open Yahoo's regularMarketPrice is just the last trade, so intraday prices
+       look exactly like a close. Labelling one 收盤 is what went wrong on
+       2026-07-30, so the distinction is stated outright here. #}
+    <div class="regime {{ 'off' if live else 'ok' }}">
+        {% if live %}
+            <div class="verdict">🔴 美股盤中交易中</div>
+            <div class="why">
+                以下是<b style="color:var(--text);">即時報價</b>，不是收盤價 —<br>
+                收盤後數字還會變動。
+            </div>
+        {% else %}
+            <div class="verdict">✅ {{ us.session_label or '美股' }} 已收盤</div>
+            <div class="why">以下為該交易日的<b style="color:var(--text);">收盤</b>結果。</div>
+        {% endif %}
+        <div class="idx">紐約時間 <b>{{ us.market.now_ny }}</b> · 交易時段 {{ us.market.hours }}</div>
+    </div>
+
+    {% if us.error and not us.indices %}
+    <div class="empty">暫時取不到美股報價，請稍後再重新整理。</div>
+    {% endif %}
+
+    {# ── 指數 ── #}
+    {% if us.indices %}
+    <div class="seclabel">📊 主要指數</div>
+    <div class="card">
+        {% for i in us.indices %}
+            {% if i.price is not none %}
+            <div class="qrow">
+                <div class="q-name">{{ i.label }}
+                    {% if i.symbol == '^SOX' %}<small>台股電子的領先指標</small>{% endif %}
+                </div>
+                <div class="q-right">
+                    <div class="q-px num">{{ '{:,.0f}'.format(i.price) if i.price >= 1000 else '{:,.2f}'.format(i.price) }}</div>
+                    <div class="q-chg num {{ 'up' if i.chg_pct and i.chg_pct > 0 else ('dn' if i.chg_pct and i.chg_pct < 0 else 'flat') }}">
+                        {% if i.chg_pct is not none %}{{ '▲' if i.chg_pct > 0 else ('▼' if i.chg_pct < 0 else '―') }} {{ '%+.2f' % i.chg_pct }}%{% else %}—{% endif %}
+                    </div>
+                </div>
+            </div>
+            {% endif %}
+        {% endfor %}
+
+        {% if us.vix.price is not none %}
+        <div class="qrow">
+            <div class="q-name">VIX 恐慌指數<small>越高代表市場越緊張，20 以上算偏高</small></div>
+            <div class="q-right">
+                <div class="q-px num">{{ '%.2f' % us.vix.price }}</div>
+                <div class="q-chg num {{ 'dn' if us.vix.chg_pct and us.vix.chg_pct > 0 else 'up' }}">
+                    {% if us.vix.chg_pct is not none %}{{ '▲' if us.vix.chg_pct > 0 else '▼' }} {{ '%+.2f' % us.vix.chg_pct }}%{% endif %}
+                </div>
+            </div>
+        </div>
+        {% endif %}
+
+        {% if us.tnx.price is not none %}
+        <div class="qrow">
+            <div class="q-name">美國 10 年期公債<small>殖利率；升太快通常壓抑股市</small></div>
+            <div class="q-right">
+                <div class="q-px num">{{ '%.2f' % us.tnx.price }}%</div>
+                <div class="q-chg num {{ 'dn' if us.tnx.chg_pp and us.tnx.chg_pp > 0 else 'up' }}">
+                    {% if us.tnx.chg_pp is not none %}{{ '▲' if us.tnx.chg_pp > 0 else '▼' }} {{ '%+.2f' % us.tnx.chg_pp }}{% endif %}
+                </div>
+            </div>
+        </div>
+        {% endif %}
+    </div>
+    {% endif %}
+
+    {# ── 台積電 ADR ── #}
+    {% if us.adr %}
+    <div class="seclabel">🇹🇼 台積電 ADR</div>
+    <div class="card">
+        <div class="crow">
+            <div class="name">台積電 ADR<span class="code">TSM</span></div>
+            <div class="q-right">
+                <span class="q-px num">{{ '%.2f' % us.adr.adr }}</span>
+                {% if us.adr.adr_pct is not none %}
+                <span class="q-chg num {{ 'up' if us.adr.adr_pct > 0 else 'dn' }}" style="display:inline;margin-left:6px;">
+                    {{ '%+.2f' % us.adr.adr_pct }}%</span>
+                {% endif %}
+            </div>
+        </div>
+        <div class="levels" style="grid-template-columns:1fr 1fr;">
+            <div class="lv entry">
+                <div class="k">約當台股價</div>
+                <div class="v num">{{ '{:,.0f}'.format(us.adr.equiv) }}</div>
+                <div class="d">1 單位 ADR ＝ 5 股台積電</div>
+            </div>
+            <div class="lv">
+                <div class="k">2330 收盤</div>
+                <div class="v num">{{ '{:,.0f}'.format(us.adr.tw_close) }}</div>
+                <div class="d {{ 'up' if us.adr.premium_pct >= 0 else 'dn' }} num">
+                    {{ '溢價' if us.adr.premium_pct >= 0 else '折價' }} {{ '%.1f' % (us.adr.premium_pct | abs) }}%
+                </div>
+            </div>
+        </div>
+        <div class="note">
+            <b>怎麼看？</b>ADR 是台積電在美國掛牌的股票，跟著美股走。換算成台幣後比台股貴叫「溢價」，
+            代表外資在美國願意用更高的價錢買 —— 通常是台積電開盤的參考風向，但<b>不是保證</b>。
+        </div>
+    </div>
+    {% endif %}
+
+    {# ── 漲跌家數 ── #}
+    {% if us.breadth.total %}
+    <div class="seclabel">📈 美股百大權值股</div>
+    <div class="card">
+        <div class="crow">
+            <div class="name">上漲 <span class="up num">{{ us.breadth.up }}</span>
+                ／ 下跌 <span class="dn num">{{ us.breadth.down }}</span></div>
+            <div class="q-chg" style="color:var(--muted);font-size:12px;">共 {{ us.breadth.total }} 檔</div>
+        </div>
+        <div class="bar">
+            <div class="b-up" style="width: {{ (us.breadth.up / us.breadth.total * 100) | round(1) }}%"></div>
+            <div class="b-dn" style="width: {{ (us.breadth.down / us.breadth.total * 100) | round(1) }}%"></div>
+        </div>
+        <div class="movers">
+            {% if us.breadth.gainers %}
+            <div>🔥 領漲　{% for r in us.breadth.gainers %}<b>{{ r.ticker }}</b>
+                <span class="up num">{{ '%+.1f' % r.change_pct }}%</span>{% if not loop.last %}　{% endif %}{% endfor %}</div>
+            {% endif %}
+            {% if us.breadth.losers %}
+            <div>❄️ 領跌　{% for r in us.breadth.losers %}<b>{{ r.ticker }}</b>
+                <span class="dn num">{{ '%+.1f' % r.change_pct }}%</span>{% if not loop.last %}　{% endif %}{% endfor %}</div>
+            {% endif %}
+        </div>
+    </div>
+    {% endif %}
+
+    {# ── 一句話解讀 ── #}
+    {% if us.read %}
+    <div class="seclabel">💡 一句話解讀</div>
+    <div class="card"><div style="font-size:14px;line-height:1.85;">{{ us.read }}</div></div>
+    {% endif %}
+
+    <div class="guide">
+        <b>這頁怎麼用？</b><br>
+        1. 台股 09:00 開盤前看一眼 — 美股昨晚收紅或收黑，台股開盤常跟著走。<br>
+        2. <b>費城半導體</b>最重要：台股權值幾乎都是電子股，費半強台股電子通常較有撐。<br>
+        3. <b>台積電 ADR</b> 換算成台股價，可當 2330 開盤的參考。<br>
+        4. <b>VIX</b> 突然跳高代表市場恐慌，這種時候更要小心。<br>
+        5. 想看台股的實際進場點，切到上面的 <b>🇹🇼 台股</b> 分頁。
+    </div>
+
+    {% if invite_url %}
+    <a href="{{ invite_url }}" class="tg-cta" rel="noopener" target="_blank">🚀 加入 Telegram 訊號群組</a>
+    {% endif %}
+
+    <div class="disc">
+        ⚠️ 資料來源為公開行情，僅供參考。<br>
+        非投資建議，請自行評估風險。
+    </div>
+
+    <div class="foot">
+        <span id="updated">最後更新中…</span> · <a href="/us">重新整理</a>
+    </div>
+
+</div>
+
+<script>
+/* Same refresh contract as /tw: a full reload (no client re-render that could
+   drift from the template), paced to whether New York is actually trading. */
+(function () {
+    var el = document.getElementById('updated');
+    if (el) {
+        try {
+            el.textContent = '更新於 ' + new Date().toLocaleTimeString('zh-TW',
+                { hour: '2-digit', minute: '2-digit' });
+        } catch (e) { el.textContent = ''; }
+    }
+    var live = {{ 'true' if us.live else 'false' }};
+    setTimeout(function () { location.reload(); }, (live ? 60 : 900) * 1000);
+})();
+</script>
+</body>
+</html>

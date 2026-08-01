@@ -10,6 +10,7 @@
        nav. 台股 leads (user's request). #}
     {# ── overview ── #}
     <a href="/tw" class="nav-pill stocks{% if request.endpoint == 'tw_page' %} active{% endif %}">台股</a>
+    <a href="/us" class="nav-pill stocks{% if request.endpoint == 'us_page' %} active{% endif %}">美股</a>
     <a href="{{ url_for('index') }}" class="nav-pill home{% if request.endpoint == 'index' %} active{% endif %}">Dashboard</a>
 
     <span class="nav-sep nav-gsep" aria-hidden="true"></span>

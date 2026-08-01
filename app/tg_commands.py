@@ -702,7 +702,7 @@ def _poll_loop() -> None:
                            offset=offset, timeout=POLL_TIMEOUT,
                            allowed_updates='["message","callback_query"]').get("result") or []
         except Exception as exc:  # noqa: BLE001 — network blip: back off, retry
-            print(f"[tgcmd] poll error: {exc}")
+            print(f"[tgcmd] poll error: {telegram_utils.redact(exc)}")
             time.sleep(10)
             continue
         for up in updates:

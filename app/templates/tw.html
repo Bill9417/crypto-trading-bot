@@ -7,142 +7,7 @@
     <meta name="theme-color" content="#0e1018">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700;900&display=swap" rel="stylesheet">
-    <style>
-        :root {
-            --bg: #0e1018;
-            --card: #171b28;
-            --card2: #1e2436;
-            --line: rgba(255,255,255,.09);
-            --text: #f1f5f9;
-            --muted: #9aa7bd;
-            --blue: #38bdf8;
-            --gold: #ffcf4b;
-            --green: #22c55e;
-            --red: #f05252;
-            --amber: #f59e0b;
-        }
-        * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
-        html { -webkit-text-size-adjust: 100%; }
-        body {
-            margin: 0; background: var(--bg); color: var(--text);
-            font-family: 'Noto Sans TC', -apple-system, BlinkMacSystemFont, 'PingFang TC', sans-serif;
-            -webkit-font-smoothing: antialiased;
-            min-height: 100vh;
-            background-image: radial-gradient(1200px 600px at 50% -10%, rgba(56,189,248,.10), transparent 60%);
-        }
-        .num { font-variant-numeric: tabular-nums; }
-        .wrap { max-width: 620px; margin: 0 auto; padding: 18px 15px calc(40px + env(safe-area-inset-bottom)); }
-
-        /* Header */
-        .head { text-align: center; padding: 6px 0 14px; }
-        .head h1 { margin: 0; font-size: 22px; font-weight: 900; letter-spacing: .5px; }
-        .head .sub { margin-top: 5px; font-size: 12.5px; color: var(--muted); }
-
-        /* Regime banner */
-        .regime {
-            border-radius: 16px; padding: 16px 18px; margin: 4px 0 18px;
-            border: 1px solid var(--line); text-align: center;
-        }
-        .regime.ok  { background: linear-gradient(160deg, rgba(34,197,94,.16), rgba(34,197,94,.04)); border-color: rgba(34,197,94,.4); }
-        .regime.off { background: linear-gradient(160deg, rgba(148,163,184,.12), rgba(148,163,184,.03)); }
-        .regime .verdict { font-size: 19px; font-weight: 900; }
-        .regime.ok .verdict  { color: var(--green); }
-        .regime.off .verdict { color: var(--muted); }
-        .regime .why { margin-top: 6px; font-size: 13px; color: var(--muted); line-height: 1.5; }
-
-        /* Section label */
-        .seclabel {
-            display: flex; align-items: center; gap: 8px;
-            font-size: 12px; letter-spacing: 2px; color: var(--muted);
-            margin: 20px 2px 10px; text-transform: none;
-        }
-        .seclabel::after { content: ""; flex: 1; height: 1px; background: var(--line); }
-
-        /* Card */
-        .card {
-            background: var(--card); border: 1px solid var(--line);
-            border-radius: 15px; padding: 14px 15px; margin-bottom: 12px;
-        }
-        .card.buy  { border-color: rgba(255,207,75,.55); box-shadow: 0 0 0 1px rgba(255,207,75,.25) inset; }
-        .card.done { opacity: .72; }
-        .crow { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
-        .name { font-size: 17px; font-weight: 700; }
-        .name .code { color: var(--muted); font-weight: 500; font-size: 13px; margin-left: 5px; }
-        .stag { font-size: 11px; font-weight: 700; padding: 2px 7px; border-radius: 999px; margin-left: 7px; vertical-align: middle; }
-        .stag.breakout { color: var(--gold); background: rgba(255,207,75,.14); border: 1px solid rgba(255,207,75,.35); }
-        .stag.pullback { color: var(--blue); background: rgba(56,189,248,.12); border: 1px solid rgba(56,189,248,.3); }
-        .pill {
-            font-size: 11.5px; font-weight: 700; padding: 3px 9px; border-radius: 999px;
-            white-space: nowrap;
-        }
-        .pill.new  { background: rgba(255,207,75,.16); color: var(--gold); border: 1px solid rgba(255,207,75,.4); }
-        .pill.track{ background: rgba(56,189,248,.14); color: var(--blue); border: 1px solid rgba(56,189,248,.35); }
-        .pill.tp   { background: rgba(34,197,94,.16); color: var(--green); border: 1px solid rgba(34,197,94,.4); }
-        .pill.sl   { background: rgba(240,82,82,.15); color: var(--red); border: 1px solid rgba(240,82,82,.4); }
-
-        .live { margin: 9px 0 2px; font-size: 13px; color: var(--muted); }
-        .live .px { color: var(--text); font-weight: 700; font-size: 15px; }
-        .live .up { color: var(--green); } .live .dn { color: var(--red); }
-        .buytag {
-            display: inline-block; margin-left: 8px; font-size: 11.5px; font-weight: 700;
-            color: #1a1205; background: var(--gold); padding: 2px 8px; border-radius: 999px;
-        }
-
-        .levels { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; margin-top: 11px; }
-        .lv { background: var(--card2); border-radius: 11px; padding: 9px 10px; text-align: center; }
-        .lv .k { font-size: 11px; color: var(--muted); }
-        .lv .v { font-size: 16px; font-weight: 800; margin-top: 3px; }
-        .lv .d { font-size: 11.5px; margin-top: 2px; }
-        .lv.entry .v { color: var(--text); }
-        .lv.stop  .v { color: var(--red); }   .lv.stop .d  { color: var(--red); }
-        .lv.goal  .v { color: var(--green); } .lv.goal .d { color: var(--green); }
-
-        .trail { margin-top: 10px; font-size: 12.5px; color: var(--muted); background: rgba(255,255,255,.03);
-                 border: 1px solid var(--line); border-radius: 10px; padding: 8px 11px; line-height: 1.5; }
-        .trail b { color: var(--text); }
-        .trail.locked { background: rgba(34,197,94,.09); border-color: rgba(34,197,94,.32); color: #86e0aa; }
-        .trail.locked b { color: var(--green); }
-        .fin { margin-top: 8px; font-size: 12.5px; color: var(--muted); background: rgba(255,255,255,.03);
-               border: 1px solid var(--line); border-radius: 10px; padding: 8px 11px; line-height: 1.6; }
-        .fin .up { color: var(--green); font-weight: 700; }
-        .fin .dn { color: var(--red); font-weight: 700; }
-        .fin .next { display: block; margin-top: 3px; color: rgba(154,167,189,.75); font-size: 11px; }
-        .meta { margin-top: 10px; font-size: 12px; color: var(--muted); display: flex; justify-content: space-between; gap: 10px; }
-        .hit { margin-top: 9px; font-size: 13px; font-weight: 700; }
-        .hit.tp { color: var(--green); } .hit.sl { color: var(--red); }
-
-        .empty { text-align: center; color: var(--muted); padding: 26px 10px; font-size: 14px; line-height: 1.7; }
-
-        /* How-to-read + disclaimer */
-        .guide {
-            background: var(--card); border: 1px solid var(--line); border-radius: 15px;
-            padding: 15px 16px; margin-top: 22px; font-size: 13px; color: var(--muted); line-height: 1.85;
-        }
-        .guide b { color: var(--text); }
-        .disc { margin-top: 14px; font-size: 12px; color: var(--muted); text-align: center; line-height: 1.7; }
-        .foot { margin-top: 18px; text-align: center; font-size: 11.5px; color: rgba(154,167,189,.7); }
-        .foot a { color: var(--blue); text-decoration: none; }
-
-        .tg-cta {
-            display: flex; align-items: center; justify-content: center; gap: 8px;
-            margin-top: 22px; padding: 14px; border-radius: 15px;
-            background: linear-gradient(160deg, rgba(56,189,248,.16), rgba(56,189,248,.05));
-            border: 1px solid rgba(56,189,248,.4);
-            color: var(--blue); font-weight: 800; font-size: 14.5px;
-            text-decoration: none;
-        }
-        .tg-cta:active { transform: translateY(1px) scale(.99); }
-
-        /* Back-to-Dashboard bar — only shown to a logged-in owner, never to dad */
-        .topbar { display: flex; margin-bottom: 6px; }
-        .backlink {
-            display: inline-flex; align-items: center; gap: 6px;
-            font-size: 13px; font-weight: 600; color: var(--muted);
-            text-decoration: none; padding: 7px 13px; border-radius: 999px;
-            border: 1px solid var(--line); background: var(--card);
-        }
-        .backlink:hover { color: var(--text); border-color: var(--blue); }
-    </style>
+    {% include '_public_style.html' %}
 </head>
 <body>
 <div class="wrap">
@@ -156,6 +21,11 @@
         <div class="sub">
             {% if tw.as_of %}資料日期 {{ tw.as_of }} · {% endif %}強勢股回檔買點掃描
         </div>
+    </div>
+
+    <div class="tabs">
+        <a href="/tw" class="on">🇹🇼 台股</a>
+        <a href="/us">🇺🇸 美股</a>
     </div>
 
     {# ── 大盤紅綠燈 ── #}
@@ -174,13 +44,57 @@
                 （回測顯示：濾掉這種盤勢的訊號後，整體績效才轉正）
             </div>
         {% endif %}
+
+        {# BOTH gates, always — the verdict needs two conditions to pass, and
+           showing only the moving average made a perfectly correct 觀望 look
+           self-contradictory whenever the index sat above it but momentum had
+           rolled over. #}
+        {% if reg.close and reg.sma100 %}
+        {% set above = reg.close >= reg.sma100 %}
+        {% set rising = (reg.mom20 or 0) > 0 %}
+        <div class="idx">
+            加權指數 <b class="num">{{ '{:,.0f}'.format(reg.close) }}</b>
+        </div>
+        <div class="checks">
+            <div class="chk {{ 'pass' if above else 'fail' }}">
+                <span class="c-k">{{ '✅' if above else '❌' }} 站上 100 日均線
+                    <span style="opacity:.7">（{{ '{:,.0f}'.format(reg.sma100) }}）</span></span>
+                <span class="c-v num">{{ '%+.1f' % ((reg.close - reg.sma100) / reg.sma100 * 100) }}%</span>
+            </div>
+            <div class="chk {{ 'pass' if rising else 'fail' }}">
+                <span class="c-k">{{ '✅' if rising else '❌' }} 近 20 日走勢向上</span>
+                <span class="c-v num">{% if reg.mom20 is not none %}{{ '%+.1f' % (reg.mom20 * 100) }}%{% else %}—{% endif %}</span>
+            </div>
+        </div>
+        {% if above and not rising %}
+        <div class="why" style="margin-top:9px;">
+            指數雖然還在均線上，但近 20 日已經走弱 —— 兩個條件都成立才進場。
+        </div>
+        {% endif %}
+        {% endif %}
     </div>
 
     {% set open_setups = tw.setups | selectattr('status', 'in', ['new', 'tracking']) | list %}
     {% set done_setups = tw.setups | selectattr('status', 'in', ['tp', 'sl']) | list %}
 
+    {% set ready = open_setups | selectattr('buy_zone') | list %}
+
     {# ── 進場點 ── #}
     <div class="seclabel">🎯 追蹤中的進場點（{{ open_setups | length }}）</div>
+
+    {# The one number worth reading first: how many are actually at a price
+       where entering still matches the setup. They are sorted to the top. #}
+    {% if ready %}
+    <div class="note" style="margin:-2px 0 12px;">
+        💛 其中 <b>{{ ready | length }} 檔</b>現在就在進場價附近：
+        {% for s in ready %}<b>{{ s.name }}</b>{% if not loop.last %}、{% endif %}{% endfor %}
+        —— 已排在最前面。
+    </div>
+    {% elif open_setups %}
+    <div class="note" style="margin:-2px 0 12px;">
+        目前沒有股票在進場價附近，<b>先等回檔</b>，不必追高。
+    </div>
+    {% endif %}
 
     {% if open_setups and not tw.regime_ok %}
     <div style="font-size:12.5px;color:var(--muted);margin:-4px 2px 12px;line-height:1.6;">

@@ -1,5 +1,6 @@
 import json
 import os
+import re
 import threading
 import time
 
@@ -370,6 +371,21 @@ def _route(channel: str, force: bool):
     return token, payload, bot
 
 
+
+# ── secret redaction ─────────────────────────────────────────────────────────
+# requests puts the FULL request URL into its exception messages, and every
+# Telegram URL embeds the bot token. Printing such an exception writes a live
+# credential into app/logs/*.log — which /health then tails and renders in the
+# browser (last_error, 220 chars, more than enough for a whole token). Anything
+# that logs an exception from a Telegram call must go through this.
+_TOKEN_RE = re.compile(r"(bot)\d{6,}:[A-Za-z0-9_\-]{20,}")
+
+
+def redact(text) -> str:
+    """Strip Telegram bot tokens out of text about to be logged or displayed."""
+    return _TOKEN_RE.sub(r"\1***", str(text))
+
+
 def send_message(message, parse_mode=None, *, force=False, retries=2, channel="alerts"):
     """Long messages are split on line boundaries and sent as in-order
     chunks; returns True only when EVERY chunk was delivered. See _route()
@@ -407,7 +423,7 @@ def pin_message(chat_id, message_id, *, bot: str = "main") -> bool:
             print(f"[tg] pin failed (bot needs admin+pin rights?): {r.text[:200]}")
         return r.ok
     except requests.RequestException as exc:
-        print(f"[tg] pin error: {exc}")
+        print(f"[tg] pin error: {redact(exc)}")
         return False
 
 
@@ -418,7 +434,7 @@ def unpin_message(chat_id, message_id, *, bot: str = "main") -> bool:
                           data={"chat_id": chat_id, "message_id": message_id}, timeout=15)
         return r.ok
     except requests.RequestException as exc:
-        print(f"[tg] unpin error: {exc}")
+        print(f"[tg] unpin error: {redact(exc)}")
         return False
 
 
