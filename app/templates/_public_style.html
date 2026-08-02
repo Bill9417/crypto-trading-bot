@@ -8,12 +8,12 @@
    Included by tw.html and us.html; edit here, never in one page only. #}
 <style>
     :root {
-        --bg: #0e1018;
-        --card: #171b28;
+        --bg: #0d1220;
+        --card: rgba(33,40,62,.80);
         --card2: #1e2436;
         --line: rgba(255,255,255,.09);
-        --text: #f1f5f9;
-        --muted: #9aa7bd;
+        --text: #f2f6fb;
+        --muted: #93a3b8;
         --blue: #38bdf8;
         --gold: #ffcf4b;
         --green: #22c55e;
@@ -27,7 +27,11 @@
         font-family: 'Noto Sans TC', -apple-system, BlinkMacSystemFont, 'PingFang TC', sans-serif;
         -webkit-font-smoothing: antialiased;
         min-height: 100vh;
-        background-image: radial-gradient(1200px 600px at 50% -10%, rgba(56,189,248,.10), transparent 60%);
+        /* use the SAME shared background as every other page — this used to
+           be its own single radial, so the public pages read as a different
+           product to anyone arriving from a link and then logging in. */
+        background-image: var(--page-bg-glow);
+        background-attachment: fixed;
     }
     .num { font-variant-numeric: tabular-nums; }
     .wrap { max-width: 620px; margin: 0 auto; padding: 18px 15px calc(40px + env(safe-area-inset-bottom)); }

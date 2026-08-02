@@ -10,12 +10,16 @@
     --wolf-gold: #ffcf4b;
     --wolf-champagne: #e8ca8d;     /* nav accent — muted champagne, quieter than the data gold */
     --wolf-dark: #171a26;
-    --wolf-slate: #0e1018;
-    --wolf-bg: #0e1018;            /* alias some pages use */
-    --wolf-card: rgba(30, 36, 56, 0.72);
-    --wolf-border: rgba(255, 255, 255, 0.08);
-    --wolf-muted: #8a99ad;
-    --wolf-text: #f1f5f9;
+    --wolf-slate: #0d1220;
+    --wolf-bg: #0d1220;            /* alias some pages use */
+    /* Surfaces: a touch lighter and cooler-neutral than before, so cards
+       separate from the page instead of melting into it. */
+    --wolf-card: rgba(33, 40, 62, 0.82);
+    --wolf-card-hi: rgba(41, 49, 74, 0.82);   /* hover / raised */
+    --wolf-border: rgba(255, 255, 255, 0.10);
+    --wolf-border-hi: rgba(255, 255, 255, 0.18);
+    --wolf-muted: #93a3b8;
+    --wolf-text: #f2f6fb;
     --long: #16a34a;
     --long-bg: rgba(22, 163, 74, 0.14);
     --short: #dc2626;
@@ -23,17 +27,24 @@
     --radius: 14px;
     /* Card shadow + a 1px inner top highlight — the highlight is what makes dark
        glass cards read as "lit from above" instead of flat rectangles. */
-    --shadow: 0 14px 40px rgba(0, 0, 0, 0.38), inset 0 1px 0 rgba(255, 255, 255, 0.05);
+    --shadow: 0 16px 44px rgba(0, 0, 0, 0.42), inset 0 1px 0 rgba(255, 255, 255, 0.06);
     --page-max: 1440px;        /* ONE shared content width for every page + the nav */
-    --page-bg-glow:            /* ONE shared background so every page matches:
-                                  brand glows + a faint terminal grid (repeating-
-                                  gradients so it works with background-image alone —
-                                  pages never set background-size). */
-        radial-gradient(circle at 0% 0%, rgba(0, 210, 255, 0.09) 0%, transparent 44%),
-        radial-gradient(circle at 100% 100%, rgba(255, 207, 75, 0.05) 0%, transparent 36%),
-        radial-gradient(ellipse 80% 40% at 50% -10%, rgba(0, 210, 255, 0.05), transparent 70%),
-        repeating-linear-gradient(0deg, rgba(255, 255, 255, 0.016) 0 1px, transparent 1px 48px),
-        repeating-linear-gradient(90deg, rgba(255, 255, 255, 0.016) 0 1px, transparent 1px 48px);
+    /* ONE shared background for every page. Rebuilt 2026-08 for depth: the old
+       version was a flat near-black with two corner glows, which read as
+       "unfinished dark mode". Now a soft vertical lift (lighter at the top,
+       where the eye lands first), an indigo/violet mid-tone so the base is not
+       dead cold black, the brand cyan + gold as quiet corner auroras, a
+       vignette to pull focus inward, and a finer, dimmer grid.
+       Order matters: gradients paint front-to-back, so the grid is listed
+       first and the base wash last. */
+    --page-bg-glow:
+        repeating-linear-gradient(0deg, rgba(255, 255, 255, 0.012) 0 1px, transparent 1px 56px),
+        repeating-linear-gradient(90deg, rgba(255, 255, 255, 0.012) 0 1px, transparent 1px 56px),
+        radial-gradient(ellipse 120% 70% at 50% 120%, rgba(0, 0, 0, 0.55), transparent 60%),
+        radial-gradient(ellipse 90% 55% at 12% -8%, rgba(0, 190, 255, 0.13), transparent 62%),
+        radial-gradient(ellipse 70% 50% at 92% 8%, rgba(138, 110, 255, 0.10), transparent 60%),
+        radial-gradient(ellipse 80% 60% at 88% 96%, rgba(255, 190, 90, 0.055), transparent 58%),
+        linear-gradient(178deg, #151c2e 0%, #111726 38%, #0d1220 100%);
 }
 
 /* ── Global polish — one copy here instead of per-page duplicates ─────────── */
