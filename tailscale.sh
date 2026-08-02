@@ -9,6 +9,7 @@
 #   ./tailscale.sh url      print the permanent URL
 #   ./tailscale.sh status   show what is currently exposed
 #   ./tailscale.sh check    verify the URL actually answers from outside
+#   ./tailscale.sh doctor   check the prerequisites Funnel silently blocks on
 #
 # ── WHY THIS REPLACES tunnel.sh ──────────────────────────────────────────────
 # The Cloudflare *quick tunnel* minted a NEW random trycloudflare.com hostname
@@ -18,11 +19,17 @@
 # this machine, free on a personal tailnet, with a real certificate.
 #
 # ── ONE-TIME SETUP (a human must do this once) ───────────────────────────────
-#   1. Enable Funnel for the tailnet — Tailscale prints an approval link the
-#      first time you run `on`; open it and approve.
-#   2. Set the URL in app/.env so the bots announce the right link:
+#   Run `./tailscale.sh doctor` — it names whichever step is missing. Sign in
+#   to the admin console as the account it prints; a different identity 404s
+#   on the node-specific links.
+#   1. HTTPS certificates: login.tailscale.com/admin/dns → HTTPS Certificates
+#      → Enable. Without this Funnel cannot issue a cert and just blocks.
+#   2. Funnel in the policy: login.tailscale.com/admin/acls → Funnel →
+#      "Add Funnel to policy"  (nodeAttrs → attr: ["funnel"])
+#   3. ./tailscale.sh on
+#   4. Set the URL in app/.env so the bots announce the right link:
 #         PUBLIC_BASE_URL=https://<node>.<tailnet>.ts.net
-#   3. Restart the stack so the scanner picks it up:  ./run_all.sh bg
+#   5. Restart the stack so the scanner picks it up:  ./run_all.sh bg
 #
 # ── TRADE-OFFS, HONESTLY ─────────────────────────────────────────────────────
 #   · The URL contains your machine + tailnet name; it is stable and public,
@@ -48,11 +55,69 @@ node_url() {
         | python3 -c 'import sys,json;d=json.load(sys.stdin);n=(d.get("Self") or {}).get("DNSName","").rstrip(".");print("https://"+n if n else "")' 2>/dev/null
 }
 
+# `tailscale funnel` BLOCKS on a browser approval when a prerequisite is
+# missing, which looks like a hang. Check them up front and say which one.
+doctor() {
+    # NOTE: the status JSON goes via a temp file, not a pipe — the heredoc
+    # below already claims stdin, so a pipe would be swallowed and python
+    # would see an empty document.
+    _tsj="$(mktemp -t tsstatus)"
+    "$TS" status --json > "$_tsj" 2>/dev/null
+    python3 - "$_tsj" "$(node_url)" <<'PY'
+import json, sys
+url = sys.argv[2] if len(sys.argv) > 2 else ""
+try:
+    with open(sys.argv[1], encoding="utf-8") as f:
+        d = json.load(f)
+except Exception:
+    print("✗ tailscale is not running or not logged in — open the Tailscale app.")
+    raise SystemExit(1)
+
+self_ = d.get("Self") or {}
+users = d.get("User") or {}
+who = (users.get(str(self_.get("UserID"))) or {}).get("LoginName", "?")
+ok = True
+
+print(f"  tailnet account : {who}")
+print(f"  node URL        : {url or '(unknown)'}")
+
+if d.get("BackendState") != "Running":
+    print(f"✗ backend state is {d.get('BackendState')!r}, expected Running"); ok = False
+
+if not d.get("MagicDNSSuffix"):
+    print("✗ MagicDNS is off — enable it at https://login.tailscale.com/admin/dns"); ok = False
+
+if not d.get("CertDomains"):
+    print("✗ HTTPS certificates are NOT enabled — Funnel cannot work without them.")
+    print("    Fix: https://login.tailscale.com/admin/dns → HTTPS Certificates → Enable")
+    ok = False
+
+if ok:
+    print("✓ prerequisites look right (Funnel still needs the 'funnel' node attribute)")
+    print("    If `on` hangs, add it at https://login.tailscale.com/admin/acls")
+    print("    → Funnel section → \"Add Funnel to policy\"")
+else:
+    print()
+    print("  Sign in to the admin console as the SAME account shown above")
+    print(f"  ({who}) — signing in as a different identity 404s on the node links.")
+raise SystemExit(0 if ok else 1)
+PY
+    _rc=$?
+    rm -f "$_tsj"
+    return $_rc
+}
+
 case "${1:-status}" in
 on)
     URL="$(node_url)"
+    echo "Checking prerequisites…"
+    if ! doctor; then
+        echo
+        echo "Not starting — fix the ✗ above first, then re-run:  $0 on"
+        exit 1
+    fi
+    echo
     echo "Exposing 127.0.0.1:$PORT  →  ${URL:-<unknown node>}"
-    echo "(first run prints an approval link — open it, approve, then re-run)"
     "$TS" funnel --bg "$PORT"
     echo
     "$TS" funnel status
@@ -76,11 +141,13 @@ check)
     echo "Local  127.0.0.1:$PORT  → $(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:$PORT/login" || echo down)"
     echo "Public $URL → $(curl -s -o /dev/null -w '%{http_code}' --max-time 20 "$URL/login" || echo unreachable)"
     ;;
+doctor)
+    doctor ;;
 status)
     "$TS" funnel status
     echo
     echo "node: $(node_url)"
     ;;
 *)
-    echo "Usage: $0 [on|off|url|check|status]"; exit 1 ;;
+    echo "Usage: $0 [on|off|url|check|status|doctor]"; exit 1 ;;
 esac

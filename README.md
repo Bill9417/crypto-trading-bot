@@ -214,13 +214,19 @@ crypto/
 every restart**, killing every link already saved in the family's LINE and
 Telegram chats.
 
-One-time setup:
+One-time setup — run `./tailscale.sh doctor` first, it names whichever step is
+missing. In the admin console, **sign in as the account `doctor` prints**;
+signing in under a different identity makes the node-specific links 404.
 
-1. `./tailscale.sh on` — the first run prints an approval link; open it and
-   enable Funnel for the tailnet, then run it again.
-2. Put the URL in `app/.env` so the bots announce the right one:
+1. **HTTPS certificates** → https://login.tailscale.com/admin/dns → *HTTPS
+   Certificates* → Enable. Funnel cannot issue a certificate without this, and
+   `tailscale funnel` just blocks on approval if it's off.
+2. **Funnel in the policy** → https://login.tailscale.com/admin/acls → *Funnel*
+   → **Add Funnel to policy** (adds `nodeAttrs` with `attr: ["funnel"]`).
+3. `./tailscale.sh on`
+4. Put the URL in `app/.env` so the bots announce the right one:
    `PUBLIC_BASE_URL=https://<node>.<tailnet>.ts.net`
-3. `./run_all.sh bg` to pick it up.
+5. `./run_all.sh bg` to pick it up.
 
 `./tailscale.sh check` confirms it answers from outside. With `PUBLIC_BASE_URL`
 set, `site_link.py` stops promising the link will change, and the LINE webhook
