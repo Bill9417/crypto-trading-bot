@@ -287,7 +287,23 @@
         }
         .hero3d-stage:hover { border-color: rgba(0,210,255,.3); }
         /* display-only: clicks belong to the wrapping link, not the canvas */
-        #sky3d { display: block; width: 100%; height: 340px; pointer-events: none; }
+        #sky3d { display: block; width: 100%; height: 340px; cursor: grab; touch-action: pan-y; }
+        #sky3d.drag { cursor: grabbing; }
+        .hero3d-tip {
+            position: absolute; pointer-events: none; opacity: 0; z-index: 4;
+            transform: translate(-50%,-118%);
+            background: rgba(10,13,22,.97); border: 1px solid rgba(255,255,255,.18);
+            border-radius: 10px; padding: 8px 11px; font-size: .74rem; line-height: 1.5;
+            white-space: nowrap; box-shadow: 0 12px 30px rgba(0,0,0,.55); transition: opacity .12s;
+        }
+        .hero3d-tip.on { opacity: 1; }
+        .hero3d-tip .tt-s { font-weight: 900; font-size: .82rem; }
+        .hero3d-tip .tt-r { color: var(--wolf-muted); font-size: .68rem; }
+        .hero3d-tip .tt-r b { color: var(--wolf-text); font-weight: 700; font-variant-numeric: tabular-nums; }
+        .hero3d-hint {
+            position: absolute; right: 10px; bottom: 8px; font-size: .6rem;
+            color: var(--wolf-muted); opacity: .5; pointer-events: none;
+        }
 
         .hero3d-kpis {
             position: relative; display: grid; gap: 8px; margin-top: 12px;
@@ -1372,9 +1388,11 @@
                 <a href="/universe" class="hero3d-open">Open 3D →</a>
             </div>
 
-            <a href="/universe" class="hero3d-stage" title="Open the full 3D views">
+            <div class="hero3d-stage">
                 <canvas id="sky3d"></canvas>
-            </a>
+                <div class="hero3d-tip" id="sky3d-tip"></div>
+                <div class="hero3d-hint">拖曳旋轉 · 指向任一點看資訊 · 點擊開圖表</div>
+            </div>
 
             <div class="hero3d-kpis">
                 <a class="kpi" href="{{ url_for('funnel') }}">
@@ -1520,7 +1538,7 @@
             var cv = document.getElementById('sky3d');
             if (!cv || !window.Wolf3D) return;
             var reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-            var scene = new Wolf3D(cv, { spin: !reduce, spinRate: 0.0016, input: false,
+            var scene = new Wolf3D(cv, { spin: !reduce, spinRate: 0.0016, wheel: false,
                                          view: { yaw: -0.6, pitch: 0.38, dist: 3.1 } });
             var PTS = [], onScreen = true;
 
@@ -1593,12 +1611,36 @@
                     var col = o.p.d > 0 ? '#4ade80' : '#f87171';
                     var r = Math.max(1.6, Math.min((2.0 + o.p.conv * 1.4) * (o.q.f / 300), 10));
                     var a = Math.max(0.14, Math.min(1, 1.5 - (o.q.z - s.view.dist + 1.6) * 0.42));
-                    if (o.p.conv >= 3) { ctx.shadowColor = col; ctx.shadowBlur = 8; }
-                    ctx.globalAlpha = a; ctx.fillStyle = col;
-                    ctx.beginPath(); ctx.arc(o.q.x, o.q.y, r, 0, 6.2832); ctx.fill();
+                    var hot = s.hover === o.p;
+                    if (o.p.conv >= 3 || hot) { ctx.shadowColor = col; ctx.shadowBlur = hot ? 16 : 8; }
+                    ctx.globalAlpha = hot ? 1 : a; ctx.fillStyle = col;
+                    ctx.beginPath(); ctx.arc(o.q.x, o.q.y, hot ? r * 1.7 : r, 0, 6.2832); ctx.fill();
                     ctx.shadowBlur = 0;
+                    s.hit.push({ x: o.q.x, y: o.q.y, r: Math.max(r, 7), data: o.p });
                 });
                 ctx.globalAlpha = 1;
+            };
+
+            var tip = document.getElementById('sky3d-tip');
+            scene.onHover = function (p, mx, my) {
+                if (!p) { tip.classList.remove('on'); return; }
+                var col = p.d > 0 ? '#4ade80' : '#f87171';
+                tip.innerHTML =
+                    '<div class="tt-s" style="color:' + col + '">' + p.b +
+                    ' <span style="font-size:.64rem;opacity:.8">' + (p.d > 0 ? 'LONG' : 'SHORT') + '</span></div>' +
+                    '<div class="tt-r">RSI <b>' + (p.rsi == null ? '—' : p.rsi) + '</b>' +
+                    ' · 匯合 <b>' + (p.score == null ? '—' : p.score) + '</b>' +
+                    ' · 燈 <b>' + (p.lights == null ? '—' : p.lights) + '</b></div>' +
+                    '<div class="tt-r">' + (p.zone || '—') +
+                    (p.px != null ? ' · <b>' + p.px + '</b>' : '') +
+                    (p.rr != null ? ' · 已掛單' : '') + '</div>';
+                tip.classList.add('on');
+                var tw = tip.offsetWidth || 170;
+                tip.style.left = Math.max(tw / 2 + 4, Math.min(scene.W - tw / 2 - 4, mx)) + 'px';
+                tip.style.top = Math.max(tip.offsetHeight + 8, my) + 'px';
+            };
+            scene.onClick = function (p) {
+                if (p && p.tv) window.open(p.tv, '_blank', 'noopener');
             };
 
             function load() {

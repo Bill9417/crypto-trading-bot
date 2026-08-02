@@ -3636,6 +3636,35 @@ def tw_page():
     return render_template("tw.html", tw=data, invite_url=_config.TELEGRAM_INVITE_URL)
 
 
+@app.route("/markets")
+def markets_page():
+    """股市總覽 — 台股 + 美股 on ONE page.
+
+    /tw and /us stay as they are (dad opens them straight from LINE links);
+    this is the combined view, because the two markets are not independent —
+    the US close is what sets the tone for the next TW open, and reading them
+    on separate pages hides that. PUBLIC like its two halves: market data
+    only, nothing account-related. Fail-soft on each side independently, so a
+    broken TW scan still leaves the US half readable.
+    """
+    import config as _config
+    import tw_stocks
+    import us_market
+    try:
+        tw = tw_stocks.web_view()
+    except Exception as e:  # noqa: BLE001
+        print(f"Markets page (TW) error: {e}")
+        tw = {"setups": [], "regime": {}, "regime_ok": False, "as_of": None}
+    try:
+        us = us_market.web_view()
+    except Exception as e:  # noqa: BLE001
+        print(f"Markets page (US) error: {e}")
+        us = {"indices": [], "vix": {}, "tnx": {}, "adr": {}, "breadth": {},
+              "read": "", "session_label": None, "live": False}
+    return render_template("markets.html", tw=tw, us=us,
+                           invite_url=_config.TELEGRAM_INVITE_URL)
+
+
 @app.route("/us")
 def us_page():
     """美股．開盤前看盤 — the companion to /tw at the other end of the day.

@@ -36,9 +36,7 @@
         this.resize = this.resize.bind(this);
         window.addEventListener('resize', this.resize);
         this.resize();
-        // opts.input:false = display-only (the dashboard's mini cloud). Its
-        // wheel handler calls preventDefault, so binding input on a decorative
-        // canvas would hijack page scrolling whenever the cursor crossed it.
+        this._wheel = opts.wheel;          // read by _bindInput
         if (opts.input !== false) this._bindInput();
 
         (function loop() {
@@ -127,11 +125,16 @@
             if (self.hover) { self.hover = null; self._dirty = true; }
             if (self.onHover) self.onHover(null, 0, 0);
         });
-        cv.addEventListener('wheel', function (e) {
-            e.preventDefault();
-            self.view.dist = Math.max(1.7, Math.min(9, self.view.dist + (e.deltaY > 0 ? 0.28 : -0.28)));
-            self._dirty = true;
-        }, { passive: false });
+        // opts.wheel:false keeps hover/drag but leaves the wheel alone. On a
+        // canvas embedded in a scrolling page (the dashboard hero), zooming
+        // would steal the scroll whenever the cursor crossed it.
+        if (this._wheel !== false) {
+            cv.addEventListener('wheel', function (e) {
+                e.preventDefault();
+                self.view.dist = Math.max(1.7, Math.min(9, self.view.dist + (e.deltaY > 0 ? 0.28 : -0.28)));
+                self._dirty = true;
+            }, { passive: false });
+        }
     };
 
     /* ── wireframe box + floor grid + axis ticks ──────────────────────────
