@@ -200,10 +200,31 @@ crypto/
 ├── docs/                       # USAGE.md, PROJECT_MEMORY.md (historical)
 ├── run_all.sh                  # start/stop the whole stack (./run_all.sh bg)
 ├── run_web.sh / run_bot.sh / run_strategy2.sh / dev.sh
-├── tunnel.sh                   # Cloudflare quick-tunnel for the dashboard
+├── tailscale.sh                # permanent public HTTPS URL (Tailscale Funnel)
+├── tunnel.sh                   # Cloudflare quick-tunnel (legacy: URL changes on restart)
 ├── sync.sh                     # commit+push helper
 └── README.md
 ```
+
+### 🔗 Public link
+
+`./tailscale.sh on` exposes `127.0.0.1:4000` on a **permanent** HTTPS URL —
+`https://<node>.<tailnet>.ts.net` — free on a personal tailnet. This replaces
+`tunnel.sh`, whose Cloudflare quick tunnel minted a **new random hostname on
+every restart**, killing every link already saved in the family's LINE and
+Telegram chats.
+
+One-time setup:
+
+1. `./tailscale.sh on` — the first run prints an approval link; open it and
+   enable Funnel for the tailnet, then run it again.
+2. Put the URL in `app/.env` so the bots announce the right one:
+   `PUBLIC_BASE_URL=https://<node>.<tailnet>.ts.net`
+3. `./run_all.sh bg` to pick it up.
+
+`./tailscale.sh check` confirms it answers from outside. With `PUBLIC_BASE_URL`
+set, `site_link.py` stops promising the link will change, and the LINE webhook
+points at the stable address instead of chasing the tunnel log.
 
 ---
 

@@ -73,3 +73,53 @@ def test_link_reply_and_commands(monkeypatch):
 def test_link_reply_without_tunnel(monkeypatch):
     _wire(monkeypatch, url="")
     assert "偵測不到" in site_link.link_reply()
+
+
+# ── stable link (Tailscale Funnel) ───────────────────────────────────────────
+# A permanent URL changes what the copy is allowed to promise: the old text
+# told the family "the link will change on reboot and we'll send the new one",
+# which becomes a lie people plan around once the URL is fixed.
+STABLE = "https://shihbochuns-mac-mini.tail902e9c.ts.net"
+
+
+def test_public_base_url_wins_over_the_tunnel(monkeypatch):
+    monkeypatch.setattr(line_push, "current_tunnel_url", lambda: URL)
+    monkeypatch.setenv("PUBLIC_BASE_URL", STABLE)
+    assert site_link.current_url() == STABLE
+    assert site_link.is_stable() is True
+
+
+def test_trailing_slash_is_trimmed(monkeypatch):
+    monkeypatch.setenv("PUBLIC_BASE_URL", STABLE + "/")
+    assert site_link.current_url() == STABLE
+
+
+def test_line_webhook_base_still_works(monkeypatch):
+    """Back-compat: it did this job before there was a general name for it."""
+    monkeypatch.delenv("PUBLIC_BASE_URL", raising=False)
+    monkeypatch.setenv("LINE_WEBHOOK_BASE", STABLE)
+    assert site_link.current_url() == STABLE
+    assert site_link.is_stable() is True
+
+
+def test_falls_back_to_the_tunnel_when_unset(monkeypatch):
+    monkeypatch.delenv("PUBLIC_BASE_URL", raising=False)
+    monkeypatch.delenv("LINE_WEBHOOK_BASE", raising=False)
+    monkeypatch.setattr(line_push, "current_tunnel_url", lambda: URL)
+    assert site_link.current_url() == URL
+    assert site_link.is_stable() is False
+
+
+def test_stable_copy_does_not_promise_a_new_link(monkeypatch):
+    monkeypatch.setenv("PUBLIC_BASE_URL", STABLE)
+    for text in (site_link.announce_text(STABLE), site_link.link_reply()):
+        assert STABLE in text
+        assert "固定網址" in text
+        assert "會更換" not in text, "stable link must not promise it will change"
+
+
+def test_ephemeral_copy_still_warns(monkeypatch):
+    monkeypatch.delenv("PUBLIC_BASE_URL", raising=False)
+    monkeypatch.delenv("LINE_WEBHOOK_BASE", raising=False)
+    monkeypatch.setattr(line_push, "current_tunnel_url", lambda: URL)
+    assert "會更換" in site_link.link_reply()

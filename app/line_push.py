@@ -380,7 +380,9 @@ def sync_webhook() -> bool:
     """Point LINE's webhook at the current public URL; no-op until it changes."""
     if not enabled():
         return False
-    base = os.getenv("LINE_WEBHOOK_BASE", "").strip() or current_tunnel_url()
+    base = (os.getenv("PUBLIC_BASE_URL", "").strip()
+            or os.getenv("LINE_WEBHOOK_BASE", "").strip()
+            or current_tunnel_url())
     if not base:
         return False
     url = base.rstrip("/") + "/line/webhook"
