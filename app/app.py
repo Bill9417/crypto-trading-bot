@@ -3556,6 +3556,147 @@ def _minute_closes(base: str) -> dict:
     return out
 
 
+# ── 🔥 Projected liquidation heatmap ────────────────────────────────────────
+# THIS IS A MODEL, NOT DATA. /api/liq_levels shows liquidations that actually
+# happened; this estimates where leverage would GET liquidated if price went
+# there. Public heatmaps (Coinglass et al.) do the same thing with a
+# proprietary model — this one states its assumptions so the output can be
+# argued with:
+#
+#   1. New positions open in proportion to each bar's OPEN-INTEREST INCREASE.
+#      OI falling means positions closed, so no new levels are created.
+#      Volume is only a fallback when OI history is unavailable — volume also
+#      counts closes and would invent levels that never existed.
+#   2. Longs and shorts split 50/50 each bar. The real split is not public.
+#      This is the single largest assumption in the model.
+#   3. Leverage mix is fixed: 10x/25x/50x/100x weighted .35/.30/.25/.10.
+#   4. Liquidation price = entry x (1 -/+ 1/L). Ignores maintenance margin
+#      tiers, fees and funding, so real liquidations happen slightly EARLIER
+#      than modelled.
+#   5. A level is CLEARED once price trades through it — those positions are
+#      already gone. Without this the map accumulates ghosts.
+#
+# Total intensity is scaled to the current OI notional, so the numbers are in
+# plausible USD rather than arbitrary units. They remain an estimate.
+_LEV_MIX = ((10, 0.35), (25, 0.30), (50, 0.25), (100, 0.10))
+_heat_cache: dict = {}
+HEAT_TTL = 180
+
+
+@app.route("/api/liq_heatmap")
+@login_required
+def api_liq_heatmap():
+    base = (request.args.get("coin") or "BTC").strip().upper()
+    if not base.isalnum():
+        return jsonify({"ok": False, "error": "bad coin"}), 400
+    tf = request.args.get("tf", "15m")
+    if tf not in ("5m", "15m", "1h"):
+        tf = "15m"
+    sym = f"{base}/{QUOTE_ASSET}:{QUOTE_ASSET}"
+    key = (base, tf)
+    now = time.time()
+    hit = _heat_cache.get(key)
+    if hit and now - hit[0] < HEAT_TTL:
+        return jsonify(hit[1])
+
+    try:
+        import backtest as _bt
+        days = 2 if tf != "1h" else 4
+        oh = _bt.fetch_ohlcv(sym, tf, days)
+    except Exception as e:  # noqa: BLE001
+        return jsonify({"ok": False, "error": f"no candles for {base}: {str(e)[:90]}"}), 200
+    if len(oh) < 20:
+        return jsonify({"ok": False, "error": f"only {len(oh)} candles for {base}"}), 200
+
+    NBARS = 96
+    oh = oh[-NBARS:]
+
+    # open-interest history, aligned to the same bars where possible
+    oi_by_ts, oi_now = {}, None
+    try:
+        hist = rest_client.call("fetch_open_interest_history", sym, tf, None, NBARS) or []
+        for r in hist:
+            v = r.get("openInterestValue")
+            if r.get("timestamp") and v:
+                oi_by_ts[int(r["timestamp"])] = float(v)
+        cur = rest_client.call("fetch_open_interest", sym) or {}
+        oi_now = _fnum(cur.get("openInterestValue"))
+        if oi_now is None and oi_by_ts:
+            oi_now = list(oi_by_ts.values())[-1]
+    except Exception as e:  # noqa: BLE001 — fall back to volume weighting
+        print(f"[heatmap] OI for {base} failed: {e}")
+
+    # weight per bar = positive OI change (new positions), else volume
+    weights, used_oi = [], bool(oi_by_ts)
+    prev_oi = None
+    for c in oh:
+        w = 0.0
+        if used_oi:
+            v = oi_by_ts.get(int(c[0]))
+            if v is not None:
+                w = max(0.0, v - prev_oi) if prev_oi is not None else 0.0
+                prev_oi = v
+        if not used_oi or (w == 0.0 and prev_oi is None):
+            w = float(c[5]) * float(c[4])
+        weights.append(w)
+    if sum(weights) <= 0:                       # OI never rose in the window
+        weights = [float(c[5]) * float(c[4]) for c in oh]
+        used_oi = False
+
+    lo_p = min(c[3] for c in oh)
+    hi_p = max(c[2] for c in oh)
+    pad = (hi_p - lo_p) * 0.35 or hi_p * 0.02   # room for levels beyond the range
+    lo_p, hi_p = lo_p - pad, hi_p + pad
+    NB = 64
+    step = (hi_p - lo_p) / NB
+
+    def _bin(px):
+        return None if not (lo_p <= px < hi_p) else int((px - lo_p) / step)
+
+    live = [[0.0, 0.0] for _ in range(NB)]      # [long-liq usd, short-liq usd]
+    grid = []
+    for i, c in enumerate(oh):
+        entry, high, low = float(c[4]), float(c[2]), float(c[3])
+        w = weights[i]
+        for lev, share in _LEV_MIX:
+            amt = w * share * 0.5               # assumption 2: 50/50 split
+            for side, price in ((0, entry * (1 - 1 / lev)), (1, entry * (1 + 1 / lev))):
+                j = _bin(price)
+                if j is not None:
+                    live[j][side] += amt
+        # assumption 5: anything this bar traded through is already liquidated
+        jl, jh = _bin(low), _bin(high)
+        if jl is not None and jh is not None:
+            for j in range(jl, jh + 1):
+                live[j][0] = live[j][1] = 0.0
+        grid.append([round(a + b, 2) for a, b in live])
+
+    tot = sum(a + b for a, b in live) or 1.0
+    scale = (oi_now / tot) if oi_now else 1.0
+    grid = [[v * scale for v in row] for row in grid]
+    live_usd = [[a * scale, b * scale] for a, b in live]
+
+    levels = [{"lo": lo_p + j * step, "hi": lo_p + (j + 1) * step,
+               "long": live_usd[j][0], "short": live_usd[j][1]} for j in range(NB)]
+    spot = float(oh[-1][4])
+    hot = sorted([lv for lv in levels if (lv["long"] + lv["short"]) > 0],
+                 key=lambda lv: -(lv["long"] + lv["short"]))[:6]
+
+    payload = {
+        "ok": True, "coin": base, "tf": tf,
+        "candles": [[int(c[0]), float(c[1]), float(c[2]), float(c[3]), float(c[4])] for c in oh],
+        "grid": grid, "nb": NB, "lo": lo_p, "hi": hi_p, "spot": spot,
+        "levels": levels,
+        "max_usd": max((max(r) if r else 0) for r in grid) or 0.0,
+        "oi_usd": oi_now, "weighted_by": "open-interest growth" if used_oi else "volume",
+        "clusters": [{"price": (h["lo"] + h["hi"]) / 2, "usd": h["long"] + h["short"],
+                      "side": "long" if h["long"] >= h["short"] else "short",
+                      "dist_pct": ((h["lo"] + h["hi"]) / 2 - spot) / spot * 100} for h in hot],
+    }
+    _heat_cache[key] = (now, payload)
+    return jsonify(payload)
+
+
 @app.route("/api/liq_levels")
 @login_required
 def api_liq_levels():

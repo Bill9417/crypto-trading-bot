@@ -409,6 +409,27 @@
         .lqm .m-p { font-size:1.02rem; font-weight:900; font-variant-numeric:tabular-nums; }
         .lqm .m-d { font-size:.68rem; color:var(--wolf-muted); font-variant-numeric:tabular-nums; }
         .lqm .m-n { font-size:.63rem; color:var(--wolf-dim,#64748b); width:100%; line-height:1.5; }
+        /* 🔥 預估清算熱區 */
+        .hm-stage { position:relative; border-radius:11px; overflow:hidden; border:1px solid var(--wolf-border); background:#0a0d17; }
+        #lq2-heat { display:block; width:100%; height:340px; }
+        @media (max-width:640px){ #lq2-heat { height:240px; } }
+        .hm-tip { position:absolute; pointer-events:none; opacity:0; transform:translate(-50%,-120%);
+            background:rgba(10,13,22,.97); border:1px solid var(--wolf-border-hi,rgba(255,255,255,.18));
+            border-radius:9px; padding:7px 10px; font-size:.7rem; white-space:nowrap; z-index:4;
+            box-shadow:0 10px 26px rgba(0,0,0,.5); transition:opacity .12s; line-height:1.5; }
+        .hm-tip.on { opacity:1; }
+        .hm-tip b { font-variant-numeric:tabular-nums; }
+        .hm-legend { display:flex; align-items:center; gap:9px; margin:8px 0 2px; font-size:.64rem; color:var(--wolf-dim,#64748b); }
+        .hm-scale { width:110px; height:8px; border-radius:999px; flex:0 0 auto;
+            background:linear-gradient(90deg,#2a1a4a,#2f5fa8,#22b8a6,#9ede4a,#f7f14b); }
+        .hm-clusters { display:grid; grid-template-columns:repeat(auto-fit,minmax(140px,1fr)); gap:7px; margin-top:9px; }
+        .hm-c { border:1px solid var(--wolf-border); border-radius:10px; padding:7px 10px; background:rgba(255,255,255,.03); }
+        .hm-c.l { border-color:rgba(248,113,113,.34); background:rgba(248,113,113,.06); }
+        .hm-c.s { border-color:rgba(74,222,128,.34); background:rgba(74,222,128,.06); }
+        .hm-c .p { font-size:.9rem; font-weight:900; font-variant-numeric:tabular-nums; }
+        .hm-c .d { font-size:.62rem; color:var(--wolf-muted); }
+        .hm-assume { margin-top:9px; font-size:.63rem; color:var(--wolf-dim,#64748b); line-height:1.6; }
+        .hm-assume b { color:var(--wolf-muted); }
         .lq-bias { font-size:.7rem; margin-bottom:9px; color:var(--wolf-muted); }
         .lq-bias b { font-weight:800; }
 
@@ -1930,11 +1951,23 @@
                     <div class="analytics-subtitle" id="lq2-sub">Where stops actually got run, by price level</div>
                 </div>
                 <div style="display:flex;gap:6px;align-items:center;">
+                    <div class="seg3" id="lq2-mode">
+                        <button data-m="heat" class="on">預估熱區</button><button data-m="real">已實現</button>
+                    </div>
                     <div class="seg3" id="lq2-coin">
                         <button data-c="BTC" class="on">BTC</button><button data-c="ETH">ETH</button><button data-c="SOL">SOL</button>
                     </div>
                     <a href="/universe" class="analytics-link">3D →</a>
                 </div>
+            </div>
+            <div id="lq2-heatwrap">
+                <div class="hm-stage"><canvas id="lq2-heat"></canvas><div class="hm-tip" id="hm-tip"></div></div>
+                <div class="hm-legend">
+                    <span class="hm-scale"></span>
+                    <span id="hm-note"></span>
+                </div>
+                <div class="hm-clusters" id="hm-clusters"></div>
+                <div class="hm-assume" id="hm-assume"></div>
             </div>
             <div id="lq2-magnets"></div>
             <div class="liq2d-wrap"><div class="liq2d-rows" id="lq2-rows"><div class="liq2d-empty">Loading…</div></div></div>
@@ -2018,6 +2051,133 @@
             });
             load();
             if (window.wolfPoll) wolfPoll(load, 120000);
+        })();
+        </script>
+
+
+        <script>
+        /* 🔥 Projected liquidation heatmap. This is a MODEL, not observed data —
+           it estimates where leverage WOULD be liquidated. The assumptions are
+           printed under the chart on purpose: a heatmap that hides them is
+           indistinguishable from a guess. */
+        (function () {
+            var cv=document.getElementById('lq2-heat'); if(!cv) return;
+            var ctx=cv.getContext('2d'), tip=document.getElementById('hm-tip');
+            var D=null, COIN='BTC', W=0,H=0,DPR=1;
+            function usd(v){var a=Math.abs(v||0);return a>=1e9?(a/1e9).toFixed(2)+'B':a>=1e6?(a/1e6).toFixed(0)+'M':a>=1e3?(a/1e3).toFixed(0)+'k':a.toFixed(0);}
+            function pxs(v){return v>=1000?Math.round(v).toLocaleString('en-US'):Number(v.toPrecision(5)).toString();}
+            // viridis-ish: dark violet -> blue -> teal -> green -> yellow
+            var STOPS=[[42,26,74],[47,95,168],[34,184,166],[158,222,74],[247,241,75]];
+            function heat(t){
+                t=Math.max(0,Math.min(1,t)); var x=t*(STOPS.length-1), i=Math.floor(x), f=x-i;
+                var a=STOPS[i], b=STOPS[Math.min(i+1,STOPS.length-1)];
+                return 'rgb('+Math.round(a[0]+(b[0]-a[0])*f)+','+Math.round(a[1]+(b[1]-a[1])*f)+','+Math.round(a[2]+(b[2]-a[2])*f)+')';
+            }
+            function resize(){
+                DPR=Math.min(window.devicePixelRatio||1,2); W=cv.clientWidth; H=cv.clientHeight;
+                cv.width=Math.round(W*DPR); cv.height=Math.round(H*DPR); ctx.setTransform(DPR,0,0,DPR,0,0); draw();
+            }
+            var PADR=54;
+            function draw(){
+                ctx.clearRect(0,0,W,H);
+                if(!D||!D.grid||!D.grid.length){ return; }
+                var nx=D.grid.length, nb=D.nb, gw=(W-PADR)/nx, gh=H/nb;
+                var mx=D.max_usd||1;
+                for(var i=0;i<nx;i++){
+                    var col=D.grid[i];
+                    for(var j=0;j<nb;j++){
+                        var v=col[j]; if(!v) continue;
+                        // gamma curve, not log. log1p lifted every non-zero cell
+                        // into the bright end so the whole chart read as hot and
+                        // the real clusters stopped standing out. ^0.45 keeps
+                        // small values dark while still showing them.
+                        var t=Math.pow(v/mx,0.45);
+                        if(t<0.06) continue;         // floor: near-empty stays black
+                        ctx.fillStyle=heat(t);
+                        ctx.fillRect(i*gw, H-(j+1)*gh, Math.ceil(gw)+0.5, Math.ceil(gh)+0.5);
+                    }
+                }
+                // candles on top
+                var lo=D.lo, hi=D.hi, yOf=function(p){return H-((p-lo)/(hi-lo))*H;};
+                var cw=Math.max(1,gw*0.55);
+                D.candles.forEach(function(c,i){
+                    var x=i*gw+gw/2, up=c[4]>=c[1];
+                    ctx.strokeStyle=up?'rgba(120,255,190,.95)':'rgba(255,140,150,.95)';
+                    ctx.fillStyle=ctx.strokeStyle; ctx.lineWidth=1;
+                    ctx.beginPath(); ctx.moveTo(x,yOf(c[2])); ctx.lineTo(x,yOf(c[3])); ctx.stroke();
+                    var y1=yOf(Math.max(c[1],c[4])), y2=yOf(Math.min(c[1],c[4]));
+                    ctx.fillRect(x-cw/2,y1,cw,Math.max(1,y2-y1));
+                });
+                // price axis
+                ctx.fillStyle='rgba(255,255,255,.06)'; ctx.fillRect(W-PADR,0,PADR,H);
+                ctx.font='600 9px Inter,sans-serif'; ctx.textAlign='left'; ctx.textBaseline='middle';
+                for(var k=0;k<=5;k++){
+                    var p=lo+(hi-lo)*k/5, y=yOf(p);
+                    ctx.strokeStyle='rgba(255,255,255,.05)'; ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(W-PADR,y); ctx.stroke();
+                    ctx.fillStyle='rgba(147,163,184,.85)'; ctx.fillText(pxs(p), W-PADR+5, y);
+                }
+                // spot line
+                var ys=yOf(D.spot);
+                ctx.strokeStyle='rgba(255,207,75,.85)'; ctx.setLineDash([4,3]); ctx.lineWidth=1;
+                ctx.beginPath(); ctx.moveTo(0,ys); ctx.lineTo(W-PADR,ys); ctx.stroke(); ctx.setLineDash([]);
+                ctx.fillStyle='#ffcf4b'; ctx.fillText(pxs(D.spot), W-PADR+5, ys);
+            }
+            cv.addEventListener('mousemove',function(e){
+                if(!D||!D.grid.length) return;
+                var r=cv.getBoundingClientRect(), mxp=e.clientX-r.left, myp=e.clientY-r.top;
+                var nx=D.grid.length, gw=(W-PADR)/nx, i=Math.floor(mxp/gw);
+                if(i<0||i>=nx||mxp>W-PADR){ tip.classList.remove('on'); return; }
+                var j=Math.floor((H-myp)/(H/D.nb)); if(j<0||j>=D.nb){ tip.classList.remove('on'); return; }
+                var v=D.grid[i][j]||0, price=D.lo+(D.hi-D.lo)*(j+0.5)/D.nb;
+                tip.innerHTML='<b>'+pxs(price)+'</b><br>預估清算 <b>$'+usd(v)+'</b>';
+                tip.classList.add('on'); tip.style.left=mxp+'px'; tip.style.top=myp+'px';
+            });
+            cv.addEventListener('mouseleave',function(){tip.classList.remove('on');});
+
+            function render(d){
+                D=d; draw();
+                document.getElementById('hm-note').textContent=
+                    '低 → 高預估清算量 · 依「'+(d.weighted_by==='open-interest growth'?'未平倉量增加':'成交量')+'」加權'+
+                    (d.oi_usd?' · 目前 OI $'+usd(d.oi_usd):'');
+                document.getElementById('hm-clusters').innerHTML=(d.clusters||[]).slice(0,4).map(function(c){
+                    return '<div class="hm-c '+(c.side==='long'?'l':'s')+'"><div class="p">'+pxs(c.price)+'</div>'+
+                      '<div class="d">'+(c.dist_pct>=0?'+':'')+c.dist_pct.toFixed(2)+'% · $'+usd(c.usd)+' '+
+                      (c.side==='long'?'多單':'空單')+'</div></div>';
+                }).join('');
+                document.getElementById('hm-assume').innerHTML=
+                    '<b>這是模型推估，不是實際資料。</b> 假設：新倉隨未平倉量增加而開（OI 下降代表平倉，不產生新價位）· ' +
+                    '多空各半（真實比例不公開，這是最大的假設）· 槓桿分佈固定 10x/25x/50x/100x = 35/30/25/10% · ' +
+                    '清算價 = 進場 ×(1∓1/L)，未計維持保證金與費用，所以<b>真實清算會比模型更早發生</b> · ' +
+                    '價格走過的價位視為已清算並清空。強度已依目前 OI 名目縮放。';
+            }
+            function load(){
+                fetch('/api/liq_heatmap?coin='+encodeURIComponent(COIN))
+                  .then(function(r){return r.ok?r.json():null;})
+                  .then(function(d){ if(d&&d.ok) render(d);
+                     else document.getElementById('hm-note').textContent=(d&&d.error)||'無法載入'; })
+                  .catch(function(){});
+            }
+            document.getElementById('lq2-mode').addEventListener('click',function(e){
+                var b=e.target.closest('button'); if(!b) return;
+                this.querySelectorAll('button').forEach(function(x){x.classList.remove('on')});
+                b.classList.add('on');
+                var heatOn=b.dataset.m==='heat';
+                document.getElementById('lq2-heatwrap').style.display=heatOn?'':'none';
+                document.getElementById('lq2-magnets').style.display=heatOn?'none':'';
+                document.querySelector('.liq2d-wrap').style.display=heatOn?'none':'';
+                document.getElementById('lq2-foot').style.display=heatOn?'none':'';
+                if(heatOn){ resize(); load(); }
+            });
+            // realized view starts hidden — the projected map is the default
+            document.querySelector('.liq2d-wrap').style.display='none';
+            document.getElementById('lq2-magnets').style.display='none';
+            document.getElementById('lq2-foot').style.display='none';
+            document.getElementById('lq2-coin').addEventListener('click',function(){
+                setTimeout(function(){ COIN=document.querySelector('#lq2-coin button.on').dataset.c; load(); },0);
+            });
+            window.addEventListener('resize',resize);
+            resize(); load();
+            if(window.wolfPoll) wolfPoll(load,180000);
         })();
         </script>
 
