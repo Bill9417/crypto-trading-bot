@@ -730,7 +730,7 @@ def sync_record_states_in_scan_data() -> None:
 # this ONE value whenever app.css / i18n.js change and every template busts its
 # cache — no more hunting down 10 hardcoded copies (which once shipped an
 # unstyled page to users). Templates reference it as ?v={{ asset_ver }}.
-ASSET_VER = "20260802"
+ASSET_VER = "20260803"
 
 
 @app.context_processor
@@ -3393,23 +3393,68 @@ def api_liquidations():
 def stocks_page():
     """Stock watch — Taiwan top-50 + US top-100 with Binance-perp comparison.
     Read-only public data via stocks_data.py; isolated from the scanner/bot."""
+    return render_template("stocks.html", stocks=_stocks_cached(), user=current_user)
+
+
+_stocks_cache = {"ts": 0.0, "data": None}
+STOCKS_TTL = 60
+
+
+def _stocks_cached():
+    """build_stocks() hits TWSE + Yahoo. /stocks, /markets and the public
+    movers endpoint all want it, so cache it briefly rather than fanning out
+    three sets of upstream calls per visitor."""
     import stocks_data
+    now = time.time()
+    if _stocks_cache["data"] is not None and now - _stocks_cache["ts"] < STOCKS_TTL:
+        return _stocks_cache["data"]
     try:
         data = stocks_data.build_stocks()
-    except Exception as e:  # noqa: BLE001 — never let this page break
-        print(f"Stocks page error: {e}")
-        data = stocks_data.empty_payload(str(e))
-    return render_template("stocks.html", stocks=data, user=current_user)
+    except Exception as e:  # noqa: BLE001
+        if _stocks_cache["data"] is not None:
+            return _stocks_cache["data"]          # stale beats nothing
+        return stocks_data.empty_payload(str(e))
+    _stocks_cache.update(ts=now, data=data)
+    return data
 
 
 @app.route("/api/stocks")
 @login_required
 def api_stocks():
-    import stocks_data
-    try:
-        return jsonify(stocks_data.build_stocks())
-    except Exception as e:  # noqa: BLE001
-        return jsonify(stocks_data.empty_payload(str(e))), 200
+    return jsonify(_stocks_cached())
+
+
+@app.route("/api/market_movers")
+def api_market_movers():
+    """PUBLIC — feeds the /markets board's movers + session clocks.
+
+    Deliberately trimmed: only ticker, name, price and % move, plus each
+    market's open/closed state. The full /api/stocks payload also carries the
+    Binance tokenised-stock perp columns, which nobody needs here; a public
+    endpoint should hand out the minimum that answers the question.
+    """
+    data = _stocks_cached()
+    out = {"generated_at": data.get("generated_at"), "tw": {}, "us": {}}
+    for side, key, label in (("tw", "code", "name"), ("us", "ticker", "name")):
+        block = data.get(side) or {}
+        rows = []
+        for r in block.get("rows") or []:
+            pct = r.get("change_pct")
+            if pct is None:
+                continue
+            rows.append({"id": r.get(key), "name": r.get(label),
+                         "price": r.get("price"), "pct": pct})
+        rows.sort(key=lambda r: r["pct"], reverse=True)
+        out[side] = {
+            "market": block.get("market") or {},
+            "up": rows[:5],
+            "down": rows[-5:][::-1],
+            "advancers": sum(1 for r in rows if r["pct"] > 0),
+            "decliners": sum(1 for r in rows if r["pct"] < 0),
+            "total": len(rows),
+            "error": block.get("error"),
+        }
+    return jsonify(out)
 
 
 # ── 3D Market Universe (/universe) ──────────────────────────────────────────

@@ -84,6 +84,18 @@
     // ── Top entry candidates ──────────────────────────────────
     "🎯 Top Entry Candidates": "🎯 最佳進場候選",
 
+    // ── 🌌 Market Cloud (3D hero) ──────────────────────────────
+    "Armed": "已掛單",
+    "size = conviction": "點大小 = 信心度",
+    "Drag to rotate · hover a body for detail · click to open its chart":
+      "拖曳旋轉 · 指向任一點看資訊 · 點擊開圖表",
+    "Hunting signals": "搜尋訊號",
+    "Long / Short": "多 / 空",
+    "Win rate · 4+ lights": "勝率 · 4+ 燈",
+    "Strategy P&L": "策略損益",
+    "🔻 Funnel · queued": "🔻 漏斗 · 排隊中",
+    "Market": "市場",
+
     // ── Section titles & analytics ────────────────────────────
     "Signal Pulse": "訊號脈動",
     "Strategy Signals": "策略訊號",

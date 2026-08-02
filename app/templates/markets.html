@@ -58,6 +58,37 @@
         .mk-empty { font-size: .8rem; color: var(--muted, #8a99ad); padding: 6px 2px; }
         .mk-link { font-size: .76rem; line-height: 1.65; }
         .mk-link b { color: #e6ecf5; }
+
+        /* 開盤時鐘 */
+        .mk-sess { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 14px; }
+        @media (max-width: 620px) { .mk-sess { grid-template-columns: 1fr; } }
+        .sess {
+            display: flex; align-items: center; gap: 11px; position: relative; overflow: hidden;
+            background: rgba(255,255,255,.035); border: 1px solid rgba(255,255,255,.08);
+            border-radius: 12px; padding: 11px 14px;
+        }
+        .sess::before { content:''; position:absolute; inset:0 auto 0 0; width:3px; background:#8a99ad; opacity:.5; }
+        .sess.open::before { background:#22c55e; opacity:1; }
+        .sess.holiday::before { background:#f59e0b; opacity:1; }
+        .sess-flag { font-size: 1.5rem; line-height: 1; }
+        .sess-n { font-size: .82rem; font-weight: 800; }
+        .sess-h { font-size: .64rem; color: var(--muted,#8a99ad); margin-top: 1px; }
+        .sess-r { margin-left: auto; text-align: right; }
+        .sess-s { font-size: .78rem; font-weight: 900; }
+        .sess.open .sess-s { color:#22c55e; }
+        .sess.closed .sess-s { color: var(--muted,#8a99ad); }
+        .sess.holiday .sess-s { color:#f59e0b; }
+        .sess-c { font-size: .64rem; color: var(--muted,#8a99ad); margin-top: 2px; font-variant-numeric: tabular-nums; }
+
+        /* 漲跌排行 */
+        .mv { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+        @media (max-width: 480px) { .mv { grid-template-columns: 1fr; } }
+        .mv-h { font-size: .64rem; font-weight: 800; letter-spacing: .04em; color: var(--muted,#8a99ad); margin-bottom: 5px; }
+        .mv-r { display: flex; justify-content: space-between; gap: 8px; padding: 4px 0; font-size: .76rem; }
+        .mv-r + .mv-r { border-top: 1px solid rgba(255,255,255,.05); }
+        .mv-nm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .mv-nm b { font-weight: 800; }
+        .mv-p { font-weight: 800; font-variant-numeric: tabular-nums; white-space: nowrap; }
     </style>
 </head>
 <body>
@@ -76,6 +107,18 @@
         <a href="/markets" class="on">📈 總覽</a>
         <a href="/tw">🇹🇼 台股</a>
         <a href="/us">🇺🇸 美股</a>
+    </div>
+
+    {# 開盤狀態 — 兩個市場的時鐘，這是「現在該看哪邊」的第一個問題 #}
+    <div class="mk-sess">
+        <div class="sess" id="sess-tw"><span class="sess-flag">🇹🇼</span>
+            <div><div class="sess-n">台股</div><div class="sess-h">09:00–13:30 台北</div></div>
+            <div class="sess-r"><div class="sess-s">—</div><div class="sess-c"></div></div>
+        </div>
+        <div class="sess" id="sess-us"><span class="sess-flag">🇺🇸</span>
+            <div><div class="sess-n">美股</div><div class="sess-h">09:30–16:00 紐約</div></div>
+            <div class="sess-r"><div class="sess-s">—</div><div class="sess-c"></div></div>
+        </div>
     </div>
 
     {# ── 關聯：美股→台股 的實際傳導，兩頁分開時看不到 ── #}
@@ -103,7 +146,7 @@
             ADR 收 <b>{{ '%.2f'|format(adr.adr) }}</b> 美元（折合台股約 <b>{{ '%.1f'|format(adr.equiv) }}</b> 元），
             台股上次收 <b>{{ '%.1f'|format(adr.tw_close) }}</b> 元。
             {% endif %}
-            溢價為正代表美國投資人出價比台股高，隔天台積電often開高；反之偏弱。
+            溢價為正代表美國投資人出價比台股高，隔天台積電開高的機率較大；反之偏弱。
             <b>這是參考不是保證</b>，開盤後仍以實際盤勢為準。
         </div>
         {% endif %}
@@ -180,6 +223,13 @@
                 <div class="mk-empty">目前沒有符合條件的標的。策略寧可不出手，也不勉強進場。</div>
                 {% endif %}
             </div>
+
+            <div class="card">
+                <div class="mk-h"><h2>📊 台股 50 漲跌</h2>
+                    <span class="mk-when" id="tw-breadth">—</span>
+                </div>
+                <div class="mv" id="mv-tw"><div class="mk-empty">載入中…</div></div>
+            </div>
         </div>
 
         {# ══════════ 美股 ══════════ #}
@@ -238,6 +288,13 @@
                 <div class="mk-empty">市場氣氛資料暫時無法取得。</div>
                 {% endif %}
             </div>
+
+            <div class="card">
+                <div class="mk-h"><h2>📊 美股 100 漲跌</h2>
+                    <span class="mk-when" id="us-breadth">—</span>
+                </div>
+                <div class="mv" id="mv-us"><div class="mk-empty">載入中…</div></div>
+            </div>
         </div>
     </div>
 
@@ -246,5 +303,71 @@
         {% if invite_url %}<br><a href="{{ invite_url }}" style="color:#00d2ff;">加入 Telegram 群組看即時訊號 →</a>{% endif %}
     </div>
 </div>
+<script>
+(function () {
+    "use strict";
+    function esc(t){return String(t==null?'':t).replace(/[&<>"]/g,function(c){
+        return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c];});}
+    function pct(v){ return (v>=0?'+':'') + v.toFixed(2) + '%'; }
+    function cls(v){ return v>0?'up':(v<0?'dn':'fl'); }   /* 台股習慣：紅漲綠跌 */
+
+    var DATA = null;
+
+    function rows(list, title){
+        if(!list || !list.length) return '<div><div class="mv-h">'+title+'</div><div class="mk-empty">—</div></div>';
+        return '<div><div class="mv-h">'+title+'</div>' + list.map(function(r){
+            return '<div class="mv-r"><span class="mv-nm"><b>'+esc(r.id)+'</b> '+esc(r.name||'')+'</span>'+
+                   '<span class="mv-p '+cls(r.pct)+'">'+pct(r.pct)+'</span></div>';
+        }).join('') + '</div>';
+    }
+
+    function paint(){
+        if(!DATA) return;
+        [['tw','mv-tw','tw-breadth'],['us','mv-us','us-breadth']].forEach(function(x){
+            var d = DATA[x[0]] || {}, el = document.getElementById(x[1]);
+            if (d.error || !(d.up||[]).length) {
+                el.innerHTML = '<div class="mk-empty">'+(d.error ? '資料暫時無法取得' : '尚無報價')+'</div>';
+            } else {
+                el.innerHTML = rows(d.up, '▲ 漲幅前五') + rows(d.down, '▼ 跌幅前五');
+            }
+            var b = document.getElementById(x[2]);
+            if (d.total) b.textContent = '上漲 ' + d.advancers + ' · 下跌 ' + d.decliners + ' / ' + d.total;
+        });
+    }
+
+    // 開盤狀態 + 倒數。next_open_ts 由伺服器算（含假日），這裡只負責倒數，
+    // 所以放假、半日交易都不需要在前端重複判斷。
+    function clocks(){
+        if(!DATA) return;
+        [['tw','sess-tw'],['us','sess-us']].forEach(function(x){
+            var m = (DATA[x[0]] || {}).market || {}, el = document.getElementById(x[1]);
+            if (!el) return;
+            var state = m.state || 'closed';
+            el.className = 'sess ' + (m.holiday ? 'holiday' : state);
+            var label = m.holiday ? '休市' : (state === 'open' ? '● 開盤中' : '收盤');
+            el.querySelector('.sess-s').textContent = label;
+            var cd = el.querySelector('.sess-c'), ts = m.next_open_ts;
+            if (state !== 'open' && ts) {
+                var left = Math.max(0, ts - Date.now()/1000);
+                var d = Math.floor(left/86400), h = Math.floor(left%86400/3600), mm = Math.floor(left%3600/60);
+                cd.textContent = '距開盤 ' + (d ? d+'天 ' : '') + h + '小時 ' + mm + '分';
+            } else if (state === 'open' && m.next_close_ts) {
+                var l2 = Math.max(0, m.next_close_ts - Date.now()/1000);
+                cd.textContent = '距收盤 ' + Math.floor(l2/3600) + '小時 ' + Math.floor(l2%3600/60) + '分';
+            } else { cd.textContent = ''; }
+        });
+    }
+
+    function load(){
+        fetch('/api/market_movers').then(function(r){return r.ok?r.json():null;})
+        .then(function(d){ if(!d) return; DATA = d; paint(); clocks(); })
+        .catch(function(){});
+    }
+    load();
+    setInterval(function(){ if(!document.hidden) load(); }, 60000);
+    setInterval(clocks, 30000);
+    document.addEventListener('visibilitychange', function(){ if(!document.hidden) load(); });
+})();
+</script>
 </body>
 </html>
