@@ -3523,6 +3523,73 @@ def universe_page():
     return render_template("universe.html", user=current_user)
 
 
+@app.route("/api/whale_3d")
+@login_required
+def api_whale_3d():
+    """🐳 Tracked whales' current positioning in ONE coin.
+
+    Reads whale_tracker's own state file — the snapshot its alert loop
+    already maintains — so this endpoint costs no Hyperliquid calls.
+
+    `szi` is in COIN units, which makes whales incomparable: 29 BTC and
+    50,000 ETH look like a rounding error next to each other until both are
+    priced. Everything is converted to USD notional with one live ticker
+    lookup, and a whale whose size cannot be priced is returned with usd=None
+    rather than 0 — zero would render as "no position".
+    """
+    import whale_tracker
+    coin = (request.args.get("coin") or "ETH").strip().upper()
+    if not coin.isalnum():
+        return jsonify({"ok": False, "error": "bad coin"}), 400
+
+    try:
+        labels = {a["address"]: (a.get("label") or "") for a in whale_tracker.load_addresses()}
+        state = whale_tracker._load_state() or {}
+    except Exception as e:  # noqa: BLE001 — never take the dashboard down
+        return jsonify({"ok": False, "error": str(e)[:160], "whales": []}), 200
+
+    px = None
+    try:
+        t = fetch_live_tickers([f"{coin}/{QUOTE_ASSET}:{QUOTE_ASSET}"]) or {}
+        first = next(iter(t.values()), {}) or {}
+        px = _fnum(first.get("last") or first.get("close"))
+    except Exception as e:  # noqa: BLE001 — priced view is better, not required
+        print(f"[whale3d] price for {coin} failed: {e}")
+
+    whales, coins = [], set()
+    for addr, pos in state.items():
+        if not isinstance(pos, dict):
+            continue
+        coins.update(k for k, v in pos.items() if isinstance(v, dict))
+        d = pos.get(coin)
+        if not isinstance(d, dict):
+            continue
+        szi = _fnum(d.get("szi"))
+        if szi is None or szi == 0:
+            continue
+        whales.append({
+            "label": labels.get(addr) or addr[:8],
+            "addr": addr[:10] + "…",
+            "side": "long" if szi > 0 else "short",
+            "szi": szi,
+            "usd": None if px is None else abs(szi) * px,
+            "url": f"https://hypurrscan.io/address/{addr}",
+        })
+    whales.sort(key=lambda w: -(w["usd"] or abs(w["szi"])))
+
+    longs = [w for w in whales if w["side"] == "long"]
+    shorts = [w for w in whales if w["side"] == "short"]
+    lu = sum(w["usd"] or 0 for w in longs)
+    su = sum(w["usd"] or 0 for w in shorts)
+    return jsonify({
+        "ok": True, "coin": coin, "price": px, "whales": whales,
+        "n_long": len(longs), "n_short": len(shorts),
+        "long_usd": lu, "short_usd": su, "net_usd": lu - su,
+        "tracked": len(labels),
+        "coins": sorted(coins),
+    })
+
+
 @app.route("/api/universe")
 @login_required
 def api_universe():

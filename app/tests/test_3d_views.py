@@ -168,3 +168,74 @@ def test_exchange_failure_does_not_500(monkeypatch):
         body, code = resp if isinstance(resp, tuple) else (resp, 200)
         assert code == 200
         assert body.get_json()["ok"] is False
+
+
+# ── 🐳 whale positioning ─────────────────────────────────────────────────────
+# szi is in COIN units, which makes whales incomparable: 29 BTC and 50,000 ETH
+# look wildly different until both are priced. The endpoint's job is to make
+# them comparable without inventing numbers.
+def _whales(monkeypatch, state, price=2000.0, addresses=None):
+    import whale_tracker as W
+    _as(monkeypatch)                     # the endpoint is login_required
+    monkeypatch.setattr(W, "_load_state", lambda: state)
+    monkeypatch.setattr(W, "load_addresses",
+                        lambda: addresses if addresses is not None
+                        else [{"address": "0xaaa", "label": "鯨 A"},
+                              {"address": "0xbbb", "label": "鯨 B"}])
+    monkeypatch.setattr(APP, "fetch_live_tickers",
+                        lambda syms: ({syms[0]: {"last": price}} if price else {}))
+    with APP.app.test_request_context("/api/whale_3d?coin=ETH"):
+        return APP.api_whale_3d().get_json()
+
+
+def test_sizes_are_priced_into_usd(monkeypatch):
+    d = _whales(monkeypatch, {"0xaaa": {"ETH": {"side": "long", "szi": 10.0}},
+                              "0xbbb": {"ETH": {"side": "short", "szi": -5.0}}})
+    assert d["ok"] and len(d["whales"]) == 2
+    by = {w["label"]: w for w in d["whales"]}
+    assert by["鯨 A"]["usd"] == pytest.approx(20000.0)   # 10 ETH @ 2000
+    assert by["鯨 B"]["usd"] == pytest.approx(10000.0)   # abs(-5) @ 2000
+    assert d["net_usd"] == pytest.approx(10000.0)        # long 20k - short 10k
+
+
+def test_side_comes_from_the_sign_not_the_label(monkeypatch):
+    """A stale/incorrect 'side' string must not flip a position's direction."""
+    d = _whales(monkeypatch, {"0xaaa": {"ETH": {"side": "long", "szi": -7.0}}})
+    assert d["whales"][0]["side"] == "short"
+
+
+def test_unpriceable_size_is_none_not_zero(monkeypatch):
+    """usd=0 would render as a flat bar — i.e. 'no position' — which is a lie."""
+    d = _whales(monkeypatch, {"0xaaa": {"ETH": {"side": "long", "szi": 10.0}}}, price=None)
+    assert d["whales"][0]["usd"] is None
+    assert d["price"] is None
+
+
+def test_flat_and_other_coins_are_excluded(monkeypatch):
+    d = _whales(monkeypatch, {"0xaaa": {"ETH": {"side": "long", "szi": 0.0}},
+                              "0xbbb": {"BTC": {"side": "short", "szi": -1.0}}})
+    assert d["whales"] == [] and d["n_long"] == 0 and d["n_short"] == 0
+    assert "BTC" in d["coins"]          # still reported as available elsewhere
+
+
+def test_bad_coin_is_rejected(monkeypatch):
+    _as(monkeypatch)
+    with APP.app.test_request_context("/api/whale_3d?coin=../etc"):
+        resp = APP.api_whale_3d()
+        body, code = resp if isinstance(resp, tuple) else (resp, 200)
+        assert code == 400
+
+
+def test_a_broken_tracker_does_not_500(monkeypatch):
+    import whale_tracker as W
+    _as(monkeypatch)
+
+    def _boom():
+        raise RuntimeError("state unreadable")
+
+    monkeypatch.setattr(W, "_load_state", _boom)
+    monkeypatch.setattr(W, "load_addresses", lambda: [])
+    with APP.app.test_request_context("/api/whale_3d?coin=ETH"):
+        resp = APP.api_whale_3d()
+        body, code = resp if isinstance(resp, tuple) else (resp, 200)
+        assert code == 200 and body.get_json()["ok"] is False
