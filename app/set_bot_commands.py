@@ -4,8 +4,8 @@ tapping Menu shows a scrollable, emoji-labelled list instead of members
 having to remember /commands or read the /help wall of text.
 
 Only genuinely public, read-only commands are listed — admin/owner-only ones
-(/clean /cleanall /resume /halt /whaleadd /whalerm /report /winrate
-/positions) are left out of the menu on purpose: they still work if typed
+(/clean /cleanall /resume /halt /whaleadd /whalerm /whalesync /report
+/winrate /positions) are left out of the menu on purpose: they still work if typed
 (gated server-side in tg_commands.OWNER_ONLY_COMMANDS, unaffected by this
 file either way), but listing them publicly would just invite non-admins to
 try commands that always no-op or 403 for them.
@@ -39,6 +39,7 @@ COMMANDS = [
     ("us", "🇺🇸 昨夜美股收盤摘要"),
     ("liq", "💥 清算地圖與統計"),
     ("whale", "🐳 巨鯨持倉追蹤"),
+    ("whaletop", "🐳 巨鯨候選名單（官方排行榜）"),
     ("alerts", "⏰ 目前到價提醒"),
     ("link", "🔗 網站儀表板連結"),
 ]

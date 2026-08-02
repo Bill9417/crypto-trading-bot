@@ -56,6 +56,7 @@ eth_mom_state.json
 balance_history.json
 whale_state.json
 whale_addresses.json
+whale_candidates.json
 s1_bybit_positions.json
 copy_followers.json
 paper_tracker_state.json

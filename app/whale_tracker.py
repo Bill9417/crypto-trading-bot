@@ -53,6 +53,9 @@ HTTP_TIMEOUT = float(os.getenv("WHALE_HTTP_TIMEOUT", "12"))
 # few ≥ this floor so the report stays readable and under Telegram's limit.
 REPORT_MAX_POS = int(os.getenv("WHALE_REPORT_MAX_POS", "6"))
 REPORT_MIN_POS_USD = float(os.getenv("WHALE_REPORT_MIN_POS_USD", "250000"))
+# /whale details this many books in full (biggest first) and folds the rest into
+# a one-line tail. The consensus header already counts every tracked whale.
+REPORT_MAX_WHALES = int(os.getenv("WHALE_REPORT_MAX_WHALES", "8"))
 
 # Seed list — the address the user referenced PLUS eight validated whales picked
 # from Hyperliquid's own leaderboard (stats-data.hyperliquid.xyz/Mainnet/
@@ -345,7 +348,12 @@ def build_report() -> str:
         lines.append("<pre>" + tg_format.esc("\n".join(r.strip() for r in consensus))
                      + "</pre>")
     lines.append("")
-    for label, addr, pos, acct in books:
+    # Biggest book first, and cap the detail: the consensus block above is the
+    # part that generalises, and 15 full books blow past Telegram's 4096 chars
+    # (chunking would split one /whale reply into two messages).
+    books.sort(key=lambda b: -sum(p["notional"] for p in (b[2] or {}).values()))
+    hidden = books[REPORT_MAX_WHALES:]
+    for label, addr, pos, acct in books[:REPORT_MAX_WHALES]:
         cg = f'📊 <a href="{_coinglass(addr)}">Coinglass ↗</a>'
         if pos is None:
             lines.append(f"• {tg_format.esc(label)} — 查詢失敗 · {cg}")
@@ -370,6 +378,10 @@ def build_report() -> str:
             lines.append(f"…還有 {extra} 個 ≥{_usd(REPORT_MIN_POS_USD)} 部位")
         elif not big:
             lines.append("(無 ≥$250k 部位，多為小倉)")
+    if hidden:
+        rest = _usd(sum(p["notional"] for _, _, pos, _ in hidden
+                        for p in (pos or {}).values()))
+        lines.append(f"\n…另外 {len(hidden)} 個較小的巨鯨（合計 {rest}）已計入上方共識")
     lines.append("\n⚠️ 追蹤資訊，非投資建議")
     return "\n".join(lines)
 

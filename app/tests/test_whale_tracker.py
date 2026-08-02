@@ -164,3 +164,32 @@ def test_report_offline(monkeypatch, tmp_path):
     assert "巨鯨追蹤" in rep and "鯨魚A" in rep
     assert "做多" in rep and "BTC" in rep and "coinglass.com" in rep
     assert "<pre>" in rep                        # aligned positions table
+
+
+def test_report_caps_detail_and_ranks_biggest_first(monkeypatch, tmp_path):
+    """15 full books blow past Telegram's 4096 chars, so /whale details the
+    biggest few and folds the rest into a line — the consensus header above
+    still counts every tracked whale."""
+    _wire(monkeypatch, tmp_path)
+    monkeypatch.setattr(WT, "REPORT_MAX_WHALES", 3)
+    addrs = [f"0x{i:040x}" for i in range(1, 8)]
+    WT._save_addresses([{"address": a, "label": f"鯨{i}"}
+                        for i, a in enumerate(addrs, 1)])
+    sizes = {a: (i + 1) * 1e6 for i, a in enumerate(addrs)}   # 鯨7 is biggest
+    monkeypatch.setattr(WT, "fetch_positions",
+                        lambda a: ({"ETH": _pos("short", -1, sizes[WT._norm(a)])}, 1e7))
+    rep = WT.build_report()
+    assert "共 7 個地址" in rep
+    assert "鯨7" in rep and "鯨6" in rep and "鯨5" in rep       # 3 biggest detailed
+    assert "鯨1" not in rep and "鯨2" not in rep                # smallest folded away
+    assert "另外 4 個較小的巨鯨" in rep
+    assert rep.index("鯨7") < rep.index("鯨5")                  # biggest book first
+    assert "7空" in rep                                        # consensus counts ALL 7
+
+
+def test_report_tail_absent_when_everything_fits(monkeypatch, tmp_path):
+    _wire(monkeypatch, tmp_path)
+    WT._save_addresses([{"address": WT._norm(ADDR), "label": "鯨魚A"}])
+    monkeypatch.setattr(WT, "fetch_positions",
+                        lambda a: ({"BTC": _pos("long", 10, 6e6)}, 1e7))
+    assert "另外" not in WT.build_report()

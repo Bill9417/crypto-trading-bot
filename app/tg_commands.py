@@ -63,7 +63,7 @@ ALLOWED_CHATS = {str(c) for c in (config.TELEGRAM_GROUP_CHAT_ID, config.CHAT_ID,
 # must be a group admin (checked live via getChatAdministrators, cached) or
 # the owner (the DM chat ids double as the owner's user ids).
 ADMIN_COMMANDS = {"clean", "clear", "purge", "cleanall", "resume", "halt",
-                  "whaleadd", "whalerm"}
+                  "whaleadd", "whalerm", "whalesync"}
 OWNER_IDS = {str(c) for c in (config.CHAT_ID, config.ALERTS_CHAT_ID) if c}
 # Commands that read the REAL money: balances, open positions, entry prices,
 # unrealized/realized P&L in USDT. Strictly the owner's — not group admins,
@@ -80,7 +80,7 @@ ADMIN_CACHE_SEC = 300
 # attached to a reply DO stay tappable indefinitely (they're part of that
 # specific message, not a suggestion bar), which is the closer fit here.
 REFRESHABLE_CMDS = {"positions", "price", "signals", "winrate", "alerts",
-                    "liq", "whale", "twnow", "paper", "us"}
+                    "liq", "whale", "whaletop", "twnow", "paper", "us"}
 _admin_cache = {"ts": 0.0, "ids": set()}
 
 
@@ -344,7 +344,9 @@ HELP = ("🤖 指令列表\n"
         "/us — 🇺🇸 昨夜美股收盤摘要（指數 + 台積電 ADR + 費半）\n"
         "/liq — BTC/ETH 清算: 24h統計 + 最近清算價 + 🧲清算地圖\n"
         "/whale — 🐳 巨鯨追蹤: 每個地址的即時持倉（Hyperliquid）\n"
+        "/whaletop — 🐳 巨鯨候選名單: 官方排行榜篩出的大戶（已排除做市商/空投戶）\n"
         "/whaleadd <0x地址> [名稱] · /whalerm <地址> — 管理追蹤清單（限管理員）\n"
+        "/whalesync [dry] — 自動加入排行榜前段的新巨鯨（限管理員）\n"
         "/outcomes — 訊號成績單: 每個訊號 48h 後的真實結果\n"
         "/mom — ETH 14 日動能紙上前測戰績\n"
         "/paper — S1 前測戰績（紙上模擬, 無真實下單）: 完整版 vs 只做多版\n"
@@ -461,6 +463,12 @@ def handle(cmd: str, args: str = "", owner: bool = False) -> str:
     if cmd in ("whale", "whales"):
         import whale_tracker
         return whale_tracker.build_report()
+    if cmd in ("whaletop", "whalefind"):
+        import whale_discover
+        return whale_discover.build_report()
+    if cmd == "whalesync":
+        import whale_discover
+        return whale_discover.sync(count=6, dry_run="dry" in args.lower())
     if cmd == "whaleadd":
         import whale_tracker
         parts = args.strip().split(None, 1)
