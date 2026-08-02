@@ -3523,6 +3523,39 @@ def universe_page():
     return render_template("universe.html", user=current_user)
 
 
+_liq_px_cache: dict = {}
+LIQ_PX_TTL = 300
+
+
+def _minute_closes(base: str) -> dict:
+    """{minute_ts_ms: close} for the last day, from 1m candles.
+
+    Bybit and OKX report the BANKRUPTCY price, which sits past where the tape
+    actually printed, so liquidations.py deliberately stores px=0 for them
+    (verified 2026-07-14). That is correct — but it leaves ~99% of the feed
+    unusable for a PRICE map: four hours of collection produced 1,151
+    Bybit/OKX events against 3 Binance ones.
+
+    Those events still carry a trustworthy TIMESTAMP. Pricing them at the
+    market close of their own minute uses no bankruptcy figure at all, is
+    accurate to one candle — ample for bucketing a price level — and is
+    reported separately so the map never claims they were fills.
+    """
+    now = time.time()
+    hit = _liq_px_cache.get(base)
+    if hit and now - hit[0] < LIQ_PX_TTL:
+        return hit[1]
+    out = {}
+    try:
+        import backtest as _bt
+        oh = _bt.fetch_ohlcv(f"{base}/{QUOTE_ASSET}:{QUOTE_ASSET}", "1m", 2)
+        out = {int(c[0]): float(c[4]) for c in oh}
+    except Exception as e:  # noqa: BLE001 — degrade to Binance-only prints
+        print(f"[liq_levels] 1m closes for {base} failed: {e}")
+    _liq_px_cache[base] = (now, out)
+    return out
+
+
 @app.route("/api/liq_levels")
 @login_required
 def api_liq_levels():
@@ -3544,19 +3577,27 @@ def api_liq_levels():
         window = 86400
 
     cutoff = time.time() * 1000 - window * 1000
-    priced, skipped, newest = [], 0, 0
-    for e in liquidations.events_copy():
-        if e.get("sym") != base or (e.get("ts") or 0) < cutoff:
-            continue
-        newest = max(newest, e.get("ts") or 0)
+    mine = [e for e in liquidations.events_copy()
+            if e.get("sym") == base and (e.get("ts") or 0) >= cutoff]
+    newest = max((e.get("ts") or 0 for e in mine), default=0)
+
+    closes = _minute_closes(base) if any(not e.get("px") for e in mine) else {}
+    priced, skipped, n_fill, n_est = [], 0, 0, 0
+    for e in mine:
         if e.get("px"):
-            priced.append(e)
+            priced.append(e); n_fill += 1
+            continue
+        m = int(e.get("ts", 0)) // 60000 * 60000
+        px = closes.get(m) or closes.get(m - 60000)
+        if px:
+            priced.append({**e, "px": px}); n_est += 1
         else:
             skipped += 1
 
     snap = liquidations.snapshot(60)
     out = {"ok": True, "coin": base, "window_sec": window, "levels": [],
            "n_priced": len(priced), "n_unpriced": skipped, "last_ts": newest or None,
+           "n_fill": 0, "n_est": 0,
            "collecting_since": snap.get("collecting_since"),
            "long_usd": 0.0, "short_usd": 0.0, "max_usd": 0.0, "price": None,
            "lo": None, "hi": None}
@@ -3568,20 +3609,34 @@ def api_liq_levels():
     except Exception as e:  # noqa: BLE001 — the map still reads without it
         print(f"[liq_levels] price for {base} failed: {e}")
 
+    out["n_fill"], out["n_est"] = n_fill, n_est
     if not priced:
         return jsonify(out)
 
     pxs = sorted(e["px"] for e in priced)
-    lo, hi = pxs[0], pxs[-1]
-    if out["price"]:                       # always include spot in the range
-        lo, hi = min(lo, out["price"]), max(hi, out["price"])
-    if hi - lo < hi * 1e-6:
-        pad = max(hi * 0.001, 1e-9)
-        lo, hi = lo - pad, hi + pad
+    # Anchor the ladder on SPOT, not on the event min/max. Percentiles do not
+    # help at these sample sizes (at n=32 the 2nd percentile is still index 0),
+    # and one stale print 5% away stretched the scale until 25 of 28 rows
+    # rendered empty. A band around spot is also the actionable zone — levels
+    # far from price are not what you trade off. Outliers clamp into the end
+    # bins and are counted, never dropped silently.
+    spot0 = out["price"] or pxs[len(pxs) // 2]
+    band = 0.03
+    lo, hi = spot0 * (1 - band), spot0 * (1 + band)
+    inside = [x for x in pxs if lo <= x <= hi]
+    # widen until the band holds most of the activity, so a genuinely volatile
+    # window is not squeezed into the two end bins
+    while len(inside) < len(pxs) * 0.8 and band < 0.25:
+        band *= 1.6
+        lo, hi = spot0 * (1 - band), spot0 * (1 + band)
+        inside = [x for x in pxs if lo <= x <= hi]
+    out["band_pct"] = round(band * 100, 2)
+    out["n_outside"] = len(pxs) - len(inside)
 
     NB = 28
     bins = [[0.0, 0.0] for _ in range(NB)]
     for e in priced:
+        # clamp: an outlier belongs in the end bin, not off the chart
         j = min(NB - 1, max(0, int((e["px"] - lo) / (hi - lo) * NB)))
         usd = float(e.get("usd") or 0)
         if str(e.get("side", "")).lower().startswith("l"):
@@ -3596,6 +3651,36 @@ def api_liq_levels():
                       "long": b[0], "short": b[1]} for j, b in enumerate(bins)]
     out["max_usd"] = max((b[0] + b[1]) for b in bins)
     out["lo"], out["hi"] = lo, hi
+
+    # ── the "magnets": the heaviest cluster ABOVE and BELOW spot ─────────────
+    # Price tends to reach for where leverage is dying, so the nearest big
+    # cluster on each side is the honest read of "what might get run next".
+    # Stated as a LEVEL, never as a prediction — it is where stops already
+    # died, not where price is going.
+    spot = out["price"]
+    if spot:
+        above = [lv for lv in out["levels"] if lv["lo"] > spot and (lv["long"] + lv["short"]) > 0]
+        below = [lv for lv in out["levels"] if lv["hi"] < spot and (lv["long"] + lv["short"]) > 0]
+        def _mag(rows):
+            if not rows:
+                return None
+            b = max(rows, key=lambda lv: lv["long"] + lv["short"])
+            mid = (b["lo"] + b["hi"]) / 2
+            tot = b["long"] + b["short"]
+            return {"price": mid, "usd": tot,
+                    # which side died there: longs liquidate on the way DOWN,
+                    # shorts on the way UP
+                    "side": "long" if b["long"] >= b["short"] else "short",
+                    "dist_pct": (mid - spot) / spot * 100}
+        out["magnet_up"] = _mag(above)
+        out["magnet_down"] = _mag(below)
+        # net pressure: which side has been bleeding more in this window
+        tot = out["long_usd"] + out["short_usd"]
+        out["bias"] = None if not tot else {
+            "long_share": out["long_usd"] / tot,
+            # more LONGS liquidated = downside pressure has been winning
+            "label": "downside" if out["long_usd"] > out["short_usd"] else "upside",
+        }
     return jsonify(out)
 
 

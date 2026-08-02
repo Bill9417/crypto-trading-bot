@@ -269,13 +269,31 @@ def test_levels_bin_by_price_and_split_by_side(monkeypatch):
     assert len(hit) == 2
 
 
-def test_bankruptcy_priced_events_never_reach_the_map(monkeypatch):
-    """Same rule as the 3D terrain: Bybit/OKX prices never traded."""
+def test_the_exchange_bankruptcy_price_is_never_plotted(monkeypatch):
+    """Bybit/OKX report a BANKRUPTCY price that never traded. Those events are
+    now plotted — 99% of the feed is theirs — but priced from the 1m candle of
+    their own minute, never from the figure the exchange sent. This pins the
+    thing that must stay true: an absurd bankruptcy price must not move the
+    map. They also count as derived, not as fills."""
     now = time.time() * 1000
+    minute = int(now) // 60000 * 60000
+    monkeypatch.setattr(APP, "_minute_closes", lambda base: {minute: 63000.0})
     evs = [{"sym": "BTC", "ts": now - 1000, "px": None, "usd": 9999.0, "side": "long", "ex": "Bybit"},
            {"sym": "BTC", "ts": now - 1000, "px": 0, "usd": 8888.0, "side": "short", "ex": "OKX"}]
+    d = _levels(monkeypatch, evs, price=63000.0)
+    assert d["n_est"] == 2 and d["n_fill"] == 0
+    # the whole ladder hugs spot (a +/-3% band), nowhere near a bankruptcy figure
+    assert d["lo"] == pytest.approx(63000 * 0.97)
+    assert d["hi"] == pytest.approx(63000 * 1.03)
+
+
+def test_an_event_with_no_candle_is_dropped_not_guessed(monkeypatch):
+    """No candle for that minute means no honest price — skip it."""
+    now = time.time() * 1000
+    monkeypatch.setattr(APP, "_minute_closes", lambda base: {})
+    evs = [{"sym": "BTC", "ts": now - 1000, "px": None, "usd": 9999.0, "side": "long", "ex": "Bybit"}]
     d = _levels(monkeypatch, evs)
-    assert d["n_priced"] == 0 and d["n_unpriced"] == 2
+    assert d["n_priced"] == 0 and d["n_unpriced"] == 1
     assert d["levels"] == [] and d["long_usd"] == 0.0
 
 
