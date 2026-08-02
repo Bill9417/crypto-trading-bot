@@ -110,3 +110,58 @@ def test_headline_sentiment():
     assert headline_sentiment("Tokenization panel discusses custody standards") == "neutral"
     # mixed headline: equal hits → neutral, never a false positive
     assert headline_sentiment("Bitcoin jumps above $63,000, reversing end-June losses") == "neutral"
+
+
+def test_concurrent_saves_do_not_race(tmp_path, monkeypatch):
+    """Three WebSocket threads all call _maybe_save() via _push. A shared
+    "<file>.tmp" meant the first os.replace consumed it and the rest raised
+    FileNotFoundError, silently losing those saves — seen in the real S2 log
+    the moment persistence shipped. A PID tag alone does not fix it either:
+    same process, same PID. Saves are serialised."""
+    import threading as _t
+    import liquidations as L
+    monkeypatch.setattr(L, "BUFFER_FILE", str(tmp_path / "buf.json"))
+    L._events.clear()
+    for i in range(10):
+        L._push(int(time.time() * 1000) - i * 1000, "Binance", "BTCUSDT",
+                "long", 10.0, 63000.0)
+
+    results, errors = [], []
+
+    def _w():
+        try:
+            results.append(L.save_buffer())
+        except Exception as e:  # noqa: BLE001
+            errors.append(e)
+
+    threads = [_t.Thread(target=_w) for _ in range(12)]
+    [t.start() for t in threads]
+    [t.join() for t in threads]
+
+    assert not errors, f"concurrent saves raised: {errors}"
+    assert any(results), "every save was skipped — nothing persisted"
+    assert not list(tmp_path.glob("*.tmp")), "a stray temp file was left behind"
+    L._events.clear()
+    assert L.load_buffer() == 10
+
+
+def test_a_restarted_process_cannot_wipe_the_other_ones_history(tmp_path, monkeypatch):
+    """Observed live: the persisted buffer went from 82 events to 2 when a
+    freshly restarted web process saved over the S2 scanner's hours of data.
+    Two collectors run independently, so a save has to MERGE with disk, not
+    overwrite it."""
+    import liquidations as L
+    monkeypatch.setattr(L, "BUFFER_FILE", str(tmp_path / "buf.json"))
+    now = time.time() * 1000
+
+    L._events.clear()                                   # collector A: lots of history
+    for i in range(50):
+        L._push(int(now - i * 1000), "Binance", "BTCUSDT", "long", 10.0, 63000.0 + i)
+    L.save_buffer()
+
+    L._events.clear()                                   # collector B: just restarted
+    L._push(int(now - 500), "Binance", "ETHUSDT", "short", 5.0, 1800.0)
+    L.save_buffer()
+
+    L._events.clear()
+    assert L.load_buffer() >= 51, "a restarted process destroyed the other's history"

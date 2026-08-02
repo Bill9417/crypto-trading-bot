@@ -73,6 +73,11 @@ _status = {"binance": "idle", "bybit": "idle", "okx": "idle"}
 BUFFER_FILE = os.path.join(os.path.dirname(__file__), "liquidations_buffer.json")
 SAVE_EVERY_SEC = 60
 _last_save: float = 0.0
+# Three WebSocket threads all call _maybe_save() via _push, and a PID-tagged
+# temp is NOT enough on its own: same process, same PID, same temp path, so
+# concurrent saves still raced each other into FileNotFoundError. Serialise
+# them — a save is cheap and redundant concurrent ones buy nothing.
+_save_lock = threading.Lock()
 
 
 def _key(e: dict) -> tuple:
@@ -83,12 +88,35 @@ def save_buffer() -> bool:
     """Atomically persist the in-window events. Best-effort by design — a
     failure here must never disturb collection."""
     global _last_save
+    tmp = ""
+    if not _save_lock.acquire(blocking=False):
+        return False                     # another thread is already saving
     try:
         with _lock:
             evs = list(_events)
         cutoff = (time.time() - WINDOW_SEC) * 1000
         evs = [e for e in evs if e.get("ts", 0) >= cutoff]
-        tmp = BUFFER_FILE + ".tmp"
+        # MERGE with whatever is already on disk before writing. Two processes
+        # collect independently, and a plain overwrite meant a freshly
+        # restarted one — holding seconds of data — wiped the other's hours of
+        # it (observed live: 82 events replaced by 2). Union, dedupe, keep the
+        # window. Neither process can now destroy the other's history.
+        try:
+            with open(BUFFER_FILE, "r", encoding="utf-8") as f:
+                disk = (json.load(f) or {}).get("events") or []
+            have = {_key(e) for e in evs}
+            evs.extend(e for e in disk
+                       if e.get("ts", 0) >= cutoff and _key(e) not in have)
+            evs.sort(key=lambda e: e.get("ts", 0))
+        except Exception:  # noqa: BLE001 — absent/corrupt disk copy = ours wins
+            pass
+        # PID in the temp name: the web app and the S2 scanner both run a
+        # collector and both save. With a shared "<file>.tmp" the first
+        # os.replace consumes it and the second raises FileNotFoundError,
+        # silently losing that process's save. A per-process temp makes the
+        # two writers independent — last writer wins, which is fine, versus
+        # one of them never landing at all.
+        tmp = f"{BUFFER_FILE}.{os.getpid()}.tmp"
         with open(tmp, "w", encoding="utf-8") as f:
             json.dump({"saved_at": time.time(), "events": evs}, f)
         os.replace(tmp, BUFFER_FILE)
@@ -96,7 +124,14 @@ def save_buffer() -> bool:
         return True
     except Exception as exc:  # noqa: BLE001
         print(f"[liq] buffer save failed: {exc}")
+        try:
+            if os.path.exists(tmp):
+                os.remove(tmp)          # never leave a stray temp behind
+        except Exception:  # noqa: BLE001
+            pass
         return False
+    finally:
+        _save_lock.release()
 
 
 def load_buffer() -> int:
