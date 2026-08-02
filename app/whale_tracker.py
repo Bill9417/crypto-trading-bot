@@ -408,7 +408,13 @@ def tick(client=None) -> int:
         pos, acct = fetch_positions(addr)
         if pos is None:                       # API blip — keep old state, retry next tick
             continue
-        cur = {c: {"side": v["side"], "szi": v["szi"]} for c, v in pos.items()}
+        # entry/lev/liq ride along so the dashboard can show a whale's cost
+        # basis and compute a LIVE P&L without spending a Hyperliquid call.
+        # Only side and szi drive change detection (see diff_positions) — the
+        # extra keys are inert to it.
+        cur = {c: {"side": v["side"], "szi": v["szi"], "entry": v.get("entry"),
+                   "lev": v.get("lev"), "liq": v.get("liq")}
+               for c, v in pos.items()}
 
         if addr not in state:                 # first sight → seed silently, no flood
             state[addr] = cur

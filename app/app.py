@@ -3869,12 +3869,30 @@ def api_whale_3d():
         szi = _fnum(d.get("szi"))
         if szi is None or szi == 0:
             continue
+        entry, lev, liq = _fnum(d.get("entry")), _fnum(d.get("lev")), _fnum(d.get("liq"))
+        # P&L is COMPUTED from cost basis against the live price, not read from
+        # the stored snapshot: the tracker polls every 5 minutes, so a stored
+        # figure would be up to that stale. szi carries the sign, so
+        # szi*(px-entry) is already correct for a short.
+        # Caveat kept honest in the UI: entry comes from Hyperliquid while px is
+        # this exchange's perp last — a few bps of cross-venue basis rides along.
+        upnl = roi = None
+        if entry and px:
+            upnl = szi * (px - entry)
+            margin = abs(szi) * entry / lev if lev else abs(szi) * entry
+            if margin:
+                roi = upnl / margin
         whales.append({
             "label": labels.get(addr) or addr[:8],
             "addr": addr[:10] + "…",
             "side": "long" if szi > 0 else "short",
             "szi": szi,
             "usd": None if px is None else abs(szi) * px,
+            "entry": entry,
+            "lev": lev,
+            "liq": liq,
+            "upnl": upnl,
+            "roi": roi,
             "url": f"https://hypurrscan.io/address/{addr}",
         })
     whales.sort(key=lambda w: -(w["usd"] or abs(w["szi"])))

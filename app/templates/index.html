@@ -380,6 +380,24 @@
         .wh-empty { font-size:.78rem; color:var(--wolf-muted); padding:8px 2px; }
         .wh-foot { margin-top:10px; font-size:.66rem; color:var(--wolf-dim,#64748b); line-height:1.6; }
         @media (max-width:640px){ .wh-r { grid-template-columns:88px 1fr 64px; } }
+        /* hover card: cost basis + live P&L for one whale */
+        .wh-r { cursor:default; border-radius:5px; }
+        .wh-r:hover { background:rgba(255,255,255,.045); }
+        .wh-panel { position:relative; }
+        /* translateX only — the vertical placement is computed in JS so the card
+           can flip below a row near the top instead of being clipped by the panel */
+        .wh-tip { position:absolute; z-index:40; pointer-events:none; opacity:0; transition:opacity .11s;
+                  transform:translateX(-50%); width:270px; padding:9px 11px; border-radius:9px;
+                  background:rgba(10,14,24,.97); border:1px solid var(--wolf-border);
+                  box-shadow:0 10px 26px rgba(0,0,0,.5); font-size:.68rem; line-height:1.5; }
+        .wh-tip.on { opacity:1; }
+        .wh-tip .t-h { font-weight:800; color:var(--wolf-text); margin-bottom:2px; }
+        .wh-tip .t-s { color:var(--wolf-dim,#64748b); margin-bottom:6px; font-size:.64rem; }
+        .wh-tip dl { display:grid; grid-template-columns:auto 1fr; gap:2px 12px; margin:0; }
+        .wh-tip dt { color:var(--wolf-muted); }
+        .wh-tip dd { margin:0; text-align:right; font-weight:700; font-variant-numeric:tabular-nums; color:var(--wolf-text); }
+        .wh-tip .t-note { margin-top:6px; padding-top:5px; border-top:1px solid var(--wolf-border);
+                          color:var(--wolf-dim,#64748b); font-size:.6rem; line-height:1.45; }
 
         /* ── 💥 2D liquidation map ── */
         .liq2d-panel { position: relative; }
@@ -1892,6 +1910,9 @@
                 </div>
             </div>
             <div id="wh-body"><div class="wh-empty">Loading…</div></div>
+            <!-- outside #wh-body on purpose: render() replaces that node's
+                 innerHTML, which would take the tooltip with it -->
+            <div class="wh-tip" id="wh-tip"></div>
         </section>
 
 
@@ -1911,10 +1932,10 @@
                 var html='<div class="wh-net">'+
                     '<i class="l" style="width:'+lp.toFixed(1)+'%">'+(lp>12?'LONG $'+usd(d.long_usd):'')+'</i>'+
                     '<i class="s" style="width:'+(100-lp).toFixed(1)+'%">'+((100-lp)>12?'SHORT $'+usd(d.short_usd):'')+'</i></div>';
-                html+='<div class="wh-rows">'+d.whales.map(function(w){
+                html+='<div class="wh-rows">'+d.whales.map(function(w,i){
                     var pct=(w.usd||0)/max*50;   // half-width max, so both sides share the axis
                     var isL=w.side==='long';
-                    return '<div class="wh-r"><span class="wh-nm">'+esc(w.label)+'</span>'+
+                    return '<div class="wh-r" data-i="'+i+'"><span class="wh-nm">'+esc(w.label)+'</span>'+
                       '<span class="wh-track"><span class="wh-mid"></span>'+
                       '<span class="half left">'+(isL?'<b class="l" style="width:'+(pct*2).toFixed(1)+'%"></b>':'')+'</span>'+
                       '<span class="half">'+(!isL?'<b class="s" style="width:'+(pct*2).toFixed(1)+'%"></b>':'')+'</span>'+
@@ -1924,12 +1945,69 @@
                 html+='<div class="wh-foot">'+d.n_long+' long / '+d.n_short+' short · net <b style="color:'+
                     (net>=0?'#4ade80':'#f87171')+'">'+(net>=0?'+':'-')+'$'+usd(net)+'</b> — 這是持倉，不是預測；巨鯨也會錯。</div>';
                 el.innerHTML=html;
-                sub.textContent="Tracked whales' live "+d.coin+' positioning — bar length is USD notional';
+                sub.textContent="Tracked whales' live "+d.coin+' positioning — 滑過看進場價與損益';
             }
+
+            // ── hover card: cost basis + live P&L ──
+            var ROWS=[], PX=null, tip=document.getElementById('wh-tip');
+            function px5(v){return v==null?'—':(v>=1000?v.toLocaleString('en-US',{maximumFractionDigits:1}):Number(v.toPrecision(5)).toString());}
+            function sgn(v){return (v>=0?'+':'-')+'$'+usd(v);}
+            function pctTxt(v){return (v>=0?'+':'')+(v*100).toFixed(1)+'%';}
+            function tipHtml(w){
+                var isL=w.side==='long', col=isL?'#4ade80':'#f87171';
+                var h='<div class="t-h">'+esc(w.label)+'</div>'+
+                      '<div class="t-s">'+(isL?'做多':'做空')+' '+Math.abs(w.szi).toLocaleString('en-US',{maximumFractionDigits:2})+
+                      ' '+esc(w.coin)+' · $'+usd(w.usd)+'</div><dl>';
+                if(w.entry==null){
+                    // pre-existing state rows carry no cost basis; the tracker
+                    // fills it in on its next sweep rather than us guessing
+                    h+='<dt>進場價</dt><dd style="color:var(--wolf-muted)">等下次掃描</dd>';
+                }else{
+                    h+='<dt>進場價</dt><dd>'+px5(w.entry)+'</dd>';
+                }
+                h+='<dt>現價</dt><dd>'+px5(PX)+'</dd>';
+                if(w.upnl!=null){
+                    var pc=w.upnl>=0?'#4ade80':'#f87171';
+                    h+='<dt>未實現</dt><dd style="color:'+pc+'">'+sgn(w.upnl)+
+                       (w.roi!=null?' <span style="opacity:.75;font-weight:600">'+pctTxt(w.roi)+'</span>':'')+'</dd>';
+                }
+                if(w.lev) h+='<dt>槓桿</dt><dd>'+w.lev+'x</dd>';
+                if(w.liq){
+                    var away=PX?(w.liq-PX)/PX:null;
+                    h+='<dt>清算價</dt><dd style="color:'+col+'">'+px5(w.liq)+
+                       (away!=null?' <span style="opacity:.75;font-weight:600">'+pctTxt(away)+'</span>':'')+'</dd>';
+                }
+                h+='</dl>';
+                if(w.upnl!=null) h+='<div class="t-note">即時由進場價算出'+(w.roi!=null?'，% 是對保證金':'')+
+                   '。現價取自本所永續，與 Hyperliquid 標記價有數基點差。</div>';
+                return h;
+            }
+            document.getElementById('wh-body').addEventListener('mousemove',function(e){
+                var r=e.target.closest('.wh-r'), w=r&&ROWS[+r.dataset.i];
+                if(!w){ tip.classList.remove('on'); return; }
+                var pr=this.closest('.wh-panel').getBoundingClientRect(), rr=r.getBoundingClientRect();
+                tip.innerHTML=tipHtml(w);
+                // measure AFTER filling: the card's height depends on how many
+                // fields this whale actually has
+                var tw=tip.offsetWidth, th=tip.offsetHeight, half=tw/2+6;
+                var x=Math.min(Math.max(e.clientX-pr.left,half), Math.max(half,pr.width-half));
+                // above the row by default; flip below when that would clip, then
+                // clamp into the panel — it is only ~270px tall, so on the top
+                // rows "below" overflows the bottom edge and gets cut off
+                var top=rr.top-pr.top-th-8;
+                if(top<4) top=rr.bottom-pr.top+8;
+                top=Math.max(4,Math.min(top,pr.height-th-4));
+                tip.style.left=x+'px';
+                tip.style.top=top+'px';
+                tip.classList.add('on');
+            });
+            document.getElementById('wh-body').addEventListener('mouseleave',function(){ tip.classList.remove('on'); });
+
             function load(){
                 fetch('/api/whale_3d?coin='+encodeURIComponent(COIN))
                   .then(function(r){return r.ok?r.json():null;})
-                  .then(function(d){ if(d&&d.ok) render(d); }).catch(function(){});
+                  .then(function(d){ if(d&&d.ok){ ROWS=d.whales.map(function(w){w.coin=d.coin;return w;}); PX=d.price; render(d);} })
+                  .catch(function(){});
             }
             document.getElementById('wh-coin').addEventListener('click',function(e){
                 var b=e.target.closest('button'); if(!b) return;
@@ -2136,8 +2214,12 @@
 
             function render(d){
                 D=d; draw();
+                // the window was invisible until now — you had to read the code to
+                // learn the map only covers the last 24h of 15m candles
+                var nb=(d.candles||[]).length, hrs=nb*({'5m':5,'15m':15,'1h':60}[d.tf]||15)/60;
                 document.getElementById('hm-note').textContent=
-                    '低 → 高預估清算量 · 依「'+(d.weighted_by==='open-interest growth'?'未平倉量增加':'成交量')+'」加權'+
+                    '低 → 高預估清算量 · '+d.tf+' × '+nb+' 根（近 '+(hrs>=24?(hrs/24).toFixed(hrs%24?1:0)+' 天':hrs+' 小時')+'）'+
+                    ' · 依「'+(d.weighted_by==='open-interest growth'?'未平倉量增加':'成交量')+'」加權'+
                     (d.oi_usd?' · 目前 OI $'+usd(d.oi_usd):'');
                 document.getElementById('hm-clusters').innerHTML=(d.clusters||[]).slice(0,4).map(function(c){
                     return '<div class="hm-c '+(c.side==='long'?'l':'s')+'"><div class="p">'+pxs(c.price)+'</div>'+

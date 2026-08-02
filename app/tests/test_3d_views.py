@@ -317,3 +317,62 @@ def test_bad_coin_rejected(monkeypatch):
         resp = APP.api_liq_levels()
         body, code = resp if isinstance(resp, tuple) else (resp, 200)
         assert code == 400
+
+
+# ── cost basis + live P&L (hover card) ───────────────────────────────────────
+# P&L is COMPUTED from entry against the live price rather than read from the
+# stored snapshot: whale_tracker polls every 5 minutes, so a stored figure would
+# be up to that stale.
+def test_long_pnl_is_computed_from_entry(monkeypatch):
+    d = _whales(monkeypatch, {"0xaaa": {"ETH": {"side": "long", "szi": 10.0,
+                                                "entry": 1800.0, "lev": 5}}},
+                price=2000.0)
+    w = d["whales"][0]
+    assert w["entry"] == 1800.0
+    assert w["upnl"] == pytest.approx(2000.0)          # 10 x (2000 - 1800)
+    assert w["roi"] == pytest.approx(2000.0 / 3600.0)  # margin = 10*1800/5
+
+
+def test_short_pnl_uses_the_sign_of_szi(monkeypatch):
+    """szi carries the sign, so szi*(px-entry) is already right for a short —
+    a short that entered at 2200 with price now 2000 is UP."""
+    d = _whales(monkeypatch, {"0xaaa": {"ETH": {"side": "short", "szi": -10.0,
+                                                "entry": 2200.0, "lev": 10}}},
+                price=2000.0)
+    w = d["whales"][0]
+    assert w["upnl"] == pytest.approx(2000.0)
+    assert w["roi"] > 0
+
+
+def test_losing_short_reports_a_loss(monkeypatch):
+    d = _whales(monkeypatch, {"0xaaa": {"ETH": {"side": "short", "szi": -10.0,
+                                                "entry": 1800.0}}}, price=2000.0)
+    assert d["whales"][0]["upnl"] == pytest.approx(-2000.0)
+
+
+def test_missing_entry_yields_none_not_zero(monkeypatch):
+    """State written before entry was persisted must read as 'unknown', not as
+    a whale sitting exactly at breakeven."""
+    d = _whales(monkeypatch, {"0xaaa": {"ETH": {"side": "long", "szi": 10.0}}})
+    w = d["whales"][0]
+    assert w["entry"] is None and w["upnl"] is None and w["roi"] is None
+
+
+def test_no_price_means_no_pnl(monkeypatch):
+    d = _whales(monkeypatch, {"0xaaa": {"ETH": {"side": "long", "szi": 10.0,
+                                                "entry": 1800.0}}}, price=None)
+    assert d["whales"][0]["upnl"] is None
+
+
+def test_roi_falls_back_to_notional_without_leverage(monkeypatch):
+    """Unlevered ROI is still meaningful; it just isn't a margin return."""
+    d = _whales(monkeypatch, {"0xaaa": {"ETH": {"side": "long", "szi": 10.0,
+                                                "entry": 1800.0}}}, price=2000.0)
+    assert d["whales"][0]["roi"] == pytest.approx(2000.0 / 18000.0)
+
+
+def test_liquidation_price_is_passed_through(monkeypatch):
+    d = _whales(monkeypatch, {"0xaaa": {"ETH": {"side": "long", "szi": 10.0,
+                                                "entry": 1800.0, "lev": 5,
+                                                "liq": 1450.0}}}, price=2000.0)
+    assert d["whales"][0]["liq"] == 1450.0

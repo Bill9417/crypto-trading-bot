@@ -193,3 +193,20 @@ def test_report_tail_absent_when_everything_fits(monkeypatch, tmp_path):
     monkeypatch.setattr(WT, "fetch_positions",
                         lambda a: ({"BTC": _pos("long", 10, 6e6)}, 1e7))
     assert "另外" not in WT.build_report()
+
+
+def test_state_keeps_cost_basis_without_disturbing_diffs(monkeypatch, tmp_path):
+    """entry/lev/liq ride along so the dashboard can price a whale's P&L, but
+    change detection still keys on side and szi alone."""
+    _wire(monkeypatch, tmp_path)
+    WT._save_addresses([{"address": WT._norm(ADDR), "label": "鯨魚A"}])
+    pos = {"ETH": _pos("long", 10, 5e6, entry=1800.0, lev=5, liq=1450.0)}
+    monkeypatch.setattr(WT, "fetch_positions", lambda a: (pos, 1e7))
+    monkeypatch.setattr(telegram_utils, "send_message", lambda *a, **k: True)
+    WT.tick()                                        # first sight → seeds silently
+    saved = WT._load_state()[WT._norm(ADDR)]
+    eth = saved["ETH"]
+    assert eth["entry"] == 1800.0 and eth["lev"] == 5 and eth["liq"] == 1450.0
+    assert eth["side"] == "long" and eth["szi"] == 10
+    # a pure price move (same side, same size) is still not an event
+    assert WT.diff_positions(saved, {"ETH": _pos("long", 10, 9e6, entry=1900.0)}) == []
