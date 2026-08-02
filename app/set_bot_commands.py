@@ -3,12 +3,17 @@
 tapping Menu shows a scrollable, emoji-labelled list instead of members
 having to remember /commands or read the /help wall of text.
 
-Only genuinely public, read-only commands are listed — admin/owner-only
-ones (/clean /cleanall /resume /halt /whaleadd /whalerm /report) are left
-out of the menu on purpose: they still work if typed (gated server-side in
-tg_commands.handle(), unaffected by this file either way), but listing them
-publicly would just invite non-admins to try commands that always no-op or
-403 for them.
+Only genuinely public, read-only commands are listed — admin/owner-only ones
+(/clean /cleanall /resume /halt /whaleadd /whalerm /report /winrate
+/positions) are left out of the menu on purpose: they still work if typed
+(gated server-side in tg_commands.OWNER_ONLY_COMMANDS, unaffected by this
+file either way), but listing them publicly would just invite non-admins to
+try commands that always no-op or 403 for them.
+
+/winrate and /positions were public here until 2026-08-02. They read the
+owner's REAL account — open positions, entry prices, unrealized and realized
+P&L in USDT — so with the group being promoted publicly, anyone who joined
+could tap Menu and read the owner's book. They are owner-DM-only now.
 
     python set_bot_commands.py
 """
@@ -25,8 +30,6 @@ COMMANDS = [
     ("guide", "📖 群組導覽 — 新朋友從這裡開始"),
     ("help", "❓ 完整指令清單"),
     ("price", "💰 即時報價"),
-    ("winrate", "📊 真實帳戶勝率報告"),
-    ("positions", "📋 未平倉部位"),
     ("signals", "🔔 最近訊號（含進場/停損/目標）"),
     ("outcomes", "✅ 訊號成績單（48h 後真實結果）"),
     ("paper", "📝 S1 前測戰績（紙上模擬）"),

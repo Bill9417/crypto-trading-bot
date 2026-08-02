@@ -65,11 +65,13 @@ ALLOWED_CHATS = {str(c) for c in (config.TELEGRAM_GROUP_CHAT_ID, config.CHAT_ID,
 ADMIN_COMMANDS = {"clean", "clear", "purge", "cleanall", "resume", "halt",
                   "whaleadd", "whalerm"}
 OWNER_IDS = {str(c) for c in (config.CHAT_ID, config.ALERTS_CHAT_ID) if c}
-# The daily report carries REAL account balances/P&L → strictly the owner's.
-# Not even group admins may read it, and the answer always goes to the
-# owner's DM (never into the group), no matter where it was typed.
-OWNER_ONLY_COMMANDS = {"report"}
-PRIVATE_REPLY_COMMANDS = {"report"}
+# Commands that read the REAL money: balances, open positions, entry prices,
+# unrealized/realized P&L in USDT. Strictly the owner's — not group admins,
+# not members — and the answer always goes to the owner's DM no matter where
+# it was typed. The group is being promoted publicly; anyone who joins could
+# otherwise type /positions and read the owner's book.
+OWNER_ONLY_COMMANDS = {"report", "positions", "pos", "winrate", "stats", "wr"}
+PRIVATE_REPLY_COMMANDS = set(OWNER_ONLY_COMMANDS)
 ADMIN_CACHE_SEC = 300
 
 # 👆 Tap-to-refresh — the "live data" commands where re-running is a natural
@@ -658,6 +660,23 @@ def _maybe_welcome(chat_id, thread_id, joiners) -> bool:
 # 🔄 Refresh taps: a callback_query from an inline keyboard button, not a new
 # /command message. The reply is EDITED in place (not resent) so the button
 # stays attached and the chat doesn't fill up with repeat copies.
+_left_chats: set = set()
+
+
+def _leave_foreign_chat(chat_id) -> None:
+    """Walk out of a group that isn't ours. Tried once per chat per process —
+    a failure (already gone, kicked, no rights) must not retry every poll."""
+    key = str(chat_id)
+    if key in _left_chats:
+        return
+    _left_chats.add(key)
+    try:
+        _api("leaveChat", chat_id=chat_id)
+        print(f"[tgcmd] left unauthorised chat {key}")
+    except Exception as exc:  # noqa: BLE001 — never kill the poll loop
+        print(f"[tgcmd] leaveChat {key} failed: {telegram_utils.redact(exc)}")
+
+
 def _handle_callback(cb: dict) -> None:
     cb_id = cb.get("id")
     parsed = parse_refresh_callback(cb.get("data") or "")
@@ -670,6 +689,12 @@ def _handle_callback(cb: dict) -> None:
     cmd, args = parsed
     if not allowed(chat_id) or cmd not in REFRESHABLE_CMDS:
         _answer_callback(cb_id, "⛔ 無權限")
+        return
+    # The button lives in the message forever and ANY member can tap it, so it
+    # must re-check the sender — gating the typed command alone would leave a
+    # tappable back door to the same data.
+    if not authorized(cmd, (cb.get("from") or {}).get("id")):
+        _answer_callback(cb_id, "⛔ 這是擁有者專用的私人資訊")
         return
     try:
         # a refresh tap must resolve the same owner view as the original reply,
@@ -724,8 +749,17 @@ def _poll_loop() -> None:
             if joiners and str(chat_id) == str(config.TELEGRAM_GROUP_CHAT_ID):
                 _maybe_welcome(chat_id, msg.get("message_thread_id"), joiners)
                 continue
+            # Someone adding the bot to THEIR group must not get a working
+            # bot. Commands were already ignored there, but the bot would sit
+            # in the chat looking usable — walk out instead. Private chats are
+            # left alone (leaveChat does not apply, and a stranger DMing the
+            # bot already gets nothing).
+            if chat_id and not allowed(chat_id):
+                if (msg.get("chat") or {}).get("type") in ("group", "supergroup", "channel"):
+                    _leave_foreign_chat(chat_id)
+                continue
             parsed = parse_command(msg.get("text") or "")
-            if not parsed or not allowed(chat_id):
+            if not parsed:
                 continue
             cmd, args = parsed
             # remember the user's /command message too, so /clean sweeps it

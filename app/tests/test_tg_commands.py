@@ -368,3 +368,90 @@ def test_handle_callback_malformed_data_stays_silent(monkeypatch):
           "message": {"chat": {"id": -100123}, "message_id": 1}}
     TG._handle_callback(cb)
     assert answered == [""]
+
+
+# ── 🔒 real-money commands are the owner's alone ─────────────────────────────
+# Until 2026-08-02 /positions and /winrate were public read-only commands and
+# were advertised in the ☰ Menu. They print the owner's open positions, entry
+# prices and P&L in USDT. With the group promoted publicly, anyone who joined
+# could read the owner's book. These tests pin that shut.
+ACCOUNT_CMDS = ("positions", "pos", "winrate", "stats", "wr", "report")
+
+
+def test_account_commands_are_owner_only():
+    for cmd in ACCOUNT_CMDS:
+        assert cmd in TG.OWNER_ONLY_COMMANDS, f"/{cmd} must be owner-only"
+        assert not TG.authorized(cmd, "999999"), f"/{cmd} answered a stranger"
+
+
+def test_account_commands_refuse_even_group_admins(monkeypatch):
+    """A group admin is not the account owner."""
+    monkeypatch.setattr(TG, "_group_admin_ids", lambda: {"424242"})
+    assert TG.is_admin("424242") is True
+    for cmd in ACCOUNT_CMDS:
+        assert not TG.authorized(cmd, "424242"), f"/{cmd} leaked to a group admin"
+
+
+def test_account_commands_answer_the_owner(monkeypatch):
+    monkeypatch.setattr(TG, "OWNER_IDS", {"777"})
+    for cmd in ACCOUNT_CMDS:
+        assert TG.authorized(cmd, "777"), f"/{cmd} refused the owner"
+
+
+def test_account_replies_go_to_the_owners_dm():
+    """Answering in the group would defeat the gate — the data would be on
+    screen for everyone regardless of who typed it."""
+    for cmd in ACCOUNT_CMDS:
+        assert cmd in TG.PRIVATE_REPLY_COMMANDS
+
+
+def test_refresh_button_recheeks_the_sender(monkeypatch):
+    """The 🔄 button lives in the message forever and ANY member can tap it,
+    so the callback path must re-authorise — gating only the typed command
+    left a tappable back door to the same data."""
+    monkeypatch.setattr(TG, "OWNER_IDS", {"777"})
+    monkeypatch.setattr(TG, "_group_admin_ids", lambda: set())
+    monkeypatch.setattr(TG, "allowed", lambda c: True)
+    answers, edits = [], []
+    monkeypatch.setattr(TG, "_answer_callback", lambda cb_id, text=None: answers.append(text))
+    monkeypatch.setattr(TG, "_edit_message", lambda *a, **k: edits.append(a))
+    monkeypatch.setattr(TG, "handle", lambda *a, **k: "SECRET BALANCE")
+
+    def _tap(uid):
+        answers.clear(); edits.clear()
+        TG._handle_callback({"id": "1", "data": "r:positions:", "from": {"id": uid},
+                             "message": {"message_id": 5, "chat": {"id": -100}}})
+
+    _tap("999999")                      # a member taps someone else's refresh
+    assert not edits, "stranger refreshed an account message"
+    assert answers and "⛔" in (answers[0] or "")
+
+    _tap("777")                         # the owner taps their own
+    assert edits, "owner was blocked from refreshing"
+
+
+def test_public_menu_does_not_advertise_account_commands():
+    import re
+    src = open("set_bot_commands.py", encoding="utf-8").read()
+    listed = set(re.findall(r'\(\s*"([a-z]+)"\s*,\s*"', src))
+    for cmd in ("winrate", "positions", "report"):
+        assert cmd not in listed, f"/{cmd} is still in the public ☰ Menu"
+
+
+# ── 🚪 the bot is not usable in anyone else's group ──────────────────────────
+def test_leaves_a_foreign_group(monkeypatch):
+    calls = []
+    monkeypatch.setattr(TG, "_api", lambda m, **kw: calls.append((m, kw)) or {})
+    TG._left_chats.clear()
+    TG._leave_foreign_chat(-100999)
+    assert calls and calls[0][0] == "leaveChat"
+
+
+def test_leave_is_tried_once_per_chat(monkeypatch):
+    """A failure (already gone, no rights) must not retry on every poll."""
+    calls = []
+    monkeypatch.setattr(TG, "_api", lambda m, **kw: calls.append(m) or {})
+    TG._left_chats.clear()
+    for _ in range(4):
+        TG._leave_foreign_chat(-100999)
+    assert len(calls) == 1

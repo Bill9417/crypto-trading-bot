@@ -389,8 +389,10 @@ def test_clean_is_admin_only(monkeypatch):
     assert tg_commands.authorized("purge", 77)
     assert not tg_commands.authorized("clean", 12345)
     assert not tg_commands.authorized("cleanall", 12345)
-    # read-only commands stay open to everyone in the allowed chats
-    assert tg_commands.authorized("winrate", 12345)
+    # read-only MARKET commands stay open to everyone in the allowed chats.
+    # (/winrate used to be the example here; it reads the owner's real
+    # account and became owner-only on 2026-08-02 — see test_tg_commands.)
+    assert tg_commands.authorized("signals", 12345)
     assert tg_commands.authorized("liq", None)
 
 
