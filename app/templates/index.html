@@ -252,29 +252,67 @@
         }
         .analytics-link:hover { color: #7ae7ff; }
 
-        /* ── 🌌 Live 3D market cloud ── */
-        .sky3d-panel { position: relative; overflow: hidden; }
-        .sky3d-panel::after {          /* soft depth bloom behind the cloud */
-            content: ''; position: absolute; left: 50%; top: 58%;
-            width: 420px; height: 260px; transform: translate(-50%,-50%);
-            background: radial-gradient(ellipse, rgba(0,210,255,.10), transparent 70%);
+        /* ── 🌌 Hero: live 3D market cloud + headline numbers ──────────────
+           First thing on the page, so it carries both the showpiece and the
+           summary. The KPI row is the old stats strip, folded in. */
+        .hero3d {
+            position: relative; overflow: hidden;
+            background: linear-gradient(135deg, rgba(0,210,255,.09), rgba(167,139,250,.06) 45%, var(--wolf-card));
+            border: 1px solid var(--wolf-border);
+            border-radius: var(--radius);
+            box-shadow: 0 10px 30px rgba(0,0,0,.28);
+            padding: 14px clamp(12px,2vw,18px) 12px;
+            margin-bottom: 14px;
+        }
+        .hero3d::after {                       /* depth bloom behind the cloud */
+            content: ''; position: absolute; left: 50%; top: 46%;
+            width: 620px; height: 320px; transform: translate(-50%,-50%);
+            background: radial-gradient(ellipse, rgba(0,210,255,.11), transparent 70%);
             pointer-events: none;
         }
-        .sky3d-stage {
+        .hero3d-top { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; margin-bottom: 10px; }
+        .hero3d-title { font-size: 1rem; font-weight: 900; letter-spacing: -.2px; display: flex; align-items: center; gap: 9px; }
+        .hero3d-live {
+            font-size: .56rem; font-weight: 900; letter-spacing: .1em; padding: 3px 7px; border-radius: 999px;
+            background: rgba(74,222,128,.14); color: #4ade80; border: 1px solid rgba(74,222,128,.32);
+        }
+        .hero3d-sub { font-size: .71rem; color: var(--wolf-muted); margin-top: 3px; }
+        .hero3d-open { color: var(--wolf-blue); font-size: .74rem; font-weight: 800; text-decoration: none; white-space: nowrap; }
+        .hero3d-open:hover { color: #7ae7ff; }
+        .hero3d-stage {
             position: relative; display: block; border-radius: 12px; overflow: hidden;
-            background: radial-gradient(ellipse at 50% 45%, rgba(0,210,255,.05), transparent 62%), rgba(8,10,17,.55);
+            background: radial-gradient(ellipse at 50% 45%, rgba(0,210,255,.05), transparent 62%), rgba(8,10,17,.5);
             border: 1px solid rgba(255,255,255,.06);
             text-decoration: none; transition: border-color .18s;
         }
-        .sky3d-stage:hover { border-color: rgba(0,210,255,.3); }
+        .hero3d-stage:hover { border-color: rgba(0,210,255,.3); }
         /* display-only: clicks belong to the wrapping link, not the canvas */
-        #sky3d { display: block; width: 100%; height: 240px; pointer-events: none; }
-        .sky3d-hud {
-            position: absolute; left: 12px; bottom: 10px; font-size: .66rem;
-            color: var(--wolf-muted); pointer-events: none; line-height: 1.5;
+        #sky3d { display: block; width: 100%; height: 340px; pointer-events: none; }
+
+        .hero3d-kpis {
+            position: relative; display: grid; gap: 8px; margin-top: 12px;
+            grid-template-columns: repeat(6, minmax(0,1fr));
         }
-        .sky3d-hud b { color: var(--wolf-text); font-variant-numeric: tabular-nums; }
-        @media (max-width: 640px) { #sky3d { height: 190px; } }
+        .hero3d-kpis .kpi {
+            background: rgba(255,255,255,.035); border: 1px solid var(--wolf-border);
+            border-radius: 11px; padding: 9px 11px; text-decoration: none; color: inherit;
+            display: flex; flex-direction: column; gap: 3px; min-width: 0;
+            transition: border-color .15s, transform .15s, background .15s;
+        }
+        a.kpi:hover { border-color: rgba(0,210,255,.34); transform: translateY(-1px); background: rgba(255,255,255,.055); }
+        .kpi-k { font-size: .6rem; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--wolf-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .kpi-v { font-size: 1.22rem; font-weight: 800; line-height: 1.1; font-variant-numeric: tabular-nums; }
+        .kpi-v.accent { color: var(--wolf-blue); }
+        .kpi-v.down { color: var(--short); }
+        .kpi-sep { color: var(--wolf-muted); margin: 0 3px; font-weight: 600; }
+        .kpi-n { font-size: .6rem; color: var(--wolf-muted); line-height: 1.35; }
+        @media (max-width: 1100px) { .hero3d-kpis { grid-template-columns: repeat(3, minmax(0,1fr)); } }
+        @media (max-width: 640px)  {
+            .hero3d-kpis { grid-template-columns: repeat(2, minmax(0,1fr)); }
+            .hero3d-kpis .kpi-wide { grid-column: 1 / -1; }
+            #sky3d { height: 230px; }
+            .hero3d-sub { display: none; }
+        }
 
         /* ── Dashboard headlines strip ── */
         .news-strip { display: flex; gap: 10px; overflow-x: auto; padding-bottom: 4px; scrollbar-width: thin; }
@@ -1321,6 +1359,69 @@
             {% endif %}
         </div>
 
+        <!-- ══ Hero: the live 3D market cloud, carrying the headline numbers.
+             This is the first thing on the page, so it has to be both the
+             showpiece and the summary — the old stats strip lived three
+             sections down and repeated what the cloud already shows. -->
+        <section class="hero3d">
+            <div class="hero3d-top">
+                <div>
+                    <div class="hero3d-title">🌌 Market Cloud <span class="hero3d-live">LIVE</span></div>
+                    <div class="hero3d-sub">Every scanned symbol in space — left-right is RSI, height is confluence, size is conviction</div>
+                </div>
+                <a href="/universe" class="hero3d-open">Open 3D →</a>
+            </div>
+
+            <a href="/universe" class="hero3d-stage" title="Open the full 3D views">
+                <canvas id="sky3d"></canvas>
+            </a>
+
+            <div class="hero3d-kpis">
+                <a class="kpi" href="{{ url_for('funnel') }}">
+                    <span class="kpi-k">Hunting signals</span>
+                    <span class="kpi-v accent" id="stat-total">{{ signals|length }}</span>
+                </a>
+                <div class="kpi">
+                    <span class="kpi-k">Long / Short</span>
+                    <span class="kpi-v"><b style="color:var(--long)" id="stat-long">0</b><span class="kpi-sep">/</span><b style="color:var(--short)" id="stat-short">0</b></span>
+                </div>
+                <a class="kpi" href="{{ url_for('performance') }}">
+                    <span class="kpi-k">Win rate · 4+ lights</span>
+                    <span class="kpi-v" style="color:var(--long)">{{ perf_stats.win_rate }}%</span>
+                </a>
+                <a class="kpi" href="{{ url_for('performance') }}">
+                    <span class="kpi-k">Strategy P&amp;L</span>
+                    <span class="kpi-v {% if perf_stats.total_pnl >= 0 %}accent{% else %}down{% endif %}">{{ "+" if perf_stats.total_pnl > 0 }}{{ perf_stats.total_pnl }}%</span>
+                    {% if perf_stats.open_partials and perf_stats.open_partials > 0 %}
+                    <span class="kpi-n">incl. {{ perf_stats.open_partials }} open partial{{ "s" if perf_stats.open_partials > 1 }}</span>
+                    {% endif %}
+                </a>
+                <a class="kpi" href="{{ url_for('funnel') }}" title="Why setups aren't queuing — full breakdown on the Funnel page">
+                    <span class="kpi-k">🔻 Funnel · queued</span>
+                    <span class="kpi-v" id="funnel-queued" style="{% if funnel_summary.queued > 0 %}color:var(--wolf-gold,#ffcf4b);{% endif %}">{{ funnel_summary.queued }}</span>
+                    {% if funnel_summary.top_blocker %}
+                    <span class="kpi-n" id="funnel-blocker">Blocker: {{ funnel_summary.top_blocker.label }} ({{ funnel_summary.top_blocker.pct }}%)</span>
+                    {% endif %}
+                </a>
+                <div class="kpi kpi-wide">
+                    <span class="kpi-k">Market</span>
+                    <span class="kpi-v" style="font-size:.9rem;" id="hero3d-hud">—</span>
+                </div>
+            </div>
+        </section>
+
+        <!-- ── Top entry candidates ── -->
+        <section class="entries-panel">
+            <div class="entries-head">
+                <div>
+                    <div class="entries-title">🎯 Top Entry Candidates</div>
+                    <div class="entries-sub">Best setups from the latest scan — <b style="color:#ffcf4b">READY</b> = cleared every gate, resting at entry · <b>WATCH</b> = high confluence, still missing a gate</div>
+                </div>
+                <span class="entries-regime {{ top_entries.btc_regime }}" id="entries-regime">BTC {{ top_entries.btc_regime|upper }}</span>
+            </div>
+            <div class="entries-row" id="entries-row"></div>
+        </section>
+
         <!-- ◈ Hero — main-coin heatmap tiles (everyone) + live account/strategy (admin) -->
         <div class="hero-grid">
             <section class="coins-panel">
@@ -1408,75 +1509,7 @@
             <div id="briefing-body"></div>
         </section>
 
-        <!-- Stats -->
-        <div class="stats-strip">
-            <div class="stat-card">
-                <div class="stat-label">Hunting Signals</div>
-                <div class="stat-value accent" id="stat-total">{{ signals|length }}</div>
-            </div>
-            <div class="stat-card">
-                <div class="stat-label">Long / Short</div>
-                <div class="stat-value" style="font-size: 1.15rem; font-weight: 800;">
-                    <span style="color:var(--long)" id="stat-long">0</span> / <span style="color:var(--short)" id="stat-short">0</span>
-                </div>
-            </div>
-            <div class="stat-card" style="cursor: pointer;" data-href="{{ url_for('performance') }}" onclick="location.href=this.dataset.href">
-                <div class="stat-label">Win Rate (4+ Lights)</div>
-                <div class="stat-value" style="color: var(--long);">{{ perf_stats.win_rate }}%</div>
-            </div>
-            <div class="stat-card" style="cursor: pointer;" data-href="{{ url_for('performance') }}" onclick="location.href=this.dataset.href">
-                <div class="stat-label">Total Strategy PnL</div>
-                <div class="stat-value {% if perf_stats.total_pnl >= 0 %}accent{% else %}text-danger{% endif %}">
-                    {{ "+" if perf_stats.total_pnl > 0 }}{{ perf_stats.total_pnl }}%
-                </div>
-                {% if perf_stats.open_partials and perf_stats.open_partials > 0 %}
-                <div class="stat-label" style="margin-top:4px; font-size:11px; opacity:0.7;">
-                    incl. {{ perf_stats.open_partials }} open partial{{ "s" if perf_stats.open_partials > 1 }} (TP1 banked, still running)
-                </div>
-                {% endif %}
-            </div>
-            <div class="stat-card" style="cursor: pointer;" data-href="{{ url_for('funnel') }}" onclick="location.href=this.dataset.href" title="Why setups aren't queuing — full breakdown on the Funnel page">
-                <div class="stat-label">🔻 Funnel · Queued</div>
-                <div class="stat-value" id="funnel-queued" style="{% if funnel_summary.queued > 0 %}color: var(--wolf-gold, #ffcf4b);{% endif %}">{{ funnel_summary.queued }}</div>
-                {% if funnel_summary.top_blocker %}
-                <div class="stat-label" id="funnel-blocker" style="margin-top:4px; font-size:11px; opacity:0.75;">
-                    Top blocker: {{ funnel_summary.top_blocker.label }} ({{ funnel_summary.top_blocker.pct }}%)
-                </div>
-                {% endif %}
-            </div>
-        </div>
-
-        <!-- ── Top entry candidates ── -->
-        <section class="entries-panel">
-            <div class="entries-head">
-                <div>
-                    <div class="entries-title">🎯 Top Entry Candidates</div>
-                    <div class="entries-sub">Best setups from the latest scan — <b style="color:#ffcf4b">READY</b> = cleared every gate, resting at entry · <b>WATCH</b> = high confluence, still missing a gate</div>
-                </div>
-                <span class="entries-regime {{ top_entries.btc_regime }}" id="entries-regime">BTC {{ top_entries.btc_regime|upper }}</span>
-            </div>
-            <div class="entries-row" id="entries-row"></div>
-        </section>
-
-        <!-- 🌌 Live 3D market cloud — the same scan as the table above, in space.
-             Decorative but not fake: every dot is a real scanned symbol. Kept
-             cheap on purpose (see the script) because this sits on the page the
-             user leaves open all day. -->
-        <section class="analytics-panel sky3d-panel">
-            <div class="analytics-head">
-                <div>
-                    <div class="analytics-title">🌌 Market Cloud · live</div>
-                    <div class="analytics-subtitle" id="sky3d-sub">Every scanned symbol in space — height is confluence, left-right is RSI</div>
-                </div>
-                <a href="/universe" class="analytics-link">Open 3D →</a>
-            </div>
-            <a href="/universe" class="sky3d-stage" id="sky3d-stage" title="Open the full 3D views">
-                <canvas id="sky3d"></canvas>
-                <div class="sky3d-hud" id="sky3d-hud"></div>
-            </a>
-        </section>
-
-        <script src="{{ url_for('static', filename='wolf3d.js') }}?v={{ asset_ver }}"></script>
+<script src="{{ url_for('static', filename='wolf3d.js') }}?v={{ asset_ver }}"></script>
         <script>
         /* Mini market cloud. This lives on the page the user keeps open all
            day, so it is deliberately frugal: it stops animating when the tab
@@ -1575,10 +1608,11 @@
                     PTS = d.points || [];
                     var lng = PTS.filter(function (p) { return p.d > 0; }).length;
                     var max = PTS.filter(function (p) { return p.conv >= 3; }).length;
-                    document.getElementById('sky3d-hud').innerHTML =
-                        '<b>' + PTS.length + '</b> symbols · <b style="color:#4ade80">' + lng +
-                        '</b> long / <b style="color:#f87171">' + (PTS.length - lng) + '</b> short · <b>' +
-                        max + '</b> max-conviction';
+                    // Feeds the hero's Market KPI; the long/short split has its
+                    // own tile, so this one carries what the cloud can't show.
+                    document.getElementById('hero3d-hud').innerHTML =
+                        '<b>' + max + '</b> <span style="font-size:.62rem;color:var(--wolf-muted)">max-conviction of ' +
+                        PTS.length + '</span>';
                     scene.dirty();
                 }).catch(function () {});
             }
@@ -1586,7 +1620,6 @@
             if (window.wolfPoll) wolfPoll(load, 120000);
         })();
         </script>
-
         <!-- 🚀 Pump Radar — coins moving RIGHT NOW (1h change + volume vs normal).
              Data rides on /api/strategy2_signals (the S2 sweep computes it from
              candles it already fetched); rows marked HOT crossed both alert
