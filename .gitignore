@@ -97,3 +97,4 @@ ENV/
 .vscode/
 .stack_stopped
 app/research_cache/
+liquidations_buffer.json

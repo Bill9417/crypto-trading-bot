@@ -9,6 +9,8 @@ The load-bearing behaviour in both is what they REFUSE to plot:
     rather than "no liquidations".
   · risk — it is the owner's real money, so it is admin-only.
 """
+import time
+
 import flask_login.utils
 import pytest
 
@@ -239,3 +241,61 @@ def test_a_broken_tracker_does_not_500(monkeypatch):
         resp = APP.api_whale_3d()
         body, code = resp if isinstance(resp, tuple) else (resp, 200)
         assert code == 200 and body.get_json()["ok"] is False
+
+
+# ── 💥 2D liquidation map ────────────────────────────────────────────────────
+def _levels(monkeypatch, events, coin="BTC", price=63000.0):
+    _as(monkeypatch)
+    monkeypatch.setattr(APP.liquidations, "start", lambda: None)
+    monkeypatch.setattr(APP.liquidations, "events_copy", lambda: events)
+    monkeypatch.setattr(APP.liquidations, "snapshot",
+                        lambda w=60: {"collecting_since": 1785600000.0})
+    monkeypatch.setattr(APP, "fetch_live_tickers",
+                        lambda s: ({s[0]: {"last": price}} if price else {}))
+    with APP.app.test_request_context(f"/api/liq_levels?coin={coin}"):
+        return APP.api_liq_levels().get_json()
+
+
+def test_levels_bin_by_price_and_split_by_side(monkeypatch):
+    now = time.time() * 1000
+    evs = [{"sym": "BTC", "ts": now - 1000, "px": 61000.0, "usd": 500.0, "side": "long", "ex": "Binance"},
+           {"sym": "BTC", "ts": now - 2000, "px": 65000.0, "usd": 300.0, "side": "short", "ex": "Binance"}]
+    d = _levels(monkeypatch, evs)
+    assert d["ok"] and d["n_priced"] == 2
+    assert d["long_usd"] == 500.0 and d["short_usd"] == 300.0
+    assert sum(lv["long"] + lv["short"] for lv in d["levels"]) == pytest.approx(800.0)
+    # the two prints land in DIFFERENT price bins
+    hit = [i for i, lv in enumerate(d["levels"]) if lv["long"] or lv["short"]]
+    assert len(hit) == 2
+
+
+def test_bankruptcy_priced_events_never_reach_the_map(monkeypatch):
+    """Same rule as the 3D terrain: Bybit/OKX prices never traded."""
+    now = time.time() * 1000
+    evs = [{"sym": "BTC", "ts": now - 1000, "px": None, "usd": 9999.0, "side": "long", "ex": "Bybit"},
+           {"sym": "BTC", "ts": now - 1000, "px": 0, "usd": 8888.0, "side": "short", "ex": "OKX"}]
+    d = _levels(monkeypatch, evs)
+    assert d["n_priced"] == 0 and d["n_unpriced"] == 2
+    assert d["levels"] == [] and d["long_usd"] == 0.0
+
+
+def test_spot_price_is_inside_the_plotted_range(monkeypatch):
+    """Spot must be on the map even when every liquidation sat far away, or
+    'where is price relative to the clusters' is unanswerable."""
+    now = time.time() * 1000
+    evs = [{"sym": "BTC", "ts": now - 1000, "px": 61000.0, "usd": 100.0, "side": "long", "ex": "Binance"}]
+    d = _levels(monkeypatch, evs, price=70000.0)
+    assert d["lo"] <= 70000.0 <= d["hi"]
+
+
+def test_empty_is_ok_and_still_reports_price(monkeypatch):
+    d = _levels(monkeypatch, [])
+    assert d["ok"] is True and d["levels"] == [] and d["price"] == 63000.0
+
+
+def test_bad_coin_rejected(monkeypatch):
+    _as(monkeypatch)
+    with APP.app.test_request_context("/api/liq_levels?coin=../x"):
+        resp = APP.api_liq_levels()
+        body, code = resp if isinstance(resp, tuple) else (resp, 200)
+        assert code == 400

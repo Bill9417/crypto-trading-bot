@@ -3523,6 +3523,82 @@ def universe_page():
     return render_template("universe.html", user=current_user)
 
 
+@app.route("/api/liq_levels")
+@login_required
+def api_liq_levels():
+    """2D liquidation map for ONE coin: liquidated USD stacked by PRICE level.
+
+    The 3D terrain answers "when did it happen"; this answers the question you
+    actually trade off — "which prices have been eating stops, and where is
+    price now relative to them". Same Binance-only rule: Bybit and OKX report
+    the BANKRUPTCY price, so including them would draw bars at prices that
+    never traded.
+    """
+    liquidations.start()
+    base = (request.args.get("coin") or "BTC").strip().upper()
+    if not base.isalnum():
+        return jsonify({"ok": False, "error": "bad coin"}), 400
+    try:
+        window = max(600, min(int(request.args.get("window", 86400)), 86400))
+    except (TypeError, ValueError):
+        window = 86400
+
+    cutoff = time.time() * 1000 - window * 1000
+    priced, skipped, newest = [], 0, 0
+    for e in liquidations.events_copy():
+        if e.get("sym") != base or (e.get("ts") or 0) < cutoff:
+            continue
+        newest = max(newest, e.get("ts") or 0)
+        if e.get("px"):
+            priced.append(e)
+        else:
+            skipped += 1
+
+    snap = liquidations.snapshot(60)
+    out = {"ok": True, "coin": base, "window_sec": window, "levels": [],
+           "n_priced": len(priced), "n_unpriced": skipped, "last_ts": newest or None,
+           "collecting_since": snap.get("collecting_since"),
+           "long_usd": 0.0, "short_usd": 0.0, "max_usd": 0.0, "price": None,
+           "lo": None, "hi": None}
+
+    try:
+        t = fetch_live_tickers([f"{base}/{QUOTE_ASSET}:{QUOTE_ASSET}"]) or {}
+        first = next(iter(t.values()), {}) or {}
+        out["price"] = _fnum(first.get("last") or first.get("close"))
+    except Exception as e:  # noqa: BLE001 — the map still reads without it
+        print(f"[liq_levels] price for {base} failed: {e}")
+
+    if not priced:
+        return jsonify(out)
+
+    pxs = sorted(e["px"] for e in priced)
+    lo, hi = pxs[0], pxs[-1]
+    if out["price"]:                       # always include spot in the range
+        lo, hi = min(lo, out["price"]), max(hi, out["price"])
+    if hi - lo < hi * 1e-6:
+        pad = max(hi * 0.001, 1e-9)
+        lo, hi = lo - pad, hi + pad
+
+    NB = 28
+    bins = [[0.0, 0.0] for _ in range(NB)]
+    for e in priced:
+        j = min(NB - 1, max(0, int((e["px"] - lo) / (hi - lo) * NB)))
+        usd = float(e.get("usd") or 0)
+        if str(e.get("side", "")).lower().startswith("l"):
+            bins[j][0] += usd
+            out["long_usd"] += usd
+        else:
+            bins[j][1] += usd
+            out["short_usd"] += usd
+
+    step = (hi - lo) / NB
+    out["levels"] = [{"lo": lo + j * step, "hi": lo + (j + 1) * step,
+                      "long": b[0], "short": b[1]} for j, b in enumerate(bins)]
+    out["max_usd"] = max((b[0] + b[1]) for b in bins)
+    out["lo"], out["hi"] = lo, hi
+    return jsonify(out)
+
+
 @app.route("/api/whale_3d")
 @login_required
 def api_whale_3d():
