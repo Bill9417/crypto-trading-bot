@@ -60,15 +60,48 @@ def test_never_raises_on_junk():
     assert r["verdict"] is not None
 
 
-def test_the_page_renders_the_banner(monkeypatch):
-    """End to end: the reconciliation must reach the template."""
-    A.app.config["TESTING"] = True
+def _as_admin(c):
     with A.app.app_context():
         u = A.User.query.filter_by(is_admin=True).first() or A.User.query.first()
         uid = u.id
-    c = A.app.test_client()
     with c.session_transaction() as s:
         s["_user_id"] = str(uid)
         s["_fresh"] = True
+
+
+def test_the_page_renders_the_banner(monkeypatch):
+    """End to end: the reconciliation must reach the template.
+
+    Both exchange summaries are stubbed. Without that this test only passed on
+    a machine holding live API keys — everywhere else both accounts read as
+    unavailable, perf_reconcile correctly returned verdict=None (a failed API
+    call is NOT evidence of a discrepancy), the banner was hidden by design,
+    and the assert blamed the template for an environment problem.
+    """
+    import executor as _ex
+    import strategy3_exec as _s3
+    monkeypatch.setattr(_ex, "realized_pnl_summary", lambda *a, **k: OK_REAL)
+    monkeypatch.setattr(_s3, "closed_pnl_summary", lambda *a, **k: OK_BYBIT)
+
+    A.app.config["TESTING"] = True
+    c = A.app.test_client()
+    _as_admin(c)
     body = c.get("/performance").get_data(as_text=True)
     assert "對帳" in body
+    assert "交易所實際淨損益" in body        # the summed figure reached the page too
+
+
+def test_the_page_hides_the_banner_when_it_cannot_tell(monkeypatch):
+    """The other half of the contract: with no usable exchange data the page
+    must stay SILENT rather than imply the tracked record is phantom."""
+    import executor as _ex
+    import strategy3_exec as _s3
+    monkeypatch.setattr(_ex, "realized_pnl_summary", lambda *a, **k: DEAD)
+    monkeypatch.setattr(_s3, "closed_pnl_summary", lambda *a, **k: DEAD)
+
+    A.app.config["TESTING"] = True
+    c = A.app.test_client()
+    _as_admin(c)
+    body = c.get("/performance").get_data(as_text=True)
+    assert body.count("對帳") == 0
+    assert "<title" in body                  # the page still rendered fine
