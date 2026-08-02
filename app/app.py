@@ -3507,6 +3507,109 @@ def api_universe():
     })
 
 
+@app.route("/api/liq_terrain")
+@login_required
+def api_liq_terrain():
+    """Liquidation terrain — a time × price grid of liquidated USD.
+
+    ONLY Binance events carry a real traded price: Bybit and OKX report the
+    BANKRUPTCY price, which sits beyond where the tape actually printed, so
+    plotting them would put mountains at prices that never traded. They are
+    excluded from the grid and reported separately, so an empty terrain reads
+    as "no Binance prints yet", not as "no liquidations".
+    """
+    liquidations.start()
+    base = (request.args.get("symbol") or "BTC").strip().upper()
+    try:
+        window = max(600, min(int(request.args.get("window", 21600)), 86400))
+    except (TypeError, ValueError):
+        window = 21600
+
+    now_ms = time.time() * 1000
+    cutoff = now_ms - window * 1000
+    priced, skipped = [], 0
+    for e in liquidations.events_copy():
+        if e.get("sym") != base or (e.get("ts") or 0) < cutoff:
+            continue
+        if e.get("px"):
+            priced.append(e)
+        else:
+            skipped += 1
+
+    NX, NZ = 40, 26                      # time buckets × price buckets
+    out = {
+        "ok": True, "symbol": base, "window_sec": window,
+        "nx": NX, "nz": NZ, "n_priced": len(priced), "n_unpriced": skipped,
+        "collecting_since": liquidations.snapshot(60).get("collecting_since"),
+        "grid": [], "price_domain": None, "time_domain": [cutoff, now_ms],
+        "max_usd": 0.0, "long_usd": 0.0, "short_usd": 0.0,
+    }
+    if not priced:
+        return jsonify(out)
+
+    prices = sorted(e["px"] for e in priced)
+    plo, phi = prices[0], prices[-1]
+    if phi - plo < phi * 1e-6:           # single price level — give it air
+        pad = max(phi * 0.001, 1e-9)
+        plo, phi = plo - pad, phi + pad
+
+    # grid[j][i] = {l: long usd, s: short usd}; j = price bucket, i = time
+    grid = [[[0.0, 0.0] for _ in range(NX)] for _ in range(NZ)]
+    for e in priced:
+        i = int((e["ts"] - cutoff) / (window * 1000) * NX)
+        j = int((e["px"] - plo) / (phi - plo) * NZ)
+        i = max(0, min(NX - 1, i))
+        j = max(0, min(NZ - 1, j))
+        usd = float(e.get("usd") or 0)
+        # "long" = long positions liquidated (forced sells into the bid)
+        if str(e.get("side", "")).lower().startswith("l"):
+            grid[j][i][0] += usd
+            out["long_usd"] += usd
+        else:
+            grid[j][i][1] += usd
+            out["short_usd"] += usd
+
+    out["grid"] = grid
+    out["price_domain"] = [plo, phi]
+    out["max_usd"] = max((c[0] + c[1]) for row in grid for c in row)
+    return jsonify(out)
+
+
+@app.route("/api/risk_bodies")
+@admin_required
+def api_risk_bodies():
+    """Live positions with their stop / liquidation geometry.
+
+    Admin-only: this is the owner's real money (see the admin gating tests).
+    Distances are signed toward loss, so 0 means "touching it now".
+    """
+    bodies = []
+    try:
+        raw = (strategy3_exec.account_snapshot() or {}).get("positions") or []
+    except Exception as e:  # noqa: BLE001 — never 500 a viewer
+        return jsonify({"ok": False, "error": str(e)[:160], "bodies": []}), 200
+
+    for p in raw:
+        mark = _fnum(p.get("mark")) or _fnum(p.get("entry"))
+        entry, liq, sl = _fnum(p.get("entry")), _fnum(p.get("liq")), _fnum(p.get("sl"))
+        if not mark or not entry:
+            continue
+        short = str(p.get("side", "")).upper() == "SHORT"
+        bodies.append({
+            "sym": (p.get("symbol") or p.get("sym") or "?").split("/")[0],
+            "side": "SHORT" if short else "LONG",
+            "engine": p.get("engine") or "manual",
+            "notional": _fnum(p.get("notional")) or 0.0,
+            "lev": _fnum(p.get("leverage")),
+            "entry": entry, "mark": mark, "sl": sl, "liq": liq,
+            "to_sl": None if sl is None else abs((sl - mark) / mark * 100.0),
+            "to_liq": None if liq is None else abs((liq - mark) / mark * 100.0),
+            "pnl_pct": None if not entry else
+                       ((entry - mark) / entry * 100.0 if short else (mark - entry) / entry * 100.0),
+        })
+    return jsonify({"ok": True, "bodies": bodies})
+
+
 @app.route("/tools")
 @login_required
 def tools_page():

@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-    <title>Wolf Scanner — Market Universe</title>
+    <title>Wolf Scanner — 3D Views</title>
     <link rel="manifest" href="/manifest.webmanifest">
     <meta name="theme-color" content="#0e1018">
     <meta name="apple-mobile-web-app-capable" content="yes">
@@ -15,10 +15,6 @@
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="/static/app.css?v={{ asset_ver }}">
     <style>
-        /* ── Market Universe ──────────────────────────────────────────────
-           No 3D library: 246 points projected by hand onto a 2D canvas. A
-           WebGL dependency would cost ~150KB for a point cloud this small,
-           and canvas keeps the labels crisp. */
         :root {
             --u-blue:#00d2ff; --u-gold:#ffcf4b; --u-slate:#0e1018;
             --u-card:rgba(26,31,48,.92); --u-border:rgba(255,255,255,.08);
@@ -47,37 +43,49 @@
 
         .panel { background:var(--u-card); border:1px solid var(--u-border); border-radius:var(--u-radius); padding:14px; }
 
+        /* ── view tabs ── */
+        .tabs { display:flex; gap:6px; flex-wrap:wrap; margin-bottom:13px; }
+        .tabs button {
+            background:rgba(255,255,255,.04); border:1px solid var(--u-border); color:var(--u-muted);
+            border-radius:11px; padding:9px 15px; font:inherit; font-size:.79rem; font-weight:700;
+            cursor:pointer; transition:color .15s, border-color .15s, background .15s;
+        }
+        .tabs button:hover { color:var(--u-text); border-color:var(--u-border-hi); }
+        .tabs button.on { color:var(--u-blue); border-color:rgba(0,210,255,.45); background:rgba(0,210,255,.1); }
+
         /* ── controls ── */
         .ctl { display:flex; gap:10px; flex-wrap:wrap; align-items:flex-end; margin-bottom:12px; }
+        .ctl.hide { display:none; }
         .cg { display:flex; flex-direction:column; gap:5px; min-width:0; }
         .cg > span { font-size:.62rem; font-weight:700; letter-spacing:.06em; text-transform:uppercase; color:var(--u-dim); }
-        select, .seg {
+        select, input[type=number], .seg {
             background:rgba(255,255,255,.045); border:1px solid rgba(255,255,255,.12);
             border-radius:10px; color:var(--u-text); padding:8px 10px; font:inherit;
-            font-size:.79rem; font-weight:600; cursor:pointer; transition:border-color .15s, background .15s;
+            font-size:.79rem; font-weight:600; transition:border-color .15s;
         }
-        select:focus { outline:none; border-color:rgba(0,210,255,.55); box-shadow:0 0 0 3px rgba(0,210,255,.12); }
+        select { cursor:pointer; }
+        input[type=number] { width:86px; font-variant-numeric:tabular-nums; }
+        select:focus, input:focus { outline:none; border-color:rgba(0,210,255,.55); box-shadow:0 0 0 3px rgba(0,210,255,.12); }
         select option { background:#171a26; color:var(--u-text); }
         .seg { display:flex; padding:3px; gap:3px; }
         .seg button {
             background:transparent; border:0; color:var(--u-muted); font:inherit; font-size:.74rem;
-            font-weight:700; padding:5px 11px; border-radius:7px; cursor:pointer; transition:background .15s, color .15s;
+            font-weight:700; padding:5px 11px; border-radius:7px; cursor:pointer; transition:background .15s,color .15s;
         }
         .seg button.on { background:rgba(0,210,255,.16); color:var(--u-blue); }
-        .seg button:hover:not(.on) { color:var(--u-text); }
         .btn {
             background:rgba(255,255,255,.045); border:1px solid var(--u-border); color:var(--u-muted);
             border-radius:10px; padding:8px 14px; font:inherit; font-size:.76rem; font-weight:700; cursor:pointer;
-            transition:color .15s, border-color .15s;
+            transition:color .15s,border-color .15s;
         }
         .btn:hover { color:var(--u-text); border-color:var(--u-border-hi); }
         .btn.on { color:var(--u-blue); border-color:rgba(0,210,255,.45); background:rgba(0,210,255,.1); }
 
         /* ── stage ── */
-        .stage { position:relative; border-radius:14px; overflow:hidden; background:
-            radial-gradient(ellipse at 50% 45%, rgba(0,210,255,.05), transparent 62%), rgba(8,10,17,.72);
+        .stage { position:relative; border-radius:14px; overflow:hidden;
+            background:radial-gradient(ellipse at 50% 45%, rgba(0,210,255,.05), transparent 62%), rgba(8,10,17,.72);
             border:1px solid var(--u-border); }
-        #sky { display:block; width:100%; height:clamp(400px, 62vh, 760px); cursor:grab; touch-action:none; }
+        #sky { display:block; width:100%; height:clamp(400px,62vh,760px); cursor:grab; touch-action:none; }
         #sky.drag { cursor:grabbing; }
 
         .tip {
@@ -99,15 +107,18 @@
         }
         .legend .lr { display:flex; align-items:center; gap:7px; }
         .legend .dot { width:9px; height:9px; border-radius:50%; flex:0 0 auto; }
-        .legend .sz { display:flex; align-items:center; gap:4px; }
-        .legend .sz i { display:block; border-radius:50%; background:var(--u-muted); }
-
         .hud {
             position:absolute; right:12px; top:12px; text-align:right; font-size:.67rem;
             color:var(--u-dim); background:rgba(10,13,22,.7); border:1px solid var(--u-border);
             border-radius:11px; padding:8px 11px; backdrop-filter:blur(8px); pointer-events:none;
         }
         .hud b { color:var(--u-text); font-variant-numeric:tabular-nums; }
+        .empty {
+            position:absolute; inset:0; display:none; place-items:center; text-align:center; padding:24px;
+            font-size:.82rem; color:var(--u-muted); line-height:1.6;
+        }
+        .empty.on { display:grid; }
+        .empty b { color:var(--u-text); }
 
         .foot { margin-top:12px; padding-top:11px; border-top:1px solid rgba(255,255,255,.05);
             font-size:.68rem; color:var(--u-dim); line-height:1.65; }
@@ -119,32 +130,58 @@
 <div class="wrap">
 
     <div class="hero">
-        <h1><span>🌌</span> Market Universe</h1>
-        <p>Every symbol from the latest scan, placed in space instead of stacked in a table. Each axis is a metric you
-           choose — the shape of the cloud is the market's shape. Drag to orbit, scroll to zoom, click a body to open
-           its chart. Read-only: this is the scan you already have, rendered differently.</p>
+        <h1><span>🌌</span> <span id="hero-t">Market Universe</span></h1>
+        <p id="hero-p">Every symbol from the latest scan, placed in space instead of stacked in a table.</p>
     </div>
 
     <div class="nav-standalone">{% include '_nav.html' %}</div>
 
     <div class="panel">
-        <div class="ctl">
+        <div class="tabs" id="tabs">
+            <button data-v="universe" class="on">🌌 Market Universe</button>
+            <button data-v="liq">🌋 Liquidation Terrain</button>
+            <button data-v="edge">📐 Edge Surface</button>
+            {% if current_user.is_admin %}<button data-v="risk">🛰️ Position Risk</button>{% endif %}
+        </div>
+
+        <!-- universe controls -->
+        <div class="ctl" id="c-universe">
             <label class="cg"><span>X axis</span><select id="ax-x"></select></label>
             <label class="cg"><span>Y axis (up)</span><select id="ax-y"></select></label>
             <label class="cg"><span>Z axis (depth)</span><select id="ax-z"></select></label>
             <div class="cg"><span>Direction</span>
                 <div class="seg" id="f-dir">
-                    <button data-v="0" class="on">All</button>
-                    <button data-v="1">Long</button>
-                    <button data-v="-1">Short</button>
+                    <button data-v="0" class="on">All</button><button data-v="1">Long</button><button data-v="-1">Short</button>
                 </div>
             </div>
             <label class="cg"><span>Min conviction</span><select id="f-conv">
-                <option value="0">Everything</option>
-                <option value="1">👀 Watchlist +</option>
-                <option value="2">🔥 High +</option>
-                <option value="3">🚀 Max only</option>
+                <option value="0">Everything</option><option value="1">👀 Watchlist +</option>
+                <option value="2">🔥 High +</option><option value="3">🚀 Max only</option>
             </select></label>
+        </div>
+
+        <!-- liquidation controls -->
+        <div class="ctl hide" id="c-liq">
+            <label class="cg"><span>Symbol</span><select id="lq-sym">
+                <option>BTC</option><option>ETH</option><option>SOL</option><option>XRP</option><option>DOGE</option>
+            </select></label>
+            <label class="cg"><span>Window</span><select id="lq-win">
+                <option value="3600">1 hour</option><option value="21600" selected>6 hours</option>
+                <option value="43200">12 hours</option><option value="86400">24 hours</option>
+            </select></label>
+            <button class="btn" id="lq-go" type="button">Reload</button>
+        </div>
+
+        <!-- edge-surface controls -->
+        <div class="ctl hide" id="c-edge">
+            <label class="cg"><span>Your win rate %</span><input id="eg-wr" type="number" step="any" min="1" max="99" value="55"></label>
+            <label class="cg"><span>Your payoff (W:L)</span><input id="eg-rr" type="number" step="any" min="0.1" max="10" value="1"></label>
+            <label class="cg"><span>Fees (R)</span><input id="eg-fee" type="number" step="any" min="0" value="0"></label>
+        </div>
+
+        <div class="ctl hide" id="c-risk"></div>
+
+        <div style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:12px;">
             <button class="btn on" id="b-spin" type="button">⟳ Auto-rotate</button>
             <button class="btn" id="b-reset" type="button">Reset view</button>
         </div>
@@ -152,355 +189,466 @@
         <div class="stage">
             <canvas id="sky"></canvas>
             <div class="hud" id="hud">—</div>
-            <div class="legend">
-                <div class="lr"><span class="dot" style="background:#4ade80"></span> LONG bias</div>
-                <div class="lr"><span class="dot" style="background:#f87171"></span> SHORT bias</div>
-                <div class="lr sz" style="margin-top:2px;">
-                    <i style="width:5px;height:5px"></i><i style="width:8px;height:8px"></i><i style="width:11px;height:11px"></i>
-                    <span style="margin-left:3px;">conviction</span>
-                </div>
-                <div class="lr" style="opacity:.75">ring = armed setup</div>
-            </div>
+            <div class="legend" id="legend"></div>
+            <div class="empty" id="empty"></div>
             <div class="tip" id="tip"></div>
         </div>
 
-        <div class="foot" id="foot">Loading the latest scan…</div>
+        <div class="foot" id="foot">Loading…</div>
     </div>
 </div>
 
+<script src="/static/wolf3d.js?v={{ asset_ver }}"></script>
 <script>
 (function () {
     "use strict";
-
-    var LONG = '#4ade80', SHORT = '#f87171';
-    var cv = document.getElementById('sky'), ctx = cv.getContext('2d');
+    var LONG = '#4ade80', SHORT = '#f87171', GOLD = '#ffcf4b';
+    var cv = document.getElementById('sky');
     var tip = document.getElementById('tip'), hud = document.getElementById('hud');
-    var DATA = null, AXES = [], PTS = [], SCREEN = [];
-    var view = { yaw: -0.62, pitch: 0.42, dist: 3.5 };
-    var filt = { dir: 0, conv: 0 };
-    var spin = true, hoverIdx = -1, dirty = true;
-    var W = 0, H = 0, DPR = 1;
+    var legend = document.getElementById('legend'), empty = document.getElementById('empty');
+    var foot = document.getElementById('foot');
+    var IS_ADMIN = {{ 'true' if current_user.is_admin else 'false' }};
 
-    /* ── axis domains ──────────────────────────────────────────────────
-       RSI is meaningful on its true 0–100 scale. Everything else uses the
-       2nd–98th percentile, not min/max: dist-to-swing-high runs −57%..+162%
-       on this scan, and a couple of extremes would squash all 246 bodies
-       into a corner. Points outside the domain clamp to the wall instead of
-       flying off, so nothing is silently dropped. */
-    function domain(key) {
-        if (key === 'rsi') return [0, 100];
-        var v = [];
-        PTS.forEach(function (p) {
-            var x = p[key];
-            if (x != null && !isNaN(x)) v.push(x);
-        });
-        if (!v.length) return [0, 1];
-        v.sort(function (a, b) { return a - b; });
-        var lo = v[Math.floor(v.length * 0.02)], hi = v[Math.floor(v.length * 0.98)];
-        if (hi - lo < 1e-9) { lo -= 0.5; hi += 0.5; }      // all-identical guard
-        var pad = (hi - lo) * 0.05;
-        return [lo - pad, hi + pad];
+    var scene = new Wolf3D(cv, { spin: true });
+    var VIEW = 'universe';
+
+    function fmt(v, d) { return (v == null || isNaN(v)) ? '—' : Number(v).toFixed(d == null ? 2 : d); }
+    function money(v) {
+        if (v == null) return '—';
+        var a = Math.abs(v);
+        return a >= 1e6 ? (v / 1e6).toFixed(2) + 'M' : a >= 1e3 ? (v / 1e3).toFixed(1) + 'k' : v.toFixed(0);
     }
+    function esc(s) { return String(s).replace(/[&<>"]/g, function (c) {
+        return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]; }); }
+    function showEmpty(html) { empty.innerHTML = '<div>' + html + '</div>'; empty.classList.add('on'); }
+    function hideEmpty() { empty.classList.remove('on'); }
 
-    function axisLabel(key) {
-        for (var i = 0; i < AXES.length; i++) if (AXES[i].key === key) return AXES[i].label + (AXES[i].unit ? ' (' + AXES[i].unit + ')' : '');
-        return key;
+    /* ════════════ VIEW 1 — MARKET UNIVERSE ════════════ */
+    var U = { pts: [], axes: [], ax: { x: 'rsi', y: 'score', z: 'dhigh' },
+              filt: { dir: 0, conv: 0 }, meta: null };
+
+    function uLabel(k) {
+        for (var i = 0; i < U.axes.length; i++)
+            if (U.axes[i].key === k) return U.axes[i].label + (U.axes[i].unit ? ' (' + U.axes[i].unit + ')' : '');
+        return k;
     }
-
-    /* ── 3D → 2D ────────────────────────────────────────────────────────
-       Yaw about Y, pitch about X, then a perspective divide. Camera sits
-       `dist` back along +Z looking at the origin. */
-    function rot(x, y, z) {
-        var cy = Math.cos(view.yaw), sy = Math.sin(view.yaw);
-        var x1 = x * cy + z * sy, z1 = -x * sy + z * cy;
-        var cp = Math.cos(view.pitch), sp = Math.sin(view.pitch);
-        return { x: x1, y: y * cp - z1 * sp, z: y * sp + z1 * cp };
+    function uDomain(k) {
+        if (k === 'rsi') return [0, 100];
+        return Wolf3D.domain(U.pts.map(function (p) { return p[k]; }));
     }
-    function project(x, y, z) {
-        var r = rot(x, y, z), zc = r.z + view.dist;
-        if (zc < 0.06) return null;                        // behind the camera
-        // focal chosen so the ±1 cube fills most of the canvas height at the
-        // default distance — anything smaller and 246 bodies become confetti
-        var f = (Math.min(W, H) * 1.42) / zc;
-        return { x: W / 2 + r.x * f, y: H / 2 - r.y * f, z: zc, f: f };
+    function uVisible(p) {
+        if (U.filt.dir && p.d !== U.filt.dir) return false;
+        if (p.conv < U.filt.conv) return false;
+        return p[U.ax.x] != null && p[U.ax.y] != null && p[U.ax.z] != null;
     }
-
-    function resize() {
-        DPR = Math.min(window.devicePixelRatio || 1, 2);
-        W = cv.clientWidth; H = cv.clientHeight;
-        cv.width = Math.round(W * DPR); cv.height = Math.round(H * DPR);
-        ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
-        dirty = true;
-    }
-
-    /* ── the box: 12 edges + ticks on the three front-facing axes ── */
-    function drawBox(dx, dy, dz) {
-        var C = [];
-        [-1, 1].forEach(function (x) { [-1, 1].forEach(function (y) { [-1, 1].forEach(function (z) { C.push([x, y, z]); }); }); });
-        var E = [[0,1],[0,2],[0,4],[1,3],[1,5],[2,3],[2,6],[3,7],[4,5],[4,6],[5,7],[6,7]];
-        ctx.lineWidth = 1;
-        E.forEach(function (e) {
-            var a = project(C[e[0]][0], C[e[0]][1], C[e[0]][2]);
-            var b = project(C[e[1]][0], C[e[1]][1], C[e[1]][2]);
-            if (!a || !b) return;
-            ctx.strokeStyle = 'rgba(255,255,255,.07)';
-            ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
-        });
-        // floor grid for depth cueing
-        ctx.strokeStyle = 'rgba(255,255,255,.045)';
-        for (var i = 1; i < 4; i++) {
-            var t = -1 + i * 0.5;
-            var p1 = project(t, -1, -1), p2 = project(t, -1, 1);
-            var p3 = project(-1, -1, t), p4 = project(1, -1, t);
-            if (p1 && p2) { ctx.beginPath(); ctx.moveTo(p1.x,p1.y); ctx.lineTo(p2.x,p2.y); ctx.stroke(); }
-            if (p3 && p4) { ctx.beginPath(); ctx.moveTo(p3.x,p3.y); ctx.lineTo(p4.x,p4.y); ctx.stroke(); }
-        }
-        // Axis ticks + names along the three edges meeting at (-1,-1,-1).
-        // Three ticks each and the shared corner skipped — five per axis put
-        // all three sets on top of each other at that corner.
-        ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-        var specs = [
-            { d: dx, name: axisLabel(AX.x), at: function (t) { return [t, -1, -1]; }, off: [0, 15],  tOff: [0, 38] },
-            { d: dy, name: axisLabel(AX.y), at: function (t) { return [-1, t, -1]; }, off: [-26, 0], tOff: [-58, -14] },
-            { d: dz, name: axisLabel(AX.z), at: function (t) { return [-1, -1, t]; }, off: [26, 13], tOff: [64, 34] }
-        ];
-        specs.forEach(function (s) {
-            ctx.font = '600 10px Inter, sans-serif';
-            ctx.fillStyle = 'rgba(138,153,173,.8)';
-            var TICKS = [-0.45, 0.3, 1];                   // skips the shared corner
-            for (var k = 0; k < TICKS.length; k++) {
-                var t = TICKS[k];
-                var c = s.at(t), p = project(c[0], c[1], c[2]);
-                if (!p) continue;
-                var val = s.d[0] + (t + 1) / 2 * (s.d[1] - s.d[0]);
-                var a = Math.abs(val);
-                var txt = a >= 100 ? val.toFixed(0) : a >= 10 ? val.toFixed(1) : val.toFixed(2);
-                ctx.fillText(txt, p.x + s.off[0], p.y + s.off[1]);
-            }
-            var mid = s.at(0.1), pm = project(mid[0], mid[1], mid[2]);
-            if (pm) {
-                ctx.font = '800 11px Inter, sans-serif';
-                ctx.fillStyle = 'rgba(0,210,255,.9)';
-                ctx.fillText(s.name, pm.x + s.tOff[0], pm.y + s.tOff[1]);
-            }
-        });
-    }
-
-    /* Label placement: reserve a rect per drawn label and skip any that would
-       collide. 76 bodies carry MAX conviction on a busy scan — labelling them
-       all is an unreadable pile, so this caps and de-clutters. */
-    function labelPlacer(limit) {
-        var taken = [], n = 0;
-        return function (txt, x, y) {
-            if (n >= limit) return false;
-            var w = ctx.measureText(txt).width + 6, h = 13;
-            var r = { a: x - w / 2, b: x + w / 2, c: y - h, d: y };
-            for (var i = 0; i < taken.length; i++) {
-                var t = taken[i];
-                if (r.a < t.b && r.b > t.a && r.c < t.d && r.d > t.c) return false;
-            }
-            taken.push(r); n++;
-            return true;
-        };
-    }
-
-    var AX = { x: 'rsi', y: 'score', z: 'dhigh' };
-
-    function visible(p) {
-        if (filt.dir && p.d !== filt.dir) return false;
-        if (p.conv < filt.conv) return false;
-        return p[AX.x] != null && p[AX.y] != null && p[AX.z] != null;
-    }
-
-    function draw() {
-        ctx.clearRect(0, 0, W, H);
-        if (!PTS.length) return;
-        var dx = domain(AX.x), dy = domain(AX.y), dz = domain(AX.z);
-        drawBox(dx, dy, dz);
-
-        // clamp to the box: percentile domains mean a few extremes sit outside,
-        // and pinning them to the wall keeps them visible instead of off-screen
-        function norm(v, d) {
-            var n = ((v - d[0]) / (d[1] - d[0])) * 2 - 1;
-            return n < -1 ? -1 : n > 1 ? 1 : n;
-        }
-
-        SCREEN.length = 0;
+    function drawUniverse(s) {
+        var ctx = s.ctx;
+        if (!U.pts.length) return;
+        var dx = uDomain(U.ax.x), dy = uDomain(U.ax.y), dz = uDomain(U.ax.z);
+        s.drawBox([{ name: uLabel(U.ax.x), domain: dx },
+                   { name: uLabel(U.ax.y), domain: dy },
+                   { name: uLabel(U.ax.z), domain: dz }]);
         var list = [];
-        for (var i = 0; i < PTS.length; i++) {
-            var p = PTS[i];
-            if (!visible(p)) continue;
-            var s = project(norm(p[AX.x], dx), norm(p[AX.y], dy), norm(p[AX.z], dz));
-            if (!s) continue;
-            list.push({ p: p, s: s, i: i });
-        }
-        list.sort(function (a, b) { return b.s.z - a.s.z; });   // painter's algorithm
-
-        list.forEach(function (o) {
-            var p = o.p, s = o.s;
-            var col = p.d > 0 ? LONG : SHORT;
-            var r = (2.6 + p.conv * 1.9) * (s.f / 260);
-            r = Math.max(2, Math.min(r, 16));
-            // fog: distant bodies recede
-            var a = Math.max(0.16, Math.min(1, 1.5 - (s.z - view.dist + 1.6) * 0.42));
-            var hot = o.i === hoverIdx;
-
-            if (p.conv >= 3 || hot) { ctx.shadowColor = col; ctx.shadowBlur = hot ? 18 : 10; }
-            ctx.globalAlpha = hot ? 1 : a;
-            ctx.fillStyle = col;
-            ctx.beginPath(); ctx.arc(s.x, s.y, hot ? r * 1.5 : r, 0, 6.2832); ctx.fill();
-            ctx.shadowBlur = 0;
-
-            // ring = the engine actually armed this one (levels exist)
-            if (p.rr != null) {
-                ctx.globalAlpha = Math.min(1, a + .25);
-                ctx.strokeStyle = '#ffcf4b'; ctx.lineWidth = 1.4;
-                ctx.beginPath(); ctx.arc(s.x, s.y, r + 3.4, 0, 6.2832); ctx.stroke();
-            }
-            SCREEN.push({ x: s.x, y: s.y, r: Math.max(r, 6), i: o.i });
+        U.pts.forEach(function (p) {
+            if (!uVisible(p)) return;
+            var q = s.project(Wolf3D.norm(p[U.ax.x], dx), Wolf3D.norm(p[U.ax.y], dy), Wolf3D.norm(p[U.ax.z], dz));
+            if (q) list.push({ p: p, q: q });
         });
-
-        // Selective labels: highest conviction first, nearest first, and only
-        // where they don't collide. Never all 246 — never even all 76 MAX.
+        list.sort(function (a, b) { return b.q.z - a.q.z; });
+        list.forEach(function (o) {
+            var p = o.p, q = o.q, col = p.d > 0 ? LONG : SHORT;
+            var r = Math.max(2, Math.min((2.6 + p.conv * 1.9) * (q.f / 260), 16));
+            var a = Math.max(0.16, Math.min(1, 1.5 - (q.z - s.view.dist + 1.6) * 0.42));
+            var hot = s.hover === p;
+            if (p.conv >= 3 || hot) { ctx.shadowColor = col; ctx.shadowBlur = hot ? 18 : 10; }
+            ctx.globalAlpha = hot ? 1 : a; ctx.fillStyle = col;
+            ctx.beginPath(); ctx.arc(q.x, q.y, hot ? r * 1.5 : r, 0, 6.2832); ctx.fill();
+            ctx.shadowBlur = 0;
+            if (p.rr != null) {                       // gold ring = armed setup
+                ctx.globalAlpha = Math.min(1, a + .25);
+                ctx.strokeStyle = GOLD; ctx.lineWidth = 1.4;
+                ctx.beginPath(); ctx.arc(q.x, q.y, r + 3.4, 0, 6.2832); ctx.stroke();
+            }
+            s.hit.push({ x: q.x, y: q.y, r: Math.max(r, 6), data: p });
+        });
         ctx.globalAlpha = 1;
         ctx.font = '800 10px Inter, sans-serif';
         ctx.textAlign = 'center'; ctx.textBaseline = 'bottom';
         ctx.fillStyle = 'rgba(241,245,249,.88)';
-        var place = labelPlacer(16);
-        list.slice().sort(function (a, b) {
-            return (b.p.conv - a.p.conv) || (a.s.z - b.s.z);
-        }).forEach(function (o) {
-            if (o.p.conv < 3 || o.i === hoverIdx) return;
-            var y = o.s.y - 9;
-            if (place(o.p.b, o.s.x, y)) ctx.fillText(o.p.b, o.s.x, y);
-        });
-        ctx.globalAlpha = 1;
-
-        var shown = list.length;
-        hud.innerHTML = '<b>' + shown + '</b> / ' + PTS.length + ' bodies' +
-            (DATA && DATA.last_update ? '<br>scan ' + DATA.last_update.slice(11, 16) : '');
+        var place = s.labelPlacer(16);
+        list.slice().sort(function (a, b) { return (b.p.conv - a.p.conv) || (a.q.z - b.q.z); })
+            .forEach(function (o) {
+                if (o.p.conv < 3 || s.hover === o.p) return;
+                if (place(o.p.b, o.q.x, o.q.y - 9)) ctx.fillText(o.p.b, o.q.x, o.q.y - 9);
+            });
+        hud.innerHTML = '<b>' + list.length + '</b> / ' + U.pts.length + ' bodies' +
+            (U.meta && U.meta.last_update ? '<br>scan ' + U.meta.last_update.slice(11, 16) : '');
     }
-
-    function loop() {
-        if (spin && hoverIdx < 0) { view.yaw += 0.0022; dirty = true; }
-        if (dirty) { draw(); dirty = false; }
-        requestAnimationFrame(loop);
-    }
-
-    /* ── interaction ── */
-    var drag = null;
-    cv.addEventListener('pointerdown', function (e) {
-        drag = { x: e.clientX, y: e.clientY, yaw: view.yaw, pitch: view.pitch, moved: 0 };
-        cv.classList.add('drag'); cv.setPointerCapture(e.pointerId);
-    });
-    cv.addEventListener('pointermove', function (e) {
-        var rect = cv.getBoundingClientRect();
-        if (drag) {
-            var ddx = e.clientX - drag.x, ddy = e.clientY - drag.y;
-            drag.moved = Math.max(drag.moved, Math.abs(ddx) + Math.abs(ddy));
-            view.yaw = drag.yaw + ddx * 0.0075;
-            view.pitch = Math.max(-1.45, Math.min(1.45, drag.pitch + ddy * 0.0075));
-            dirty = true;
-            return;
-        }
-        // hover hit-test against the last frame's screen positions
-        var mx = e.clientX - rect.left, my = e.clientY - rect.top, best = -1, bd = 1e9;
-        for (var i = 0; i < SCREEN.length; i++) {
-            var s = SCREEN[i], d = (s.x - mx) * (s.x - mx) + (s.y - my) * (s.y - my);
-            if (d < s.r * s.r * 4 && d < bd) { bd = d; best = s.i; }
-        }
-        if (best !== hoverIdx) { hoverIdx = best; dirty = true; showTip(best, mx, my); }
-        else if (best >= 0) { showTip(best, mx, my); }
-    });
-    function endDrag(e) {
-        if (drag && drag.moved < 4) {                       // a click, not a drag
-            if (hoverIdx >= 0 && PTS[hoverIdx].tv) window.open(PTS[hoverIdx].tv, '_blank', 'noopener');
-        }
-        drag = null; cv.classList.remove('drag');
-    }
-    cv.addEventListener('pointerup', endDrag);
-    cv.addEventListener('pointercancel', endDrag);
-    cv.addEventListener('pointerleave', function () {
-        drag = null; cv.classList.remove('drag');
-        if (hoverIdx >= 0) { hoverIdx = -1; dirty = true; }
-        tip.classList.remove('on');
-    });
-    cv.addEventListener('wheel', function (e) {
-        e.preventDefault();
-        view.dist = Math.max(1.7, Math.min(8, view.dist + (e.deltaY > 0 ? 0.28 : -0.28)));
-        dirty = true;
-    }, { passive: false });
-
-    function fmt(v, d) { return v == null ? '—' : Number(v).toFixed(d == null ? 2 : d); }
-    function showTip(i, mx, my) {
-        if (i < 0) { tip.classList.remove('on'); return; }
-        var p = PTS[i];
-        tip.innerHTML =
-            '<div class="ts" style="color:' + (p.d > 0 ? LONG : SHORT) + '">' + p.b +
+    function tipUniverse(p) {
+        return '<div class="ts" style="color:' + (p.d > 0 ? LONG : SHORT) + '">' + esc(p.b) +
             ' <span style="font-size:.68rem;opacity:.8">' + (p.d > 0 ? 'LONG' : 'SHORT') + '</span></div>' +
-            '<div class="tr">' + axisLabel(AX.x) + ' <b>' + fmt(p[AX.x], 1) + '</b></div>' +
-            '<div class="tr">' + axisLabel(AX.y) + ' <b>' + fmt(p[AX.y], 1) + '</b></div>' +
-            '<div class="tr">' + axisLabel(AX.z) + ' <b>' + fmt(p[AX.z], 1) + '</b></div>' +
-            '<div class="tr">' + (p.zone || '—') + (p.px != null ? ' · <b>' + p.px + '</b>' : '') + '</div>' +
+            '<div class="tr">' + uLabel(U.ax.x) + ' <b>' + fmt(p[U.ax.x], 1) + '</b></div>' +
+            '<div class="tr">' + uLabel(U.ax.y) + ' <b>' + fmt(p[U.ax.y], 1) + '</b></div>' +
+            '<div class="tr">' + uLabel(U.ax.z) + ' <b>' + fmt(p[U.ax.z], 1) + '</b></div>' +
+            '<div class="tr">' + esc(p.zone || '—') + (p.px != null ? ' · <b>' + p.px + '</b>' : '') + '</div>' +
             '<div class="tgo">click → TradingView</div>';
-        tip.classList.add('on');
-        // keep it inside the stage — near the right edge it would clip away
-        var tw = tip.offsetWidth || 180;
-        tip.style.left = Math.max(tw / 2 + 4, Math.min(W - tw / 2 - 4, mx)) + 'px';
-        tip.style.top = Math.max(tip.offsetHeight + 6, my) + 'px';
     }
 
-    /* ── controls ── */
-    function fillSelects() {
+    /* ════════════ VIEW 2 — LIQUIDATION TERRAIN ════════════ */
+    var L = { d: null };
+    function drawLiq(s) {
+        var d = L.d, ctx = s.ctx;
+        if (!d || !d.grid.length || !d.max_usd) return;
+        var pd = d.price_domain;
+        s.drawBox([
+            { name: 'time →', domain: [0, d.window_sec / 3600], fmt: function (v) { return '-' + (d.window_sec/3600 - v).toFixed(1) + 'h'; } },
+            { name: 'liquidated USD', domain: [0, d.max_usd], fmt: function (v) { return money(v); } },
+            { name: 'price', domain: pd }
+        ]);
+        var NX = d.nx, NZ = d.nz;
+        function cell(i, j) {
+            if (j < 0 || j >= NZ || i < 0 || i >= NX) return [0, 0];
+            return d.grid[j][i];
+        }
+        // height = total USD in the cell, on a log scale: one 95k print would
+        // otherwise flatten every ordinary liquidation to the floor
+        function h(i, j) {
+            var c = cell(i, j), t = c[0] + c[1];
+            if (t <= 0) return -1;
+            return -1 + 2 * (Math.log1p(t) / Math.log1p(d.max_usd));
+        }
+        s.drawSurface(NX, NZ, h, function (i, j, hh) {
+            var c = cell(i, j), t = c[0] + c[1];
+            if (t <= 0) return 'rgba(255,255,255,.022)';
+            // Take the DOMINANT side's colour rather than blending the two —
+            // a 50/50 cell blended to a muddy tan that read as its own thing.
+            // Alpha rises steeply so the ordinary chatter stays dark and only
+            // real cascades light up.
+            var col = c[0] >= c[1] ? '248,113,113' : '74,222,128';
+            var inten = 0.05 + 0.9 * Math.pow((hh + 1) / 2, 2.4);
+            return 'rgba(' + col + ',' + inten.toFixed(3) + ')';
+        }, 'rgba(255,255,255,.04)');
+        hud.innerHTML = '<b>' + money(d.long_usd + d.short_usd) + '</b> liquidated<br>' +
+            d.n_priced + ' Binance prints';
+    }
+
+    /* ════════════ VIEW 3 — EDGE SURFACE ════════════
+       z = expectancy over (win rate × payoff). The breakeven ridge is where
+       the surface crosses zero; your own strategy is pinned to it. */
+    var E = { wr: 55, rr: 1, fee: 0 };
+    function expectancy(p, R, fee) { return p * R - (1 - p) * 1 - fee; }
+    function drawEdge(s) {
+        var ctx = s.ctx;
+        var WR = [0.05, 0.95], RR = [0.2, 4.0];
+        var lo = expectancy(WR[0], RR[0], E.fee), hi = expectancy(WR[1], RR[1], E.fee);
+        s.drawBox([
+            { name: 'win rate (%)', domain: [WR[0] * 100, WR[1] * 100] },
+            { name: 'expectancy (R)', domain: [lo, hi] },
+            { name: 'payoff (win : loss)', domain: RR }
+        ]);
+        var N = 26;
+        function ev(i, j) {
+            var p = WR[0] + (WR[1] - WR[0]) * (i / N);
+            var R = RR[0] + (RR[1] - RR[0]) * (j / N);
+            return expectancy(p, R, E.fee);
+        }
+        function h(i, j) { return Wolf3D.norm(ev(i, j), [lo, hi]); }
+        s.drawSurface(N, N, h, function (i, j) {
+            var e = ev(i, j);
+            if (Math.abs(e) < 0.02) return 'rgba(255,207,75,.55)';        // breakeven ridge
+            return e > 0 ? 'rgba(74,222,128,' + (0.16 + Math.min(e, 1.5) * 0.4).toFixed(3) + ')'
+                         : 'rgba(248,113,113,' + (0.16 + Math.min(-e, 1.5) * 0.4).toFixed(3) + ')';
+        }, 'rgba(255,255,255,.05)');
+
+        // your strategy, pinned to the surface with a drop line
+        var p = Math.max(WR[0], Math.min(WR[1], E.wr / 100));
+        var R = Math.max(RR[0], Math.min(RR[1], E.rr));
+        var myE = expectancy(p, R, E.fee);
+        var nx = (p - WR[0]) / (WR[1] - WR[0]) * 2 - 1;
+        var nz = (R - RR[0]) / (RR[1] - RR[0]) * 2 - 1;
+        var ny = Wolf3D.norm(myE, [lo, hi]);
+        var top = s.project(nx, ny, nz), foot2 = s.project(nx, -1, nz);
+        if (top && foot2) {
+            ctx.strokeStyle = 'rgba(255,255,255,.5)'; ctx.lineWidth = 1.2; ctx.setLineDash([3, 3]);
+            ctx.beginPath(); ctx.moveTo(foot2.x, foot2.y); ctx.lineTo(top.x, top.y); ctx.stroke();
+            ctx.setLineDash([]);
+            var col = myE > 0.001 ? LONG : myE < -0.001 ? SHORT : GOLD;
+            ctx.shadowColor = col; ctx.shadowBlur = 16;
+            ctx.fillStyle = col;
+            ctx.beginPath(); ctx.arc(top.x, top.y, 7, 0, 6.2832); ctx.fill();
+            ctx.shadowBlur = 0;
+            ctx.font = '800 11px Inter, sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'bottom';
+            ctx.fillStyle = '#fff';
+            ctx.fillText('you · ' + (myE >= 0 ? '+' : '') + myE.toFixed(3) + 'R', top.x, top.y - 12);
+            s.hit.push({ x: top.x, y: top.y, r: 10, data: { _edge: true, e: myE, p: p, R: R } });
+        }
+        hud.innerHTML = '<b>' + (myE >= 0 ? '+' : '') + myE.toFixed(3) + 'R</b> per trade<br>' +
+            'breakeven WR ' + (100 / (1 + R)).toFixed(1) + '%';
+    }
+
+    /* ════════════ VIEW 4 — POSITION RISK (admin) ════════════
+       Each open position orbits the centre. Radius = how far price must move
+       AGAINST you to hit liquidation; the gold ring is your stop. A body
+       close to the middle is a position close to being taken out. */
+    var K = { bodies: [], err: null };
+    function drawRisk(s) {
+        var ctx = s.ctx, n = K.bodies.length;
+        if (!n) return;
+        s.drawBox(null);
+        // the danger core
+        var c0 = s.project(0, 0, 0);
+        if (c0) {
+            var g = ctx.createRadialGradient(c0.x, c0.y, 0, c0.x, c0.y, 46);
+            g.addColorStop(0, 'rgba(248,113,113,.5)'); g.addColorStop(1, 'rgba(248,113,113,0)');
+            ctx.fillStyle = g; ctx.beginPath(); ctx.arc(c0.x, c0.y, 46, 0, 6.2832); ctx.fill();
+            ctx.font = '800 10px Inter, sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+            ctx.fillStyle = 'rgba(248,113,113,.9)'; ctx.fillText('LIQUIDATION', c0.x, c0.y);
+        }
+        var maxN = Math.max.apply(null, K.bodies.map(function (b) { return b.notional || 1; }));
+        var items = K.bodies.map(function (b, idx) {
+            // 20% adverse move = the outer wall; nearer the core = nearer death
+            var far = Math.min(1, (b.to_liq == null ? 20 : b.to_liq) / 20);
+            var rad = 0.18 + far * 0.82;
+            var ang = (idx / n) * Math.PI * 2;
+            var y = n === 1 ? 0 : -0.5 + (idx / Math.max(1, n - 1));
+            return { b: b, q: s.project(Math.cos(ang) * rad, y * 0.6, Math.sin(ang) * rad), rad: rad, ang: ang, y: y * 0.6 };
+        }).filter(function (o) { return o.q; });
+        items.sort(function (a, b) { return b.q.z - a.q.z; });
+        items.forEach(function (o) {
+            var b = o.b, q = o.q;
+            // orbit path
+            ctx.strokeStyle = 'rgba(255,255,255,.06)'; ctx.lineWidth = 1;
+            ctx.beginPath();
+            for (var t = 0; t <= 64; t++) {
+                var a2 = t / 64 * Math.PI * 2;
+                var pp = s.project(Math.cos(a2) * o.rad, o.y, Math.sin(a2) * o.rad);
+                if (!pp) continue;
+                t === 0 ? ctx.moveTo(pp.x, pp.y) : ctx.lineTo(pp.x, pp.y);
+            }
+            ctx.stroke();
+            var col = (b.pnl_pct || 0) >= 0 ? LONG : SHORT;
+            var r = 6 + 14 * Math.sqrt((b.notional || 1) / maxN);
+            var hot = s.hover === b;
+            ctx.shadowColor = col; ctx.shadowBlur = hot ? 20 : 12;
+            ctx.fillStyle = col; ctx.globalAlpha = 1;
+            ctx.beginPath(); ctx.arc(q.x, q.y, r, 0, 6.2832); ctx.fill();
+            ctx.shadowBlur = 0;
+            if (b.to_sl != null) {                       // stop ring
+                ctx.strokeStyle = GOLD; ctx.lineWidth = 1.6;
+                ctx.beginPath(); ctx.arc(q.x, q.y, r + 5, 0, 6.2832); ctx.stroke();
+            }
+            ctx.font = '800 11px Inter, sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'bottom';
+            ctx.fillStyle = '#f1f5f9';
+            ctx.fillText(b.sym + ' ' + b.side, q.x, q.y - r - 7);
+            s.hit.push({ x: q.x, y: q.y, r: r + 4, data: b });
+        });
+        var tot = K.bodies.reduce(function (a, b) { return a + (b.notional || 0); }, 0);
+        hud.innerHTML = '<b>' + n + '</b> position' + (n > 1 ? 's' : '') + '<br>' + money(tot) + ' USDT notional';
+    }
+
+    /* ════════════ tabs / wiring ════════════ */
+    var VIEWS = {
+        universe: {
+            title: 'Market Universe', icon: '🌌',
+            blurb: 'Every symbol from the latest scan, placed in space instead of stacked in a table. Each axis is a metric you choose — the shape of the cloud is the market\'s shape. Drag to orbit, scroll to zoom, click a body to open its chart.',
+            draw: drawUniverse, tip: tipUniverse,
+            legend: '<div class="lr"><span class="dot" style="background:#4ade80"></span> LONG bias</div>' +
+                    '<div class="lr"><span class="dot" style="background:#f87171"></span> SHORT bias</div>' +
+                    '<div class="lr" style="opacity:.75">size = conviction</div>' +
+                    '<div class="lr" style="opacity:.75">gold ring = armed setup</div>',
+            click: function (p) { if (p && p.tv) window.open(p.tv, '_blank', 'noopener'); },
+            load: loadUniverse, view: { yaw: -0.62, pitch: 0.42, dist: 3.5 }
+        },
+        liq: {
+            title: 'Liquidation Terrain', icon: '🌋',
+            blurb: 'Where stops actually got run. Time runs left to right, price runs into the screen, and height is the USD liquidated at that price and moment — so a cascade shows up as a mountain. Built from the live liquidation feed as it collects.',
+            draw: drawLiq, tip: null,
+            legend: '<div class="lr"><span class="dot" style="background:#f87171"></span> longs wiped out</div>' +
+                    '<div class="lr"><span class="dot" style="background:#4ade80"></span> shorts wiped out</div>' +
+                    '<div class="lr" style="opacity:.75">height = USD (log scale)</div>',
+            click: null, load: loadLiq, view: { yaw: -0.72, pitch: 0.55, dist: 4.9 }
+        },
+        edge: {
+            title: 'Edge Surface', icon: '📐',
+            blurb: 'The reason a high win rate is not an edge, as a shape. The surface is expectancy over every combination of win rate and payoff ratio; the gold ridge is break-even. Your own numbers are pinned to it — above the ridge you make money, below it you do not, however often you win.',
+            draw: drawEdge, tip: null,
+            legend: '<div class="lr"><span class="dot" style="background:#4ade80"></span> positive expectancy</div>' +
+                    '<div class="lr"><span class="dot" style="background:#f87171"></span> negative expectancy</div>' +
+                    '<div class="lr"><span class="dot" style="background:#ffcf4b"></span> break-even ridge</div>',
+            click: null, load: function () { drawFoot(); scene.dirty(); }, view: { yaw: -0.78, pitch: 0.5, dist: 4.5 }
+        },
+        risk: {
+            title: 'Position Risk', icon: '🛰️',
+            blurb: 'Your live positions as bodies orbiting a liquidation core. The closer a body sits to the middle, the less room price has to move against it before the exchange closes it. The gold ring is where your stop sits.',
+            draw: drawRisk, tip: function (b) {
+                return '<div class="ts" style="color:' + ((b.pnl_pct||0) >= 0 ? LONG : SHORT) + '">' + esc(b.sym) +
+                    ' <span style="font-size:.68rem;opacity:.8">' + esc(b.side) + ' · ' + esc(b.engine) + '</span></div>' +
+                    '<div class="tr">notional <b>' + money(b.notional) + '</b>' + (b.lev ? ' @ ' + fmt(b.lev,0) + 'x' : '') + '</div>' +
+                    '<div class="tr">unrealised <b>' + fmt(b.pnl_pct, 2) + '%</b></div>' +
+                    '<div class="tr">to stop <b>' + (b.to_sl == null ? 'none set' : fmt(b.to_sl, 2) + '%') + '</b></div>' +
+                    '<div class="tr">to liquidation <b>' + (b.to_liq == null ? '—' : fmt(b.to_liq, 2) + '%') + '</b></div>';
+            },
+            legend: '<div class="lr"><span class="dot" style="background:#4ade80"></span> in profit</div>' +
+                    '<div class="lr"><span class="dot" style="background:#f87171"></span> in loss</div>' +
+                    '<div class="lr" style="opacity:.75">size = notional</div>' +
+                    '<div class="lr" style="opacity:.75">gold ring = stop set</div>',
+            click: null, load: loadRisk, view: { yaw: -0.5, pitch: 0.5, dist: 3.6 }
+        }
+    };
+
+    function drawFoot() {
+        if (VIEW === 'universe') {
+            if (!U.meta) { foot.textContent = 'Loading the latest scan…'; return; }
+            var armed = U.pts.filter(function (p) { return p.rr != null; }).length;
+            foot.innerHTML = '<b>' + U.pts.length + '</b> symbols from the scan at <b>' + esc(U.meta.last_update || '—') +
+                '</b> · BTC regime <b>' + esc((U.meta.btc_regime || '—').toUpperCase()) + '</b>. Gold rings mark the <b>' +
+                armed + '</b> setups the engine actually armed with levels — the rest were scanned but rejected, so ' +
+                'entry-based axes are blank for them. Nothing here places or changes an order.';
+        } else if (VIEW === 'liq') {
+            var d = L.d;
+            if (!d) { foot.textContent = 'Loading the liquidation feed…'; return; }
+            var since = d.collecting_since ? new Date(d.collecting_since * 1000).toLocaleTimeString() : '—';
+            foot.innerHTML = 'Only <b>Binance</b> liquidations carry a real traded price. Bybit and OKX report the ' +
+                '<b>bankruptcy</b> price, which sits beyond where the tape actually printed, so including them would ' +
+                'build mountains at prices that never traded — they are excluded (<b>' + d.n_unpriced + '</b> skipped ' +
+                'for ' + esc(d.symbol) + ' in this window). There is no free historical source, so the feed only holds ' +
+                'what it has seen since it started at <b>' + since + '</b> and fills as it runs.';
+        } else if (VIEW === 'edge') {
+            var p = E.wr / 100, R = E.rr, e = expectancy(p, R, E.fee), be = 1 / (1 + R);
+            foot.innerHTML = 'At <b>' + fmt(E.wr, 1) + '%</b> wins with a <b>' + fmt(R, 2) + ':1</b> payoff you need ' +
+                '<b>' + fmt(be * 100, 1) + '%</b> just to break even, so this is <b>' + (e >= 0 ? '+' : '') + fmt(e, 3) +
+                'R</b> per trade. Slide the win rate up and watch how little the surface moves compared with sliding ' +
+                'the payoff — that gap is the whole point. Pure maths, no account data.';
+        } else {
+            if (K.err) { foot.innerHTML = 'Could not read positions: <b>' + esc(K.err) + '</b>'; return; }
+            foot.innerHTML = '<b>' + K.bodies.length + '</b> live position' + (K.bodies.length === 1 ? '' : 's') +
+                ' on the Bybit account. Distance from the core is how far price must move against you to reach ' +
+                'liquidation, capped at a 20% move for the outer wall. Read-only — closing is on the Bybit page. ' +
+                'This view says most when several positions are open at once.';
+        }
+    }
+
+    function setView(name) {
+        if (name === 'risk' && !IS_ADMIN) return;
+        VIEW = name;
+        var v = VIEWS[name];
+        document.getElementById('hero-t').textContent = v.title;
+        document.getElementById('hero-p').textContent = v.blurb;
+        document.querySelector('.hero h1 span').textContent = v.icon;
+        document.querySelectorAll('#tabs button').forEach(function (b) { b.classList.toggle('on', b.dataset.v === name); });
+        ['universe','liq','edge','risk'].forEach(function (k) {
+            var el = document.getElementById('c-' + k);
+            if (el) el.classList.toggle('hide', k !== name);
+        });
+        legend.innerHTML = v.legend || '';
+        hideEmpty(); hud.textContent = '—';
+        scene.onDraw = v.draw;
+        scene.onClick = v.click;
+        scene.onHover = function (data, mx, my) {
+            if (!data || !v.tip) { tip.classList.remove('on'); return; }
+            tip.innerHTML = v.tip(data);
+            tip.classList.add('on');
+            var tw = tip.offsetWidth || 180;
+            tip.style.left = Math.max(tw / 2 + 4, Math.min(scene.W - tw / 2 - 4, mx)) + 'px';
+            tip.style.top = Math.max(tip.offsetHeight + 6, my) + 'px';
+        };
+        scene.reset(v.view);
+        drawFoot();
+        v.load();
+    }
+
+    /* ── loaders ── */
+    function loadUniverse() {
+        fetch('/api/universe').then(function (r) { return r.ok ? r.json() : null; }).then(function (d) {
+            if (!d || !d.ok) return;
+            U.pts = d.points || []; U.axes = d.axes || [];
+            U.meta = { last_update: d.last_update, btc_regime: d.btc_regime };
+            fillAxisSelects();
+            if (VIEW === 'universe') { drawFoot(); scene.dirty(); }
+        }).catch(function () {});
+    }
+    function loadLiq() {
+        var sym = document.getElementById('lq-sym').value;
+        var win = document.getElementById('lq-win').value;
+        hud.textContent = 'loading…';
+        fetch('/api/liq_terrain?symbol=' + encodeURIComponent(sym) + '&window=' + win)
+            .then(function (r) { return r.ok ? r.json() : null; })
+            .then(function (d) {
+                if (!d) return;
+                L.d = d;
+                if (VIEW !== 'liq') return;
+                drawFoot();
+                if (!d.n_priced) {
+                    hud.textContent = 'no data';
+                    showEmpty('<b>No Binance-priced liquidations for ' + esc(d.symbol) + ' yet.</b><br>' +
+                        'The feed holds ' + d.n_unpriced + ' event(s) for this symbol from Bybit/OKX, but those report ' +
+                        'the bankruptcy price rather than a traded one, so they cannot be placed on a price axis.<br>' +
+                        'This fills in as Binance liquidations print — try a longer window, a busier symbol, or come back later.');
+                } else { hideEmpty(); }
+                scene.dirty();
+            }).catch(function () {});
+    }
+    function loadRisk() {
+        fetch('/api/risk_bodies').then(function (r) { return r.json(); }).then(function (d) {
+            K.bodies = (d && d.bodies) || []; K.err = d && d.ok === false ? (d.error || 'unavailable') : null;
+            if (VIEW !== 'risk') return;
+            drawFoot();
+            if (!K.bodies.length) {
+                hud.textContent = 'flat';
+                showEmpty(K.err ? '<b>Could not read positions.</b><br>' + esc(K.err)
+                                : '<b>No open positions.</b><br>Nothing to plot — the account is flat right now.');
+            } else { hideEmpty(); }
+            scene.dirty();
+        }).catch(function () {});
+    }
+
+    function fillAxisSelects() {
         [['ax-x','x'],['ax-y','y'],['ax-z','z']].forEach(function (pair) {
             var el = document.getElementById(pair[0]);
-            el.innerHTML = AXES.map(function (a) {
-                var n = PTS.filter(function (p) { return p[a.key] != null; }).length;
-                var thin = a.optional && n < PTS.length;
-                return '<option value="' + a.key + '"' + (AX[pair[1]] === a.key ? ' selected' : '') + '>' +
-                    a.label + (thin ? ' (' + n + ' of ' + PTS.length + ')' : '') + '</option>';
+            if (el.dataset.built) return;
+            el.innerHTML = U.axes.map(function (a) {
+                var n = U.pts.filter(function (p) { return p[a.key] != null; }).length;
+                var thin = a.optional && n < U.pts.length;
+                return '<option value="' + a.key + '"' + (U.ax[pair[1]] === a.key ? ' selected' : '') + '>' +
+                    esc(a.label) + (thin ? ' (' + n + ' of ' + U.pts.length + ')' : '') + '</option>';
             }).join('');
-            el.addEventListener('change', function () { AX[pair[1]] = el.value; dirty = true; updateFoot(); });
+            el.dataset.built = '1';
+            el.addEventListener('change', function () { U.ax[pair[1]] = el.value; drawFoot(); scene.dirty(); });
         });
     }
+
+    document.getElementById('tabs').addEventListener('click', function (e) {
+        var b = e.target.closest('button'); if (b) setView(b.dataset.v);
+    });
     document.getElementById('f-dir').addEventListener('click', function (e) {
         var b = e.target.closest('button'); if (!b) return;
         this.querySelectorAll('button').forEach(function (x) { x.classList.remove('on'); });
-        b.classList.add('on'); filt.dir = +b.dataset.v; dirty = true;
+        b.classList.add('on'); U.filt.dir = +b.dataset.v; scene.dirty();
     });
-    document.getElementById('f-conv').addEventListener('change', function () { filt.conv = +this.value; dirty = true; });
-    document.getElementById('b-spin').addEventListener('click', function () {
-        spin = !spin; this.classList.toggle('on', spin);
-    });
-    document.getElementById('b-reset').addEventListener('click', function () {
-        view = { yaw: -0.62, pitch: 0.42, dist: 3.5 }; dirty = true;
-    });
-
-    function updateFoot() {
-        var armed = PTS.filter(function (p) { return p.rr != null; }).length;
-        document.getElementById('foot').innerHTML =
-            '<b>' + PTS.length + '</b> symbols from the ' +
-            (DATA.last_update ? 'scan at <b>' + DATA.last_update + '</b>' : 'latest scan') +
-            ' · BTC regime <b>' + (DATA.btc_regime || '—').toUpperCase() + '</b>. ' +
-            'Gold rings mark the <b>' + armed + '</b> setups the engine actually armed with levels — ' +
-            'the rest were scanned but rejected, so entry-based axes are blank for them. ' +
-            'Position is the metric you picked on each axis; colour is direction; size is conviction. ' +
-            'Nothing here places or changes an order.';
-    }
-
-    function load() {
-        fetch('/api/universe').then(function (r) { return r.ok ? r.json() : null; }).then(function (d) {
-            if (!d || !d.ok) return;
-            DATA = d; AXES = d.axes || []; PTS = d.points || [];
-            fillSelects(); updateFoot(); dirty = true;
-        }).catch(function () {
-            document.getElementById('foot').textContent = 'Could not load the scan.';
+    document.getElementById('f-conv').addEventListener('change', function () { U.filt.conv = +this.value; scene.dirty(); });
+    document.getElementById('lq-go').addEventListener('click', loadLiq);
+    document.getElementById('lq-sym').addEventListener('change', loadLiq);
+    document.getElementById('lq-win').addEventListener('change', loadLiq);
+    ['eg-wr','eg-rr','eg-fee'].forEach(function (id) {
+        document.getElementById(id).addEventListener('input', function () {
+            E.wr = parseFloat(document.getElementById('eg-wr').value) || 0;
+            E.rr = parseFloat(document.getElementById('eg-rr').value) || 0.1;
+            E.fee = parseFloat(document.getElementById('eg-fee').value) || 0;
+            drawFoot(); scene.dirty();
         });
-    }
+    });
+    document.getElementById('b-spin').addEventListener('click', function () {
+        scene.spin = !scene.spin; this.classList.toggle('on', scene.spin); scene.dirty();
+    });
+    document.getElementById('b-reset').addEventListener('click', function () { scene.reset(VIEWS[VIEW].view); });
 
-    window.addEventListener('resize', resize);
-    resize(); load(); loop();
-    if (window.wolfPoll) wolfPoll(load, 120000);
+    setView('universe');
+    loadUniverse();
+    if (window.wolfPoll) wolfPoll(function () {
+        if (VIEW === 'universe') loadUniverse();
+        else if (VIEW === 'liq') loadLiq();
+        else if (VIEW === 'risk') loadRisk();
+    }, 120000);
 })();
 </script>
 </body>
