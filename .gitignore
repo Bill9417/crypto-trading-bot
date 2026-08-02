@@ -44,6 +44,7 @@ tg_sent_log.json
 tg_autoclean_state.json
 watchdog_state.json
 strategy_ledger.json
+bybit_position_mode.json
 s3_halt.json
 signal_outcomes.json
 eth_mom_state.json

@@ -730,7 +730,7 @@ def sync_record_states_in_scan_data() -> None:
 # this ONE value whenever app.css / i18n.js change and every template busts its
 # cache — no more hunting down 10 hardcoded copies (which once shipped an
 # unstyled page to users). Templates reference it as ?v={{ asset_ver }}.
-ASSET_VER = "20260729"
+ASSET_VER = "20260802"
 
 
 @app.context_processor
@@ -3240,6 +3240,69 @@ def api_price_alerts_delete():
     return jsonify({"ok": price_alerts.remove_alert(str(body.get("id") or ""))})
 
 
+# ── Funding-cost tool (/tools) ───────────────────────────────────────────────
+# Binance publishes the CURRENT rate but not "what holding this costs me", so
+# the tool needs the interval too. ccxt leaves `interval` None on Binance, so
+# it is derived from the gaps in the funding-rate HISTORY (real data, not an
+# assumed 8h) and the same history gives a recent average — one funding print
+# is noisy, the average is what a multi-day hold actually pays.
+_funding_cache: dict = {}
+FUNDING_TTL = 120
+
+
+@app.route("/api/funding")
+@login_required
+def api_funding():
+    base = (request.args.get("symbol") or "").strip().upper().split("/")[0].split(":")[0]
+    if not base or not base.isalnum():
+        return jsonify({"ok": False, "error": "bad symbol"}), 400
+    symbol = f"{base}/{QUOTE_ASSET}:{QUOTE_ASSET}"
+    now = time.time()
+    hit = _funding_cache.get(symbol)
+    if hit and now - hit[0] < FUNDING_TTL:
+        return jsonify(hit[1])
+
+    try:
+        cur = rest_client.call("fetch_funding_rate", symbol) or {}
+    except Exception as e:  # noqa: BLE001 — unknown symbol / cooldown
+        return jsonify({"ok": False, "error": f"no funding data for {base} — "
+                        "is it a Binance USDT perp?", "detail": str(e)[:120]}), 400
+
+    rate = cur.get("fundingRate")
+    if rate is None:
+        return jsonify({"ok": False, "error": f"no funding rate for {base}"}), 400
+
+    # Interval + recent average from history; both are best-effort — the tool
+    # stays usable on the current rate alone if this call fails.
+    interval_h, avg_rate, samples = None, None, 0
+    try:
+        hist = rest_client.call("fetch_funding_rate_history", symbol, None, 21) or []
+        stamps = [h["timestamp"] for h in hist if h.get("timestamp")]
+        gaps = sorted((stamps[i + 1] - stamps[i]) / 3600000.0
+                      for i in range(len(stamps) - 1))
+        if gaps:  # median gap — robust to a single missed/backfilled print
+            interval_h = round(gaps[len(gaps) // 2], 2)
+        rates = [h["fundingRate"] for h in hist if h.get("fundingRate") is not None]
+        if rates:
+            avg_rate, samples = sum(rates) / len(rates), len(rates)
+    except Exception as e:  # noqa: BLE001
+        print(f"Funding history for {symbol} failed: {e}")
+
+    payload = {
+        "ok": True,
+        "symbol": symbol,
+        "base": base,
+        "funding_rate": float(rate),
+        "avg_rate": avg_rate,
+        "avg_samples": samples,
+        "interval_hours": interval_h,
+        "mark_price": cur.get("markPrice"),
+        "next_funding_ts": cur.get("fundingTimestamp"),
+    }
+    _funding_cache[symbol] = (now, payload)
+    return jsonify(payload)
+
+
 @app.route("/api/events_feed")
 @login_required
 def api_events_feed():
@@ -3347,6 +3410,110 @@ def api_stocks():
         return jsonify(stocks_data.build_stocks())
     except Exception as e:  # noqa: BLE001
         return jsonify(stocks_data.empty_payload(str(e))), 200
+
+
+# ── 3D Market Universe (/universe) ──────────────────────────────────────────
+# The scan table is 246 rows deep; the same data plotted in space makes the
+# clusters and the outliers obvious. Everything here is already on disk from
+# the last sweep — this endpoint reshapes it, it never triggers a scan or a
+# network call.
+_CONVICTION_RANK = (("MAX", 3), ("HIGH", 2), ("WATCH", 1))
+
+# Only axes with FULL coverage are offered by default. entry/SL/TP are None
+# for every signal the engine did not arm (215 of 246 on a typical bear
+# sweep), so metrics derived from them are marked optional and the viewer
+# drops the points that lack one rather than plotting a fake zero.
+UNIVERSE_AXES = [
+    {"key": "rsi",    "label": "RSI",                  "unit": "",  "optional": False},
+    {"key": "score",  "label": "Confluence score",     "unit": "",  "optional": False},
+    {"key": "lights", "label": "Lights passed",        "unit": "",  "optional": False},
+    {"key": "dhigh",  "label": "Distance to swing high", "unit": "%", "optional": False},
+    {"key": "dlow",   "label": "Distance to swing low",  "unit": "%", "optional": False},
+    {"key": "rr",     "label": "Risk : reward",        "unit": "",  "optional": True},
+    {"key": "dent",   "label": "Distance to entry",    "unit": "%", "optional": True},
+]
+
+
+def _fnum(v):
+    """float() that yields None instead of raising — scan rows carry None for
+    every level when a setup was not armed."""
+    try:
+        f = float(v)
+    except (TypeError, ValueError):
+        return None
+    return f if f == f and f not in (float("inf"), float("-inf")) else None
+
+
+@app.route("/universe")
+@login_required
+def universe_page():
+    """3D market map — every scanned symbol as a point in space."""
+    return render_template("universe.html", user=current_user)
+
+
+@app.route("/api/universe")
+@login_required
+def api_universe():
+    data = load_data()
+    pts = []
+    for s in data.get("signals", []):
+        if not isinstance(s, dict):
+            continue
+        rsi, score = _fnum(s.get("rsi")), _fnum(s.get("score"))
+        if rsi is None or score is None:
+            continue                      # can't place it without the base axes
+        smc = s.get("smc") or {}
+        entry, sl = _fnum(s.get("entry")), _fnum(s.get("sl"))
+        tp, price = _fnum(s.get("tp")), _fnum(s.get("current_price"))
+        rr = dent = None
+        if None not in (entry, sl, tp) and abs(entry - sl) > 0:
+            rr = abs(tp - entry) / abs(entry - sl)
+        if None not in (entry, price) and entry:
+            dent = (price - entry) / entry * 100.0
+
+        conv = 0
+        label = str(s.get("conviction") or "")
+        for needle, rank in _CONVICTION_RANK:
+            if needle in label:
+                conv = rank
+                break
+
+        sym = str(s.get("symbol") or "")
+        pts.append({
+            "b": sym.split("/")[0],                     # base, for the label
+            "sym": sym,
+            "d": 1 if s.get("direction") == "LONG" else -1,
+            "rsi": round(rsi, 1),
+            "score": score,
+            "lights": _fnum(s.get("effective_lights")) or 0,
+            "dhigh": _fnum(smc.get("dist_to_high_pct")),
+            "dlow": _fnum(smc.get("dist_to_low_pct")),
+            "rr": None if rr is None else round(rr, 2),
+            "dent": None if dent is None else round(dent, 2),
+            "conv": conv,
+            "zone": smc.get("zone_label") or "",
+            "px": price,
+            "st": s.get("trade_status") or "",
+            "tv": s.get("tv_url") or "",
+        })
+
+    return jsonify({
+        "ok": True,
+        "points": pts,
+        "axes": UNIVERSE_AXES,
+        "last_update": data.get("last_update"),
+        "btc_regime": data.get("btc_regime", "neutral"),
+        "scanned": data.get("scanned_symbols", 0),
+    })
+
+
+@app.route("/tools")
+@login_required
+def tools_page():
+    """Quick utilities — price alerts and the position-size calculator.
+    Split off the dashboard (2026-08) so the live signal feed isn't sharing
+    space with input forms; both widgets are unchanged, just relocated."""
+    return render_template("tools.html", user=current_user)
 
 
 @app.route("/tw")

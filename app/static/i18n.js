@@ -27,6 +27,9 @@
     "Strategy 2": "策略二",
     "Admin": "管理",
     "Health": "系統健康",
+    "Tools": "工具",
+    "Strategies": "策略",
+    "Universe": "宇宙",
 
     // ── Strategy 2 — confidence meter ─────────────────────────
     "Live mirror of the TradingView indicator": "TradingView 指標的即時鏡像",
