@@ -252,6 +252,30 @@
         }
         .analytics-link:hover { color: #7ae7ff; }
 
+        /* ── 🌌 Live 3D market cloud ── */
+        .sky3d-panel { position: relative; overflow: hidden; }
+        .sky3d-panel::after {          /* soft depth bloom behind the cloud */
+            content: ''; position: absolute; left: 50%; top: 58%;
+            width: 420px; height: 260px; transform: translate(-50%,-50%);
+            background: radial-gradient(ellipse, rgba(0,210,255,.10), transparent 70%);
+            pointer-events: none;
+        }
+        .sky3d-stage {
+            position: relative; display: block; border-radius: 12px; overflow: hidden;
+            background: radial-gradient(ellipse at 50% 45%, rgba(0,210,255,.05), transparent 62%), rgba(8,10,17,.55);
+            border: 1px solid rgba(255,255,255,.06);
+            text-decoration: none; transition: border-color .18s;
+        }
+        .sky3d-stage:hover { border-color: rgba(0,210,255,.3); }
+        /* display-only: clicks belong to the wrapping link, not the canvas */
+        #sky3d { display: block; width: 100%; height: 240px; pointer-events: none; }
+        .sky3d-hud {
+            position: absolute; left: 12px; bottom: 10px; font-size: .66rem;
+            color: var(--wolf-muted); pointer-events: none; line-height: 1.5;
+        }
+        .sky3d-hud b { color: var(--wolf-text); font-variant-numeric: tabular-nums; }
+        @media (max-width: 640px) { #sky3d { height: 190px; } }
+
         /* ── Dashboard headlines strip ── */
         .news-strip { display: flex; gap: 10px; overflow-x: auto; padding-bottom: 4px; scrollbar-width: thin; }
         .news-chip { flex: 0 0 auto; width: 240px; background: rgba(255,255,255,0.03); border: 1px solid var(--wolf-border); border-radius: 10px; padding: 9px 12px; transition: border-color .15s, transform .15s; }
@@ -1433,6 +1457,135 @@
             </div>
             <div class="entries-row" id="entries-row"></div>
         </section>
+
+        <!-- 🌌 Live 3D market cloud — the same scan as the table above, in space.
+             Decorative but not fake: every dot is a real scanned symbol. Kept
+             cheap on purpose (see the script) because this sits on the page the
+             user leaves open all day. -->
+        <section class="analytics-panel sky3d-panel">
+            <div class="analytics-head">
+                <div>
+                    <div class="analytics-title">🌌 Market Cloud · live</div>
+                    <div class="analytics-subtitle" id="sky3d-sub">Every scanned symbol in space — height is confluence, left-right is RSI</div>
+                </div>
+                <a href="/universe" class="analytics-link">Open 3D →</a>
+            </div>
+            <a href="/universe" class="sky3d-stage" id="sky3d-stage" title="Open the full 3D views">
+                <canvas id="sky3d"></canvas>
+                <div class="sky3d-hud" id="sky3d-hud"></div>
+            </a>
+        </section>
+
+        <script src="{{ url_for('static', filename='wolf3d.js') }}?v={{ asset_ver }}"></script>
+        <script>
+        /* Mini market cloud. This lives on the page the user keeps open all
+           day, so it is deliberately frugal: it stops animating when the tab
+           is hidden OR the panel is scrolled out of view, honours
+           prefers-reduced-motion, and reuses /api/universe (already cached
+           scan data — no extra exchange load). */
+        (function () {
+            var cv = document.getElementById('sky3d');
+            if (!cv || !window.Wolf3D) return;
+            var reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+            var scene = new Wolf3D(cv, { spin: !reduce, spinRate: 0.0016, input: false,
+                                         view: { yaw: -0.6, pitch: 0.38, dist: 3.1 } });
+            var PTS = [], onScreen = true;
+
+            // Don't burn frames on an off-screen canvas.
+            if (window.IntersectionObserver) {
+                new IntersectionObserver(function (es) {
+                    onScreen = es[0].isIntersecting;
+                    scene.spin = onScreen && !reduce;
+                    if (onScreen) scene.dirty();
+                }, { threshold: 0.05 }).observe(cv);
+            }
+
+            scene.onDraw = function (s) {
+                if (!PTS.length) return;
+                var dRsi = [0, 100];
+                var dScore = Wolf3D.domain(PTS.map(function (p) { return p.score; }));
+                var dHigh = Wolf3D.domain(PTS.map(function (p) { return p.dhigh; }));
+                // This panel is a wide, short banner, and the projector scales
+                // off the SHORTER side — so the cloud rendered tiny in a sea of
+                // empty width. Stretch horizontally in SCREEN space (not before
+                // projection, which would make the cloud breathe as it spins).
+                var ar = Math.max(1, Math.min(s.W / Math.max(s.H, 1) / 1.8, 3.4));
+                var list = [], sumX = 0;
+                PTS.forEach(function (p) {
+                    if (p.dhigh == null) return;
+                    var q = s.project(Wolf3D.norm(p.rsi, dRsi),
+                                      Wolf3D.norm(p.score, dScore),
+                                      Wolf3D.norm(p.dhigh, dHigh));
+                    if (!q) return;
+                    sumX += q.x;
+                    list.push({ p: p, q: q });
+                });
+                if (!list.length) return;
+                // Stretch around the cloud's own centre, not the canvas centre:
+                // the symbols don't sit centred inside the data box, so
+                // stretching around W/2 shoved the whole thing off to one side.
+                var midX = sumX / list.length;
+                list.forEach(function (o) { o.q.x = s.W / 2 + (o.q.x - midX) * ar; });
+                list.sort(function (a, b) { return b.q.z - a.q.z; });
+                var ctx = s.ctx;
+
+                // Constellation lines between nearby high-conviction setups —
+                // near in this space means similar RSI + confluence, so the
+                // webs are real clusters, not noise. Restricted to the top 70
+                // by conviction: all 245 would be ~30k pair-checks EVERY frame
+                // on a page that stays open all day.
+                var web = list.filter(function (o) { return o.p.conv >= 2; })
+                              .sort(function (a, b) { return b.p.conv - a.p.conv; })
+                              .slice(0, 70);
+                var maxD = Math.min(s.W, s.H) * 0.30, maxD2 = maxD * maxD, drawn = 0;
+                ctx.lineWidth = 1;
+                for (var i = 0; i < web.length && drawn < 340; i++) {
+                    for (var j = i + 1; j < web.length && drawn < 340; j++) {
+                        var dx = web[i].q.x - web[j].q.x, dy = web[i].q.y - web[j].q.y;
+                        var d2 = dx * dx + dy * dy;
+                        if (d2 > maxD2) continue;
+                        var same = web[i].p.d === web[j].p.d;
+                        ctx.strokeStyle = (same && web[i].p.d > 0) ? 'rgba(74,222,128,'
+                                        : same ? 'rgba(248,113,113,' : 'rgba(140,160,190,';
+                        ctx.strokeStyle += (0.16 * (1 - d2 / maxD2)).toFixed(3) + ')';
+                        ctx.beginPath();
+                        ctx.moveTo(web[i].q.x, web[i].q.y);
+                        ctx.lineTo(web[j].q.x, web[j].q.y);
+                        ctx.stroke();
+                        drawn++;
+                    }
+                }
+
+                list.forEach(function (o) {
+                    var col = o.p.d > 0 ? '#4ade80' : '#f87171';
+                    var r = Math.max(1.6, Math.min((2.0 + o.p.conv * 1.4) * (o.q.f / 300), 10));
+                    var a = Math.max(0.14, Math.min(1, 1.5 - (o.q.z - s.view.dist + 1.6) * 0.42));
+                    if (o.p.conv >= 3) { ctx.shadowColor = col; ctx.shadowBlur = 8; }
+                    ctx.globalAlpha = a; ctx.fillStyle = col;
+                    ctx.beginPath(); ctx.arc(o.q.x, o.q.y, r, 0, 6.2832); ctx.fill();
+                    ctx.shadowBlur = 0;
+                });
+                ctx.globalAlpha = 1;
+            };
+
+            function load() {
+                fetch('/api/universe').then(function (r) { return r.ok ? r.json() : null; })
+                .then(function (d) {
+                    if (!d || !d.ok) return;
+                    PTS = d.points || [];
+                    var lng = PTS.filter(function (p) { return p.d > 0; }).length;
+                    var max = PTS.filter(function (p) { return p.conv >= 3; }).length;
+                    document.getElementById('sky3d-hud').innerHTML =
+                        '<b>' + PTS.length + '</b> symbols · <b style="color:#4ade80">' + lng +
+                        '</b> long / <b style="color:#f87171">' + (PTS.length - lng) + '</b> short · <b>' +
+                        max + '</b> max-conviction';
+                    scene.dirty();
+                }).catch(function () {});
+            }
+            load();
+            if (window.wolfPoll) wolfPoll(load, 120000);
+        })();
+        </script>
 
         <!-- 🚀 Pump Radar — coins moving RIGHT NOW (1h change + volume vs normal).
              Data rides on /api/strategy2_signals (the S2 sweep computes it from

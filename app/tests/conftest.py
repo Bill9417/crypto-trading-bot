@@ -178,6 +178,12 @@ def _no_live_side_effects(request, monkeypatch, tmp_path):
     import site_link
     import watchdog
     monkeypatch.setattr(site_link, "STATE_FILE", str(tmp_path / "site_link.json"))
+    # The public-URL overrides are set in the operator's real .env once a
+    # permanent link (Tailscale Funnel) is configured. Left alone they beat any
+    # tunnel URL a test fakes, so the suite would pass or fail depending on
+    # whose machine it ran on. Tests that want them set them explicitly.
+    monkeypatch.delenv("PUBLIC_BASE_URL", raising=False)
+    monkeypatch.delenv("LINE_WEBHOOK_BASE", raising=False)
     monkeypatch.setattr(watchdog, "STATE_FILE", str(tmp_path / "watchdog.json"))
     monkeypatch.setattr(watchdog, "LOG_DIR", str(tmp_path / "logs"))
     # the signal scorecard is months of accumulated measurement — a test that

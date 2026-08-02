@@ -36,7 +36,10 @@
         this.resize = this.resize.bind(this);
         window.addEventListener('resize', this.resize);
         this.resize();
-        this._bindInput();
+        // opts.input:false = display-only (the dashboard's mini cloud). Its
+        // wheel handler calls preventDefault, so binding input on a decorative
+        // canvas would hijack page scrolling whenever the cursor crossed it.
+        if (opts.input !== false) this._bindInput();
 
         (function loop() {
             if (self.spin && !self.hover && !self._drag) {
