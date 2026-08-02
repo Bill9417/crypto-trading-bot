@@ -14,7 +14,7 @@
         /* 兩市場並排；手機自動疊成一欄 */
         .mk-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; align-items: start; }
         @media (max-width: 900px) { .mk-grid { grid-template-columns: 1fr; } }
-        .mk-col > .card:first-child { margin-top: 0; }
+        .mk-grid > .card { margin: 0; }   /* the grid owns the gaps now */
         .mk-h {
             display: flex; align-items: baseline; gap: 9px; flex-wrap: wrap;
             margin: 0 2px 9px; padding-bottom: 7px;
@@ -154,10 +154,7 @@
     {% endif %}
 
     <div class="mk-grid">
-
-        {# ══════════ 台股 ══════════ #}
-        <div class="mk-col">
-            <div class="card">
+        <div class="card">
                 <div class="mk-h">
                     <h2>🇹🇼 台股</h2>
                     <span class="mk-when">{% if tw.as_of %}{{ tw.as_of }}{% endif %}</span>
@@ -195,46 +192,7 @@
                 </div>
             </div>
 
-            <div class="card">
-                <div class="mk-h"><h2>🎯 好進場點</h2>
-                    <span class="mk-when">紅框 = 已進入買進區</span>
-                </div>
-                {% set setups = (tw.setups or [])[:8] %}
-                {% if setups %}
-                <div class="mk-list">
-                    {% for s in setups %}
-                    <div class="mk-item {{ 'buy' if s.buy_zone }}">
-                        <span class="mk-code">{{ s.code }}</span>
-                        <span>
-                            <span class="mk-name">{{ s.name }}</span>
-                            <span class="mk-tag {{ 'hot' if s.buy_zone }}">{{ s.strategy_tag or s.strategy }}</span>
-                        </span>
-                        <span class="mk-px">
-                            {{ '%.1f'|format(s.ref) if s.ref else '—' }}
-                            <small>停損 {{ '%.1f'|format(s.sl) if s.sl else '—' }}</small>
-                        </span>
-                    </div>
-                    {% endfor %}
-                </div>
-                {% if (tw.setups or [])|length > 8 %}
-                <div class="mk-empty" style="margin-top:8px;">還有 {{ (tw.setups|length) - 8 }} 檔 — <a href="/tw" style="color:#00d2ff;">看完整清單 →</a></div>
-                {% endif %}
-                {% else %}
-                <div class="mk-empty">目前沒有符合條件的標的。策略寧可不出手，也不勉強進場。</div>
-                {% endif %}
-            </div>
-
-            <div class="card">
-                <div class="mk-h"><h2>📊 台股 50 漲跌</h2>
-                    <span class="mk-when" id="tw-breadth">—</span>
-                </div>
-                <div class="mv" id="mv-tw"><div class="mk-empty">載入中…</div></div>
-            </div>
-        </div>
-
-        {# ══════════ 美股 ══════════ #}
-        <div class="mk-col">
-            <div class="card">
+        <div class="card">
                 <div class="mk-h">
                     <h2>🇺🇸 美股</h2>
                     <span class="mk-when">{{ us.session_label or us.session or '' }}{% if us.live %} · 盤中{% else %} · 收盤{% endif %}</span>
@@ -257,7 +215,36 @@
                 {% endif %}
             </div>
 
-            <div class="card">
+        <div class="card">
+                <div class="mk-h"><h2>🎯 好進場點</h2>
+                    <span class="mk-when">紅框 = 已進入買進區</span>
+                </div>
+                {% set setups = (tw.setups or [])[:6] %}
+                {% if setups %}
+                <div class="mk-list">
+                    {% for s in setups %}
+                    <div class="mk-item {{ 'buy' if s.buy_zone }}">
+                        <span class="mk-code">{{ s.code }}</span>
+                        <span>
+                            <span class="mk-name">{{ s.name }}</span>
+                            <span class="mk-tag {{ 'hot' if s.buy_zone }}">{{ s.strategy_tag or s.strategy }}</span>
+                        </span>
+                        <span class="mk-px">
+                            {{ '%.1f'|format(s.ref) if s.ref else '—' }}
+                            <small>停損 {{ '%.1f'|format(s.sl) if s.sl else '—' }}</small>
+                        </span>
+                    </div>
+                    {% endfor %}
+                </div>
+                {% if (tw.setups or [])|length > 6 %}
+                <div class="mk-empty" style="margin-top:8px;">還有 {{ (tw.setups|length) - 6 }} 檔 — <a href="/tw" style="color:#00d2ff;">看完整清單 →</a></div>
+                {% endif %}
+                {% else %}
+                <div class="mk-empty">目前沒有符合條件的標的。策略寧可不出手，也不勉強進場。</div>
+                {% endif %}
+            </div>
+
+        <div class="card">
                 <div class="mk-h"><h2>📊 市場氣氛</h2></div>
                 {% set vix = us.vix or {} %}
                 {% set tnx = us.tnx or {} %}
@@ -289,13 +276,19 @@
                 {% endif %}
             </div>
 
-            <div class="card">
+        <div class="card">
+                <div class="mk-h"><h2>📊 台股 50 漲跌</h2>
+                    <span class="mk-when" id="tw-breadth">—</span>
+                </div>
+                <div class="mv" id="mv-tw"><div class="mk-empty">載入中…</div></div>
+            </div>
+
+        <div class="card">
                 <div class="mk-h"><h2>📊 美股 100 漲跌</h2>
                     <span class="mk-when" id="us-breadth">—</span>
                 </div>
                 <div class="mv" id="mv-us"><div class="mk-empty">載入中…</div></div>
             </div>
-        </div>
     </div>
 
     <div class="foot">
