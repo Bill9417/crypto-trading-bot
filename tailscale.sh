@@ -88,8 +88,14 @@ if not d.get("MagicDNSSuffix"):
     print("✗ MagicDNS is off — enable it at https://login.tailscale.com/admin/dns"); ok = False
 
 if not d.get("CertDomains"):
+    tnet = d.get("MagicDNSSuffix") or "?"
     print("✗ HTTPS certificates are NOT enabled — Funnel cannot work without them.")
     print("    Fix: https://login.tailscale.com/admin/dns → HTTPS Certificates → Enable")
+    print(f"    The DNS page MUST show tailnet '{tnet}'. If it shows a different")
+    print("    name, or no machines, the browser is in the WRONG tailnet and the")
+    print("    toggle you flipped applied to an empty one.")
+    print("    Ground truth:  tailscale cert " + (self_.get("DNSName","").rstrip(".") or "<node>"))
+    print("      → '...does not support getting TLS certs' means still not enabled.")
     ok = False
 
 if ok:
