@@ -644,6 +644,14 @@ def main() -> None:
             morning_brief.tick(client)
         except Exception as exc:  # noqa: BLE001 — brief must never kill the loop
             print(f"[strategy2] morning brief error: {exc}")
+        # 🧵 Meta Threads — the same public snapshot as a daily post. Two API
+        # calls split across two sweeps so Meta's ~30s container delay costs
+        # this loop nothing. No-op unless THREADS_ENABLED and connected.
+        try:
+            import threads_post
+            threads_post.tick(client)
+        except Exception as exc:  # noqa: BLE001 — marketing never kills the loop
+            print(f"[strategy2] threads error: {exc}")
         # 🔔 Price alerts — user-set levels from the dashboard, checked against
         # live tickers each sweep (one bulk fetch_tickers call).
         try:

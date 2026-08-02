@@ -57,6 +57,7 @@ balance_history.json
 whale_state.json
 whale_addresses.json
 whale_candidates.json
+threads_state.json
 s1_bybit_positions.json
 copy_followers.json
 paper_tracker_state.json

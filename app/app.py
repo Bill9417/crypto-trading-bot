@@ -2937,6 +2937,37 @@ def health_page():
     return render_template("health.html", health=build_health(), user=current_user)
 
 
+# ── 🧵 Meta Threads OAuth ───────────────────────────────────────────────────
+# Admin-only on both legs: the callback exchanges whatever `code` it is handed
+# for a token that then posts under our name, so an open endpoint would let a
+# stranger bind their own Threads account to this bot.
+@app.route("/threads/connect")
+@admin_required
+def threads_connect():
+    import threads_post
+    if not threads_post.configured():
+        return ("THREADS_APP_ID / THREADS_APP_SECRET 還沒設定在 .env。", 400)
+    return redirect(threads_post.auth_url())
+
+
+@app.route("/threads/callback")
+@admin_required
+def threads_callback():
+    import threads_post
+    err = request.args.get("error_description") or request.args.get("error")
+    if err:
+        return (f"❌ Threads 授權被拒絕：{err}", 400)
+    code = (request.args.get("code") or "").strip()
+    if not code:
+        return ("❌ 回呼沒有帶 code。", 400)
+    res = threads_post.exchange_code(code)
+    if not res.get("ok"):
+        return (f"❌ 交換 token 失敗：{res.get('error')}", 400)
+    who = res.get("username") or "(帳號名稱讀取失敗，但 token 已存)"
+    return (f"✅ Threads 已連結：@{who}<br>接著在 .env 設 "
+            f"<code>THREADS_ENABLED=true</code> 並重啟 S2 掃描器。", 200)
+
+
 @app.route("/api/health")
 @admin_required
 def api_health():
