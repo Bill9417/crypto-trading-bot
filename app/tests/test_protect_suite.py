@@ -67,6 +67,52 @@ def test_losses_in_window_counts_and_nets():
     assert abs(net - (-27.0)) < 1e-9
 
 
+# ── partial closes are ONE position, not N losses ────────────────────────────
+# 2026-08-03: a single 0.371 XAUT short (entry 4041.8, −3.68 USDT all-in) was
+# closed in four chunks. Bybit emits one closed-P&L row per closing FILL, not
+# per position, so it arrived as four rows and tripped a limit of 2 — halting
+# the engine on what was one small losing trade. The −45 USDT net limit, the
+# one that measures real damage, was nowhere near.
+def _chunk(pnl, hours_ago, entry="4041.8", side="Buy", symbol="XAUTUSDT"):
+    return {"pnl": pnl, "time": NOW_MS - int(hours_ago * 3600 * 1000),
+            "symbol": symbol, "entry": entry, "side": side}
+
+
+def test_chunk_closed_trade_counts_once():
+    rows = [_chunk(-0.97, 1), _chunk(-1.04, 2), _chunk(-0.74, 12), _chunk(-0.92, 15)]
+    n, net = R.losses_in_window(rows, NOW_MS)
+    assert n == 1                                    # one position, not four
+    assert abs(net - (-3.67)) < 1e-9                 # net is still every row
+
+
+def test_distinct_positions_still_count_separately():
+    rows = [_chunk(-5.0, 1, entry="4041.8"), _chunk(-6.0, 2, entry="4090.2")]
+    assert R.losses_in_window(rows, NOW_MS)[0] == 2
+
+
+def test_opposite_sides_at_one_price_are_two_positions():
+    """A short and a long can share an average entry; they are not one trade."""
+    rows = [_chunk(-5.0, 1, side="Buy"), _chunk(-6.0, 2, side="Sell")]
+    assert R.losses_in_window(rows, NOW_MS)[0] == 2
+
+
+def test_scaling_out_of_a_winner_through_a_red_chunk_is_not_a_loss():
+    rows = [_chunk(+9.0, 1), _chunk(-1.0, 2)]
+    n, net = R.losses_in_window(rows, NOW_MS)
+    assert n == 0 and abs(net - 8.0) < 1e-9
+
+
+def test_rows_without_an_entry_keep_one_row_per_trade():
+    """The documented pure-math shape carries no entry price — unchanged."""
+    assert R.losses_in_window([_trade(-1.0, 1), _trade(-1.0, 2)], NOW_MS)[0] == 2
+
+
+def test_chunks_outside_the_window_do_not_join_the_group():
+    rows = [_chunk(-1.0, 1), _chunk(-50.0, 25)]
+    n, net = R.losses_in_window(rows, NOW_MS)
+    assert n == 1 and abs(net - (-1.0)) < 1e-9
+
+
 def test_breach_on_stop_count_and_loss_depth():
     assert "虧損平倉" in R.breach(2, -10.0, max_stops=2, max_loss=45)
     assert "淨虧損" in R.breach(1, -50.0, max_stops=2, max_loss=45)

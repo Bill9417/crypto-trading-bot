@@ -38,13 +38,30 @@ S3_BASES = {s.strip().upper() for s in
 # ── pure helpers (unit-tested) ───────────────────────────────────────────────
 def losses_in_window(trades: list, now_ms: int, window_h: float = WINDOW_H,
                      bases: set = None) -> tuple:
-    """(losing-trade count, net P&L) over the trailing window.
-    trades: [{"pnl": float, "time": ms, "symbol": "XAUTUSDT"}, ...] —
-    closed_pnl_history shape. bases (e.g. {"XAUT"}) limits the count to those
-    symbols; None counts everything (the pure-math tests)."""
+    """(losing-POSITION count, net P&L) over the trailing window.
+    trades: [{"pnl": float, "time": ms, "symbol": "XAUTUSDT", "entry": str,
+    "side": str}, ...] — closed_pnl_history shape. bases (e.g. {"XAUT"}) limits
+    the count to those symbols; None counts everything (the pure-math tests).
+
+    Rows are grouped into POSITIONS before counting. Bybit emits one closed-P&L
+    row per closing FILL, not per position, and each partial close repeats that
+    position's average entry — so a single trade closed in chunks arrives as
+    several rows. On 2026-08-03 one 0.371 XAUT short (entry 4041.8, −3.68 USDT
+    all-in) was closed in four pieces and read as "4 筆虧損平倉", tripping a
+    limit of 2 on what was one small losing trade; the −45 USDT net limit, the
+    one that measures actual damage, was nowhere near.
+
+    A group counts as ONE loss only when the position lost money OVERALL, so
+    scaling out of a winner through one red chunk no longer registers.
+
+    Rows without an entry price keep their old one-row-per-trade behaviour
+    (each becomes its own group). Two distinct positions sharing a symbol, side
+    AND exact average entry would merge — vanishingly unlikely, and it errs
+    toward allowing entries, which matches this module's fail-open stance."""
     cutoff = now_ms - window_h * 3600 * 1000
-    n_loss, net = 0, 0.0
-    for t in trades:
+    groups: dict = {}
+    net = 0.0
+    for i, t in enumerate(trades):
         if (t.get("time") or 0) < cutoff:
             continue
         if bases is not None and \
@@ -52,8 +69,10 @@ def losses_in_window(trades: list, now_ms: int, window_h: float = WINDOW_H,
             continue
         pnl = t.get("pnl") or 0.0
         net += pnl
-        if pnl < 0:
-            n_loss += 1
+        entry = t.get("entry")
+        key = (t.get("symbol"), t.get("side"), str(entry)) if entry else ("row", i)
+        groups[key] = groups.get(key, 0.0) + pnl
+    n_loss = sum(1 for total in groups.values() if total < 0)
     return n_loss, net
 
 

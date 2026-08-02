@@ -211,8 +211,14 @@ def closed_pnl_history(limit: int = 80) -> dict:
                 pnl = float(it.get("closedPnl") or 0.0)
             except (TypeError, ValueError):
                 pnl = 0.0
+            # entry+side identify the POSITION a row belongs to: Bybit emits one
+            # row per closing FILL, and every partial close of the same position
+            # repeats that position's average entry. The breaker needs this to
+            # avoid reading one chunk-closed trade as several losses.
             trades.append({"symbol": it.get("symbol"), "pnl": pnl,
                             "asset": config.QUOTE_ASSET,
+                            "entry": it.get("avgEntryPrice"),
+                            "side": it.get("side"),
                             "time": int(it.get("updatedTime") or 0)})
         trades.sort(key=lambda x: x["time"], reverse=True)
         return {"ok": True, "trades": trades}
