@@ -67,6 +67,14 @@ MAX_LEN = 500
 PUBLISH_DELAY_SEC = int(os.getenv("THREADS_PUBLISH_DELAY", "30"))
 REFRESH_EVERY_DAYS = 7          # Meta needs the token ≥24h old; 60d is the wall
 HTTP_TIMEOUT = float(os.getenv("THREADS_HTTP_TIMEOUT", "20"))
+# Where the post's preview card points. The Telegram invite is the funnel the
+# owner wants to grow, and link_attachment costs no characters (a raw t.me URL
+# in the body would). Set THREADS_LINK to the /welcome page instead to make
+# people read the live proof before they join.
+CTA_TEXT = os.getenv("THREADS_CTA", "免費即時訊號在 Telegram 群 👇")
+# Publishing a hit rate to strangers is off by default — see build_post().
+SHOW_OUTCOMES = os.getenv("THREADS_SHOW_OUTCOMES", "false").strip().lower() \
+    in ("1", "true", "yes")
 TZ = getattr(config, "TZ", None)
 _WD = "一二三四五六日"
 
@@ -116,6 +124,21 @@ def redirect_uri() -> str:
     base = (os.getenv("PUBLIC_BASE_URL")
             or getattr(config, "PUBLIC_BASE_URL", "") or "").rstrip("/")
     return f"{base}/threads/callback"
+
+
+def post_link() -> str:
+    """The preview card's target: the Telegram group by default (that is the
+    funnel being grown), the public /welcome page if there is no invite."""
+    explicit = (os.getenv("THREADS_LINK") or "").strip()
+    if explicit:
+        return explicit
+    invite = (os.getenv("TELEGRAM_INVITE_URL")
+              or getattr(config, "TELEGRAM_INVITE_URL", "") or "").strip()
+    if invite:
+        return invite
+    base = (os.getenv("PUBLIC_BASE_URL")
+            or getattr(config, "PUBLIC_BASE_URL", "") or "").rstrip("/")
+    return f"{base}/welcome" if base else ""
 
 
 def auth_url(state: str = "") -> str:
@@ -283,11 +306,17 @@ def build_post(data: dict, now: datetime) -> str:
         if sig.get("premium"):
             s += f"（⭐{sig['premium']}）"
         lines += ["", s]
+    # The 7-day "先到目標" rate stays OFF by default. morning_brief's tracker
+    # counts tp1→sl as a hit — a signal that tagged the first target and then
+    # ran to the stop — so the number is softer than a win rate, and a win rate
+    # is already not an edge (this project's own walk-forwards say so). Inside
+    # the group a reader can type /outcomes and see the breakdown; a stranger
+    # scrolling Threads reads it as "56% win rate" and cannot check anything.
     oc = data.get("outcomes") or {}
-    if (oc.get("n") or 0) >= 5:
+    if SHOW_OUTCOMES and (oc.get("n") or 0) >= 5:
         lines.append(f"📋 近 7 日結算 {oc['n']} 個 · 先到目標 {oc['hit_pct']:.0f}%")
 
-    lines += ["", "完整訊號與圖表 👇", "#加密貨幣 #比特幣 #以太幣 #量化交易"]
+    lines += ["", CTA_TEXT, "#加密貨幣 #比特幣 #以太幣 #量化交易"]
     text = "\n".join(lines)
 
     # Trim from the tail if a wide calendar headline pushed it over. The
@@ -336,9 +365,7 @@ def tick(client=None) -> bool:
             return False
         import morning_brief
         text = build_post(morning_brief._gather(client, now), now)
-        link = (os.getenv("PUBLIC_BASE_URL")
-                or getattr(config, "PUBLIC_BASE_URL", "") or "").rstrip("/")
-        res = create_container(text, f"{link}/welcome" if link else "")
+        res = create_container(text, post_link())
         if not res.get("ok"):
             print(f"[threads] container failed: {res.get('error')}")
             return False

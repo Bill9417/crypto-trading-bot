@@ -281,3 +281,76 @@ def test_auth_url_carries_the_publish_scope():
     url = T.auth_url()
     assert url.startswith(T.AUTHORIZE_URL)
     assert "threads_content_publish" in url and "response_type=code" in url
+
+
+# ── the funnel: where the preview card points ────────────────────────────────
+def _no_real_links(monkeypatch):
+    """The real .env is loaded in this process, and post_link() falls back to
+    config's attributes — clear BOTH layers or the developer's own invite link
+    answers the test."""
+    import config as C
+    monkeypatch.delenv("THREADS_LINK", raising=False)
+    monkeypatch.setenv("TELEGRAM_INVITE_URL", "")
+    monkeypatch.setenv("PUBLIC_BASE_URL", "")
+    monkeypatch.setattr(C, "TELEGRAM_INVITE_URL", "", raising=False)
+    monkeypatch.setattr(C, "PUBLIC_BASE_URL", "", raising=False)
+
+
+def test_link_defaults_to_the_telegram_invite(monkeypatch):
+    """Growing the group is the point; link_attachment costs no characters,
+    while a raw t.me URL in the body would."""
+    _no_real_links(monkeypatch)
+    monkeypatch.setenv("TELEGRAM_INVITE_URL", "https://t.me/+abc123")
+    assert T.post_link() == "https://t.me/+abc123"
+
+
+def test_explicit_link_overrides_the_invite(monkeypatch):
+    _no_real_links(monkeypatch)
+    monkeypatch.setenv("THREADS_LINK", "https://example.test/welcome")
+    monkeypatch.setenv("TELEGRAM_INVITE_URL", "https://t.me/+abc123")
+    assert T.post_link() == "https://example.test/welcome"
+
+
+def test_link_falls_back_to_the_welcome_page(monkeypatch):
+    _no_real_links(monkeypatch)
+    monkeypatch.setenv("PUBLIC_BASE_URL", "https://host.test/")
+    assert T.post_link() == "https://host.test/welcome"
+
+
+def test_link_is_empty_when_nothing_is_configured(monkeypatch):
+    """No link is better than a broken preview card."""
+    _no_real_links(monkeypatch)
+    assert T.post_link() == ""
+
+
+def test_post_invites_readers_to_telegram():
+    assert "Telegram" in T.build_post(DATA, NOW)
+
+
+def test_hit_rate_is_not_published_by_default(monkeypatch):
+    """morning_brief's tracker counts tp1→sl — a signal that tagged the first
+    target and then ran to the stop — as a hit. Inside the group a reader can
+    check it with /outcomes; a stranger on Threads reads it as a win rate."""
+    monkeypatch.setattr(T, "SHOW_OUTCOMES", False)
+    assert "先到目標" not in T.build_post(DATA, NOW)
+
+
+def test_hit_rate_can_be_switched_back_on(monkeypatch):
+    monkeypatch.setattr(T, "SHOW_OUTCOMES", True)
+    assert "先到目標 56%" in T.build_post(DATA, NOW)
+
+
+def test_tick_attaches_the_funnel_link(monkeypatch):
+    _connect()
+    _gather_stub(monkeypatch)
+    monkeypatch.setattr(T, "POST_HOUR", 0)
+    monkeypatch.setenv("THREADS_LINK", "https://t.me/+wolf")
+    seen = {}
+
+    def fake_post(url, data=None, timeout=None):
+        seen.update(data or {})
+        return _Resp({"id": "c1"})
+
+    monkeypatch.setattr(T.requests, "post", fake_post)
+    T.tick(None)
+    assert seen["link_attachment"] == "https://t.me/+wolf"
