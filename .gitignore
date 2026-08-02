@@ -4,6 +4,11 @@
 # ─────────────────────────────────────────────────────────────────────────────
 .env
 *.env
+# `*.env` only matches names ENDING in .env — a dated backup like
+# app/.env.bak.20260802 slips through and would commit every secret.
+.env.bak*
+*.env.bak*
+*.env.*
 !.env.example
 !app/.env.example
 
