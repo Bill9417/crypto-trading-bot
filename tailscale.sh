@@ -144,9 +144,20 @@ check)
 doctor)
     doctor ;;
 status)
-    "$TS" funnel status
+    OUT="$("$TS" funnel status 2>&1)"
+    echo "$OUT"
     echo
     echo "node: $(node_url)"
+    # "No serve config" on its own tells you nothing about WHY, so when
+    # nothing is being served, say what is still missing.
+    case "$OUT" in
+        *"No serve config"*)
+            echo
+            echo "Nothing is being served publicly yet. Checking why:"
+            echo
+            doctor || true
+            ;;
+    esac
     ;;
 *)
     echo "Usage: $0 [on|off|url|check|status|doctor]"; exit 1 ;;
