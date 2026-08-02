@@ -182,3 +182,52 @@ def test_installer_and_migration_scripts_are_executable():
         p = root / rel
         assert p.exists(), f"{rel} missing"
         assert p.stat().st_mode & 0o111, f"{rel} is not executable"
+
+
+# ── 🔒 credential audit ──────────────────────────────────────────────────────
+# The dashboard moved from a rotating Cloudflare quick-tunnel URL to a
+# permanent public address on 2026-08-02. "Nobody knows the link" stopped
+# being a control, and an audit that day found an ADMIN account whose
+# username and password were both "1".
+def test_health_reports_guessable_accounts(monkeypatch):
+    import app as APP
+    import set_password as SP
+
+    class _U:
+        def __init__(self, name, admin):
+            self.username, self.is_admin, self.password = name, admin, "x"
+
+    monkeypatch.setattr(SP, "weak_reason",
+                        lambda u, h: "password is '1'" if u == "1" else None)
+    monkeypatch.setattr(APP, "_auth_health", lambda: {
+        "weak_accounts": [{"username": "1", "is_admin": True, "why": "password is '1'"}],
+        "public_registration": False, "cookie_secure": True})
+    with APP.app.test_request_context("/health"):
+        auth = APP.build_health()["auth"]
+    assert [w["username"] for w in auth["weak_accounts"]] == ["1"]
+    assert auth["weak_accounts"][0]["is_admin"] is True
+
+
+def test_health_survives_a_broken_credential_audit(monkeypatch):
+    """A failure here must never take the ops page down."""
+    import app as APP
+    import set_password as SP
+
+    def _boom(*a, **k):
+        raise RuntimeError("hash backend gone")
+
+    monkeypatch.setattr(SP, "weak_reason", _boom)
+    with APP.app.app_context():
+        assert APP._auth_health()["weak_accounts"] == []   # degrades, never raises
+    with APP.app.test_request_context("/health"):
+        assert "auth" in APP.build_health()
+
+
+def test_weak_reason_catches_username_derived_passwords():
+    import set_password as SP
+    from werkzeug.security import generate_password_hash
+    for pw in ("1", "admin", "wolfman", "wolfman123", "password"):
+        h = generate_password_hash(pw, method="pbkdf2:sha256")
+        assert SP.weak_reason("wolfman", h), f"{pw!r} should be flagged"
+    strong = generate_password_hash("k7#pQx2vLm9!Rt", method="pbkdf2:sha256")
+    assert SP.weak_reason("wolfman", strong) is None

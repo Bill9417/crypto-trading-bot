@@ -144,8 +144,33 @@ url)
 check)
     URL="$(node_url)"
     if [ -z "$URL" ]; then echo "No node URL — is tailscale logged in?"; exit 1; fi
-    echo "Local  127.0.0.1:$PORT  → $(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:$PORT/login" || echo down)"
-    echo "Public $URL → $(curl -s -o /dev/null -w '%{http_code}' --max-time 20 "$URL/login" || echo unreachable)"
+    HOST="${URL#https://}"
+    echo "Local   127.0.0.1:$PORT  → $(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:$PORT/login" || echo down)"
+    # A plain curl from this machine resolves the ts.net name over the TAILNET
+    # and connects to 100.x — it answers 200 even when Funnel is completely
+    # dead to the outside world. That false green is exactly what hid a broken
+    # public path while a phone off the tailnet could not load the site. So
+    # force each PUBLIC ingress IP and report them separately.
+    IPS="$(dig +short @8.8.8.8 "$HOST" A 2>/dev/null | grep -E '^[0-9.]+$')"
+    if [ -z "$IPS" ]; then
+        echo "Public  no A record in public DNS — Funnel is not published."
+        exit 1
+    fi
+    ok=0
+    for ip in $IPS; do
+        code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 20 \
+                --resolve "$HOST:443:$ip" "$URL/login" 2>/dev/null)"
+        [ "$code" = "200" ] && ok=1
+        echo "Public  via $ip → ${code:-fail}$([ "$code" = "200" ] || echo '   <-- this relay is not serving')"
+    done
+    echo
+    if [ "$ok" = "1" ]; then
+        echo "✓ reachable from the public internet (phones off the tailnet included)."
+    else
+        echo "✗ NOT reachable publicly. The tailnet path may still work, which is"
+        echo "  why a browser on this Mac looks fine. Re-arm the registration:"
+        echo "      $0 off && $0 on"
+    fi
     ;;
 doctor)
     doctor ;;

@@ -2727,6 +2727,30 @@ def _daily_risk_status() -> dict:
         return {"enabled": False, "error": str(exc)[:150]}
 
 
+def _auth_health() -> dict:
+    """🔒 Guessable logins + the two settings that decide who can get in.
+
+    The dashboard used to hide behind a Cloudflare quick-tunnel URL that
+    rotated on every restart; it now has a permanent public address, so
+    "nobody knows the link" stopped being a control. An audit on 2026-08-02
+    found an ADMIN account whose username and password were both "1".
+    Surfaced on /health so it cannot quietly go unnoticed again.
+    """
+    weak = []
+    try:
+        import set_password as _sp
+        for u in User.query.all():
+            why = _sp.weak_reason(u.username, u.password)
+            if why:
+                weak.append({"username": u.username, "is_admin": bool(u.is_admin),
+                             "why": why})
+    except Exception as e:  # noqa: BLE001 — never take the ops page down over this
+        print(f"[health] credential audit failed: {e}")
+    return {"weak_accounts": weak,
+            "public_registration": ALLOW_PUBLIC_REGISTRATION,
+            "cookie_secure": bool(app.config.get("SESSION_COOKIE_SECURE"))}
+
+
 def build_health():
     """Full stack snapshot for /health — JSON-safe primitives only."""
     import re
@@ -2849,6 +2873,8 @@ def build_health():
     # 📡 Pipeline — LINE quota, the public site link, backup freshness. These
     # fail silently (a message never arrives, a backup silently stops), so
     # flag them here rather than trusting nothing-looks-wrong.
+    auth_info = _auth_health()
+
     pipeline = _build_pipeline(base, now)
     s2_running = any(p["key"] == "s2" and p["running"] for p in processes)
     pl = pipeline["line"]
@@ -2900,6 +2926,7 @@ def build_health():
         "logs": _log_health(base),
         "storage": storage,
         "pipeline": pipeline,
+        "auth": auth_info,
         "daily_risk": _daily_risk_status(),
     }
 

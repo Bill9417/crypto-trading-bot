@@ -209,6 +209,7 @@
     <div class="card">
         <div class="card-h"><span class="ic">📡</span><h2>Pipeline</h2></div>
         <p class="hint">LINE quota, the public site link, and state backups — these fail <em>silently</em> (a message never arrives, a backup silently stops) rather than crashing a process, so they're checked here explicitly.</p>
+        <div id="authwarn"></div>
         <div id="pipeline"></div>
     </div>
 
@@ -315,6 +316,31 @@ function render(h) {
     document.getElementById('fresh').innerHTML = rows.join('');
 
     // Pipeline
+    // 🔒 credential audit — first thing on the page when it fires, because a
+    // guessable admin login on a publicly reachable site outranks every other
+    // health signal here
+    (function () {
+        var a = h.auth || {}, w = a.weak_accounts || [], out = [];
+        if (w.length) {
+            out.push('<div style="background:rgba(220,38,38,.14);border:1px solid rgba(220,38,38,.5);' +
+                'border-radius:12px;padding:13px 15px;margin-bottom:14px;">' +
+                '<div style="font-weight:900;color:#fca5a5;font-size:.9rem;">🔒 ' + w.length +
+                ' account' + (w.length > 1 ? 's' : '') + ' with a guessable password</div>' +
+                w.map(function (u) {
+                    return '<div style="font-size:.78rem;margin-top:6px;">· <b>' + u.username + '</b>' +
+                        (u.is_admin ? ' <span style="color:#fca5a5;font-weight:800">[ADMIN]</span>' : '') +
+                        ' — ' + u.why + '</div>';
+                }).join('') +
+                '<div style="font-size:.72rem;color:#8a99ad;margin-top:9px;">This site has a permanent ' +
+                'public address. Fix from the app folder: <code>python set_password.py &lt;user&gt;</code></div></div>');
+        }
+        if (a.public_registration) {
+            out.push('<div style="background:rgba(245,158,11,.12);border:1px solid rgba(245,158,11,.45);' +
+                'border-radius:12px;padding:11px 14px;margin-bottom:14px;font-size:.8rem;color:#fde68a;">' +
+                '⚠ Public registration is ON — anyone reaching the site can create an account.</div>');
+        }
+        document.getElementById('authwarn').innerHTML = out.join('');
+    })();
     document.getElementById('pipeline').innerHTML = renderPipeline(h.pipeline || {});
 
     // Logs
