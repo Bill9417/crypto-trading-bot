@@ -158,7 +158,17 @@ def tick(self_name: str) -> list:
                 f"🚨 看門狗: {name} ({_label(name)}) 已停止運行!\n"
                 f"重啟:  {fix}", force=True, channel="private")
             print(f"[watchdog] ALERT: {name} is down")
+    # Recovery is only claimable for things still being WATCHED. Turning a
+    # check off drops its name from `down`, which is indistinguishable from the
+    # thing coming back — and on 2026-08-03 that sent a "✅ cloudflared 已恢復
+    # 運行" for a tunnel that had been retired, at the moment its check was
+    # disabled. Unwatched names leave the state silently.
+    watched = set(EXPECTED) | ({TUNNEL_KEY} if WATCH_TUNNEL else set())
     for name in sorted(was_down - set(down)):
+        if name not in watched:
+            last_alert.pop(name, None)
+            print(f"[watchdog] no longer watching {name} — dropped, not announced")
+            continue
         telegram_utils.send_message(
             f"✅ 看門狗: {name} ({_label(name)}) 已恢復運行",
             force=True, channel="private")

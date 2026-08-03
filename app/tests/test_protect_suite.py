@@ -315,3 +315,40 @@ def test_watchdog_alerts_go_to_the_owner_not_the_group(monkeypatch, tmp_path):
                         lambda msg, **k: seen.append(k.get("channel")) or True)
     W.tick("strategy2_scanner.py")
     assert seen and all(ch == "private" for ch in seen), seen
+
+
+def test_disabling_a_check_is_not_announced_as_recovery(monkeypatch, tmp_path):
+    """2026-08-03: turning the retired cloudflared check off dropped its name
+    from `down`, which is indistinguishable from the tunnel coming back — so
+    the owner got "✅ cloudflared 已恢復運行" for something that no longer
+    exists. Unwatched names must leave the state silently."""
+    monkeypatch.setattr(W, "STATE_FILE", str(tmp_path / "wd.json"))
+    monkeypatch.setattr(W, "WATCH_TUNNEL", False)
+    W._save_state({"down": [W.TUNNEL_KEY], "last_alert": {W.TUNNEL_KEY: 1.0}})
+    monkeypatch.setattr(W, "_ps", lambda: "\n".join(
+        f"python -u {s}" for s in W.EXPECTED))
+    import telegram_utils
+    sent = []
+    monkeypatch.setattr(telegram_utils, "send_message",
+                        lambda msg, **k: sent.append(msg) or True)
+    assert W.tick("strategy2_scanner.py") == []
+    assert not sent, f"announced a retired check: {sent}"
+    st = W._load_state()
+    assert W.TUNNEL_KEY not in (st.get("down") or [])
+    assert W.TUNNEL_KEY not in (st.get("last_alert") or {})
+
+
+def test_a_watched_process_still_announces_recovery(monkeypatch, tmp_path):
+    """The silencing above must not swallow a real comeback."""
+    monkeypatch.setattr(W, "STATE_FILE", str(tmp_path / "wd.json"))
+    monkeypatch.setattr(W, "WATCH_TUNNEL", False)
+    dead = sorted(W.EXPECTED)[0]
+    W._save_state({"down": [dead], "last_alert": {}})
+    monkeypatch.setattr(W, "_ps", lambda: "\n".join(
+        f"python -u {s}" for s in W.EXPECTED))
+    import telegram_utils
+    sent = []
+    monkeypatch.setattr(telegram_utils, "send_message",
+                        lambda msg, **k: sent.append((msg, k.get("channel"))) or True)
+    W.tick("strategy2_scanner.py")
+    assert sent and "已恢復運行" in sent[0][0] and sent[0][1] == "private"
