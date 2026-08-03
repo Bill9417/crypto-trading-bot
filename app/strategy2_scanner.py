@@ -676,6 +676,14 @@ def main() -> None:
             us_market.tick()
         except Exception as exc:  # noqa: BLE001 — digest must never kill the loop
             print(f"[strategy2] us market error: {exc}")
+        # 🇺🇸 美股進場掃描 — oversold-in-uptrend setups on US100, 09:00 台北,
+        # just after the close digest. Watch-only; measured edge +1.34%/trade
+        # over a random-day baseline (see the module docstring).
+        try:
+            import us_stocks
+            us_stocks.tick()
+        except Exception as exc:  # noqa: BLE001 — a watch-only scan never kills the loop
+            print(f"[strategy2] us stocks error: {exc}")
         # 📋 台股週結 — honest Sunday-morning TP/SL scorecard to LINE
         # (self-paced no-op except Sunday mornings).
         try:
