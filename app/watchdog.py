@@ -26,6 +26,13 @@ EXPECTED = {
 TUNNEL_KEY = "cloudflared"
 TUNNEL_LABEL = "Cloudflare 通道（對外網址）"
 TUNNEL_FIX = "./tunnel.sh start"
+# The public URL moved to a Tailscale Funnel, which is a system service and not
+# a cloudflared process — so this check found "cloudflared tunnel" missing and
+# fired a 🚨 alert every hour for a component that was retired on purpose.
+# Opt-in now: set WATCHDOG_WATCH_TUNNEL=true only while a quick-tunnel is the
+# public URL again.
+WATCH_TUNNEL = os.getenv("WATCHDOG_WATCH_TUNNEL", "false").strip().lower() \
+    in ("1", "true", "yes")
 STATE_FILE = os.path.join(os.path.dirname(__file__), "watchdog_state.json")
 CHECK_SEC = 300
 ALERT_COOLDOWN_SEC = 3600
@@ -127,7 +134,7 @@ def tick(self_name: str) -> list:
         return []
     running.add(self_name)                       # we are obviously alive
     down = missing(running)
-    if not tunnel_running(ps_text):
+    if WATCH_TUNNEL and not tunnel_running(ps_text):
         down = [*down, TUNNEL_KEY]
 
     import telegram_utils
@@ -143,13 +150,18 @@ def tick(self_name: str) -> list:
             last_alert[name] = now
             alerted.append(name)
             fix = TUNNEL_FIX if name == TUNNEL_KEY else "./run_all.sh bg"
+            # channel="private": send_message() defaults to "alerts", which
+            # is a PUBLIC group topic. "restart with ./run_all.sh bg" is an
+            # instruction only the owner can act on, and it advertises the
+            # stack to everyone who joined via the invite link.
             telegram_utils.send_message(
                 f"🚨 看門狗: {name} ({_label(name)}) 已停止運行!\n"
-                f"重啟:  {fix}", force=True)
+                f"重啟:  {fix}", force=True, channel="private")
             print(f"[watchdog] ALERT: {name} is down")
     for name in sorted(was_down - set(down)):
         telegram_utils.send_message(
-            f"✅ 看門狗: {name} ({_label(name)}) 已恢復運行", force=True)
+            f"✅ 看門狗: {name} ({_label(name)}) 已恢復運行",
+            force=True, channel="private")
         print(f"[watchdog] recovered: {name}")
 
     state["down"] = down

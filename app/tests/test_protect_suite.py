@@ -279,3 +279,39 @@ def test_group_channels_never_carry_account_numbers():
             if in_group and money.search(block):
                 offenders.append(f"{name}:{i + 1}")
     assert not offenders, f"account figures routed to a group channel: {offenders}"
+
+
+# ── watchdog: no false alarms, and not in front of the members ───────────────
+def test_the_tunnel_check_is_opt_in(monkeypatch, tmp_path):
+    """The public URL moved to a Tailscale Funnel, which is a system service,
+    not a cloudflared process — so this check reported the retired quick-tunnel
+    "down" and alerted every hour."""
+    monkeypatch.setattr(W, "STATE_FILE", str(tmp_path / "wd.json"))
+    monkeypatch.setattr(W, "WATCH_TUNNEL", False)
+    monkeypatch.setattr(W, "_ps", lambda: "\n".join(
+        f"python -u {s}" for s in W.EXPECTED))
+    assert W.tick("strategy2_scanner.py") == []          # no cloudflared alarm
+
+
+def test_the_tunnel_check_still_works_when_asked(monkeypatch, tmp_path):
+    monkeypatch.setattr(W, "STATE_FILE", str(tmp_path / "wd.json"))
+    monkeypatch.setattr(W, "WATCH_TUNNEL", True)
+    monkeypatch.setattr(W, "_ps", lambda: "\n".join(
+        f"python -u {s}" for s in W.EXPECTED))
+    import telegram_utils
+    monkeypatch.setattr(telegram_utils, "send_message", lambda *a, **k: True)
+    assert W.TUNNEL_KEY in W.tick("strategy2_scanner.py")
+
+
+def test_watchdog_alerts_go_to_the_owner_not_the_group(monkeypatch, tmp_path):
+    """'restart with ./run_all.sh bg' is an instruction only the owner can act
+    on, and send_message() defaults to a PUBLIC group topic."""
+    monkeypatch.setattr(W, "STATE_FILE", str(tmp_path / "wd.json"))
+    monkeypatch.setattr(W, "WATCH_TUNNEL", False)
+    monkeypatch.setattr(W, "_ps", lambda: "python -u strategy2_scanner.py")
+    import telegram_utils
+    seen = []
+    monkeypatch.setattr(telegram_utils, "send_message",
+                        lambda msg, **k: seen.append(k.get("channel")) or True)
+    W.tick("strategy2_scanner.py")
+    assert seen and all(ch == "private" for ch in seen), seen
