@@ -206,3 +206,92 @@ def test_the_digest_carries_no_account_data(monkeypatch):
     body = U.build_digest(NOW, {"ok": True, "why": "x"}, [("AAPL", "Apple", s)])
     for banned in ("餘額", "淨值", "持倉", "未實現", "保證金", "Bybit", "USDT"):
         assert banned not in body
+
+
+# ── /us web view ─────────────────────────────────────────────────────────────
+def _state(monkeypatch, tmp_path, setups, last_scan="2026-08-03", ok=True):
+    monkeypatch.setattr(U, "STATE_FILE", str(tmp_path / "s.json"))
+    U._save_state({"last_scan": last_scan, "last_regime": {"ok": ok, "why": "x"},
+                   "active_setups": setups})
+
+
+def _quotes(monkeypatch, mapping):
+    import stocks_data
+    monkeypatch.setattr(stocks_data, "us_quote_rows",
+                        lambda: [{"ticker": k, "price": v, "change_pct": 0.0}
+                                 for k, v in mapping.items()])
+
+
+S1 = {"code": "AMD", "name": "AMD", "date": "2026-08-03",
+      "ref": 100.0, "sl": 90.0, "tp": 120.0, "rsi": 27.0, "atr": 3.3}
+
+
+def test_web_view_survives_a_dead_quote_feed(monkeypatch, tmp_path):
+    """The page must render off the persisted scan alone — a quote hiccup
+    cannot be allowed to 500 a public, no-login page."""
+    import stocks_data
+    _state(monkeypatch, tmp_path, [S1])
+    monkeypatch.setattr(stocks_data, "us_quote_rows",
+                        lambda: (_ for _ in ()).throw(RuntimeError("yahoo down")))
+    v = U.web_view()
+    assert len(v["setups"]) == 1 and v["setups"][0]["price"] is None
+
+
+def test_buy_zone_marks_price_still_near_the_reference(monkeypatch, tmp_path):
+    _state(monkeypatch, tmp_path, [S1])
+    _quotes(monkeypatch, {"AMD": 101.0})          # inside 0.25 × (100−90) = 2.5
+    assert U.web_view()["setups"][0]["buy_zone"] is True
+
+
+def test_price_run_past_the_band_is_not_a_buy_zone(monkeypatch, tmp_path):
+    _state(monkeypatch, tmp_path, [S1])
+    _quotes(monkeypatch, {"AMD": 106.0})
+    r = U.web_view()["setups"][0]
+    assert r["buy_zone"] is False and r["dist_pct"] == 6.0
+
+
+def test_reaching_the_target_closes_the_row(monkeypatch, tmp_path):
+    """Without this a resolved setup sits on the page as a live idea for 40
+    sessions. It reads the CURRENT quote, so it means 'price is now beyond the
+    target', not 'the trade filled there'."""
+    _state(monkeypatch, tmp_path, [S1])
+    _quotes(monkeypatch, {"AMD": 121.0})
+    r = U.web_view()["setups"][0]
+    assert r["status"] == "tp" and not r["buy_zone"]
+
+
+def test_breaking_the_stop_closes_the_row(monkeypatch, tmp_path):
+    _state(monkeypatch, tmp_path, [S1])
+    _quotes(monkeypatch, {"AMD": 89.0})
+    assert U.web_view()["setups"][0]["status"] == "sl"
+
+
+def test_actionable_rows_sort_above_resolved_ones(monkeypatch, tmp_path):
+    rows = [dict(S1, code="DONE", tp=105.0),
+            dict(S1, code="LIVE"),
+            dict(S1, code="OLD", date="2026-07-20")]
+    _state(monkeypatch, tmp_path, rows)
+    _quotes(monkeypatch, {"DONE": 106.0, "LIVE": 100.5, "OLD": 100.5})
+    order = [r["code"] for r in U.web_view()["setups"]]
+    assert order[0] == "LIVE"                  # in its band AND today
+    assert order[-1] == "DONE"                 # resolved sinks
+
+
+def test_web_view_reports_the_regime_and_the_edge(monkeypatch, tmp_path):
+    _state(monkeypatch, tmp_path, [], ok=False)
+    v = U.web_view()
+    assert v["regime"]["ok"] is False
+    assert "真實優勢" in v["edge"] and "隨機日" in v["edge"]
+    assert "RSI14" in v["rule"]
+
+
+def test_business_days_skip_the_weekend():
+    from datetime import datetime as dt
+    # 2026-07-31 is a Friday; the following Monday is one business day on
+    assert U._biz_days_since("2026-07-31", dt(2026, 8, 3)) == 1
+
+
+def test_business_days_tolerates_junk():
+    from datetime import datetime as dt
+    assert U._biz_days_since("not-a-date", dt(2026, 8, 3)) == 0
+    assert U._biz_days_since(None, dt(2026, 8, 3)) == 0

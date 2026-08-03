@@ -4163,7 +4163,13 @@ def us_page():
     fail-soft — web_view() serves its last good snapshot rather than raising."""
     import config as _config
     import us_market
-    return render_template("us.html", us=us_market.web_view(),
+    import us_stocks
+    try:
+        setups = us_stocks.web_view()
+    except Exception as e:  # noqa: BLE001 — the close digest must still render
+        print(f"[us] setup view failed: {e}")
+        setups = None
+    return render_template("us.html", us=us_market.web_view(), setups=setups,
                            invite_url=_config.TELEGRAM_INVITE_URL)
 
 

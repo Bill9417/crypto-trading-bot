@@ -8,6 +8,32 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700;900&display=swap" rel="stylesheet">
     {% include '_public_style.html' %}
+    <style>
+    /* 🎯 entry setups — page-local, the shared sheet has no card-in-card rows */
+    .us-setup { padding: 12px 0; border-bottom: 1px solid var(--line); }
+    .us-setup:last-child { border-bottom: 0; }
+    .us-setup.zone { margin: 0 -14px; padding: 12px 14px;
+                     background: rgba(52,211,153,.07);
+                     border-left: 3px solid #34d399; }
+    .us-s-head { display: flex; justify-content: space-between; align-items: baseline;
+                 gap: 10px; flex-wrap: wrap; }
+    .us-s-nm { color: var(--muted); font-size: 13px; }
+    .us-s-px { font-weight: 700; white-space: nowrap; }
+    .us-s-px .up { color: #34d399; } .us-s-px .dn { color: #f87171; }
+    .us-badge { display: inline-block; margin-left: 6px; padding: 1px 7px; border-radius: 999px;
+                font-size: 11px; font-weight: 700; background: rgba(52,211,153,.18); color: #34d399; }
+    .us-badge.new { background: rgba(96,165,250,.18); color: #60a5fa; }
+    .us-badge.done { background: rgba(52,211,153,.14); color: #34d399; }
+    .us-badge.lost { background: rgba(248,113,113,.16); color: #f87171; }
+    .us-setup.closed { opacity: .55; }
+    .us-s-lv { display: flex; flex-wrap: wrap; gap: 4px 16px; margin-top: 7px; font-size: 13px; }
+    .us-s-lv .up { color: #34d399; } .us-s-lv .dn { color: #f87171; }
+    .us-s-lv i { font-style: normal; opacity: .7; font-size: 12px; }
+    .us-s-meta { margin-top: 5px; font-size: 12px; color: var(--muted); }
+    .us-none { text-align: center; color: var(--muted); padding: 18px 6px;
+               font-size: 14px; line-height: 1.8; }
+    .us-edge { margin: 8px 2px 4px; font-size: 12px; color: var(--muted); line-height: 1.75; }
+    </style>
 </head>
 <body>
 <div class="wrap">
@@ -50,6 +76,63 @@
 
     {% if us.error and not us.indices %}
     <div class="empty">暫時取不到美股報價，請稍後再重新整理。</div>
+    {% endif %}
+
+    {# ── 進場掃描 — the reason to open this page before the US open, above the
+         index recap because it is the only actionable part of it ── #}
+    {% if setups %}
+    <div class="seclabel">🎯 進場掃描
+        <small>{{ setups.rule }}</small>
+    </div>
+    {% if not setups.regime.ok %}
+    <div class="card"><div class="us-none">
+        <b>今日不進場</b> — {{ setups.regime.why or '大盤轉弱' }}。<br>
+        大盤走弱時不找標的：回測中這道濾網把 2022 年的交易數壓到 49 筆。
+    </div></div>
+    {% elif not setups.setups %}
+    <div class="card"><div class="us-none">
+        目前沒有標的觸發。RSI14 跌破 30 本來就不常見，平均一天約 1–2 檔。
+    </div></div>
+    {% else %}
+    <div class="card">
+        {% for s in setups.setups %}
+        <div class="us-setup{{ ' zone' if s.buy_zone }}{{ ' closed' if s.status in ('tp','sl') }}">
+            <div class="us-s-head">
+                <div>
+                    <b>{{ s.code }}</b> <span class="us-s-nm">{{ s.name }}</span>
+                    {% if s.buy_zone %}<span class="us-badge">仍在進場區</span>{% endif %}
+                    {% if s.status == 'new' %}<span class="us-badge new">今日新訊號</span>
+                    {% elif s.status == 'tp' %}<span class="us-badge done">已達停利價</span>
+                    {% elif s.status == 'sl' %}<span class="us-badge lost">已跌破停損</span>{% endif %}
+                </div>
+                <div class="us-s-px num">
+                    {% if s.price_s %}{{ s.price_s }}
+                    <span class="{{ 'up' if s.change_pct and s.change_pct > 0 else ('dn' if s.change_pct and s.change_pct < 0 else 'flat') }}">
+                        {% if s.change_pct is not none %}{{ '%+.2f' % s.change_pct }}%{% endif %}</span>
+                    {% else %}—{% endif %}
+                </div>
+            </div>
+            <div class="us-s-lv num">
+                <span>參考 <b>{{ s.ref_s }}</b></span>
+                <span class="dn">停損 {{ s.sl_s }} <i>−{{ s.risk_pct }}%</i></span>
+                <span class="up">停利 {{ s.tp_s }} <i>+{{ s.gain_pct }}%</i></span>
+                {% if s.rr %}<span>風報比 {{ s.rr }}</span>{% endif %}
+            </div>
+            <div class="us-s-meta">
+                RSI {{ '%.0f' % s.rsi if s.rsi else '—' }} ·
+                {{ s.date }}{% if s.days %} · 已 {{ s.days }} 個交易日{% endif %}
+                {% if s.dist_pct is not none %} · 距參考價 {{ '%+.1f' % s.dist_pct }}%{% endif %}
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+    {% endif %}
+    <div class="us-edge">
+        進場＝次一交易日開盤參考 · 停損 3×ATR · 停利 5×ATR · 最長持有 40 個交易日<br>
+        📊 {{ setups.edge }}<br>
+        ⚠️ 回測偏樂觀（成分股存活者偏差、十年多頭、事後選參數），實際會低於這個數字。
+        這是觀察名單，不是投資建議。
+    </div>
     {% endif %}
 
     {# ── 指數 ── #}

@@ -221,6 +221,99 @@ def build_digest(now, reg: dict, setups: list) -> str:
     return "\n".join(lines)
 
 
+def _biz_days_since(date_str: str, now) -> int:
+    """Weekday count since a YYYY-MM-DD stamp. Holidays are not modelled — this
+    only drives display ageing and the hold cutoff, where being a day or two
+    generous is harmless."""
+    if not date_str:
+        return 0
+    try:
+        d0 = datetime.strptime(date_str, "%Y-%m-%d").date()
+    except ValueError:
+        return 0
+    days, d = 0, d0
+    today = now.date()
+    while d < today:
+        d = d.fromordinal(d.toordinal() + 1)
+        if d.weekday() < 5:
+            days += 1
+    return days
+
+
+def web_view(now=None) -> dict:
+    """Read-only payload for the /us page's entry-setup section.
+
+    Reads the persisted daily scan — NO network of its own — and overlays the
+    cached US100 quotes so each setup shows whether price is STILL in a sane
+    entry zone. Fail-soft in every branch: the route must never 500 because a
+    quote feed hiccuped."""
+    now = now or datetime.now(TZ)
+    state = _load_state()
+    reg = state.get("last_regime") or {}
+
+    prices = {}
+    try:
+        import stocks_data
+        for row in stocks_data.us_quote_rows() or []:
+            t = row.get("ticker") or row.get("symbol")
+            if t:
+                prices[t] = row
+    except Exception:  # noqa: BLE001 — live price is a bonus, never required
+        prices = {}
+
+    last_run = state.get("last_scan")
+    rows = []
+    for s in (state.get("active_setups") or []):
+        ref, sl, tp = s.get("ref"), s.get("sl"), s.get("tp")
+        if not (ref and sl and tp):
+            continue
+        q = prices.get(s.get("code")) or {}
+        price = q.get("price") or q.get("last")
+        row = {
+            "code": s.get("code"), "name": s.get("name"), "date": s.get("date"),
+            "days": _biz_days_since(s.get("date"), now),
+            "rsi": s.get("rsi"),
+            "ref": ref, "sl": sl, "tp": tp,
+            "ref_s": _px(ref), "sl_s": _px(sl), "tp_s": _px(tp),
+            "risk_pct": round((ref - sl) / ref * 100, 1),
+            "gain_pct": round((tp - ref) / ref * 100, 1),
+            "rr": round((tp - ref) / (ref - sl), 1) if ref > sl else None,
+            "status": "new" if s.get("date") == last_run else "tracking",
+            "price": price, "price_s": _px(price) if price else None,
+            "change_pct": q.get("change_pct"),
+        }
+        if price:
+            row["dist_pct"] = round((price - ref) / ref * 100, 1)
+            # Reached its level? Said from the CURRENT quote only — there is no
+            # intraday path here, so this is "price is now beyond the target",
+            # not "the trade filled at it". Without this a setup that resolved
+            # days ago keeps sitting on the page as a live idea for 40 sessions.
+            if price >= tp:
+                row["status"] = "tp"
+            elif price <= sl:
+                row["status"] = "sl"
+            # "Still a valid entry": within a quarter of the stop distance of
+            # the reference. Deliberately tight, so the badge means "entering
+            # here still matches the tested setup" — not merely "above the stop".
+            band = 0.25 * (ref - sl)
+            row["buy_zone"] = bool(row["status"] in ("new", "tracking")
+                                   and ref - band <= price <= ref + band)
+        rows.append(row)
+
+    # Actionable first: still inside its entry band floats to the top, then new,
+    # then tracking, with anything already resolved last. Newest date breaks
+    # remaining ties (the pre-sort is stable).
+    order = {"new": 0, "tracking": 1, "tp": 2, "sl": 2}
+    rows.sort(key=lambda r: r["date"] or "", reverse=True)
+    rows.sort(key=lambda r: (order.get(r["status"], 3), not r.get("buy_zone")))
+    return {
+        "regime": reg, "setups": rows, "last_scan": last_run,
+        "n_zone": sum(1 for r in rows if r.get("buy_zone")),
+        "rule": f"RSI14 < {RSI_MAX:g} 且站上 200 日均線",
+        "edge": "10 年回測真實優勢 +1.34%/筆（已扣掉同期隨機日進場的 +1.19%）",
+    }
+
+
 # ── scheduling ──────────────────────────────────────────────────────────────
 def _due(state: dict, now) -> bool:
     return now.hour >= SEND_HOUR and state.get("last_scan") != now.strftime("%Y-%m-%d")
@@ -276,8 +369,19 @@ def tick(client=None) -> bool:
             return False
         for ticker, _, _ in fresh:
             recent[ticker] = time.time()
-        state.update({"last_scan": now.strftime("%Y-%m-%d"), "recent": recent,
-                      "last_fail": False})
+        # Keep the setups so /us can show them all day (and for as long as the
+        # backtested 40-session hold lasts) instead of only in the one Telegram
+        # message that scrolls away.
+        active = [s for s in (state.get("active_setups") or [])
+                  if _biz_days_since(s.get("date"), now) < MAX_HOLD]
+        today = now.strftime("%Y-%m-%d")
+        active = [s for s in active if s.get("date") != today]
+        for ticker, name, s in fresh:
+            active.append({"code": ticker, "name": name, "date": today,
+                           "ref": s["ref"], "sl": s["sl"], "tp": s["tp"],
+                           "rsi": s["rsi"], "atr": s["atr"]})
+        state.update({"last_scan": today, "recent": recent, "last_fail": False,
+                      "active_setups": active[-60:], "last_regime": reg})
         _save_state(state)
         print(f"[us-stocks] digest sent — {len(fresh)} setups")
         return True
