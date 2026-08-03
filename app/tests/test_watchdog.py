@@ -46,7 +46,12 @@ def test_rotate_logs_missing_dir_is_noop(tmp_path):
 
 
 # ── tick(): process + tunnel alerting ─────────────────────────────────────────
-def _wire_tick(monkeypatch, ps_text, tmp_path):
+def _wire_tick(monkeypatch, ps_text, tmp_path, watch_tunnel=False):
+    """watch_tunnel: the cloudflared check is opt-in since the public URL moved
+    to a Tailscale Funnel — a system service, not a process this can see — so
+    it reported the retired quick-tunnel down and alerted every hour. The
+    default-off behaviour is covered in test_protect_suite."""
+    monkeypatch.setattr(watchdog, "WATCH_TUNNEL", watch_tunnel)
     import telegram_utils
     monkeypatch.setattr(watchdog, "STATE_FILE", str(tmp_path / "wd.json"))
     monkeypatch.setattr(watchdog, "LOG_DIR", str(tmp_path / "logs"))
@@ -60,7 +65,7 @@ def _wire_tick(monkeypatch, ps_text, tmp_path):
 def test_tick_alerts_on_dead_tunnel_with_correct_fix_command(monkeypatch, tmp_path):
     ps_no_tunnel = PS_ALL_UP.replace(
         "/opt/homebrew/bin/cloudflared tunnel --url http://localhost:4000\n", "")
-    sent = _wire_tick(monkeypatch, ps_no_tunnel, tmp_path)
+    sent = _wire_tick(monkeypatch, ps_no_tunnel, tmp_path, watch_tunnel=True)
     alerted = watchdog.tick("app.py")
     assert "cloudflared" in alerted
     assert sent and "Cloudflare" in sent[0] and "./tunnel.sh start" in sent[0]
@@ -70,7 +75,7 @@ def test_tick_alerts_on_dead_tunnel_with_correct_fix_command(monkeypatch, tmp_pa
 def test_tick_recovers_when_tunnel_comes_back(monkeypatch, tmp_path):
     ps_no_tunnel = PS_ALL_UP.replace(
         "/opt/homebrew/bin/cloudflared tunnel --url http://localhost:4000\n", "")
-    sent = _wire_tick(monkeypatch, ps_no_tunnel, tmp_path)
+    sent = _wire_tick(monkeypatch, ps_no_tunnel, tmp_path, watch_tunnel=True)
     watchdog.tick("app.py")
     assert len(sent) == 1
 
@@ -92,7 +97,7 @@ def test_tick_silent_when_everything_up(monkeypatch, tmp_path):
 def test_tick_respects_check_interval_gate(monkeypatch, tmp_path):
     ps_no_tunnel = PS_ALL_UP.replace(
         "/opt/homebrew/bin/cloudflared tunnel --url http://localhost:4000\n", "")
-    sent = _wire_tick(monkeypatch, ps_no_tunnel, tmp_path)
+    sent = _wire_tick(monkeypatch, ps_no_tunnel, tmp_path, watch_tunnel=True)
     watchdog.tick("app.py")
     assert len(sent) == 1
     watchdog.tick("app.py")               # same 5-min window → no re-check at all
