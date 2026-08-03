@@ -87,6 +87,13 @@ CTA_TEXT = os.getenv("THREADS_CTA", "免費即時訊號在 Telegram 群 👇")
 # Publishing a hit rate to strangers is off by default — see build_post().
 SHOW_OUTCOMES = os.getenv("THREADS_SHOW_OUTCOMES", "false").strip().lower() \
     in ("1", "true", "yes")
+# Bybit referral. It pays the owner a commission when someone signs up and
+# trades, which makes it branded content under Meta's policy and an ad under
+# most fair-trading rules — so it is labelled. Undisclosed affiliate links get
+# posts down-ranked or pulled, which costs more reach than the label does
+# characters. THREADS_REF_LABEL="" removes it if you disclose another way.
+REF_URL = (os.getenv("BYBIT_REF_URL") or "").strip()
+REF_TEXT = os.getenv("THREADS_REF_TEXT", "開 Bybit 帳戶（推薦連結）👇")
 TZ = getattr(config, "TZ", None)
 _WD = "一二三四五六日"
 
@@ -280,7 +287,8 @@ def publish_container(creation_id: str) -> dict:
 
 
 # ── the daily post (pure given `data` — unit-testable, no network) ───────────
-def build_post(data: dict, now: datetime, inline_link: str = "") -> str:
+def build_post(data: dict, now: datetime, inline_link: str = "",
+               ref_link: str = "") -> str:
     """≤500 by Meta's rule, and ACCOUNT-FREE: prices, sentiment, calendar and
     the scanner's own measured results only. Never a balance or a position."""
     import tg_format
@@ -336,18 +344,26 @@ def build_post(data: dict, now: datetime, inline_link: str = "") -> str:
     # preview from the first URL in the body, so a DRAFT must carry the URL
     # inline. The API path leaves it out and passes link_attachment instead,
     # which costs no characters.
-    tail = [CTA_TEXT]
-    if inline_link:
-        tail.append(inline_link)
-    tail.append("#加密貨幣 #比特幣 #以太幣 #量化交易")
+    # Tail is built in BLOCKS, not lines, so the overflow guard below can never
+    # strand a call-to-action whose link it just removed.
+    blocks = [[CTA_TEXT] + ([inline_link] if inline_link else [])]
+    # The referral goes SECOND on purpose. Threads previews only the FIRST URL
+    # in the body, and a cold reader who has seen nothing yet converts far
+    # better on "join the group" than on "open a trading account".
+    if ref_link:
+        blocks.append(["", REF_TEXT, ref_link])
+    blocks.append(["#加密貨幣 #比特幣 #以太幣 #量化交易"])
 
-    text = "\n".join(lines + [""] + tail)
-    # Every input above is bounded, so this is belt-and-braces. If it ever does
-    # fire, the hashtags go first and the funnel link goes LAST — the link is
-    # the entire point of the post.
-    while threads_len(text) > MAX_LEN and len(tail) > 1:
-        tail.pop()
-        text = "\n".join(lines + [""] + tail)
+    def _render(bs):
+        return "\n".join(lines + [""] + [ln for b in bs for ln in b])
+
+    text = _render(blocks)
+    # Hashtags go first, then the whole referral block; the group link is last
+    # out because it is the one the post exists for. A referral URL alone runs
+    # ~98 characters, so this guard is no longer purely theoretical.
+    while threads_len(text) > MAX_LEN and len(blocks) > 1:
+        blocks.pop()
+        text = _render(blocks)
     return text
 
 
@@ -393,7 +409,7 @@ def tick(client=None) -> bool:
                 return False
             import morning_brief
             text = build_post(morning_brief._gather(client, now), now,
-                              inline_link=post_link())
+                              inline_link=post_link(), ref_link=REF_URL)
             if not send_draft(text, now):
                 return False                  # Telegram blip → retry next sweep
             st["last_post"] = now.strftime("%Y-%m-%d")
@@ -424,7 +440,8 @@ def tick(client=None) -> bool:
         if not connected() or not _due(st, now):
             return False
         import morning_brief
-        text = build_post(morning_brief._gather(client, now), now)
+        text = build_post(morning_brief._gather(client, now), now,
+                          ref_link=REF_URL)
         res = create_container(text, post_link())
         if not res.get("ok"):
             print(f"[threads] container failed: {res.get('error')}")
@@ -452,7 +469,8 @@ if __name__ == "__main__":  # pragma: no cover — operator tool
         now = datetime.now(TZ) if TZ else datetime.now()
         auto = configured() and connected()
         body = build_post(morning_brief._gather(None, now), now,
-                          inline_link="" if auto else post_link())
+                          inline_link="" if auto else post_link(),
+                          ref_link=REF_URL)
         print(body)
         print(f"\n— {threads_len(body)}/{MAX_LEN} (Meta 規則) · "
               f"模式：{'API 自動發文' if auto else '草稿（發到你的 Telegram 私訊）'}")
@@ -460,12 +478,13 @@ if __name__ == "__main__":  # pragma: no cover — operator tool
         import morning_brief
         now = datetime.now(TZ) if TZ else datetime.now()
         text = build_post(morning_brief._gather(None, now), now,
-                          inline_link=post_link())
+                          inline_link=post_link(), ref_link=REF_URL)
         print("sent:", send_draft(text, now))
     elif "--post" in sys.argv:
         import morning_brief
         now = datetime.now(TZ) if TZ else datetime.now()
-        c = create_container(build_post(morning_brief._gather(None, now), now))
+        c = create_container(build_post(morning_brief._gather(None, now), now,
+                                        ref_link=REF_URL))
         print("container:", c)
         if c.get("ok"):
             time.sleep(PUBLISH_DELAY_SEC)

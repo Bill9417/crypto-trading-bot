@@ -438,3 +438,51 @@ def test_an_absurd_headline_cannot_evict_the_funnel_link(monkeypatch):
     body = T.build_post(data, NOW, inline_link=T.post_link())
     assert T.threads_len(body) <= T.MAX_LEN
     assert "https://t.me/+wolf" in body
+
+
+# ── Bybit referral ───────────────────────────────────────────────────────────
+REF = ("https://www.bybit.com/en/sign-up?affiliate_id=157298&group_id=1800715"
+       "&group_type=1&ref_code=157298")
+
+
+def test_referral_is_labelled_as_one():
+    """It pays a commission, so it is branded content under Meta's policy and
+    an ad under most fair-trading rules. An unlabelled affiliate link gets the
+    post down-ranked or pulled — more reach lost than the label costs."""
+    body = T.build_post(DATA, NOW, ref_link=REF)
+    assert REF in body and "推薦連結" in body
+
+
+def test_group_link_comes_before_the_referral(monkeypatch):
+    """Threads previews only the FIRST URL in the body, and a cold reader
+    converts far better on 'join the group' than 'open a trading account'."""
+    body = T.build_post(DATA, NOW, inline_link="https://t.me/+wolf", ref_link=REF)
+    assert body.index("https://t.me/+wolf") < body.index(REF)
+
+
+def test_referral_and_group_link_still_fit():
+    body = T.build_post(DATA, NOW, inline_link="https://t.me/+wolf", ref_link=REF)
+    assert T.threads_len(body) <= T.MAX_LEN
+
+
+def test_no_referral_configured_leaves_no_dangling_cta():
+    body = T.build_post(DATA, NOW)
+    assert "推薦連結" not in body and "Bybit" not in body
+
+
+def test_overflow_drops_the_referral_block_whole():
+    """Popping line-by-line would strand '開 Bybit 帳戶（推薦連結）👇' pointing at
+    nothing. The tail is built in blocks so that cannot happen."""
+    data = dict(DATA, today_events=["• " + "美國經濟數據" * 60])
+    body = T.build_post(data, NOW, inline_link="https://t.me/+wolf", ref_link=REF)
+    assert T.threads_len(body) <= T.MAX_LEN
+    assert ("推薦連結" in body) == (REF in body)      # label and link travel together
+    assert "https://t.me/+wolf" in body               # the group link outlives both
+
+
+def test_referral_survives_the_account_free_rule():
+    """'Bybit' appears as a signup link, never as account data — the ban is on
+    balances and positions, and the guard must not be quietly weakened."""
+    body = T.build_post(DATA, NOW, ref_link=REF)
+    for banned in ("餘額", "淨值", "持倉", "未實現", "保證金", "USDT"):
+        assert banned not in body
