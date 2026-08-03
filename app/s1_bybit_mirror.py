@@ -91,6 +91,22 @@ def _tg(msg: str) -> None:
         print(f"[s1-mirror] telegram failed: {exc}")
 
 
+def _tg_owner(msg: str) -> None:
+    """The same note WITH the account numbers, to the owner's DM only.
+
+    The public note above lives in the group so a skipped mirror sits next to
+    the trade it explains, but the reason often contains real balances — free
+    margin, 24h realised P&L, raw exchange errors. The group is joinable by
+    anyone with the invite link, so the number goes here and the reason goes
+    there."""
+    try:
+        import telegram_utils
+        telegram_utils.send_message(f"🪞 S1鏡單 · {msg}",
+                                    force=True, channel="private")
+    except Exception as exc:  # noqa: BLE001
+        print(f"[s1-mirror] owner note failed: {exc}")
+
+
 def _s3_reserve() -> float:
     """Margin to leave untouched so S3 can still enter when its flag flips.
 
@@ -204,7 +220,9 @@ def mirror_open(binance_symbol: str, direction: str, price: float,
             print(f"[s1-mirror] daily-risk gate error ({exc}) — allowing entry")
             day_halt = ""
         if day_halt:
-            _tg(f"{sym.split('/')[0]} 略過鏡單 — {day_halt}")
+            # day_halt can read "24h 淨虧損 -50.0 USDT" — realised P&L
+            _tg(f"{sym.split('/')[0]} 略過鏡單 — 今日風控上限已觸發")
+            _tg_owner(f"{sym.split('/')[0]} 略過鏡單 — {day_halt}")
             return False
 
         if sym not in (X.client().markets or {}):
@@ -241,14 +259,17 @@ def mirror_open(binance_symbol: str, direction: str, price: float,
             avail = _available_usdt()
             need = margin * MARGIN_BUFFER + _s3_reserve()
             if avail < need:
-                _tg(f"{sym.split('/')[0]} 可用保證金不足（{avail:.1f} < "
-                    f"{need:.1f} USDT，含保留給 S3 的額度），略過鏡單")
+                # reason in the group (next to the trade), numbers in the DM
+                _tg(f"{sym.split('/')[0]} 可用保證金不足，略過鏡單")
+                _tg_owner(f"{sym.split('/')[0]} 可用保證金不足（{avail:.1f} < "
+                          f"{need:.1f} USDT，含保留給 S3 的額度）")
                 return False
 
         res = X.open_flip(sym, d, float(price), float(sl_price),
                           margin, config.S1_BYBIT_LEVERAGE)
         if not res.get("ok"):
-            _tg(f"⚠️ {sym.split('/')[0]} 開倉失敗：{res.get('error')}")
+            _tg(f"⚠️ {sym.split('/')[0]} 開倉失敗（詳情已送管理員）")
+            _tg_owner(f"⚠️ {sym.split('/')[0]} 開倉失敗：{res.get('error')}")
             return False
         if not res.get("dry"):
             state[sym] = {"side": d, "qty": float(res.get("qty") or 0),
@@ -266,7 +287,8 @@ def mirror_open(binance_symbol: str, direction: str, price: float,
                 if tp_err:
                     # SL still protects the position; TP just falls back to the
                     # bot-driven close — surface it so the owner knows.
-                    _tg(f"⚠️ {sym.split('/')[0]} 掛終標失敗（停損仍在）：{tp_err}")
+                    _tg(f"⚠️ {sym.split('/')[0]} 掛終標失敗（停損仍在）")
+                    _tg_owner(f"⚠️ {sym.split('/')[0]} 掛終標失敗：{tp_err}")
                 else:
                     tp_note = f" · 終標 {float(tp2_price):.6g}"
             _tg(f"{'🟢 做多' if d == 'long' else '🔴 做空'} {sym.split('/')[0]} "
@@ -331,7 +353,8 @@ def mirror_tp1(binance_symbol: str, direction: str, entry_price: float) -> bool:
         if half >= min_qty:
             err = _reduce(sym, t["side"], half)
             if err:
-                _tg(f"⚠️ {sym.split('/')[0]} TP1 平一半失敗：{err}")
+                _tg(f"⚠️ {sym.split('/')[0]} TP1 平一半失敗")
+                _tg_owner(f"⚠️ {sym.split('/')[0]} TP1 平一半失敗：{err}")
             else:
                 t["qty"] = round(t["qty"] - half, 10)
                 _save(state)
@@ -341,7 +364,8 @@ def mirror_tp1(binance_symbol: str, direction: str, entry_price: float) -> bool:
             t["sl"] = float(entry_price)               # guardian re-arms at BE now
             _save(state)
         except Exception as exc:  # noqa: BLE001 — the guardian retries next pass
-            _tg(f"⚠️ {sym.split('/')[0]} 停損移到進場價失敗：{str(exc)[:150]}")
+            _tg(f"⚠️ {sym.split('/')[0]} 停損移到進場價失敗")
+            _tg_owner(f"⚠️ {sym.split('/')[0]} 停損移到進場價失敗：{str(exc)[:150]}")
             return False
         if X.is_live():
             _tg(f"{sym.split('/')[0]} TP1 — 已平一半、停損移到進場價 {entry_price:.6g}")

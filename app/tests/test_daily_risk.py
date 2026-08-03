@@ -149,12 +149,34 @@ def test_the_mirror_refuses_to_open_while_blocked(monkeypatch, tmp_path):
     monkeypatch.setattr(config, "S1_BYBIT_MIRROR", True)
     monkeypatch.setattr(X, "keys_present", lambda: True)
     monkeypatch.setattr(X, "is_live", lambda: False)
-    notes = []
+    notes, owner_notes = [], []
     monkeypatch.setattr(M, "_tg", lambda msg: notes.append(msg))
+    monkeypatch.setattr(M, "_tg_owner", lambda msg: owner_notes.append(msg))
     _armed(monkeypatch, 10.0)
     monkeypatch.setattr(R, "_todays_pnl", lambda: -12.0)
     monkeypatch.setattr(R, "_announce_once", lambda day, pnl: None)
 
     assert M.mirror_open("ETH/USDT:USDT", "long", 3500.0, 3430.0) is False
     assert M._load() == {}                       # nothing tracked
-    assert any("不再開新倉" in n for n in notes)
+    # The public topic gets the REASON; the numbers go to the owner's DM.
+    # daily_risk's block text embeds the account's realised P&L in USDT, and
+    # the S1 topic is in a group anyone with the invite link can join.
+    assert any("今日風控上限已觸發" in n for n in notes)
+    assert not any("USDT" in n for n in notes)
+    assert any("不再開新倉" in n for n in owner_notes)
+
+
+def test_the_daily_loss_notice_goes_to_the_owner_not_the_group(monkeypatch):
+    """send_message() defaults to channel='alerts', which routes to the PUBLIC
+    group topic — so this announcement broadcast the account's realised daily
+    P&L to every member on the worst day of the month."""
+    import daily_risk as D
+    import telegram_utils
+    sent = {}
+    monkeypatch.setattr(telegram_utils, "send_message",
+                        lambda msg, **k: sent.update(msg=msg, ch=k.get("channel")) or True)
+    monkeypatch.setattr(D, "_load", lambda: {})
+    monkeypatch.setattr(D, "_save", lambda st: None)
+    D._announce_once("2026-08-03", -12.34)
+    assert sent["ch"] == "private", "daily P&L must never reach a group channel"
+    assert "-12.34" in sent["msg"]

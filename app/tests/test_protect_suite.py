@@ -246,3 +246,36 @@ def test_backup_is_idempotent_per_day(tmp_path):
     mtime = os.path.getmtime(p1)
     p2 = backup_state.make_backup(dest, [str(f)], "2026-07-13")
     assert p1 == p2 and os.path.getmtime(p2) == mtime   # untouched
+
+
+# ── nothing that reads the real account may reach a group channel ────────────
+# The Telegram group is joinable by anyone holding the invite link, so "which
+# channel" is an access-control decision, not a formatting one. 2026-08-03:
+# daily_risk broadcast the account's realised daily P&L to the public topic
+# because send_message() defaults to channel="alerts".
+GROUP_CHANNELS = {"alerts", "events", "liq", "report", "s1signals", "signals",
+                  "tech", "twstocks"}
+
+
+def test_group_channels_never_carry_account_numbers():
+    import os
+    import re
+    money = re.compile(r"(帳戶今日|已實現 \{|未實現 \{|餘額 \{|淨值 \{|可用保證金（\{"
+                       r"|avail:\.|balance:\.|equity:\.)")
+    app_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    offenders = []
+    for name in sorted(os.listdir(app_dir)):
+        if not name.endswith(".py"):
+            continue
+        with open(os.path.join(app_dir, name), encoding="utf-8") as fh:
+            lines = fh.read().split("\n")
+        for i, line in enumerate(lines):
+            if "send_message(" not in line or line.strip().startswith("def "):
+                continue
+            block = "\n".join(lines[i:i + 8])
+            ch = re.search(r'channel=["\'](\w+)["\']', block)
+            # no channel= at all means the "alerts" default, i.e. the group
+            in_group = (ch.group(1) in GROUP_CHANNELS) if ch else True
+            if in_group and money.search(block):
+                offenders.append(f"{name}:{i + 1}")
+    assert not offenders, f"account figures routed to a group channel: {offenders}"

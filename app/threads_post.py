@@ -51,6 +51,7 @@ Commands: python threads_post.py --url · --preview · --post (send now, once).
 """
 import json
 import os
+import re
 import time
 from datetime import datetime
 
@@ -178,7 +179,7 @@ def exchange_code(code: str) -> dict:
             "code": code}, timeout=HTTP_TIMEOUT)
         short = r.json() or {}
     except Exception as exc:  # noqa: BLE001
-        return {"ok": False, "error": f"token exchange failed: {str(exc)[:160]}"}
+        return {"ok": False, "error": _safe(f"token exchange failed: {exc}")[:160]}
     if not short.get("access_token"):
         return {"ok": False, "error": _err(short)}
     # A 1-hour token is useless to a daemon — trade it up immediately.
@@ -188,7 +189,7 @@ def exchange_code(code: str) -> dict:
             "access_token": short["access_token"]}, timeout=HTTP_TIMEOUT)
         long_t = r2.json() or {}
     except Exception as exc:  # noqa: BLE001
-        return {"ok": False, "error": f"long-lived exchange failed: {str(exc)[:160]}"}
+        return {"ok": False, "error": _safe(f"long-lived exchange failed: {exc}")[:160]}
     if not long_t.get("access_token"):
         return {"ok": False, "error": _err(long_t)}
     st = _load_state()
@@ -218,7 +219,7 @@ def refresh_if_due(force: bool = False) -> dict:
                          timeout=HTTP_TIMEOUT)
         d = r.json() or {}
     except Exception as exc:  # noqa: BLE001
-        return {"ok": False, "error": str(exc)[:160]}
+        return {"ok": False, "error": _safe(exc)[:160]}
     if not d.get("access_token"):
         return {"ok": False, "error": _err(d)}
     st["access_token"] = d["access_token"]
@@ -229,11 +230,25 @@ def refresh_if_due(force: bool = False) -> dict:
     return {"ok": True, "refreshed": True}
 
 
+# Meta's token endpoints are GET, so the access token AND the app secret ride
+# in the query string — and requests puts the FULL url into its exception text.
+# Printing one raw would write a live credential into the logs (which /health
+# tails) and into the /threads/callback page. Same failure the Telegram bot
+# token had; redact at the emitter, exactly as telegram_utils.redact does.
+_SECRET_RE = re.compile(
+    r"(?i:(access_token|client_secret|client_id|code)=)[^\s&\"'>]+")
+
+
+def _safe(text) -> str:
+    """Strip credentials out of anything about to be logged or shown."""
+    return _SECRET_RE.sub(lambda m: m.group(0).split("=")[0] + "=***", str(text))
+
+
 def _err(payload: dict) -> str:
     e = (payload or {}).get("error")
     if isinstance(e, dict):
-        return str(e.get("message") or e)[:200]
-    return str(e or payload)[:200]
+        return _safe(e.get("message") or e)[:200]
+    return _safe(e or payload)[:200]
 
 
 def _username(st: dict) -> str:
@@ -264,7 +279,7 @@ def create_container(text: str, link: str = "") -> dict:
                           timeout=HTTP_TIMEOUT)
         d = r.json() or {}
     except Exception as exc:  # noqa: BLE001
-        return {"ok": False, "error": str(exc)[:200]}
+        return {"ok": False, "error": _safe(exc)[:200]}
     if not d.get("id"):
         return {"ok": False, "error": _err(d)}
     return {"ok": True, "creation_id": str(d["id"])}
@@ -280,7 +295,7 @@ def publish_container(creation_id: str) -> dict:
                           timeout=HTTP_TIMEOUT)
         d = r.json() or {}
     except Exception as exc:  # noqa: BLE001
-        return {"ok": False, "error": str(exc)[:200]}
+        return {"ok": False, "error": _safe(exc)[:200]}
     if not d.get("id"):
         return {"ok": False, "error": _err(d)}
     return {"ok": True, "id": str(d["id"])}
@@ -453,7 +468,7 @@ def tick(client=None) -> bool:
         print(f"[threads] container {res['creation_id']} ready — publishing next sweep")
         return False
     except Exception as exc:  # noqa: BLE001 — a marketing post never kills the sweep
-        print(f"[threads] tick error: {exc}")
+        print(f"[threads] tick error: {_safe(exc)}")
         return False
 
 

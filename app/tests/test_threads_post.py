@@ -486,3 +486,49 @@ def test_referral_survives_the_account_free_rule():
     body = T.build_post(DATA, NOW, ref_link=REF)
     for banned in ("餘額", "淨值", "持倉", "未實現", "保證金", "USDT"):
         assert banned not in body
+
+
+# ── secrets must never reach a log, a page, or a Telegram message ────────────
+# Meta's token endpoints are GET, so the access token AND the app secret ride
+# in the query string, and requests puts the FULL url into its exception text.
+# This project has already shipped a live Telegram bot token into its logs and
+# onto /health exactly this way.
+def test_secrets_are_stripped_from_error_text():
+    url = ("https://graph.threads.net/access_token?grant_type=th_exchange_token"
+           "&client_secret=APPSECRET123&access_token=THEREALTOKEN")
+    out = T._safe(url)
+    assert "APPSECRET123" not in out and "THEREALTOKEN" not in out
+    assert "client_secret=***" in out and "access_token=***" in out
+    assert "grant_type=th_exchange_token" in out      # diagnostics still readable
+
+
+def test_oauth_code_is_stripped_too():
+    assert "SECRETCODE" not in T._safe("...&code=SECRETCODE&x=1")
+
+
+def test_meta_error_payload_is_redacted():
+    msg = T._err({"error": {"message": "bad call: ?access_token=LIVE_TOKEN_123"}})
+    assert "LIVE_TOKEN_123" not in msg
+
+
+def test_a_refresh_exception_cannot_leak_the_token(monkeypatch):
+    """requests raises with the whole URL in the message; the token is in it."""
+    _connect(age_s=8 * 86400)
+
+    def boom(*a, **k):
+        raise RuntimeError("GET https://graph.threads.net/refresh_access_token"
+                           "?access_token=LIVE_TOKEN_123 failed")
+
+    monkeypatch.setattr(T.requests, "get", boom)
+    res = T.refresh_if_due()
+    assert not res["ok"] and "LIVE_TOKEN_123" not in res["error"]
+
+
+def test_an_exchange_exception_cannot_leak_the_app_secret(monkeypatch):
+    """This error is rendered straight into the /threads/callback page."""
+    def boom(*a, **k):
+        raise RuntimeError("POST .../oauth/access_token?client_secret=APPSECRET failed")
+
+    monkeypatch.setattr(T.requests, "post", boom)
+    res = T.exchange_code("abc")
+    assert not res["ok"] and "APPSECRET" not in res["error"]

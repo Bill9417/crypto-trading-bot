@@ -108,12 +108,16 @@ def _announce_once(day: str, pnl: float) -> None:
     _save(state)
     try:
         import telegram_utils
+        # channel="private" — NOT the default. send_message() defaults to
+        # "alerts", which routes to the public group topic, so this broadcast
+        # the account's realised daily P&L to every member on the worst day of
+        # the month. The group is joinable by anyone holding the invite link.
         telegram_utils.send_message(
             f"🛑 今日虧損達上限 — 帳戶今日已實現 {pnl:+.2f} USDT，"
             f"超過設定的 {MAX_DAILY_LOSS_USDT:g} USDT。\n"
             f"今天不再開新倉（已持有的部位不動，停損照舊）。"
             f"明天 00:00（台北）自動恢復。",
-            force=True)
+            force=True, channel="private")
     except Exception as exc:  # noqa: BLE001 — a notice must never block the brake
         print(f"[daily-risk] announce failed: {exc}")
 
