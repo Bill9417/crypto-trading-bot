@@ -27,13 +27,25 @@ browser flow again. We refresh every 7 days (Meta requires a token be ≥24h old
 to qualify), so eight consecutive failures would have to pass unnoticed before
 anything breaks.
 
-Setup, once:
+── TWO MODES, and the easy one is the default ──────────────────────────────
+Registering a Meta app is the only hard part of this whole feature, and all it
+buys is ~20 seconds a day. So it is optional:
+
+  DRAFT (no setup at all): set THREADS_ENABLED=true and nothing else. Each
+  morning the finished post arrives in your own Telegram DM inside a
+  tap-to-copy block; you paste it into Threads. The URL is placed INLINE
+  because manual posting has no link_attachment parameter — Threads builds its
+  preview from the first URL in the body.
+
+  API (fully automatic): connect a Meta app and tick() publishes by itself.
+  The switch is automatic — the day /threads/connect succeeds, drafts stop.
+
+Meta app setup, if you want the automatic mode:
   1. developers.facebook.com → create an app → add the "Threads API" use case
   2. add the Threads tester (your own account) and accept the invite
   3. Valid OAuth Redirect URI:  {PUBLIC_BASE_URL}/threads/callback
   4. put THREADS_APP_ID / THREADS_APP_SECRET in .env
   5. visit /threads/connect on the dashboard (admin) and approve
-  6. set THREADS_ENABLED=true
 
 Commands: python threads_post.py --url · --preview · --post (send now, once).
 """
@@ -268,7 +280,7 @@ def publish_container(creation_id: str) -> dict:
 
 
 # ── the daily post (pure given `data` — unit-testable, no network) ───────────
-def build_post(data: dict, now: datetime) -> str:
+def build_post(data: dict, now: datetime, inline_link: str = "") -> str:
     """≤500 by Meta's rule, and ACCOUNT-FREE: prices, sentiment, calendar and
     the scanner's own measured results only. Never a balance or a position."""
     import tg_format
@@ -297,8 +309,12 @@ def build_post(data: dict, now: datetime) -> str:
 
     cal = data.get("today_events") or []
     if cal:
-        # the Telegram brief lists them all; 500 chars buys one headline
-        lines += ["", "🗓 " + str(cal[0]).lstrip("• ").strip()]
+        # The Telegram brief lists them all; 500 chars buys one headline. This
+        # is the ONLY unbounded input in the post, so capping it here is what
+        # makes the total length predictable instead of hoping a trim loop
+        # catches it later.
+        head = str(cal[0]).lstrip("• ").strip()
+        lines += ["", "🗓 " + (head[:39] + "…" if len(head) > 40 else head)]
 
     sig = data.get("signals") or {}
     if sig.get("n"):
@@ -316,14 +332,22 @@ def build_post(data: dict, now: datetime) -> str:
     if SHOW_OUTCOMES and (oc.get("n") or 0) >= 5:
         lines.append(f"📋 近 7 日結算 {oc['n']} 個 · 先到目標 {oc['hit_pct']:.0f}%")
 
-    lines += ["", CTA_TEXT, "#加密貨幣 #比特幣 #以太幣 #量化交易"]
-    text = "\n".join(lines)
+    # Posting by hand has no link_attachment parameter — Threads builds its
+    # preview from the first URL in the body, so a DRAFT must carry the URL
+    # inline. The API path leaves it out and passes link_attachment instead,
+    # which costs no characters.
+    tail = [CTA_TEXT]
+    if inline_link:
+        tail.append(inline_link)
+    tail.append("#加密貨幣 #比特幣 #以太幣 #量化交易")
 
-    # Trim from the tail if a wide calendar headline pushed it over. The
-    # disclaimer-free tail is the least valuable part, so it goes first.
-    while threads_len(text) > MAX_LEN and len(lines) > 3:
-        lines.pop(-2)
-        text = "\n".join(lines)
+    text = "\n".join(lines + [""] + tail)
+    # Every input above is bounded, so this is belt-and-braces. If it ever does
+    # fire, the hashtags go first and the funnel link goes LAST — the link is
+    # the entire point of the post.
+    while threads_len(text) > MAX_LEN and len(tail) > 1:
+        tail.pop()
+        text = "\n".join(lines + [""] + tail)
     return text
 
 
@@ -332,15 +356,51 @@ def _due(state: dict, now: datetime) -> bool:
     return now.hour >= POST_HOUR and state.get("last_post") != now.strftime("%Y-%m-%d")
 
 
+def send_draft(text: str, now: datetime) -> bool:
+    """DRAFT MODE — no Meta app, no OAuth, no review. The post is written for
+    you and delivered to your own Telegram DM in a tap-to-copy block; you paste
+    it into Threads. Registering a Meta app is the only hard part of this
+    feature and it buys ~20 seconds a day, so it is optional, not required.
+
+    Upgrades itself: the day /threads/connect succeeds, tick() publishes
+    through the API instead and this stops firing."""
+    import telegram_utils
+    import tg_format
+    msg = (f"🧵 <b>今天的 Threads 貼文</b>（{now.strftime('%m/%d')}）\n"
+           f"點下面整塊即可複製，貼到 Threads 就好。\n\n"
+           f"<pre>{tg_format.esc(text)}</pre>\n"
+           f"— {threads_len(text)}/{MAX_LEN} 字\n"
+           f"（想改成全自動發文：/threads/connect）")
+    return bool(telegram_utils.send_message(msg, parse_mode="HTML",
+                                            force=True, channel="private"))
+
+
 def tick(client=None) -> bool:
-    """Called once per S2 sweep. Creates today's container on one pass and
-    publishes it on the next, so the recommended delay costs no sweep time.
-    True only when a post actually went public. Never raises."""
-    if not ENABLED or not configured():
+    """Called once per S2 sweep. True only when today's post went out.
+
+    Two paths, chosen automatically: with the Meta app connected the container
+    is created on one pass and published on the next (so Meta's ~30s delay
+    costs this loop nothing); without it, the finished text is sent to the
+    owner's DM to paste by hand. Never raises."""
+    if not ENABLED:
         return False
     try:
         now = datetime.now(TZ) if TZ else datetime.now()
         st = _load_state()
+
+        if not (configured() and connected()):
+            if not _due(st, now):
+                return False
+            import morning_brief
+            text = build_post(morning_brief._gather(client, now), now,
+                              inline_link=post_link())
+            if not send_draft(text, now):
+                return False                  # Telegram blip → retry next sweep
+            st["last_post"] = now.strftime("%Y-%m-%d")
+            st["last_mode"] = "draft"
+            _save_state(st)
+            print(f"[threads] draft sent for {st['last_post']} (paste by hand)")
+            return True
 
         pend = st.get("pending")
         if pend and time.time() - float(pend.get("ts") or 0) >= PUBLISH_DELAY_SEC:
@@ -390,10 +450,18 @@ if __name__ == "__main__":  # pragma: no cover — operator tool
     elif "--preview" in sys.argv:
         import morning_brief
         now = datetime.now(TZ) if TZ else datetime.now()
-        body = build_post(morning_brief._gather(None, now), now)
+        auto = configured() and connected()
+        body = build_post(morning_brief._gather(None, now), now,
+                          inline_link="" if auto else post_link())
         print(body)
         print(f"\n— {threads_len(body)}/{MAX_LEN} (Meta 規則) · "
-              f"{len(body)} 字元 · {len(body.encode('utf-8'))} bytes")
+              f"模式：{'API 自動發文' if auto else '草稿（發到你的 Telegram 私訊）'}")
+    elif "--draft" in sys.argv:
+        import morning_brief
+        now = datetime.now(TZ) if TZ else datetime.now()
+        text = build_post(morning_brief._gather(None, now), now,
+                          inline_link=post_link())
+        print("sent:", send_draft(text, now))
     elif "--post" in sys.argv:
         import morning_brief
         now = datetime.now(TZ) if TZ else datetime.now()
@@ -404,4 +472,5 @@ if __name__ == "__main__":  # pragma: no cover — operator tool
             print("publish:", publish_container(c["creation_id"]))
     else:
         print(f"configured={configured()} connected={connected()} enabled={ENABLED}")
-        print("usage: threads_post.py --url | --preview | --post")
+        print(f"mode: {'API' if configured() and connected() else 'draft → Telegram DM'}")
+        print("usage: threads_post.py --preview | --draft | --url | --post")

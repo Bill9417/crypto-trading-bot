@@ -216,9 +216,17 @@ def test_tick_is_a_no_op_when_disabled(monkeypatch):
     assert T.tick(None) is False
 
 
-def test_tick_is_a_no_op_when_not_connected(monkeypatch):
+def test_app_keys_without_oauth_still_drafts(monkeypatch):
+    """Half-finished setup — keys in .env but /threads/connect never run — must
+    fall back to a draft, not attempt the API and fail every morning."""
+    import telegram_utils
+    _gather_stub(monkeypatch)
     monkeypatch.setattr(T, "POST_HOUR", 0)
-    assert T.tick(None) is False
+    sent = {}
+    monkeypatch.setattr(telegram_utils, "send_message",
+                        lambda msg, **k: sent.update(msg=msg) or True)
+    assert T.tick(None) is True             # requests stub would fail on an API call
+    assert "Threads" in sent["msg"]
 
 
 def test_tick_never_raises(monkeypatch):
@@ -354,3 +362,79 @@ def test_tick_attaches_the_funnel_link(monkeypatch):
     monkeypatch.setattr(T.requests, "post", fake_post)
     T.tick(None)
     assert seen["link_attachment"] == "https://t.me/+wolf"
+
+
+# ── draft mode: the Meta app is optional, not required ───────────────────────
+# Registering a Meta app is the only hard part of this feature and it buys ~20
+# seconds a day. Without it the finished post goes to the owner's DM to paste.
+def test_draft_is_used_when_no_meta_app(monkeypatch):
+    import telegram_utils
+    _gather_stub(monkeypatch)
+    monkeypatch.setattr(T, "POST_HOUR", 0)
+    monkeypatch.setattr(T, "APP_ID", "")            # not configured
+    sent = {}
+    monkeypatch.setattr(telegram_utils, "send_message",
+                        lambda msg, **k: sent.update(msg=msg, ch=k.get("channel")) or True)
+    assert T.tick(None) is True
+    assert sent["ch"] == "private"                  # owner's DM, never the group
+    assert "Threads" in sent["msg"] and "<pre>" in sent["msg"]
+    st = T._load_state()
+    assert st["last_mode"] == "draft" and st.get("last_post")
+
+
+def test_draft_carries_the_link_inline(monkeypatch):
+    """Manual posting has no link_attachment — Threads previews the first URL
+    in the body, so the draft must contain it."""
+    _no_real_links(monkeypatch)
+    monkeypatch.setenv("THREADS_LINK", "https://t.me/+wolf")
+    body = T.build_post(DATA, NOW, inline_link=T.post_link())
+    assert "https://t.me/+wolf" in body
+    assert T.threads_len(body) <= T.MAX_LEN
+
+
+def test_api_post_leaves_the_link_out_of_the_body():
+    """The API passes it as link_attachment, which costs no characters."""
+    assert "http" not in T.build_post(DATA, NOW)
+
+
+def test_draft_does_not_repeat_within_a_day(monkeypatch):
+    import telegram_utils
+    _gather_stub(monkeypatch)
+    monkeypatch.setattr(T, "POST_HOUR", 0)
+    monkeypatch.setattr(T, "APP_ID", "")
+    monkeypatch.setattr(telegram_utils, "send_message", lambda msg, **k: True)
+    assert T.tick(None) is True
+    assert T.tick(None) is False
+
+
+def test_a_telegram_failure_retries_next_sweep(monkeypatch):
+    import telegram_utils
+    _gather_stub(monkeypatch)
+    monkeypatch.setattr(T, "POST_HOUR", 0)
+    monkeypatch.setattr(T, "APP_ID", "")
+    monkeypatch.setattr(telegram_utils, "send_message", lambda msg, **k: False)
+    assert T.tick(None) is False
+    assert "last_post" not in T._load_state()       # not marked done
+
+
+def test_connecting_the_api_stops_the_drafts(monkeypatch):
+    """The upgrade is automatic — no config change needed the day it connects."""
+    import telegram_utils
+    _connect()
+    _gather_stub(monkeypatch)
+    monkeypatch.setattr(T, "POST_HOUR", 0)
+    monkeypatch.setattr(telegram_utils, "send_message",
+                        lambda *a, **k: pytest.fail("drafted while connected"))
+    monkeypatch.setattr(T.requests, "post", lambda *a, **k: _Resp({"id": "c1"}))
+    T.tick(None)
+    assert T._load_state()["pending"]["creation_id"] == "c1"
+
+
+def test_an_absurd_headline_cannot_evict_the_funnel_link(monkeypatch):
+    """If anything ever overflows, the hashtags go before the link."""
+    _no_real_links(monkeypatch)
+    monkeypatch.setenv("THREADS_LINK", "https://t.me/+wolf")
+    data = dict(DATA, today_events=["• " + "美國經濟數據" * 60])
+    body = T.build_post(data, NOW, inline_link=T.post_link())
+    assert T.threads_len(body) <= T.MAX_LEN
+    assert "https://t.me/+wolf" in body
