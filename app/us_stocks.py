@@ -81,6 +81,20 @@ MAX_SHOW = 8
 RETRY_SEC = 1800
 _UA = {"User-Agent": "Mozilla/5.0"}
 
+# ── futures variant ─────────────────────────────────────────────────────────
+# A fixed +3% target, because with leverage that is a meaningful move. The stop
+# is 8% because that is where the EDGE peaks, not where the win rate does —
+# measured on the same 10y of real US100 bars, same entries, 0.15% round trip:
+#     stop  3%  → 54.4% WR  +0.11%/trade  edge +0.08%
+#     stop  5%  → 67.7% WR  +0.42%/trade  edge +0.31%
+#     stop  8%  → 77.6% WR  +0.71%/trade  edge +0.45%   ← peak edge
+#     stop 10%  → 80.9% WR  +0.80%/trade  edge +0.41%
+#     stop 15%  → 82.5% WR  +0.84%/trade  edge +0.33%   ← best WR, worse money
+# An 82.5% win rate earns less than a 77.6% one. That is the whole reason this
+# module reports edge next to win rate everywhere it shows either.
+FUT_TP_PCT = float(os.getenv("US_FUT_TP_PCT", "3")) / 100
+FUT_SL_PCT = float(os.getenv("US_FUT_SL_PCT", "8")) / 100
+
 
 def _load_state() -> dict:
     try:
@@ -185,8 +199,60 @@ def setup(rows: list):
     if not atr:
         return None
     return {"ref": c, "sl": c - SL_ATR * atr, "tp": c + TP_ATR * atr,
+            # Futures variant: a fixed +3% target. MEASURED on the same 10y of
+            # US100 bars, not assumed to carry over from the ATR exit — see
+            # build_digest for what it actually costs.
+            "tp3": c * (1 + FUT_TP_PCT), "sl3": c * (1 - FUT_SL_PCT),
             "atr": atr, "rsi": r, "sma200": sma200,
             "turnover": c * v, "kind": "oversold"}
+
+
+# ── Bybit stock perps ───────────────────────────────────────────────────────
+# Bybit lists perps on US equities, so a setup here can actually be traded with
+# leverage. The mapping is by ticker — and a ticker is NOT an asset identifier
+# across venues. Scanning all 51 US100 names Bybit lists found four outright
+# collisions with crypto tokens of the same name:
+#     T    $0.00  vs AT&T      $23.25
+#     C    $0.05  vs Citigroup $132.45
+#     CVX  $1.35  vs Chevron   $196.83
+#     DASH $31.19 vs DoorDash  $196.16
+# Trading one of those on an equity signal buys a completely unrelated asset.
+#
+# So the price is checked every time, never cached into a hardcoded whitelist:
+# Bybit can list a new colliding token any day, exactly as it did with ON on
+# 2026-08-04. Genuine perp-vs-stock drift measured 2.2% median / 12.1% at the
+# 90th percentile — stock perps keep trading while the equity market is shut —
+# and the collisions sit at 84-100%. Nothing lands between 17% and 84%, so the
+# 20% gate is a plateau, not a tuned edge.
+PERP_MAX_DIVERGENCE = float(os.getenv("US_PERP_MAX_DIVERGENCE_PCT", "20")) / 100
+_perp_markets: dict = {}
+
+
+def _perp_symbol(ticker: str, stock_price: float):
+    """Bybit linear-perp symbol for this equity, or None. None means either
+    'not listed' or 'listed but quoting a different asset' — both are reasons
+    not to trade it, and the caller does not need to tell them apart."""
+    global _perp_markets
+    try:
+        import strategy3_exec as X
+        if not _perp_markets:
+            for sym, m in (X.client().load_markets() or {}).items():
+                if m.get("swap") and m.get("linear"):
+                    _perp_markets[(m.get("base") or "").upper()] = sym
+        sym = _perp_markets.get(ticker.upper())
+        if not sym or not stock_price:
+            return None
+        px = float((X.client().fetch_ticker(sym) or {}).get("last") or 0)
+        if not px:
+            return None
+        if abs(px - stock_price) / stock_price > PERP_MAX_DIVERGENCE:
+            print(f"[us-stocks] {ticker}: Bybit perp {px:g} vs stock "
+                  f"{stock_price:g} — different asset, not offered")
+            return None
+        return sym
+    except Exception as exc:  # noqa: BLE001 — the equity setup stands on its own
+        print(f"[us-stocks] perp lookup failed for {ticker}: {exc}")
+        return None
 
 
 def _px(v: float) -> str:
@@ -205,17 +271,33 @@ def build_digest(now, reg: dict, setups: list) -> str:
         lines.append("\n今天沒有標的觸發（RSI14 &lt; 30 且站上 200 日均線）。")
         return "\n".join(lines)
     lines.append(f"\n<b>{len(setups)} 檔觸發</b>（超賣回檔，趨勢仍在）")
+    n_perp = 0
     for ticker, name, s in setups[:MAX_SHOW]:
+        perp = s.get("perp")
+        n_perp += bool(perp)
+        tag = "  ⚡Bybit 永續" if perp else ""
         lines.append(
-            f"\n<b>{ticker}</b> {name}\n"
+            f"\n<b>{ticker}</b> {name}{tag}\n"
             f"<pre>參考 {_px(s['ref'])}  RSI {s['rsi']:.0f}\n"
-            f"停損 {_px(s['sl'])}  停利 {_px(s['tp'])}</pre>")
+            f"現股 停損 {_px(s['sl'])}  停利 {_px(s['tp'])}\n"
+            f"期貨 停損 {_px(s['sl3'])}  停利 {_px(s['tp3'])}</pre>")
     if len(setups) > MAX_SHOW:
         lines.append(f"\n…另外 {len(setups) - MAX_SHOW} 檔未顯示")
     lines.append(
-        "\n進場=次一交易日開盤參考 · 停損 3×ATR · 停利 5×ATR · 最長持有 40 天"
-        "\n📊 10 年回測: 勝率 54.4%，每筆 +2.53%，"
-        "扣掉「同期隨機日進場」的 +1.19% 後，<b>真實優勢 +1.34%/筆</b>"
+        "\n進場=次一交易日開盤參考"
+        f"\n📈 現股版 停損 3×ATR / 停利 5×ATR / 最長 40 天"
+        "\n　　勝率 54.3% · 每筆 +2.48% · <b>真實優勢 +1.34%</b>"
+        f"\n⚡ 期貨版 停損 −{FUT_SL_PCT * 100:g}% / 停利 +{FUT_TP_PCT * 100:g}% / 最長 30 天"
+        "\n　　勝率 77.6% · 每筆 +0.71% · <b>真實優勢 +0.45%</b>")
+    if n_perp:
+        lines.append(f"⚡ = Bybit 有該股永續且報價已驗證（{n_perp} 檔）")
+    lines.append(
+        "\n「真實優勢」＝同期<b>隨機日</b>進場、同樣出場規則的報酬扣掉後剩下的部分。"
+        "十年多頭裡隨便買都會賺，那個數字才是訊號自己的貢獻。"
+        "\n⚠️ 期貨版勝率高很多，但每筆和每持有日都賺得比較少"
+        "（每日 +0.066% vs +0.102%）。槓桿會等比放大兩者，不會讓小優勢變大優勢。"
+        f"\n⚠️ −{FUT_SL_PCT * 100:g}% 停損在 N 倍槓桿下＝虧掉 {FUT_SL_PCT * 100:g}N% 保證金："
+        f"3x 虧 {FUT_SL_PCT * 300:g}%、5x 虧 {FUT_SL_PCT * 500:g}%、10x 直接接近爆倉。"
         "\n⚠️ 回測偏樂觀（成分股存活者偏差、十年多頭、事後選參數），"
         "實際會比這個數字低。這是觀察名單，不是投資建議。")
     return "\n".join(lines)
@@ -275,6 +357,10 @@ def web_view(now=None) -> dict:
             "rsi": s.get("rsi"),
             "ref": ref, "sl": sl, "tp": tp,
             "ref_s": _px(ref), "sl_s": _px(sl), "tp_s": _px(tp),
+            "perp": s.get("perp"),
+            "sl3_s": _px(s["sl3"]) if s.get("sl3") else None,
+            "tp3_s": _px(s["tp3"]) if s.get("tp3") else None,
+            "fut_tp_pct": FUT_TP_PCT * 100, "fut_sl_pct": FUT_SL_PCT * 100,
             "risk_pct": round((ref - sl) / ref * 100, 1),
             "gain_pct": round((tp - ref) / ref * 100, 1),
             "rr": round((tp - ref) / (ref - sl), 1) if ref > sl else None,
@@ -333,6 +419,8 @@ def scan(limit: int = None) -> tuple:
             continue
         s = setup(rows)
         if s:
+            # only for names that actually set up — one ticker call each, not 100
+            s["perp"] = _perp_symbol(ticker, s["ref"])
             setups.append((ticker, name, s))
         time.sleep(0.12)                 # be a good Yahoo citizen
     setups.sort(key=lambda x: -x[2]["turnover"])
@@ -379,6 +467,8 @@ def tick(client=None) -> bool:
         for ticker, name, s in fresh:
             active.append({"code": ticker, "name": name, "date": today,
                            "ref": s["ref"], "sl": s["sl"], "tp": s["tp"],
+                           "sl3": s["sl3"], "tp3": s["tp3"],
+                           "perp": s.get("perp"),
                            "rsi": s["rsi"], "atr": s["atr"]})
         state.update({"last_scan": today, "recent": recent, "last_fail": False,
                       "active_setups": active[-60:], "last_regime": reg})

@@ -201,11 +201,20 @@ def test_cooldown_suppresses_a_recent_name(monkeypatch, tmp_path):
 
 
 def test_the_digest_carries_no_account_data(monkeypatch):
-    """It goes to a group topic anyone with the invite link can read."""
+    """It goes to a group topic anyone with the invite link can read.
+
+    The ban is on the OWNER'S figures, not on vocabulary: the leverage warning
+    legitimately says "虧掉 8N% 保證金" about arithmetic, and "Bybit" appears as
+    the name of a venue. What must never appear is a real balance, position or
+    P&L — so this looks for the SHAPE of account data, not for words."""
+    import re
     s = U.setup(_bars(_oversold_in_uptrend()))
     body = U.build_digest(NOW, {"ok": True, "why": "x"}, [("AAPL", "Apple", s)])
-    for banned in ("餘額", "淨值", "持倉", "未實現", "保證金", "Bybit", "USDT"):
-        assert banned not in body
+    for banned in ("餘額", "淨值", "未實現", "已實現", "可用保證金", "帳戶"):
+        assert banned not in body, banned
+    # any concrete USDT figure would be account data — the equity plan is in
+    # share prices and percentages, never in the account's own currency
+    assert not re.search(r"[\d,.]+\s*USDT", body)
 
 
 # ── /us web view ─────────────────────────────────────────────────────────────
@@ -295,3 +304,92 @@ def test_business_days_tolerates_junk():
     from datetime import datetime as dt
     assert U._biz_days_since("not-a-date", dt(2026, 8, 3)) == 0
     assert U._biz_days_since(None, dt(2026, 8, 3)) == 0
+
+
+# ── Bybit stock perps: a ticker is not an asset identifier ───────────────────
+# Scanning the 51 US100 names Bybit lists found four outright collisions with
+# crypto tokens of the same name — T $0.00 vs AT&T $23.25, C $0.05 vs Citigroup
+# $132.45, CVX $1.35 vs Chevron $196.83, DASH $31.19 vs DoorDash $196.16.
+# Same failure as the S1 mirror's ON trade on 2026-08-04.
+def _perp(monkeypatch, base, perp_price):
+    import strategy3_exec as X
+    monkeypatch.setattr(U, "_perp_markets", {})
+
+    class _Ex:
+        def load_markets(self):
+            return {f"{base}/USDT:USDT": {"swap": True, "linear": True, "base": base}}
+
+        def fetch_ticker(self, sym):
+            return {"last": perp_price}
+
+    monkeypatch.setattr(X, "client", lambda: _Ex())
+
+
+def test_a_matching_perp_is_offered(monkeypatch):
+    _perp(monkeypatch, "AAPL", 303.30)
+    assert U._perp_symbol("AAPL", 308.91) == "AAPL/USDT:USDT"
+
+
+def test_a_colliding_token_is_refused(monkeypatch):
+    """Citigroup's signal must never route to a $0.05 coin called C."""
+    _perp(monkeypatch, "C", 0.05)
+    assert U._perp_symbol("C", 132.45) is None
+
+
+def test_overnight_perp_drift_is_tolerated(monkeypatch):
+    """Stock perps keep trading while the equity market is shut. Real drift
+    measured 2.2% median / 12.1% at the 90th percentile; collisions sit at
+    84-100%. Nothing lands between, so 20% is a plateau."""
+    _perp(monkeypatch, "PLTR", 144.40)
+    assert U._perp_symbol("PLTR", 123.06) is not None      # 17.3% — real drift
+
+
+def test_an_unlisted_ticker_has_no_perp(monkeypatch):
+    _perp(monkeypatch, "AAPL", 303.30)
+    assert U._perp_symbol("ZZZZ", 100.0) is None
+
+
+def test_a_broken_exchange_does_not_break_the_scan(monkeypatch):
+    import strategy3_exec as X
+    monkeypatch.setattr(U, "_perp_markets", {})
+    monkeypatch.setattr(X, "client",
+                        lambda: (_ for _ in ()).throw(RuntimeError("bybit down")))
+    assert U._perp_symbol("AAPL", 308.91) is None          # equity setup stands
+
+
+# ── futures targets ──────────────────────────────────────────────────────────
+def test_setup_carries_both_exit_plans():
+    s = U.setup(_bars(_oversold_in_uptrend()))
+    assert s["tp3"] == pytest.approx(s["ref"] * (1 + U.FUT_TP_PCT))
+    assert s["sl3"] == pytest.approx(s["ref"] * (1 - U.FUT_SL_PCT))
+    assert s["sl3"] < s["ref"] < s["tp3"]
+
+
+def test_the_futures_stop_is_wider_than_its_target():
+    """8% stop against a 3% target is where the EDGE peaks, not the win rate.
+    A 15% stop wins 82.5% of the time and earns less. If this ever inverts to
+    a tight stop the module is chasing win rate again."""
+    assert U.FUT_SL_PCT > U.FUT_TP_PCT
+
+
+def test_digest_shows_both_plans_and_what_the_futures_one_costs():
+    s = U.setup(_bars(_oversold_in_uptrend()))
+    body = U.build_digest(NOW, {"ok": True, "why": "x"}, [("AAPL", "Apple", s)])
+    assert "現股 停損" in body and "期貨 停損" in body
+    assert "77.6%" in body and "54.3%" in body             # both win rates
+    assert "+1.34%" in body and "+0.45%" in body           # and both edges
+    assert "槓桿會等比放大" in body                          # leverage warns
+
+
+def test_digest_flags_which_names_are_tradeable_on_bybit():
+    s = U.setup(_bars(_oversold_in_uptrend()))
+    body = U.build_digest(NOW, {"ok": True, "why": "x"},
+                          [("AAPL", "Apple", dict(s, perp="AAPL/USDT:USDT")),
+                           ("ZZZZ", "NoPerp", dict(s, perp=None))])
+    assert "⚡Bybit 永續" in body and "（1 檔）" in body
+
+
+def test_no_perp_flag_when_none_are_tradeable():
+    s = U.setup(_bars(_oversold_in_uptrend()))
+    body = U.build_digest(NOW, {"ok": True, "why": "x"}, [("ZZZZ", "N", s)])
+    assert "⚡Bybit 永續" not in body
