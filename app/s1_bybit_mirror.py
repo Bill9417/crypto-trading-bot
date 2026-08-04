@@ -44,6 +44,11 @@ STATE_FILE = os.path.join(os.path.dirname(__file__), "s1_bybit_positions.json")
 
 # margin the entry pre-check requires beyond the strict requirement
 MARGIN_BUFFER = 1.3
+# How far Bybit's price may sit from the signal price before the mirror refuses
+# the trade. Genuine cross-exchange basis on the SAME asset is well under 1%;
+# anything past this means the two exchanges are not quoting the same thing.
+MAX_PRICE_DIVERGENCE = float(
+    os.getenv("S1_BYBIT_MAX_PRICE_DIVERGENCE_PCT", "5")) / 100.0
 
 _unlisted_warned: set = set()
 
@@ -140,6 +145,18 @@ def _s3_reserve() -> float:
             pass
         total += margin
     return total
+
+
+def _bybit_price(sym: str):
+    """Bybit's own last price, or None if it can't be read. None disables the
+    divergence guard for this trade rather than blocking it — the sizing bug it
+    protects against needs a WRONG price, not a missing one, and open_flip's
+    own limits still apply."""
+    try:
+        return float((X.client().fetch_ticker(sym) or {}).get("last") or 0) or None
+    except Exception as exc:  # noqa: BLE001
+        print(f"[s1-mirror] bybit price check failed for {sym}: {exc}")
+        return None
 
 
 def _available_usdt() -> float:
@@ -244,12 +261,34 @@ def mirror_open(binance_symbol: str, direction: str, price: float,
 
         margin = config.S1_BYBIT_ORDER_USDT / config.S1_BYBIT_LEVERAGE
         if X.is_live():
+            # SAME TICKER, DIFFERENT ASSET. The Binance symbol is mapped to
+            # Bybit by base name alone, and on 2026-08-04 Binance ON traded at
+            # $0.2458 while Bybit's ON — a different token, listed 2026-07-19 —
+            # traded at $84.52. open_flip sizes from the price it is handed, so
+            # it asked for 203 units: $17,194 of notional against $50 of buying
+            # power, which Bybit rejected. Had the divergence run the other way
+            # the order would have been small enough to FILL, and the account
+            # would silently hold a coin S1 never signalled.
+            #
+            # Any real cross-exchange basis on the same asset is well under 1%.
+            bybit_px = _bybit_price(sym)
+            if bybit_px:
+                div = abs(bybit_px - float(price)) / float(price)
+                if div > MAX_PRICE_DIVERGENCE:
+                    _tg(f"{sym.split('/')[0]} 略過鏡單 — Bybit 報價與訊號差距過大"
+                        f"（很可能是同名不同幣）")
+                    _tg_owner(f"⚠️ {sym.split('/')[0]} 略過鏡單 — 訊號價 {price:.6g} "
+                              f"vs Bybit {bybit_px:.6g}（差 {div * 100:,.0f}%）。"
+                              f"同代號不同資產，請確認 Bybit 是否上了另一個 "
+                              f"{sym.split('/')[0]}。")
+                    return False
             # Bybit lot-size pre-check with an HONEST message — without this a
             # BTC-priced symbol (min lot ≈ 118 USDT > the 100 USDT order) failed
             # deep in open_flip with a confusing STRATEGY3_MARGIN_USDT error.
+            # Sized off BYBIT's price: it is Bybit's minimum being tested.
             try:
                 step, min_qty, min_notional = X._market_limits(sym)
-                need = max(min_qty * float(price), min_notional or 0.0)
+                need = max(min_qty * float(bybit_px or price), min_notional or 0.0)
                 if config.S1_BYBIT_ORDER_USDT < need:
                     _tg(f"{sym.split('/')[0]} 最小下單額 ≈{need:.0f} USDT > "
                         f"設定 {config.S1_BYBIT_ORDER_USDT:g} USDT，略過鏡單")

@@ -14,7 +14,10 @@ import strategy3_exec as X
 
 
 def _wire(monkeypatch, tmp_path, *, live=True, markets=("ETH/USDT:USDT",),
-          position=None, avail=1000.0):
+          position=None, avail=1000.0, bybit_px=None):
+    """bybit_px: what Bybit quotes for the symbol. Left None the fake exchange
+    has no fetch_ticker at all, so the divergence guard reads no price and
+    stands down — which is its documented fail-open behaviour."""
     monkeypatch.setattr(M, "STATE_FILE", str(tmp_path / "pos.json"))
     monkeypatch.setattr(M, "_unlisted_warned", set())
     monkeypatch.setattr(config, "S1_BYBIT_MIRROR", True)
@@ -32,6 +35,9 @@ def _wire(monkeypatch, tmp_path, *, live=True, markets=("ETH/USDT:USDT",),
         def create_order(self, *a, **k):
             calls["orders"].append((a, k))
             return {"id": "x"}
+        if bybit_px is not None:
+            def fetch_ticker(self, sym):
+                return {"last": bybit_px}
 
     calls = {"orders": [], "opens": [], "stops": [], "tg": []}
     monkeypatch.setattr(X, "client", lambda: _Ex())
@@ -50,6 +56,8 @@ def _wire(monkeypatch, tmp_path, *, live=True, markets=("ETH/USDT:USDT",),
         M, "_set_tp",
         lambda sym, tp, pos_side="long": calls["tps"].append((sym, tp, pos_side)) or "")
     monkeypatch.setattr(M, "_tg", lambda msg: calls["tg"].append(msg))
+    calls["owner"] = []
+    monkeypatch.setattr(M, "_tg_owner", lambda msg: calls["owner"].append(msg))
     monkeypatch.setattr(M, "_last_guard", 0.0)
     return calls
 
@@ -340,3 +348,58 @@ def test_account_snapshot_includes_mirror_positions(monkeypatch, tmp_path):
     assert by_sym["ETH/USDT:USDT"]["engine"] == "s1鏡"
     assert by_sym["XAUT/USDT:USDT"]["engine"] == "s3"
     assert "SKHYNIX/USDT:USDT" not in by_sym            # manual stays private
+
+
+# ── same ticker, different asset ─────────────────────────────────────────────
+# 2026-08-04: S1 signalled ON at $0.2458 on Binance. Bybit's ON — a different
+# token listed 2026-07-19 — traded at $84.52. The mirror maps Binance symbols
+# to Bybit by base name alone, and open_flip sizes from the price it is handed,
+# so it asked for 203 units: $17,194 of notional against $50 of buying power.
+# Bybit rejected it. Had the divergence run the OTHER way the order would have
+# been small enough to fill, and the account would silently hold a coin S1
+# never signalled.
+def test_a_wildly_different_bybit_price_blocks_the_mirror(monkeypatch, tmp_path):
+    calls = _wire(monkeypatch, tmp_path, markets=("ON/USDT:USDT",), bybit_px=84.52)
+    assert M.mirror_open("ON/USDT:USDT", "long", 0.24578, 0.23595) is False
+    assert not calls["opens"], "opened a position in a different asset"
+    assert any("同名不同幣" in m for m in calls["tg"])
+    # the numbers go to the owner's DM, not the public topic
+    assert any("84.52" in m for m in calls["owner"])
+    assert not any("84.52" in m for m in calls["tg"])
+
+
+def test_a_normal_cross_exchange_basis_still_trades(monkeypatch, tmp_path):
+    """Real basis on the same asset is well under 1% — the guard must not
+    become a reason the mirror stops working."""
+    calls = _wire(monkeypatch, tmp_path, bybit_px=3503.5)
+    assert M.mirror_open("ETH/USDT:USDT", "long", 3500.0, 3430.0) is True
+    assert len(calls["opens"]) == 1
+
+
+def test_the_guard_stands_down_when_no_price_can_be_read(monkeypatch, tmp_path):
+    """A missing price is not a wrong price. Blocking on a quote hiccup would
+    cost trades; open_flip's own limits still apply."""
+    calls = _wire(monkeypatch, tmp_path)          # fake exchange has no ticker
+    assert M.mirror_open("ETH/USDT:USDT", "long", 3500.0, 3430.0) is True
+    assert len(calls["opens"]) == 1
+
+
+def test_the_threshold_is_the_boundary(monkeypatch, tmp_path):
+    monkeypatch.setattr(M, "MAX_PRICE_DIVERGENCE", 0.05)
+    under = _wire(monkeypatch, tmp_path, bybit_px=3500.0 * 1.04)
+    assert M.mirror_open("ETH/USDT:USDT", "long", 3500.0, 3430.0) is True
+    assert len(under["opens"]) == 1
+    calls2 = _wire(monkeypatch, tmp_path, bybit_px=3500.0 * 1.06)
+    assert M.mirror_open("ETH/USDT:USDT", "long", 3500.0, 3430.0) is False
+    assert not calls2["opens"]
+
+
+def test_min_notional_is_measured_against_bybits_price(monkeypatch, tmp_path):
+    """It is Bybit's minimum being tested, so it has to be Bybit's price —
+    using the signal price got this right only by accident."""
+    calls = _wire(monkeypatch, tmp_path, bybit_px=3500.0)
+    monkeypatch.setattr(X, "_market_limits", lambda s: (0.01, 1.0, 5.0))
+    monkeypatch.setattr(config, "S1_BYBIT_ORDER_USDT", 75.0)
+    # min_qty 1.0 × 3500 = 3500 USDT needed, far above the 75 USDT order
+    assert M.mirror_open("ETH/USDT:USDT", "long", 3500.0, 3430.0) is False
+    assert any("最小下單額" in m for m in calls["tg"])
