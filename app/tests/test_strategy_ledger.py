@@ -196,5 +196,5 @@ def test_the_size_windows_do_not_overlap():
     match another's and attribution would be ambiguous rather than wrong-but-
     detectable."""
     sizes = sorted({75.0, *L.PAST_S1_ORDER_USDT})
-    for a, b in zip(sizes, sizes[1:]):
+    for a, b in zip(sizes, sizes[1:], strict=False):
         assert a * 1.1 < b * 0.9, f"{a} and {b} windows overlap"
