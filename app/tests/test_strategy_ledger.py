@@ -5,6 +5,8 @@ account-wide P&L total measures none of them. These tests pin the recording
 and the attribution, including the cases where attribution must admit it is
 guessing.
 """
+import pytest
+
 import config
 import strategy_ledger as L
 
@@ -158,7 +160,10 @@ def test_split_summary_keeps_the_strategies_apart():
     assert st["S1"]["net"] == -2.0 and st["S1"]["win_rate"] == 0.0
     assert st["S3"]["net"] == 3.0 and st["S3"]["profit_factor"] is None
     assert st[L.MANUAL]["net"] == 9.0
-    assert st["S1"]["recorded"] == 1 and st[L.MANUAL]["inferred"] == 1
+    # SKHYNIX closes INSIDE the ledger's era with no row of its own, so it is
+    # deduced manual rather than guessed from a size fingerprint — a different
+    # attrib so the UI never calls a deduction a guess.
+    assert st["S1"]["recorded"] == 1 and st[L.MANUAL]["unrecorded"] == 1
 
 
 def test_report_warns_that_old_trades_are_only_guessed():
@@ -198,3 +203,50 @@ def test_the_size_windows_do_not_overlap():
     sizes = sorted({75.0, *L.PAST_S1_ORDER_USDT})
     for a, b in zip(sizes, sizes[1:], strict=False):
         assert a * 1.1 < b * 0.9, f"{a} and {b} windows overlap"
+
+
+# ── the ledger's era: after it starts recording, silence means manual ────────
+# 2026-08-04: a MANUAL NVDA stock perp at 71.2 USDT / 10x landed inside S1's
+# ~75 USDT window and was filed as an S1 trade — on a day bot.py had not
+# mentioned NVDA once. Raising the order size 50 → 75 made that collision more
+# likely, because 75 USDT is a natural manual size for a ~$210 share.
+#
+# Both engines call record_open() the moment they enter, so past that first
+# recorded open an UNRECORDED trade is not S1 and not S3. Guessing there can
+# only be wrong. MANUAL_ONLY_SYMBOLS is a hand-kept list and cannot fix this:
+# adding every equity ticker would mis-file genuine S1 crypto trades on DASH,
+# CVX, T and C, which are real coins that share an equity's ticker.
+def test_a_manual_trade_in_s1s_size_window_is_not_filed_as_s1():
+    L.record_open("S1", "ATOMUSDT", "long", ts=T)
+    L.record_close("S1", "ATOMUSDT", ts=T + 10)
+    got = L.attribute([_tr("NVDAUSDT", 5.0, T + 5, notional=71.2, lev=10)])[0]
+    assert got["strategy"] == L.MANUAL
+    assert got["attrib"] == "unrecorded"
+
+
+def test_trades_predating_the_ledger_are_still_inferred():
+    """The fingerprint fallback is not deleted — it is confined to the era it
+    was written for, before anything was recording."""
+    L.record_open("S1", "ATOMUSDT", "long", ts=T)
+    got = L.attribute([_tr("ATOMUSDT", 5.0, T - 86400, notional=100.0, lev=10)])[0]
+    assert got["attrib"] == "inferred" and got["strategy"] == "S1"
+
+
+def test_an_empty_ledger_infers_everything():
+    """A fresh install has no era yet; the old behaviour must survive."""
+    assert L.epoch([]) == 0.0
+    got = L.attribute([_tr("ATOMUSDT", 5.0, T, notional=100.0, lev=10)])[0]
+    assert got["attrib"] == "inferred"
+
+
+def test_epoch_is_the_oldest_open():
+    L.record_open("S3", "XAUTUSDT", "long", ts=T + 500)
+    L.record_open("S1", "ATOMUSDT", "long", ts=T)
+    assert L.epoch() == pytest.approx(T, abs=1)
+
+
+def test_a_recorded_trade_still_wins_over_everything():
+    L.record_open("S1", "ATOMUSDT", "long", ts=T)
+    L.record_close("S1", "ATOMUSDT", ts=T + 10)
+    got = L.attribute([_tr("ATOMUSDT", 5.0, T + 5)])[0]
+    assert got["strategy"] == "S1" and got["attrib"] == "recorded"

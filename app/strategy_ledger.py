@@ -222,17 +222,40 @@ def infer(symbol: str, notional: float, leverage: float) -> str:
     return MANUAL
 
 
+def epoch(rows: list = None) -> float:
+    """When this ledger started recording — the oldest open it holds.
+
+    Both engines call record_open() the moment they enter (s1_bybit_mirror and
+    strategy3_scanner), so after this timestamp an UNRECORDED trade is, by
+    construction, not S1 and not S3. Guessing from a size fingerprint past that
+    point can only ever be wrong, and it was: on 2026-08-04 a manual NVDA perp
+    at 71.2 USDT / 10x landed inside S1's ~75 USDT window and was filed as S1,
+    on a day bot.py had not mentioned NVDA once.
+
+    0.0 when the ledger is empty — inference then applies to everything, which
+    is the old behaviour and correct for a fresh install."""
+    rows = _load().get("rows") if rows is None else rows
+    opens = [float(r.get("opened") or 0) for r in (rows or []) if r.get("opened")]
+    return min(opens) if opens else 0.0
+
+
 def attribute(trades: list) -> list:
     """Tag each grouped closed trade with 'strategy' and 'attrib'
-    ('recorded' | 'inferred'). Trades carry symbol, time (ms), pnl, and —
-    when available — notional and lev."""
+    ('recorded' | 'inferred' | 'unrecorded'). Trades carry symbol, time (ms),
+    pnl, and — when available — notional and lev."""
     rows = _load().get("rows") or []
+    since = epoch(rows)
     out = []
     for t in trades:
         ts = (t.get("time") or 0) / 1000.0
         who = owner_of(t.get("symbol") or "", ts, rows)
         if who:
             out.append({**t, "strategy": who, "attrib": "recorded"})
+        elif since and ts > since:
+            # Inside the ledger's era with no row: the engines record, manual
+            # trading does not. This is a deduction, not a guess — hence its
+            # own attrib value, so the UI never calls it "inferred".
+            out.append({**t, "strategy": MANUAL, "attrib": "unrecorded"})
         else:
             out.append({**t, "attrib": "inferred",
                         "strategy": infer(t.get("symbol") or "",
@@ -249,12 +272,12 @@ def split_summary(trades: list) -> dict:
         s = out.setdefault(t["strategy"], {
             "n": 0, "wins": 0, "losses": 0, "net": 0.0, "gross_win": 0.0,
             "gross_loss": 0.0, "best": 0.0, "worst": 0.0,
-            "recorded": 0, "inferred": 0, "symbols": set()})
+            "recorded": 0, "inferred": 0, "unrecorded": 0, "symbols": set()})
         p = float(t.get("pnl") or 0.0)
         s["n"] += 1
         s["net"] += p
         s["symbols"].add(norm(t.get("symbol") or "").replace("USDT", ""))
-        s[t["attrib"]] += 1
+        s[t["attrib"]] = s.get(t["attrib"], 0) + 1
         if p > 0:
             s["wins"] += 1
             s["gross_win"] += p
