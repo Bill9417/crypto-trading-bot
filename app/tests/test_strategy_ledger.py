@@ -176,3 +176,25 @@ def test_report_flags_thin_strategy_samples():
 
 def test_report_survives_an_empty_account():
     assert "尚無已平倉" in L.report([])
+
+
+def test_the_50_usdt_era_survives_the_raise_to_75(monkeypatch):
+    """2026-08-04: the size went 50 → 75. Same regression shape as 07-29 — the
+    ~50 USDT trades placed between those dates must keep their S1 tag, and the
+    ~100 USDT ones from before 07-29 too. Three eras, all still S1."""
+    monkeypatch.setattr(config, "S1_BYBIT_ORDER_USDT", 75.0)
+    assert 50.0 in L.PAST_S1_ORDER_USDT and 100.0 in L.PAST_S1_ORDER_USDT
+    assert L.infer("AERGOUSDT", 74.2, 10) == "S1"      # today
+    assert L.infer("AERGOUSDT", 50.4, 10) == "S1"      # the 50 era
+    assert L.infer("AERGOUSDT", 99.1, 10) == "S1"      # the 100 era
+    assert L.infer("AERGOUSDT", 63.0, 10) == L.MANUAL  # between the windows
+    assert L.infer("AERGOUSDT", 300.0, 10) == L.MANUAL
+
+
+def test_the_size_windows_do_not_overlap():
+    """±10% around 50 / 75 / 100 must stay disjoint, or one era's trades would
+    match another's and attribution would be ambiguous rather than wrong-but-
+    detectable."""
+    sizes = sorted({75.0, *L.PAST_S1_ORDER_USDT})
+    for a, b in zip(sizes, sizes[1:]):
+        assert a * 1.1 < b * 0.9, f"{a} and {b} windows overlap"

@@ -31,7 +31,7 @@ UNKNOWN = "unknown"
 # trade's size fingerprint is whatever was configured when it was placed, so
 # inference has to know the history — see infer()'s docstring. Append the old
 # value here whenever S1_BYBIT_ORDER_USDT changes.
-PAST_S1_ORDER_USDT = (100.0,)     # 100 → 50 on 2026-07-29
+PAST_S1_ORDER_USDT = (50.0, 100.0)   # 100 → 50 on 07-29, 50 → 75 on 08-04
 
 
 def norm(symbol: str) -> str:
