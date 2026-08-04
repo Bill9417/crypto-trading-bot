@@ -431,8 +431,13 @@ def test_refresh_button_recheeks_the_sender(monkeypatch):
 
 
 def test_public_menu_does_not_advertise_account_commands():
+    import os
     import re
-    src = open("set_bot_commands.py", encoding="utf-8").read()
+    # Anchored to this file, not the cwd — a bare relative path made the whole
+    # suite pass from app/ and fail from the repo root.
+    app_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    with open(os.path.join(app_dir, "set_bot_commands.py"), encoding="utf-8") as fh:
+        src = fh.read()
     listed = set(re.findall(r'\(\s*"([a-z]+)"\s*,\s*"', src))
     for cmd in ("winrate", "positions", "report"):
         assert cmd not in listed, f"/{cmd} is still in the public ☰ Menu"
