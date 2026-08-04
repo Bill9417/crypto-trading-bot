@@ -222,11 +222,11 @@ def test_app_keys_without_oauth_still_drafts(monkeypatch):
     import telegram_utils
     _gather_stub(monkeypatch)
     monkeypatch.setattr(T, "POST_HOUR", 0)
-    sent = {}
+    sent = []
     monkeypatch.setattr(telegram_utils, "send_message",
-                        lambda msg, **k: sent.update(msg=msg) or True)
+                        lambda msg, **k: sent.append(msg) or True)
     assert T.tick(None) is True             # requests stub would fail on an API call
-    assert "Threads" in sent["msg"]
+    assert any("Threads 貼文" in m for m in sent)
 
 
 def test_tick_never_raises(monkeypatch):
@@ -372,12 +372,19 @@ def test_draft_is_used_when_no_meta_app(monkeypatch):
     _gather_stub(monkeypatch)
     monkeypatch.setattr(T, "POST_HOUR", 0)
     monkeypatch.setattr(T, "APP_ID", "")            # not configured
-    sent = {}
+    sent = []
     monkeypatch.setattr(telegram_utils, "send_message",
-                        lambda msg, **k: sent.update(msg=msg, ch=k.get("channel")) or True)
+                        lambda msg, **k: sent.append((msg, k.get("channel"))) or True)
     assert T.tick(None) is True
-    assert sent["ch"] == "private"                  # owner's DM, never the group
-    assert "Threads" in sent["msg"] and "<pre>" in sent["msg"]
+    assert all(ch == "private" for _, ch in sent)   # owner's DM, never the group
+    # TWO messages, and the post owns the second one entirely — a <pre> block
+    # is only tap-to-copy on some clients, and long-press → Copy takes the
+    # WHOLE message, so a header used to ride into the Threads post.
+    assert len(sent) == 2
+    assert "Threads 貼文" in sent[0][0]              # the instruction
+    body = T.build_post(DATA, T.datetime.now(T.TZ),
+                        inline_link=T.post_link(), ref_link=T.REF_URL)
+    assert sent[1][0] == body                       # byte-identical, nothing else
     st = T._load_state()
     assert st["last_mode"] == "draft" and st.get("last_post")
 
@@ -532,3 +539,35 @@ def test_an_exchange_exception_cannot_leak_the_app_secret(monkeypatch):
     monkeypatch.setattr(T.requests, "post", boom)
     res = T.exchange_code("abc")
     assert not res["ok"] and "APPSECRET" not in res["error"]
+
+
+def test_the_copyable_message_contains_nothing_but_the_post(monkeypatch):
+    """The whole point of the second message. A <pre> block is only
+    tap-to-copy on some clients; elsewhere the only way to copy is long-press →
+    Copy, which takes the entire message — so the header and the "335/500 字"
+    counter ended up pasted into Threads. Sent as plain text too: no parse mode
+    means no escaping, so what Telegram stores is what gets pasted."""
+    import telegram_utils
+    sent = []
+    monkeypatch.setattr(telegram_utils, "send_message",
+                        lambda msg, **k: sent.append((msg, k.get("parse_mode"))) or True)
+    body = "☀️ 貼文本體\nhttps://x.test/a?b=1&c=2"
+    T.send_draft(body, T.datetime(2026, 8, 4, 9, 0))
+    post_msg, mode = sent[1]
+    assert post_msg == body                  # not a character more or less
+    assert mode is None                      # plain text — nothing to escape
+    for stray in ("字", "複製", "🧵", "/threads/connect"):
+        assert stray not in post_msg
+
+
+def test_the_instruction_message_carries_the_length():
+    """It moved off the copyable message, so it has to live somewhere."""
+    import telegram_utils
+    sent = []
+    orig = telegram_utils.send_message
+    telegram_utils.send_message = lambda msg, **k: sent.append(msg) or True
+    try:
+        T.send_draft("x" * 42, T.datetime(2026, 8, 4, 9, 0))
+    finally:
+        telegram_utils.send_message = orig
+    assert "42/500" in sent[0]

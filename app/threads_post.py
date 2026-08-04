@@ -396,14 +396,20 @@ def send_draft(text: str, now: datetime) -> bool:
     Upgrades itself: the day /threads/connect succeeds, tick() publishes
     through the API instead and this stops firing."""
     import telegram_utils
-    import tg_format
-    msg = (f"🧵 <b>今天的 Threads 貼文</b>（{now.strftime('%m/%d')}）\n"
-           f"點下面整塊即可複製，貼到 Threads 就好。\n\n"
-           f"<pre>{tg_format.esc(text)}</pre>\n"
-           f"— {threads_len(text)}/{MAX_LEN} 字\n"
-           f"（想改成全自動發文：/threads/connect）")
-    return bool(telegram_utils.send_message(msg, parse_mode="HTML",
-                                            force=True, channel="private"))
+    # TWO messages, and the post gets one entirely to itself. A <pre> block is
+    # only tap-to-copy on some clients; on others the only way to copy is
+    # long-press → Copy, which takes the WHOLE message — so a header and a
+    # character count travelled into the Threads post along with it. Nothing
+    # shares the second message, so every way of copying yields exactly the
+    # post. It is sent as plain text for the same reason: no parse mode means
+    # no escaping, so what is stored is byte-for-byte what gets pasted.
+    header = (f"🧵 <b>今天的 Threads 貼文</b>（{now.strftime('%m/%d')}）· "
+              f"{threads_len(text)}/{MAX_LEN} 字\n"
+              f"👇 下一則<b>整則複製</b>，貼到 Threads 就好（那則只有貼文，沒有別的字）。\n"
+              f"<i>想改成全自動發文：/threads/connect</i>")
+    telegram_utils.send_message(header, parse_mode="HTML", force=True,
+                                channel="private")
+    return bool(telegram_utils.send_message(text, force=True, channel="private"))
 
 
 def tick(client=None) -> bool:
