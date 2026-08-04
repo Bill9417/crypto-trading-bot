@@ -1632,6 +1632,20 @@ if barstate.islast and showPanel
         table.cell(infoPanel, 0, 11, activeW < 100 ? " Volume  ·  of " + str.tostring(activeW) : " Volume", text_color=color.silver, text_size=panelSize, text_halign=text.align_left)
         table.cell(infoPanel, 1, 11, (volSpeaks ? f_facTxt(fVolume) : "abstain") + " ", text_color=volSpeaks ? f_facCol(fVolume) : color.new(color.gray, 30), text_size=panelSize, text_halign=text.align_right)
 
+// ── inputs first: Pine resolves identifiers top-down, so a function
+// ── may only read what is already declared above it. f_tfLevels()
+// ── needs mtfSrLen, so the whole group moves ahead of the functions.
+gMTF = "⑬ Multi-Timeframe Bias"
+showMTF   = input.bool(true, "Show MTF Bias Panel", group=gMTF, tooltip="Small table showing the direction on three timeframes at once (default 15m / 30m / 1H), scored the same way as the confidence meter's price factors. The bottom row lights up only when all three agree.\n\nThis is the one panel that tells you something your chart timeframe cannot: whether the bigger picture agrees with what you're looking at.\n\nv2: reads the LAST CLOSED bar on each timeframe. It used to read the bar still forming, which meant a 1H row could show LONG for 50 minutes and then leave no trace of it once the candle closed bearish. Rows now step when each higher-timeframe candle closes — the header says 'closed bars' as a reminder.\n\nSet timeframes at or ABOVE your chart timeframe. A row below it is marked ↓ and answers nothing this panel is for.")
+mtfTf1    = input.timeframe("15", "Timeframe 1", group=gMTF, inline="tf")
+mtfTf2    = input.timeframe("30", "Timeframe 2", group=gMTF, inline="tf")
+mtfTf3    = input.timeframe("60", "Timeframe 3", group=gMTF, inline="tf")
+mtfLongTh = input.int(65, "Long Threshold", minval=50, maxval=100, group=gMTF, tooltip="Score ≥ this = LONG bias on that timeframe; ≤ (100 − this) = SHORT; between = Neutral.")
+mtfSrLen  = input.int(10, "S/R Pivot Length", minval=3, maxval=50, group=gMTF, tooltip="Bars each side to confirm a swing on the HIGHER timeframe. Larger = fewer, more significant levels. These are that timeframe's own pivots, not chart-timeframe pivots relabelled.")
+mtfShowSR = input.bool(true, "Show S/R Column", group=gMTF, tooltip="Adds the nearest untouched resistance ABOVE and support BELOW price, measured on each row's own timeframe, with the distance to each. Levels price has already broken are skipped — a broken level is not a level.")
+mtfPos    = input.string("Middle Right", "Position", ["Top Right","Top Left","Bottom Right","Bottom Left","Middle Right","Middle Left"], group=gMTF)
+mtfSize   = input.string(size.small, "Text Size", [size.tiny, size.small, size.normal], group=gMTF)
+
 // ════════════════════════════════════════════════════════════════════════════
 //  MULTI-TIMEFRAME BIAS — reusable scorer + request.security fetch
 //  Mirrors the chart-TF confidence factors (EMA stack, price vs EMA200, Vegas
@@ -1711,16 +1725,6 @@ f_tfScorePrev() =>
     [sup, res] = f_tfLevels()
     [s[1], sup[1], res[1]]
 
-gMTF = "⑬ Multi-Timeframe Bias"
-showMTF   = input.bool(true, "Show MTF Bias Panel", group=gMTF, tooltip="Small table showing the direction on three timeframes at once (default 15m / 30m / 1H), scored the same way as the confidence meter's price factors. The bottom row lights up only when all three agree.\n\nThis is the one panel that tells you something your chart timeframe cannot: whether the bigger picture agrees with what you're looking at.\n\nv2: reads the LAST CLOSED bar on each timeframe. It used to read the bar still forming, which meant a 1H row could show LONG for 50 minutes and then leave no trace of it once the candle closed bearish. Rows now step when each higher-timeframe candle closes — the header says 'closed bars' as a reminder.\n\nSet timeframes at or ABOVE your chart timeframe. A row below it is marked ↓ and answers nothing this panel is for.")
-mtfTf1    = input.timeframe("15", "Timeframe 1", group=gMTF, inline="tf")
-mtfTf2    = input.timeframe("30", "Timeframe 2", group=gMTF, inline="tf")
-mtfTf3    = input.timeframe("60", "Timeframe 3", group=gMTF, inline="tf")
-mtfLongTh = input.int(65, "Long Threshold", minval=50, maxval=100, group=gMTF, tooltip="Score ≥ this = LONG bias on that timeframe; ≤ (100 − this) = SHORT; between = Neutral.")
-mtfSrLen  = input.int(10, "S/R Pivot Length", minval=3, maxval=50, group=gMTF, tooltip="Bars each side to confirm a swing on the HIGHER timeframe. Larger = fewer, more significant levels. These are that timeframe's own pivots, not chart-timeframe pivots relabelled.")
-mtfShowSR = input.bool(true, "Show S/R Column", group=gMTF, tooltip="Adds the nearest untouched resistance ABOVE and support BELOW price, measured on each row's own timeframe, with the distance to each. Levels price has already broken are skipped — a broken level is not a level.")
-mtfPos    = input.string("Middle Right", "Position", ["Top Right","Top Left","Bottom Right","Bottom Left","Middle Right","Middle Left"], group=gMTF)
-mtfSize   = input.string(size.small, "Text Size", [size.tiny, size.small, size.normal], group=gMTF)
 
 // ── v2 FIX (note 1): THIS PANEL USED TO REPAINT ─────────────────────────────
 // The old line was `request.security(..., f_tfScore(), lookahead_off)` under a
