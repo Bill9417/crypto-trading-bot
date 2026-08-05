@@ -1,0 +1,401 @@
+// ════════════════════════════════════════════════════════════════════════════
+//  DIVERGENCE RADAR — 背離雷達
+//  Lower pane. Three questions, nothing else:
+//
+//    1. RIGHT NOW, is money leaning long or short?   → Whale Bias + OI Read
+//    2. Is price making a new extreme that MACD / KD refuse to confirm?
+//    3. WHEN did that happen, and how many times?    → the panel
+//
+//  ── WHAT DIVERGENCE MEANS HERE (背離) ─────────────────────────────────────
+//  Regular divergence only:
+//    ▼ BEARISH — price prints a HIGHER high, the oscillator prints a LOWER
+//                high. The push up is not backed by momentum.
+//    ▲ BULLISH — price prints a LOWER low, the oscillator prints a HIGHER
+//                low. The flush down is not backed by momentum.
+//  Both oscillators are compared against the SAME price pivots, so when MACD
+//  and KD both diverge they do it on the same bar and the panel can say so.
+//
+//  ── THE HONEST PART: THE MARKERS ARE LATE ON PURPOSE ──────────────────────
+//  A pivot is not a pivot until `Pivot Length` bars have closed after it.
+//  Confirming earlier would mean re-drawing markers as new bars arrive — the
+//  chart would show a perfect history that never existed live. So every marker
+//  appears exactly `Pivot Length` bars after the pivot it refers to, and once
+//  drawn it never moves. The panel prints the pivot's OWN timestamp, not the
+//  confirmation time, so "when did it happen" is the truth and "how late am I"
+//  is visible as the bars-ago number.
+//
+//  Divergence is a warning about momentum, NOT an entry. Price can keep going
+//  and print three of them on the way. That is why they are COUNTED: a single
+//  divergence is noise, a stack of them without a break is a condition.
+//
+//  ── OI READ ───────────────────────────────────────────────────────────────
+//    OI ↑ + price ↑ = new LONGS opening      (green)
+//    OI ↑ + price ↓ = new SHORTS opening     (red)
+//    OI ↓ + price ↑ = shorts CLOSING/squeeze (teal)
+//    OI ↓ + price ↓ = longs CLOSING/flush    (orange)
+//  Aggregated across Binance/Bybit/OKX as an average of each venue's OWN Δ%,
+//  so different contract units cannot distort it. OI can never say WHO opened
+//  — every long has a short on the other side — which is why it is read next
+//  to the whale bias rather than alone.
+//
+//  A MISSING OI reading is left missing. It is not smoothed as a zero: a zero
+//  asserts "open interest did not move", which is a measurement this chart
+//  never made. When a venue drops out the strip goes grey and the panel says
+//  so, instead of quietly averaging in a fact that was never observed.
+// ════════════════════════════════════════════════════════════════════════════
+//@version=6
+indicator("Divergence Radar", overlay=false, format=format.price, precision=1,
+     max_labels_count=500)
+
+// ╔═══════════════════════════════════════════════════════════════════════════
+// ║  INPUTS — every one of them is read below this block, never above it.
+// ║  Pine resolves names top-down; an input placed under the function that
+// ║  reads it is CE10272 "Undeclared identifier", and the browser is the only
+// ║  place that error appears. (pine/check_pine.py catches it locally.)
+// ╚═══════════════════════════════════════════════════════════════════════════
+gDiv = "① 背離 Divergence"
+divLen    = input.int(5, "Pivot Length", minval=2, maxval=30, group=gDiv, tooltip="Bars required on BOTH sides of a pivot before it counts. Also the confirmation lag: markers appear this many bars after the pivot. Bigger = fewer, more meaningful pivots, later.")
+showMacdD = input.bool(true,  "MACD divergence", group=gDiv, inline="src")
+showKdD   = input.bool(true,  "KD divergence",   group=gDiv, inline="src")
+countLen  = input.int(200, "Count Window (bars)", minval=20, maxval=2000, group=gDiv, tooltip="How far back the panel counts divergences. 200 bars ≈ 2 days on 15m.")
+markBoth  = input.bool(true, "Label when MACD and KD diverge together", group=gDiv, tooltip="Both oscillators are measured against the same price pivots, so agreement lands on one bar. That is the strongest reading this script produces.")
+
+gMacd = "② MACD"
+showMacd  = input.bool(true, "Plot MACD", group=gMacd)
+macdFast  = input.int(12, "Fast", minval=2, group=gMacd, inline="m")
+macdSlow  = input.int(26, "Slow", minval=3, group=gMacd, inline="m")
+macdSig   = input.int(9,  "Signal", minval=1, group=gMacd, inline="m")
+normLen   = input.int(200, "Display Scaling Window", minval=50, maxval=2000, group=gMacd, tooltip="MACD is in PRICE units, so on this shared pane it is divided by its own recent maximum to fit −100…+100. Display only — divergences are detected on the RAW MACD, so the scaling can never create or hide one.")
+
+gKd = "③ KD (Stochastic)"
+showKd    = input.bool(true, "Plot KD", group=gKd)
+kLen      = input.int(9, "%K Length", minval=1, group=gKd, inline="k", tooltip="9/3/3 is the classic KD most Asian charting packages draw by default.")
+kSmooth   = input.int(3, "%K Smooth", minval=1, group=gKd, inline="k")
+dSmooth   = input.int(3, "%D Smooth", minval=1, group=gKd, inline="k")
+
+gW = "④ Whale Bias"
+showBias   = input.bool(true, "Plot Whale Bias", group=gW)
+ltfInput   = input.timeframe("1", "Intrabar Timeframe", group=gW, tooltip="Splits each chart bar into buy/sell volume. '1' is most precise. TradingView limits intrabar history — older bars fall back to a close-position estimate automatically.")
+whalePct   = input.int(90, "Whale Percentile", minval=70, maxval=99, group=gW, tooltip="A bar is a 'whale bar' at or above this percentile of volume. 90 = top 10%.")
+pctLen     = input.int(200, "Percentile Lookback", minval=50, maxval=1000, group=gW)
+biasLen    = input.int(96, "Bias Window (bars)", minval=20, maxval=500, group=gW, tooltip="96 bars = 1 day on 15m; use 48 on 30m.")
+biasTh     = input.int(40, "Bias Threshold (±)", minval=10, maxval=90, group=gW)
+showDelta  = input.bool(false, "Show raw delta columns", group=gW, tooltip="The per-bar buy/sell split the bias is built from. Off by default — with MACD and KD on the same pane it competes for the eye.")
+
+gO = "⑤ Open Interest"
+showOI     = input.bool(true, "Show OI Strip", group=gO)
+useBinance = input.bool(true, "Binance", inline="ven", group=gO)
+useBybit   = input.bool(true, "Bybit",   inline="ven", group=gO)
+useOkx     = input.bool(true, "OKX",     inline="ven", group=gO, tooltip="A venue that does not list this coin returns nothing and is skipped.")
+oiSmoothLen= input.int(3, "OI Smoothing (EMA)", minval=1, maxval=20, group=gO, tooltip="Per-bar OI flips constantly on 15m. 1 = raw.")
+oiOverride = input.symbol("", "OI Symbol Override", group=gO, tooltip="Empty = aggregated. Set a specific *_OI symbol to use only that feed.")
+
+gP = "⑥ Panel"
+showTbl   = input.bool(true, "Show Panel", group=gP)
+tblPos    = input.string("Top Right", "Position", ["Top Right","Top Left","Bottom Right","Bottom Left"], group=gP)
+tblSize   = input.string(size.small, "Text Size", [size.tiny, size.small, size.normal], group=gP)
+histN     = input.int(3, "Recent events listed", minval=1, maxval=6, group=gP)
+
+// palette
+BUY  = #26a69a
+SELL = #ef5350
+AMBR = #ffb300
+TEAL = #4dd0e1
+ORNG = #ff9800
+MCOL = #42a5f5
+KCOL = #ab47bc
+
+// ╔═══════════════════════════════════════════════════════════════════════════
+// ║  HELPERS
+// ╚═══════════════════════════════════════════════════════════════════════════
+// Intrabar signed volume: an up-closing minute counts as aggressive buying.
+f_delta() =>
+    close > open ? volume : close < open ? -volume : close >= nz(close[1], close) ? volume : -volume
+
+f_oiDeltaPct(string tick) =>
+    c = request.security(tick, timeframe.period, close, ignore_invalid_symbol=true)
+    not na(c) and nz(c[1]) > 0 ? (c - c[1]) / c[1] * 100 : na
+
+f_pos(string p) =>
+    p == "Top Left" ? position.top_left : p == "Bottom Right" ? position.bottom_right : p == "Bottom Left" ? position.bottom_left : position.top_right
+
+// Divergence tracker. Pivots are computed OUTSIDE and handed in: ta.pivothigh
+// needs a `simple int` length, and a length that has passed through a user
+// function gets inferred as `series` — which is a compile error, not a warning.
+// `var` inside a function is instantiated per CALL SITE, so calling this twice
+// (MACD, KD) keeps two independent memories, which is exactly what we want.
+f_divTrack(float phVal, float plVal, float oscAtPivot) =>
+    var float lastPH  = na
+    var float lastPHo = na
+    var float lastPL  = na
+    var float lastPLo = na
+    bool bear = false
+    bool bull = false
+    if not na(phVal) and not na(oscAtPivot)
+        if not na(lastPH) and phVal > lastPH and oscAtPivot < lastPHo
+            bear := true
+        lastPH  := phVal
+        lastPHo := oscAtPivot
+    if not na(plVal) and not na(oscAtPivot)
+        if not na(lastPL) and plVal < lastPL and oscAtPivot > lastPLo
+            bull := true
+        lastPL  := plVal
+        lastPLo := oscAtPivot
+    [bear, bull]
+
+// ╔═══════════════════════════════════════════════════════════════════════════
+// ║  ① OSCILLATORS
+// ╚═══════════════════════════════════════════════════════════════════════════
+[macdLine, macdSignal, _macdHist] = ta.macd(close, macdFast, macdSlow, macdSig)
+
+k = ta.sma(ta.stoch(close, high, low, kLen), kSmooth)
+d = ta.sma(k, dSmooth)
+
+// ╔═══════════════════════════════════════════════════════════════════════════
+// ║  ② DIVERGENCE — one set of price pivots, two oscillators
+// ╚═══════════════════════════════════════════════════════════════════════════
+ph = ta.pivothigh(high, divLen, divLen)
+pl = ta.pivotlow(low, divLen, divLen)
+
+[macdBear, macdBull] = f_divTrack(ph, pl, macdLine[divLen])
+[kdBear,   kdBull]   = f_divTrack(ph, pl, k[divLen])
+
+mBear = showMacdD and macdBear
+mBull = showMacdD and macdBull
+kBear = showKdD and kdBear
+kBull = showKdD and kdBull
+
+bothBear = mBear and kBear
+bothBull = mBull and kBull
+
+// Consecutive same-direction divergences — the number that actually matters.
+// One is noise; three stacked without the opposite firing is a condition. The
+// run resets on the opposite signal, not on a timer, so it measures a
+// structure rather than a window.
+var int bearRun = 0
+var int bullRun = 0
+if mBear or kBear
+    bearRun += 1
+    bullRun := 0
+if mBull or kBull
+    bullRun += 1
+    bearRun := 0
+
+mBearN = math.sum(mBear ? 1 : 0, countLen)
+mBullN = math.sum(mBull ? 1 : 0, countLen)
+kBearN = math.sum(kBear ? 1 : 0, countLen)
+kBullN = math.sum(kBull ? 1 : 0, countLen)
+
+// ── event log: the pivot's OWN time, not the confirmation time ──────────────
+var array<int>    evTime = array.new_int()
+var array<int>    evBar  = array.new_int()
+var array<string> evSrc  = array.new_string()
+var array<int>    evDir  = array.new_int()      // +1 bullish, −1 bearish
+
+f_push(int t, int b, string s, int dir) =>
+    array.push(evTime, t)
+    array.push(evBar, b)
+    array.push(evSrc, s)
+    array.push(evDir, dir)
+    if array.size(evTime) > 40                  // bounded — this is a log, not a database
+        array.shift(evTime)
+        array.shift(evBar)
+        array.shift(evSrc)
+        array.shift(evDir)
+
+pivotTime = time[divLen]
+pivotBar  = bar_index - divLen
+if bothBear
+    f_push(pivotTime, pivotBar, "MACD+KD", -1)
+else if mBear
+    f_push(pivotTime, pivotBar, "MACD", -1)
+else if kBear
+    f_push(pivotTime, pivotBar, "KD", -1)
+if bothBull
+    f_push(pivotTime, pivotBar, "MACD+KD", 1)
+else if mBull
+    f_push(pivotTime, pivotBar, "MACD", 1)
+else if kBull
+    f_push(pivotTime, pivotBar, "KD", 1)
+
+// ╔═══════════════════════════════════════════════════════════════════════════
+// ║  ③ WHALE BIAS
+// ╚═══════════════════════════════════════════════════════════════════════════
+deltaArr = request.security_lower_tf(syminfo.tickerid, ltfInput, f_delta())
+
+// Beyond TradingView's intrabar history limit there is no minute data, so the
+// buy share is estimated from where the bar closed inside its own range. That
+// is an ESTIMATE and it is only used where no measurement exists.
+float rawDelta = deltaArr.size() > 0 ? deltaArr.sum() : (high == low ? 0.0 : nz(volume) * (2 * (close - low) / (high - low) - 1))
+float deltaPct = nz(volume) > 0 ? rawDelta / volume * 100 : 0.0
+
+whaleThr = ta.percentile_nearest_rank(volume, pctLen, whalePct)
+isWhale  = not na(whaleThr) and nz(volume) >= whaleThr
+
+biasNum   = math.sum(isWhale ? rawDelta : 0.0, biasLen)
+biasDen   = math.sum(isWhale ? math.abs(rawDelta) : 0.0, biasLen)
+whaleBias = biasDen > 0 ? biasNum / biasDen * 100 : 0.0
+
+// ╔═══════════════════════════════════════════════════════════════════════════
+// ║  ④ OPEN INTEREST
+// ╚═══════════════════════════════════════════════════════════════════════════
+baseCoin = syminfo.basecurrency
+dBin = f_oiDeltaPct("BINANCE:" + baseCoin + "USDT.P_OI")
+dByb = f_oiDeltaPct("BYBIT:"   + baseCoin + "USDT.P_OI")
+dOkx = f_oiDeltaPct("OKX:"     + baseCoin + "USDT.P_OI")
+dMan = f_oiDeltaPct(oiOverride == "" ? syminfo.tickerid + "_OI" : oiOverride)
+
+float sumD = 0.0
+int   cntD = 0
+if useBinance and not na(dBin)
+    sumD += dBin
+    cntD += 1
+if useBybit and not na(dByb)
+    sumD += dByb
+    cntD += 1
+if useOkx and not na(dOkx)
+    sumD += dOkx
+    cntD += 1
+
+float oiRawDelta = oiOverride != "" ? dMan : cntD > 0 ? sumD / cntD : dMan
+string venueTxt  = oiOverride != "" ? "manual" : cntD > 0 ? str.tostring(cntD) + " ex" : "chart"
+oiOk = not na(oiRawDelta)
+
+// A missing reading is NOT smoothed as a zero. ta.ema(nz(x)) would feed 0 into
+// the average whenever a venue drops out, which asserts "open interest did not
+// move" — a measurement this chart never made. This EMA advances only on bars
+// that actually carried a reading, and holds its last value otherwise; the
+// strip goes grey so the gap is visible rather than averaged away.
+var float oiEma = na
+float alpha = 2.0 / (oiSmoothLen + 1)
+if oiOk
+    oiEma := na(oiEma) ? oiRawDelta : oiEma + alpha * (oiRawDelta - oiEma)
+
+priceChgS = ta.ema(ta.change(close), oiSmoothLen)
+
+// 1 longs opening · 2 shorts opening · 3 shorts closing · 4 longs closing
+int oiState = not oiOk or na(oiEma) ? 0 : oiEma > 0 ? (priceChgS >= 0 ? 1 : 2) : oiEma < 0 ? (priceChgS >= 0 ? 3 : 4) : 0
+color oiCol = oiState == 1 ? BUY : oiState == 2 ? SELL : oiState == 3 ? TEAL : oiState == 4 ? ORNG : color.new(color.gray, 55)
+string oiTxt = oiState == 1 ? "Longs opening 開多" : oiState == 2 ? "Shorts opening 開空" : oiState == 3 ? "Shorts closing 空單回補" : oiState == 4 ? "Longs closing 多單平倉" : oiOk ? "Flat" : "no OI feed"
+
+// ╔═══════════════════════════════════════════════════════════════════════════
+// ║  ⑤ PLOTS — everything normalised to −100…+100 so one pane can hold it
+// ╚═══════════════════════════════════════════════════════════════════════════
+// MACD lives in price units. Dividing by its own recent maximum is a DISPLAY
+// transform only: divergence was already detected on the raw series above.
+macdAbsMax = ta.highest(math.abs(macdLine), normLen)
+macdPlot   = macdAbsMax > 0 ? macdLine / macdAbsMax * 100 : 0.0
+sigPlot    = macdAbsMax > 0 ? macdSignal / macdAbsMax * 100 : 0.0
+
+// KD is 0…100 → (v−50)×2 puts 50 on the zero line and maps 80/20 to ±60.
+kPlot = (k - 50) * 2
+dPlot = (d - 50) * 2
+
+colDelta = isWhale ? (rawDelta >= 0 ? color.new(BUY, 20) : color.new(SELL, 20)) : (rawDelta >= 0 ? color.new(BUY, 85) : color.new(SELL, 85))
+plot(showDelta ? deltaPct : na, "Delta % of volume", style=plot.style_columns, color=colDelta)
+
+plot(showMacd ? macdPlot : na, "MACD (scaled)",   color=color.new(MCOL, 0), linewidth=2)
+plot(showMacd ? sigPlot  : na, "MACD signal",     color=color.new(MCOL, 55), linewidth=1)
+plot(showKd   ? kPlot    : na, "%K (scaled)",     color=color.new(KCOL, 0), linewidth=1)
+plot(showKd   ? dPlot    : na, "%D (scaled)",     color=color.new(KCOL, 55), linewidth=1)
+
+biasCol = whaleBias >= biasTh ? color.new(BUY, 0) : whaleBias <= -biasTh ? color.new(SELL, 0) : color.new(color.silver, 30)
+plot(showBias ? whaleBias : na, "Whale Bias", color=biasCol, linewidth=3)
+
+hline(0, "Zero", color=color.new(color.gray, 55))
+hline(60,  "KD 80 / bias +", color=color.new(color.gray, 80), linestyle=hline.style_dotted)
+hline(-60, "KD 20 / bias −", color=color.new(color.gray, 80), linestyle=hline.style_dotted)
+
+plotshape(showOI and oiState != 0, "OI strip", shape.square, location.top, color=oiCol, size=size.tiny)
+
+plotshape(mBear and not bothBear, "MACD bearish div", shape.triangledown, location.bottom, color.new(MCOL, 0), size=size.tiny)
+plotshape(mBull and not bothBull, "MACD bullish div", shape.triangleup,   location.bottom, color.new(MCOL, 0), size=size.tiny)
+plotshape(kBear and not bothBear, "KD bearish div",   shape.circle,       location.bottom, color.new(KCOL, 0), size=size.tiny)
+plotshape(kBull and not bothBull, "KD bullish div",   shape.circle,       location.bottom, color.new(KCOL, 0), size=size.tiny)
+
+if markBoth and bothBear
+    label.new(bar_index, 0, "▼ M+K", color=color.new(SELL, 15), textcolor=color.white, style=label.style_label_down, size=size.tiny)
+if markBoth and bothBull
+    label.new(bar_index, 0, "▲ M+K", color=color.new(BUY, 15), textcolor=color.white, style=label.style_label_up, size=size.tiny)
+
+// ╔═══════════════════════════════════════════════════════════════════════════
+// ║  ⑥ PANEL
+// ╚═══════════════════════════════════════════════════════════════════════════
+// 6 fixed rows + up to 6 event rows + 1 count row. Sized for the MAXIMUM the
+// input allows, not the default: table.cell() past the declared row count is a
+// runtime error, so a user sliding "Recent events listed" to 6 would have
+// crashed a table built for the default 3.
+var table tbl = table.new(f_pos(tblPos), 2, 13, bgcolor=color.new(#0d0d12, 12), border_color=color.new(color.gray, 65), border_width=1, frame_color=color.new(color.gray, 45), frame_width=1)
+
+if barstate.islast and showTbl
+    biasTxt = whaleBias >= biasTh ? "LONG lean" : whaleBias <= -biasTh ? "SHORT lean" : "Neutral"
+    biasC   = whaleBias >= biasTh ? BUY : whaleBias <= -biasTh ? SELL : AMBR
+
+    // "NOW" only claims a side when the two independent reads AGREE. They
+    // measure different things (executed volume vs open positions), so
+    // agreement is information; disagreement is also information, and calling
+    // it anyway would be inventing a signal neither one gave.
+    int biasSide = whaleBias >= biasTh ? 1 : whaleBias <= -biasTh ? -1 : 0
+    int oiSide   = oiState == 1 ? 1 : oiState == 2 ? -1 : 0
+    // Resolved as a STATE first, then rendered. Deriving the colour by
+    // comparing the finished string would break silently the day the wording
+    // changes — the panel would keep reading correctly and colour it wrong.
+    int nowState = biasSide != 0 and biasSide == oiSide ? biasSide * 2 : biasSide == 0 and oiSide == 0 ? 0 : biasSide != 0 and oiSide != 0 ? 9 : (biasSide + oiSide > 0 ? 1 : -1)
+    string nowTxt = nowState == 2 ? "LONG 偏多 — 兩邊一致" : nowState == -2 ? "SHORT 偏空 — 兩邊一致" : nowState == 9 ? "分歧 — 兩邊相反" : nowState == 1 ? "微偏多" : nowState == -1 ? "微偏空" : "沒有方向"
+    color nowC = nowState == 2 ? BUY : nowState == -2 ? SELL : AMBR
+
+    runTxt = bearRun > 0 ? str.tostring(bearRun) + "× ▼ 連續看空背離" : bullRun > 0 ? str.tostring(bullRun) + "× ▲ 連續看多背離" : "—"
+    runC   = bearRun > 0 ? SELL : bullRun > 0 ? BUY : color.gray
+
+    table.cell(tbl, 0, 0, "背離雷達  DIVERGENCE RADAR", text_color=color.white, text_size=tblSize, text_halign=text.align_left, bgcolor=color.new(#1c1c28, 0))
+    table.cell(tbl, 1, 0, "", bgcolor=color.new(#1c1c28, 0))
+
+    table.cell(tbl, 0, 1, " NOW 現在", text_color=color.silver, text_size=tblSize, text_halign=text.align_left)
+    table.cell(tbl, 1, 1, nowTxt + " ", text_color=nowC, text_size=tblSize, text_halign=text.align_right)
+    table.cell(tbl, 0, 2, " Whale Bias", text_color=color.silver, text_size=tblSize, text_halign=text.align_left)
+    table.cell(tbl, 1, 2, str.tostring(math.round(whaleBias)) + " · " + biasTxt + " ", text_color=biasC, text_size=tblSize, text_halign=text.align_right)
+    table.cell(tbl, 0, 3, " OI Read", text_color=color.silver, text_size=tblSize, text_halign=text.align_left)
+    table.cell(tbl, 1, 3, oiTxt + " ", text_color=oiCol, text_size=tblSize, text_halign=text.align_right)
+    table.cell(tbl, 0, 4, " OI Δ", text_color=color.silver, text_size=tblSize, text_halign=text.align_left)
+    table.cell(tbl, 1, 4, (oiOk and not na(oiEma) ? str.tostring(oiEma, "#.###") + "% · " + venueTxt : "—") + " ", text_color=oiCol, text_size=tblSize, text_halign=text.align_right)
+
+    table.cell(tbl, 0, 5, " 連續背離 Run", text_color=color.white, text_size=tblSize, text_halign=text.align_left, bgcolor=color.new(#1c1c28, 0))
+    table.cell(tbl, 1, 5, runTxt + " ", text_color=runC, text_size=tblSize, text_halign=text.align_right, bgcolor=color.new(#1c1c28, 0))
+
+    // Recent events, newest first. Each row prints the PIVOT's own time plus
+    // how many bars ago it was — the second number is the confirmation lag you
+    // are living with, and it should never be a surprise.
+    int n = array.size(evTime)
+    for i = 0 to histN - 1
+        int row = 6 + i
+        if i < n
+            int idx = n - 1 - i
+            int t   = array.get(evTime, idx)
+            int b   = array.get(evBar, idx)
+            string s = array.get(evSrc, idx)
+            int dir  = array.get(evDir, idx)
+            string arrow = dir > 0 ? "▲" : "▼"
+            color c = dir > 0 ? BUY : SELL
+            table.cell(tbl, 0, row, " " + arrow + " " + s, text_color=c, text_size=tblSize, text_halign=text.align_left)
+            table.cell(tbl, 1, row, str.format_time(t, "MM-dd HH:mm", syminfo.timezone) + " · " + str.tostring(bar_index - b) + " bars ago ", text_color=color.silver, text_size=tblSize, text_halign=text.align_right)
+        else
+            table.cell(tbl, 0, row, " —", text_color=color.gray, text_size=tblSize, text_halign=text.align_left)
+            table.cell(tbl, 1, row, " ", text_color=color.gray, text_size=tblSize, text_halign=text.align_right)
+
+    int cRow = 6 + histN
+    table.cell(tbl, 0, cRow, " 近 " + str.tostring(countLen) + " 根", text_color=color.silver, text_size=tblSize, text_halign=text.align_left)
+    table.cell(tbl, 1, cRow, "MACD ▼" + str.tostring(mBearN) + " ▲" + str.tostring(mBullN) + " · KD ▼" + str.tostring(kBearN) + " ▲" + str.tostring(kBullN) + " ", text_color=color.silver, text_size=tblSize, text_halign=text.align_right)
+
+// ╔═══════════════════════════════════════════════════════════════════════════
+// ║  ALERTS
+// ╚═══════════════════════════════════════════════════════════════════════════
+alertcondition(macdBear, "MACD Bearish Divergence", "價格創新高但 MACD 沒有 — 上攻沒有動能支撐")
+alertcondition(macdBull, "MACD Bullish Divergence", "價格創新低但 MACD 沒有 — 下殺沒有動能支撐")
+alertcondition(kdBear,   "KD Bearish Divergence",   "價格創新高但 KD 沒有")
+alertcondition(kdBull,   "KD Bullish Divergence",   "價格創新低但 KD 沒有")
+alertcondition(macdBear and kdBear, "MACD+KD Bearish Divergence", "MACD 和 KD 同時出現看空背離")
+alertcondition(macdBull and kdBull, "MACD+KD Bullish Divergence", "MACD 和 KD 同時出現看多背離")
+alertcondition(ta.crossover(whaleBias, biasTh),   "Whale Bias Flip Long",  "大單流向轉多")
+alertcondition(ta.crossunder(whaleBias, -biasTh), "Whale Bias Flip Short", "大單流向轉空")
+alertcondition(oiState == 1 and oiState[1] != 1, "New Longs Opening",  "未平倉上升 + 價格上升 — 新多單進場")
+alertcondition(oiState == 2 and oiState[1] != 2, "New Shorts Opening", "未平倉上升 + 價格下跌 — 新空單進場")
