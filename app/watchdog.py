@@ -48,7 +48,11 @@ WATCH_TUNNEL = os.getenv("WATCHDOG_WATCH_TUNNEL", "false").strip().lower() \
 # Public DNS gives the relay IPs; each is forced with --resolve.
 PUBLIC_KEY = "public_url"
 PUBLIC_LABEL = "對外網址（Tailscale Funnel）"
-PUBLIC_FIX = "./tailscale.sh off && ./tailscale.sh on"
+# ONE command on purpose. The two-step form was pasted as
+# "./tailscale.sh off && on" on 2026-08-05 — the second half was not a command,
+# so the public URL went from intermittently down to fully down. An alert that
+# can be half-followed is an alert that can make things worse.
+PUBLIC_FIX = "./tailscale.sh rearm"
 WATCH_PUBLIC = os.getenv("WATCHDOG_WATCH_PUBLIC", "true").strip().lower() \
     in ("1", "true", "yes")
 PUBLIC_PATH = os.getenv("WATCHDOG_PUBLIC_PATH", "/welcome")

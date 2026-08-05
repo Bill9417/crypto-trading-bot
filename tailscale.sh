@@ -169,7 +169,7 @@ check)
     else
         echo "✗ NOT reachable publicly. The tailnet path may still work, which is"
         echo "  why a browser on this Mac looks fine. Re-arm the registration:"
-        echo "      $0 off && $0 on"
+        echo "      $0 rearm"
     fi
     ;;
 doctor)
@@ -190,6 +190,24 @@ status)
             ;;
     esac
     ;;
+rearm)
+    # ONE command, because the two-step remedy is a footgun: on 2026-08-05 the
+    # printed "$0 rearm" was pasted as "$0 off && on", the second half
+    # was not a command, and the public URL went from intermittently down to
+    # fully down — LINE's webhook and every public page with it. A single
+    # command cannot be half-executed.
+    echo "Re-arming the Funnel registration…"
+    "$TS" funnel --https="$PORT" off >/dev/null 2>&1 || true
+    sleep 2
+    "$TS" funnel --bg "$PORT"
+    echo "Waiting for the relays to pick it up…"
+    for i in 1 2 3 4 5 6; do
+        sleep 5
+        if "$0" check >/dev/null 2>&1; then break; fi
+    done
+    echo
+    "$0" check
+    ;;
 *)
-    echo "Usage: $0 [on|off|url|check|status|doctor]"; exit 1 ;;
+    echo "Usage: $0 [on|off|rearm|url|check|status|doctor]"; exit 1 ;;
 esac
