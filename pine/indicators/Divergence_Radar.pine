@@ -80,16 +80,23 @@ useCvdD   = input.bool(true, "CVD",  group=gDiv, inline="src", tooltip="Which so
 countLen  = input.int(200, "Count Window (bars)", minval=20, maxval=2000, group=gDiv, tooltip="How far back the panel counts. 200 bars ≈ 2 days on 15m.")
 labelStrong = input.bool(true, "Label when 2+ sources agree", group=gDiv, tooltip="A small tag naming which sources fired. Only for 2+ — labelling every single divergence is what makes these panes unreadable.")
 
-gMacd = "③ MACD"
+gMacd = "③ MACD ReLoaded"
+macdSrc   = input.source(close, "Source", group=gMacd)
+mav       = input.string("VAR", "Moving Average Type", ["SMA","EMA","WMA","DEMA","TMA","VAR","WWMA","ZLEMA","TSF","HULL","TILL"], group=gMacd, tooltip="Kivanc Ozbilgic's MACD ReLoaded: the same MACD structure with a swappable average. VAR (VIDYA) is the default — its smoothing constant scales with |CMO|, so it tracks hard in a trend and goes quiet in chop. All three legs (fast, slow, signal) use this same type, as in the original.")
 macdFast  = input.int(12, "Fast", minval=2, group=gMacd, inline="m")
 macdSlow  = input.int(26, "Slow", minval=3, group=gMacd, inline="m")
 macdSig   = input.int(9,  "Signal", minval=1, group=gMacd, inline="m")
+t3factor  = input.float(0.7, "TILLSON T3 Volume Factor", minval=0.0, maxval=1.0, step=0.1, group=gMacd)
+showHist  = input.bool(false, "Draw MACD histogram", group=gMacd, tooltip="Four-state colouring: rising/falling above and below zero. Off by default so it does not compete with the lines — turn it on if you read the histogram rather than the crossover.")
 normLen   = input.int(200, "Display Scaling Window", minval=50, maxval=2000, group=gMacd, tooltip="MACD is in PRICE units, so on this shared pane it is divided by its own recent maximum to fit −100…+100. Display only — divergences are detected on the RAW MACD, so scaling can never create or hide one.")
 
-gKd = "④ KD (Stochastic)"
-kLen      = input.int(9, "%K Length", minval=1, group=gKd, inline="k", tooltip="9/3/3 is the classic KD most Asian charting packages draw by default.")
-kSmooth   = input.int(3, "%K Smooth", minval=1, group=gKd, inline="k")
-dSmooth   = input.int(3, "%D Smooth", minval=1, group=gKd, inline="k")
+gKd = "④ KDJ"
+kLen      = input.int(9, "Range Length (%K)", minval=1, group=gKd, tooltip="9 is canonical for this formula — the 2/3 · 1/3 recursion IS the Chinese KDJ, and 9 is what every Asian package draws. The script this came from used 14; set it back if you prefer that.")
+kSmooth   = input.int(1, "%K extra smooth", minval=1, group=gKd, inline="s")
+dSmooth   = input.int(1, "%D extra smooth", minval=1, group=gKd, inline="s")
+jSmooth   = input.int(1, "J smooth", minval=1, group=gKd, inline="s", tooltip="1 = textbook KDJ. The source script defaulted these to 3 AND built J from the UNsmoothed K/D, so the J you saw did not match the K and D lines beside it. Here J is always built from the same K and D that are drawn, at any setting.")
+kdDivSrc  = input.string("K", "Divergence uses", ["K","D","J"], group=gKd, tooltip="Which KDJ line is compared against price pivots. K is the usual choice; J overshoots by design and produces far more, far noisier divergences.")
+showJ     = input.bool(true, "Draw J line", group=gKd)
 
 gW = "⑤ Whale Bias"
 ltfInput   = input.timeframe("1", "Intrabar Timeframe", group=gW, tooltip="Splits each chart bar into buy/sell volume — the raw material for both Whale Bias and CVD. '1' is most precise. TradingView limits intrabar history; older bars fall back to a close-position estimate automatically.")
@@ -145,6 +152,79 @@ f_oiDeltaPct(string tick) =>
 f_pos(string p) =>
     p == "Top Left" ? position.top_left : p == "Bottom Right" ? position.bottom_right : p == "Bottom Left" ? position.bottom_left : position.top_right
 
+f_clamp(float v, float lim) =>
+    math.max(-lim, math.min(lim, v))
+
+// ── the MA library, written ONCE ───────────────────────────────────────────
+// The original carried three near-identical copies of this (getMA / getMA1 /
+// getMA2, ~200 lines) because each length needed its own globals. One function
+// with a `simple int` length parameter does all three. The qualifier is
+// load-bearing, not decoration: a length that reaches ta.sma() as `series` is a
+// compile error, and that is exactly how it arrives if the parameter is left
+// to be inferred.
+//
+// Every candidate is evaluated on EVERY bar and the choice is made afterwards.
+// A ta.* call reached only on some bars keeps a stale internal window — safe
+// here only because `mav` never changes mid-run, which is the kind of "safe
+// because of something happening elsewhere" that stops being true the first
+// time someone makes the type dynamic.
+f_ma(simple string t, float s, simple int len) =>
+    sma_  = ta.sma(s, len)
+    ema_  = ta.ema(s, len)
+    wma_  = ta.wma(s, len)
+    dema_ = 2 * ema_ - ta.ema(ema_, len)
+    tma_  = ta.sma(ta.sma(s, int(math.ceil(len / 2.0))), int(math.floor(len / 2.0)) + 1)
+
+    // VAR / VIDYA — alpha scales with |CMO| over a fixed 9-bar momentum window
+    // (9 is part of the original formula, not the MA length).
+    vud  = s > s[1] ? s - s[1] : 0.0
+    vdd  = s < s[1] ? s[1] - s : 0.0
+    vUD  = math.sum(vud, 9)
+    vDD  = math.sum(vdd, 9)
+    vCMO = vUD + vDD != 0 ? (vUD - vDD) / (vUD + vDD) : 0.0
+    vk   = 2.0 / (len + 1) * math.abs(vCMO)
+    // Seeded with the source. The original seeded from 0, so the line crawled
+    // up from zero over dozens of bars — a warm-up artefact that this script
+    // would have read as a monster divergence at the left edge of the chart.
+    var float var_ = na
+    var_ := na(var_) ? s : vk * s + (1 - vk) * var_
+
+    var float wwma_ = na
+    wwa = 1.0 / len
+    wwma_ := na(wwma_) ? s : wwa * s + (1 - wwa) * wwma_
+
+    zlag   = int(len / 2)
+    zlema_ = ta.ema(s + (s - s[zlag]), len)
+
+    lr0  = ta.linreg(s, len, 0)
+    lr1  = ta.linreg(s, len, 1)
+    tsf_ = 2 * lr0 - lr1                       // == linreg + (linreg − linreg[1])
+
+    hull_ = ta.wma(2 * ta.wma(s, int(math.max(1, math.round(len / 2.0)))) - ta.wma(s, len), int(math.max(1, math.round(math.sqrt(len)))))
+
+    e1 = ta.ema(s, len)
+    e2 = ta.ema(e1, len)
+    e3 = ta.ema(e2, len)
+    e4 = ta.ema(e3, len)
+    e5 = ta.ema(e4, len)
+    e6 = ta.ema(e5, len)
+    a  = t3factor
+    till_ = -a*a*a * e6 + (3*a*a + 3*a*a*a) * e5 + (-6*a*a - 3*a - 3*a*a*a) * e4 + (1 + 3*a + a*a*a + 3*a*a) * e3
+
+    switch t
+        "SMA"   => sma_
+        "EMA"   => ema_
+        "WMA"   => wma_
+        "DEMA"  => dema_
+        "TMA"   => tma_
+        "VAR"   => var_
+        "WWMA"  => wwma_
+        "ZLEMA" => zlema_
+        "TSF"   => tsf_
+        "HULL"  => hull_
+        "TILL"  => till_
+        => ema_
+
 f_srcTxt(bool m, bool k, bool c) =>
     string s = m ? "MACD" : ""
     s := k ? (s == "" ? "KD" : s + "+KD") : s
@@ -178,10 +258,33 @@ f_divTrack(float phVal, float plVal, float oscAtPivot) =>
 // ╔═══════════════════════════════════════════════════════════════════════════
 // ║  ① OSCILLATORS
 // ╚═══════════════════════════════════════════════════════════════════════════
-[macdLine, macdSignal, macdHist] = ta.macd(close, macdFast, macdSlow, macdSig)
+// MACD ReLoaded — same structure as the classic, swappable average.
+macdLine   = f_ma(mav, macdSrc, macdFast) - f_ma(mav, macdSrc, macdSlow)
+macdSignal = f_ma(mav, macdLine, macdSig)
+macdHist   = macdLine - macdSignal
 
-k = ta.sma(ta.stoch(close, high, low, kLen), kSmooth)
-d = ta.sma(k, dSmooth)
+// KDJ — the Chinese variant. RSV is the raw stochastic; K and D are recursive
+// 2/3 · 1/3 smoothings of it, seeded at 50 so the first bars are neutral
+// rather than pinned to an extreme.
+//
+// The source used 0.666 / 0.334. They sum to 1.000 so nothing drifts, but they
+// are not 2/3 and 1/3, and the error compounds through a recursion that never
+// forgets. Exact fractions cost nothing.
+rsv = ta.stoch(close, high, low, kLen)
+var float kRaw = na
+var float dRaw = na
+kRaw := (2.0 / 3.0) * nz(kRaw[1], 50) + (1.0 / 3.0) * nz(rsv, 50)
+dRaw := (2.0 / 3.0) * nz(dRaw[1], 50) + (1.0 / 3.0) * nz(kRaw, 50)
+
+// ta.sma(x, 1) is x, so length 1 is a genuine no-op — no conditional needed.
+// J is built from the SAME k and d that get plotted. The source smoothed the
+// plotted lines but computed J from the unsmoothed pair, so the J on screen
+// was not 3K−2D of the K and D on screen.
+k = ta.sma(kRaw, kSmooth)
+d = ta.sma(dRaw, dSmooth)
+j = ta.sma(3 * k - 2 * d, jSmooth)
+
+kdDiv = kdDivSrc == "D" ? d : kdDivSrc == "J" ? j : k
 
 // ╔═══════════════════════════════════════════════════════════════════════════
 // ║  ② WHALE FLOW + CVD  (CVD is the third divergence source, so it comes
@@ -213,7 +316,7 @@ ph = ta.pivothigh(high, divLen, divLen)
 pl = ta.pivotlow(low, divLen, divLen)
 
 [macdBear, macdBull] = f_divTrack(ph, pl, macdLine[divLen])
-[kdBear,   kdBull]   = f_divTrack(ph, pl, k[divLen])
+[kdBear,   kdBull]   = f_divTrack(ph, pl, kdDiv[divLen])
 [cvdBear,  cvdBull]  = f_divTrack(ph, pl, cvd[divLen])
 
 mBear = useMacdD and macdBear
@@ -415,17 +518,29 @@ macdAbsMax = ta.highest(math.abs(macdLine), normLen)
 macdPlot   = macdAbsMax > 0 ? macdLine / macdAbsMax * 100 : 0.0
 sigPlot    = macdAbsMax > 0 ? macdSignal / macdAbsMax * 100 : 0.0
 
-// KD is 0…100 → (v−50)×2 puts 50 on the zero line and maps 80/20 to ±60.
+// KDJ is 0…100 → (v−50)×2 puts 50 on the zero line and maps 80/20 to ±60.
+// J deliberately overshoots that range — that overshoot is the whole point of
+// J — so the DRAWN value is clamped. Without it a single J spike to 140 sets
+// the pane's scale and flattens every other line into a straight edge. The
+// clamp is display only: divergence, the panel reading and the alerts all use
+// the true J.
 kPlot = (k - 50) * 2
 dPlot = (d - 50) * 2
+jPlot = f_clamp((j - 50) * 2, 125)
 
 colDelta = isWhale ? (rawDelta >= 0 ? color.new(BUY, 25) : color.new(SELL, 25)) : (rawDelta >= 0 ? color.new(BUY, 88) : color.new(SELL, 88))
 plot(showDelta ? deltaPct : na, "Delta % of volume", style=plot.style_columns, color=colDelta)
+
+// Histogram first so the lines sit on top of it.
+histPlot = macdAbsMax > 0 ? macdHist / macdAbsMax * 100 : 0.0
+histCol  = macdHist >= 0 ? (macdHist > macdHist[1] ? color.new(BUY, 30) : color.new(BUY, 72)) : (macdHist > macdHist[1] ? color.new(SELL, 72) : color.new(SELL, 30))
+plot(drawMacd and showHist ? histPlot : na, "MACD histogram", style=plot.style_columns, color=histCol)
 
 plot(drawMacd ? macdPlot : na, "MACD (scaled)", color=color.new(MCOL, 0),  linewidth=2)
 plot(drawMacd ? sigPlot  : na, "MACD signal",   color=color.new(MCOL, 60), linewidth=1)
 plot(drawKd   ? kPlot    : na, "%K (scaled)",   color=color.new(KCOL, 0),  linewidth=1)
 plot(drawKd   ? dPlot    : na, "%D (scaled)",   color=color.new(KCOL, 60), linewidth=1)
+plot(drawKd and showJ ? jPlot : na, "J (scaled, clamped)", color=color.new(AMBR, 25), linewidth=1)
 
 biasCol = whaleBias >= biasTh ? color.new(BUY, 0) : whaleBias <= -biasTh ? color.new(SELL, 0) : color.new(color.silver, 35)
 plot(showBias ? whaleBias : na, "Whale Bias", color=biasCol, linewidth=3)
@@ -456,11 +571,11 @@ if labelStrong and bullN >= 2
 // ╔═══════════════════════════════════════════════════════════════════════════
 // ║  ⑦ PANEL
 // ╚═══════════════════════════════════════════════════════════════════════════
-// 7 fixed rows + up to 6 event rows + 2 count rows. Sized for the MAXIMUM the
+// 8 fixed rows + up to 6 event rows + 2 count rows. Sized for the MAXIMUM the
 // input allows, not the default: table.cell() past the declared row count is a
 // runtime error, so a user sliding "Recent events listed" to 6 would crash a
 // table built for 3.
-var table tbl = table.new(f_pos(tblPos), 2, 15, bgcolor=color.new(#0d0d12, 12), border_color=color.new(color.gray, 65), border_width=1, frame_color=color.new(color.gray, 45), frame_width=1)
+var table tbl = table.new(f_pos(tblPos), 2, 16, bgcolor=color.new(#0d0d12, 12), border_color=color.new(color.gray, 65), border_width=1, frame_color=color.new(color.gray, 45), frame_width=1)
 
 if barstate.islast and showTbl
     biasTxt = whaleBias >= biasTh ? "LONG lean" : whaleBias <= -biasTh ? "SHORT lean" : "Neutral"
@@ -499,15 +614,22 @@ if barstate.islast and showTbl
     table.cell(tbl, 0, 5, " DXY", text_color=color.silver, text_size=tblSize, text_halign=text.align_left)
     table.cell(tbl, 1, 5, dxyTxt + " ", text_color=dxyC, text_size=tblSize, text_halign=text.align_right)
 
-    table.cell(tbl, 0, 6, " 連續背離 Run", text_color=color.white, text_size=tblSize, text_halign=text.align_left, bgcolor=color.new(#1c1c28, 0))
-    table.cell(tbl, 1, 6, runTxt + " ", text_color=runC, text_size=tblSize, text_halign=text.align_right, bgcolor=color.new(#1c1c28, 0))
+    // J is the reason KDJ exists: it overshoots 0…100 and those excursions are
+    // the signal. The pane clamps the LINE; this prints the real number.
+    jTxt = str.tostring(j, "#") + (j > 100 ? " · 超買 overbought" : j < 0 ? " · 超賣 oversold" : k > d ? " · K>D" : " · K<D")
+    jC   = j > 100 ? SELL : j < 0 ? BUY : k > d ? BUY : SELL
+    table.cell(tbl, 0, 6, " KDJ  J", text_color=color.silver, text_size=tblSize, text_halign=text.align_left)
+    table.cell(tbl, 1, 6, jTxt + " ", text_color=jC, text_size=tblSize, text_halign=text.align_right)
+
+    table.cell(tbl, 0, 7, " 連續背離 Run", text_color=color.white, text_size=tblSize, text_halign=text.align_left, bgcolor=color.new(#1c1c28, 0))
+    table.cell(tbl, 1, 7, runTxt + " ", text_color=runC, text_size=tblSize, text_halign=text.align_right, bgcolor=color.new(#1c1c28, 0))
 
     // Recent events, newest first. Each row prints the PIVOT's own time plus
     // how many bars ago — the second number is the confirmation lag you are
     // living with, and it should never be a surprise.
     int n = array.size(evTime)
     for i = 0 to histN - 1
-        int row = 7 + i
+        int row = 8 + i
         if i < n
             int idx  = n - 1 - i
             int t    = array.get(evTime, idx)
@@ -522,7 +644,7 @@ if barstate.islast and showTbl
             table.cell(tbl, 0, row, " —", text_color=color.gray, text_size=tblSize, text_halign=text.align_left)
             table.cell(tbl, 1, row, " ", text_color=color.gray, text_size=tblSize, text_halign=text.align_right)
 
-    int r1 = 7 + histN
+    int r1 = 8 + histN
     table.cell(tbl, 0, r1, " 近 " + str.tostring(countLen) + " 根", text_color=color.silver, text_size=tblSize, text_halign=text.align_left)
     table.cell(tbl, 1, r1, "▼" + str.tostring(bearAny) + "  ▲" + str.tostring(bullAny) + " ", text_color=color.silver, text_size=tblSize, text_halign=text.align_right)
     table.cell(tbl, 0, r1 + 1, " 其中 2+ 同時", text_color=color.silver, text_size=tblSize, text_halign=text.align_left)
@@ -541,3 +663,12 @@ alertcondition(ta.crossover(whaleBias, biasTh),   "Whale Bias Flip Long",  "大�
 alertcondition(ta.crossunder(whaleBias, -biasTh), "Whale Bias Flip Short", "大單流向轉空")
 alertcondition(oiState == 1 and oiState[1] != 1, "New Longs Opening",  "未平倉上升 + 價格上升 — 新多單進場")
 alertcondition(oiState == 2 and oiState[1] != 2, "New Shorts Opening", "未平倉上升 + 價格下跌 — 新空單進場")
+// The KDJ source computed `Buy = crossover(J,0)` and `Sell = crossunder(J,100)`
+// and then never plotted or alerted on either — dead code in the original.
+// They are the J extremes coming back inside the band, so they are wired up.
+alertcondition(ta.crossover(j, 0),    "J back above 0",   "J 從超賣區翻上 0 — 極端賣壓收手")
+alertcondition(ta.crossunder(j, 100), "J back below 100", "J 從超買區翻下 100 — 極端買盤收手")
+alertcondition(ta.crossover(k, d),    "KDJ golden cross", "K 向上穿越 D — KD 黃金交叉")
+alertcondition(ta.crossunder(k, d),   "KDJ death cross",  "K 向下穿越 D — KD 死亡交叉")
+alertcondition(ta.crossover(macdLine, macdSignal),  "MACD cross up",   "MACD 向上穿越訊號線")
+alertcondition(ta.crossunder(macdLine, macdSignal), "MACD cross down", "MACD 向下穿越訊號線")
