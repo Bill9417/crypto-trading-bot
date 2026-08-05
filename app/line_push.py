@@ -191,9 +191,21 @@ def handle_webhook(payload: dict) -> int:
     return changed
 
 
+# Keywords that are OURS. Anything outside this set stays silent — a bot in a
+# group sees every message and must not answer conversation.
+_KEYWORDS = {"訊號", "台股", "tw", "美股", "美國", "us", "現況", "即時", "now",
+             "期貨", "台指", "futures", "網址", "連結", "link",
+             "說明", "幫助", "指令", "help"}
+
+
 def _command_reply(text: str):
     """Response for a recognised command, else None (bots in groups see every
-    message — only exact keywords answer, anything else stays silent)."""
+    message — only exact keywords answer, anything else stays silent).
+
+    A recognised keyword ALWAYS gets an answer, even when the data behind it is
+    unavailable. Returning None there left the user staring at silence, which
+    is indistinguishable from a broken bot — and it also skipped the reply, so
+    the Quick Reply buttons never refreshed either."""
     t = (text or "").strip().lower()
     if t in ("訊號", "台股", "tw"):
         try:
@@ -202,7 +214,6 @@ def _command_reply(text: str):
                     or "今日還沒有台股掃描 — 每個交易日 14:00 後更新。")
         except Exception as exc:  # noqa: BLE001 — a broken command stays silent
             print(f"[line] 訊號 command failed: {exc}")
-            return None
     if t in ("美股", "美國", "us"):
         try:
             import us_market
@@ -210,40 +221,56 @@ def _command_reply(text: str):
                     or "今天還沒有美股收盤摘要 — 每個交易日 08:00 前後更新。")
         except Exception as exc:  # noqa: BLE001 — a broken command stays silent
             print(f"[line] 美股 command failed: {exc}")
-            return None
     if t in ("現況", "即時", "now"):
         try:
             import tw_intraday
             return tw_intraday.snapshot_plain()
         except Exception as exc:  # noqa: BLE001
             print(f"[line] 現況 command failed: {exc}")
-            return None
     if t in ("期貨", "台指", "futures"):
         try:
             import tw_intraday
             return tw_intraday.taifex_plain()
         except Exception as exc:  # noqa: BLE001
             print(f"[line] 期貨 command failed: {exc}")
-            return None
     if t in ("網址", "連結", "link"):
         try:
             import site_link
             return site_link.link_reply()
         except Exception as exc:  # noqa: BLE001
             print(f"[line] 網址 command failed: {exc}")
-            return None
     if t in ("說明", "幫助", "指令", "help"):
         return HELP_MSG
+    if t in _KEYWORDS:
+        # a keyword we own whose data source just failed — say so
+        return "⚠️ 這個功能暫時取不到資料，稍後再試一次。"
     return None
 
 
 def _reply(reply_token: str, text: str) -> None:
+    """Answer a command. Chunked, because LINE rejects the WHOLE call over
+    5000 characters — a 400 with nothing delivered, which reads as "the command
+    is broken" and takes the Quick Reply buttons with it (they only exist on a
+    message the bot actually sent). 訊號 runs ~100 chars on a stand-aside day
+    and several thousand on a day with ten setups, so the failure would arrive
+    exactly when the reply was worth reading.
+
+    A reply token allows at most BATCH messages and is single-use, so an
+    over-long answer is trimmed with a pointer to the web page rather than
+    silently losing its tail. Replies are free; pushing the remainder would
+    spend the 200/month push quota on one command."""
+    chunks = _chunks(text)
+    if len(chunks) > BATCH:
+        chunks = chunks[:BATCH]
+        chunks[-1] = (chunks[-1][:MAX_LEN - 60].rstrip()
+                      + "\n…（內容過長，完整版看 /tw 網頁：輸入「網址」）")
+    msgs = [{"type": "text", "text": c} for c in chunks]
+    msgs[-1] = {**msgs[-1], "quickReply": QUICK_REPLY}
     try:
-        code, body = _post("reply", {"replyToken": reply_token,
-                                     "messages": [{"type": "text", "text": text,
-                                                  "quickReply": QUICK_REPLY}]})
+        code, body = _post("reply", {"replyToken": reply_token, "messages": msgs})
         if code != 200:
-            print(f"[line] reply failed {code}: {body[:200]}")
+            print(f"[line] reply failed {code} ({len(msgs)} msgs, "
+                  f"{len(text)} chars): {body[:200]}")
     except Exception as exc:  # noqa: BLE001
         print(f"[line] reply error: {exc}")
 

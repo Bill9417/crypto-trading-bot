@@ -557,3 +557,71 @@ def test_silencing_the_notice_does_not_silence_normal_pushes(monkeypatch):
     monkeypatch.setattr(config, "LINE_LIFECYCLE_NOTICE", False)
     assert line_push.send("🇹🇼 台股掃描") is True
     assert len(calls) == 1
+
+
+# ── a command must always ANSWER, and the answer must fit ───────────────────
+# 2026-08-05: the LINE bot looked broken. The real cause was an unreachable
+# webhook, but two latent faults would have produced the same symptom, and both
+# take the Quick Reply buttons down with them — those only exist on a message
+# the bot actually SENDS.
+def test_a_long_reply_is_chunked_not_rejected(monkeypatch):
+    """LINE rejects the WHOLE call over 5000 chars: a 400 with nothing
+    delivered. 訊號 is ~100 chars on a stand-aside day and several thousand on
+    a day with ten setups — it would have failed exactly when it mattered."""
+    sent = {}
+    monkeypatch.setattr(line_push, "_post",
+                        lambda path, payload: sent.update(path=path, p=payload) or (200, ""))
+    line_push._reply("tok", "行\n" * 6000)
+    msgs = sent["p"]["messages"]
+    assert len(msgs) > 1
+    assert all(len(m["text"]) <= line_push.MAX_LEN for m in msgs)
+    assert "quickReply" in msgs[-1] and "quickReply" not in msgs[0]
+
+
+def test_an_over_long_reply_is_trimmed_to_the_token_limit(monkeypatch):
+    """A reply token allows at most BATCH messages and is single-use, so the
+    tail is pointed at the web page rather than silently lost — and never
+    pushed, which would spend the 200/month quota on one command."""
+    sent = {}
+    monkeypatch.setattr(line_push, "_post",
+                        lambda path, payload: sent.update(p=payload) or (200, ""))
+    line_push._reply("tok", "行\n" * 200_000)
+    msgs = sent["p"]["messages"]
+    assert len(msgs) == line_push.BATCH
+    assert "網址" in msgs[-1]["text"]
+
+
+def test_a_short_reply_is_still_one_message(monkeypatch):
+    sent = {}
+    monkeypatch.setattr(line_push, "_post",
+                        lambda path, payload: sent.update(p=payload) or (200, ""))
+    line_push._reply("tok", "嗨")
+    assert len(sent["p"]["messages"]) == 1
+
+
+def test_a_broken_command_answers_instead_of_going_silent(monkeypatch):
+    """Silence is indistinguishable from a dead bot, and it also skips the
+    reply — so the buttons never refresh either."""
+    import tw_stocks
+    monkeypatch.setattr(tw_stocks, "_load_state",
+                        lambda: (_ for _ in ()).throw(RuntimeError("boom")))
+    out = line_push._command_reply("訊號")
+    assert out and "暫時取不到" in out
+
+
+def test_conversation_is_still_ignored():
+    """A bot in a group sees every message. Only our own keywords answer."""
+    for chatter in ("大家早安", "今天天氣不錯", "", "訊號很多"):
+        assert line_push._command_reply(chatter) is None
+
+
+def test_every_quick_reply_button_maps_to_a_real_command():
+    """A button that types a word nothing handles is a dead button."""
+    for item in line_push.QUICK_REPLY["items"]:
+        text = item["action"]["text"]
+        assert line_push._command_reply(text) is not None, text
+        assert len(item["action"]["label"]) <= 20      # LINE's label limit
+
+
+def test_quick_reply_fits_lines_item_limit():
+    assert len(line_push.QUICK_REPLY["items"]) <= 13
