@@ -220,6 +220,17 @@ rearm)
     # node kept a stale ingress registration that toggling the flag never
     # cleared. `serve reset` drops the whole serve config and forces a fresh
     # registration, and that is what actually brought a relay back.
+    # One at a time. BOTH scanners run the watchdog, and on 2026-08-05 they
+    # both detected the same outage in the same five-minute window and both
+    # fired this — two `serve reset` racing each other, where one can wipe the
+    # config the other just armed. mkdir is atomic; a second caller exits.
+    LOCK="${TMPDIR:-/tmp}/wolf-tailscale-rearm.lock"
+    if ! mkdir "$LOCK" 2>/dev/null; then
+        echo "Another rearm is already running — skipping."
+        exit 0
+    fi
+    trap 'rmdir "$LOCK" 2>/dev/null' EXIT
+
     echo "Re-arming the Funnel registration…"
     "$TS" funnel --https="$PORT" off >/dev/null 2>&1 || true
     "$TS" serve reset >/dev/null 2>&1 || true
