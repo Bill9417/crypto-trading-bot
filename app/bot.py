@@ -129,6 +129,21 @@ BOT_LOCK_FILE = os.path.join(os.path.dirname(__file__), "bot.lock")
 QUEUE_CLEAR_REQUEST_FILE = os.path.join(os.path.dirname(__file__), "clear_queue.request")
 CIRCUIT_STATE_FILE = os.path.join(os.path.dirname(__file__), "circuit_state.json")
 
+
+def s1_exec_mode() -> str:
+    """How THIS bot process executes: 'scan_only' | 'bybit' | 'binance'.
+
+    Read from the PROCESS environment, which run_all.sh sets at launch — so it
+    stays true even if app/.env is edited afterwards. It gets recorded into
+    bot_strategy.json for /health, because 'is the S1 bot running?' and 'is the
+    S1 bot placing orders, and on which exchange?' are different questions and
+    the ops page was answering the first while asking the second."""
+    if os.getenv("SCAN_ONLY", "").strip().lower() in ("1", "true", "yes", "on"):
+        return "scan_only"
+    if os.getenv("S1_EXEC", "").strip().lower() == "bybit":
+        return "bybit"
+    return "binance"
+
 rest_client = SafeBinanceClient(
     min_rest_interval=REST_API_MIN_INTERVAL_SEC,
     max_retries=REST_API_MAX_RETRIES,
@@ -2690,6 +2705,7 @@ def startup_message() -> None:
         try:
             with open(os.path.join(os.path.dirname(__file__), "bot_strategy.json"), "w") as _f:
                 json.dump({"strategy": _key, "manage": _manage,
+                           "exec": s1_exec_mode(), "pid": os.getpid(),
                            "started": get_now_taiwan().strftime("%Y-%m-%d %H:%M:%S")}, _f)
         except Exception:  # noqa: BLE001
             pass
@@ -2737,7 +2753,8 @@ def main() -> None:
     # trade while an S1 bot lock is held) — and force-halts live trading so it can
     # never place a real order, even if LIVE_TRADING=true. Used by run_all.sh when
     # S2 is the live engine but you still want the S1-based dashboard.
-    scan_only = os.getenv("SCAN_ONLY", "").strip().lower() in ("1", "true", "yes", "on")
+    mode = s1_exec_mode()
+    scan_only = mode == "scan_only"
     # S1_EXEC=bybit: S1 signals EXECUTE ON BYBIT (via the 🪞 mirror at
     # S1_BYBIT_ORDER_USDT fixed notional) while the Binance executor is
     # force-halted — the full queue→fill→SL/TP lifecycle still runs (dry-run
@@ -2745,7 +2762,7 @@ def main() -> None:
     # orders), so 掛單/成交/出場 cards flow and Bybit gets the real trades.
     # Lets S1 trade alongside the S3 flag-flip: different symbols, and the
     # mirror refuses any symbol that already holds an untracked position.
-    bybit_exec = os.getenv("S1_EXEC", "").strip().lower() == "bybit"
+    bybit_exec = mode == "bybit"
     if scan_only:
         executor.halt_live_trading("SCAN_ONLY — dashboard refresh companion; no orders placed")
         print("[bot] SCAN_ONLY mode: scanning to refresh the dashboard only — "

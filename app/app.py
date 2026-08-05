@@ -2141,6 +2141,90 @@ def _scanner_live_engine(max_age_sec=900):
         return False
 
 
+def _s1_runtime() -> dict:
+    """What the S1 bot process recorded about ITSELF at startup —
+    {'exec': 'binance'|'bybit'|'scan_only', 'strategy': key}. Empty when the
+    marker is missing (an old bot that predates the field, or never started)."""
+    try:
+        with open(os.path.join(os.path.dirname(__file__), "bot_strategy.json")) as f:
+            return json.load(f) or {}
+    except Exception:  # noqa: BLE001 — no marker = nothing claimed
+        return {}
+
+
+def _s1_mode() -> str:
+    """'binance' | 'bybit' | 'scan_only' — how the running S1 bot executes.
+
+    The bot records this at startup. A marker without the field (any bot
+    started before it existed) falls back to the bot LOCK, which is the one
+    unambiguous signal available: bot.py acquires it ONLY in Binance-trading
+    mode — SCAN_ONLY and S1_EXEC=bybit both skip it deliberately, so that the
+    S2 engine's "refuse to trade while S1 holds the lock" rule stays correct.
+    Defaulting a missing field to 'binance' instead would keep printing the
+    exact false claim this replaced."""
+    mode = (_s1_runtime().get("exec") or "").strip()
+    if mode in ("binance", "bybit", "scan_only"):
+        return mode
+    try:
+        import strategy2_live as S2L
+        if S2L.s1_bot_running():
+            return "binance"          # holding the lock means Binance, always
+    except Exception:  # noqa: BLE001
+        pass
+    # No lock → a companion. Which kind is whatever run_all.sh read at launch;
+    # an .env edited since is itself flagged by the restart-needed check.
+    import config as _config
+    mirror = (_config.read_env_var("S1_BYBIT_MIRROR", "false") or "false") \
+        .strip().lower() in ("1", "true", "yes", "on")
+    return "bybit" if mirror else "scan_only"
+
+
+# The set of things ACTUALLY placing real orders, across BOTH accounts.
+#
+# Deliberately NOT _live_strategy_state(). That function answers the admin
+# SWITCHER's question — S1 or S2, on the Binance account — and answering "none"
+# is correct there when neither is armed. /health was printing that answer under
+# the heading "live engine", so with STRATEGY3_LIVE=true and the S1 Bybit mirror
+# on, the page said "no live engine detected" directly above a process list that
+# marked S1 LIVE and S3 "LIVE on BYBIT". Two contradictory claims, both wrong:
+# the real answer is that S3 and S1-via-mirror are both trading, on Bybit, and
+# Binance is not being traded at all.
+def _live_engines(running: set = None) -> list:
+    """[{key, name, venue}] — every engine placing real orders right now.
+    `running` is the set of process keys known to be alive (from /health's own
+    ps pass); a configured-but-dead engine trades nothing."""
+    out = []
+    running = running if running is not None else set()
+
+    if "s2" in running and _scanner_live_engine():
+        out.append({"key": "s2", "name": S2_ENGINE_NAME, "venue": "Binance"})
+
+    if "bot" in running:
+        import backtest as BT
+        mode = _s1_mode()
+        name = (BT.STRATEGIES.get(_s1_runtime().get("strategy")) or
+                BT.STRATEGIES.get("default") or {}).get("name") or "Strategy 1"
+        if mode == "binance":
+            out.append({"key": "bot", "name": name, "venue": "Binance"})
+        elif mode == "bybit":
+            try:
+                import s1_bybit_mirror
+                armed = s1_bybit_mirror.enabled()
+            except Exception:  # noqa: BLE001
+                armed = False
+            if armed:
+                out.append({"key": "bot", "name": f"{name} 🪞", "venue": "Bybit"})
+
+    if "s3" in running:
+        try:
+            if strategy3_scanner.mode_string() == "LIVE on BYBIT":
+                out.append({"key": "s3", "name": "Strategy 3 — Vegas Flag Flip",
+                            "venue": "Bybit"})
+        except Exception:  # noqa: BLE001 — /health must never 500 on this
+            pass
+    return out
+
+
 def _live_strategy_state():
     """Saved (.env) vs running live ENGINE for the admin switcher.
 
@@ -2736,12 +2820,21 @@ def build_health():
     s2_is_engine = (_config.read_env_var("STRATEGY2_LIVE", "false") or "false") \
         .strip().lower() in ("1", "true", "yes", "on")
 
+    # The S1 role comes from what the bot process recorded about itself, not
+    # from STRATEGY2_LIVE. Branching on S2 alone had exactly two answers for
+    # three modes, so whenever S3 was the armed engine the page described the
+    # S1 mirror as "LIVE engine — places real orders", which reads as Binance —
+    # the one exchange that mode deliberately never touches.
+    s1_mode = _s1_mode()
+    s1_role = {
+        "scan_only": "scan-only companion — refreshes the dashboard, places NO orders",
+        "bybit": "LIVE on BYBIT via the 🪞 mirror — Binance untouched",
+        "binance": "LIVE engine on Binance — scans hourly and places real orders",
+    }.get(s1_mode, "LIVE engine on Binance — scans hourly and places real orders")
+
     labels = {
         "web": ("Web dashboard", f"serves this site on :{os.getenv('FLASK_PORT', '4000')}"),
-        "bot": ("S1 bot",
-                "scan-only companion — refreshes the dashboard, places NO orders"
-                if s2_is_engine else
-                "LIVE engine — scans hourly and places real orders"),
+        "bot": ("S1 bot", s1_role),
         "s2": ("S2 scanner",
                "LIVE engine — trades TV.pine confluence on 15m"
                if s2_is_engine else
@@ -2754,7 +2847,7 @@ def build_health():
     for key, pattern, entry in _HEALTH_PROCS:
         matches = [p for p in ps if re.search(pattern, p["cmd"])]
         label, role = labels[key]
-        proc = {"key": key, "label": label, "role": role,
+        proc = {"key": key, "label": label, "role": role, "live": False,
                 "running": bool(matches), "pid": None, "uptime_sec": None,
                 "rss_mb": None, "instances": len(matches),
                 "restart_needed": False, "changed_files": []}
@@ -2784,6 +2877,15 @@ def build_health():
                            "text": f"{label} is running OLD code — "
                                    f"{', '.join(proc['changed_files'])} changed after it started.",
                            "fix": "./run_all.sh bg"})
+
+    # Which of them is actually trading. The template used to derive its LIVE
+    # badge by regex-matching the role SENTENCE (/LIVE engine/), so rewording a
+    # human-readable description silently changed what the page claimed about
+    # real money. It is a flag now.
+    live_engines = _live_engines({p["key"] for p in processes if p["running"]})
+    live_keys = {e["key"] for e in live_engines}
+    for p in processes:
+        p["live"] = p["key"] in live_keys
 
     # Scan freshness — S1 writes scan_results.json each sweep, S2 rewrites
     # strategy2_signals.json every ~5 min.
@@ -2868,14 +2970,15 @@ def build_health():
     try:
         st = _live_strategy_state()
         engine = {"saved_name": st["saved_name"], "running_name": st["running_name"],
-                  "diverged": st["diverged"]}
+                  "diverged": st["diverged"], "live": live_engines}
         if st["diverged"]:
             issues.append({"sev": "warn",
                            "text": f"Engine divergence — .env selects \"{st['saved_name']}\" "
                                    f"but \"{st['running_name']}\" is the one trading.",
                            "fix": "./run_all.sh bg"})
     except Exception:  # noqa: BLE001
-        engine = {"saved_name": None, "running_name": None, "diverged": False}
+        engine = {"saved_name": None, "running_name": None, "diverged": False,
+                  "live": live_engines}
 
     overall = "ok"
     for i in issues:

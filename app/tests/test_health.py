@@ -231,3 +231,138 @@ def test_weak_reason_catches_username_derived_passwords():
         assert SP.weak_reason("wolfman", h), f"{pw!r} should be flagged"
     strong = generate_password_hash("k7#pQx2vLm9!Rt", method="pbkdf2:sha256")
     assert SP.weak_reason("wolfman", strong) is None
+
+
+# ── which engine is actually trading ────────────────────────────────────────
+# 2026-08-05: /health printed "no live engine detected" in the hero directly
+# above a process list that badged S1 as LIVE and S3 as "LIVE on BYBIT". Two
+# contradictory claims about real money, and both were wrong. The hero was
+# rendering _live_strategy_state(), which answers the admin SWITCHER's question
+# (S1 or S2, on the Binance account) and rightly says "none" when neither is
+# armed — while the process roles branched on STRATEGY2_LIVE alone, giving two
+# answers for three modes, so an S1 running in Bybit-mirror mode was described
+# as placing real orders on the one exchange it never touches.
+import json as _json
+
+
+def _marker(monkeypatch, tmp_path, payload):
+    import app as APP
+    p = tmp_path / "bot_strategy.json"
+    p.write_text(_json.dumps(payload))
+    monkeypatch.setattr(APP, "_s1_runtime", lambda: _json.loads(p.read_text()))
+
+
+def test_s1_mode_is_read_from_what_the_bot_recorded(monkeypatch, tmp_path):
+    import app as APP
+    for mode in ("binance", "bybit", "scan_only"):
+        _marker(monkeypatch, tmp_path, {"strategy": "default", "exec": mode})
+        assert APP._s1_mode() == mode
+
+
+def test_s1_mode_falls_back_to_the_lock_not_to_binance(monkeypatch):
+    """A marker with no 'exec' predates the field and could be ANY mode.
+    Guessing 'binance' would reprint the exact false claim this replaced; the
+    bot lock is the one unambiguous signal, because SCAN_ONLY and S1_EXEC=bybit
+    both deliberately skip acquiring it."""
+    import app as APP
+    import strategy2_live as S2L
+    monkeypatch.setattr(APP, "_s1_runtime", lambda: {"strategy": "default"})
+    monkeypatch.setattr(S2L, "s1_bot_running", lambda: True)
+    assert APP._s1_mode() == "binance"
+
+    monkeypatch.setattr(S2L, "s1_bot_running", lambda: False)
+    import config as _config
+    monkeypatch.setattr(_config, "read_env_var", lambda k, d=None: "true")
+    assert APP._s1_mode() == "bybit"          # no lock + mirror armed
+    monkeypatch.setattr(_config, "read_env_var", lambda k, d=None: "false")
+    assert APP._s1_mode() == "scan_only"      # no lock, no mirror
+
+
+def test_a_dead_process_is_never_counted_as_trading(monkeypatch):
+    import app as APP
+    monkeypatch.setattr(APP, "_s1_mode", lambda: "binance")
+    monkeypatch.setattr(APP, "_scanner_live_engine", lambda: True)
+    assert APP._live_engines(set()) == []
+
+
+def test_s1_in_mirror_mode_reports_bybit_never_binance(monkeypatch):
+    import app as APP
+    import s1_bybit_mirror
+    monkeypatch.setattr(APP, "_s1_mode", lambda: "bybit")
+    monkeypatch.setattr(APP, "_s1_runtime", lambda: {"strategy": "default"})
+    monkeypatch.setattr(s1_bybit_mirror, "enabled", lambda: True)
+    got = APP._live_engines({"bot"})
+    assert [e["venue"] for e in got] == ["Bybit"]
+    assert "🪞" in got[0]["name"]
+
+
+def test_mirror_mode_with_the_mirror_off_is_trading_nothing(monkeypatch):
+    """S1_EXEC=bybit halts Binance. With the mirror disabled on top of that,
+    the lifecycle runs but no order reaches any exchange — claiming it is live
+    would be the same class of error in the other direction."""
+    import app as APP
+    import s1_bybit_mirror
+    monkeypatch.setattr(APP, "_s1_mode", lambda: "bybit")
+    monkeypatch.setattr(s1_bybit_mirror, "enabled", lambda: False)
+    assert APP._live_engines({"bot"}) == []
+
+
+def test_scan_only_companion_is_never_live(monkeypatch):
+    import app as APP
+    monkeypatch.setattr(APP, "_s1_mode", lambda: "scan_only")
+    assert APP._live_engines({"bot"}) == []
+
+
+def test_s3_counts_only_when_it_is_actually_armed(monkeypatch):
+    import app as APP
+    import strategy3_scanner as S3
+    monkeypatch.setattr(APP, "_s1_mode", lambda: "scan_only")
+    monkeypatch.setattr(S3, "mode_string", lambda: "LIVE on BYBIT")
+    assert [e["key"] for e in APP._live_engines({"s3"})] == ["s3"]
+    monkeypatch.setattr(S3, "mode_string", lambda: "ALERT-ONLY (STRATEGY3_LIVE=false)")
+    assert APP._live_engines({"s3"}) == []
+
+
+def test_the_regression_two_bybit_engines_are_both_reported(monkeypatch):
+    """The exact live configuration that produced the contradiction:
+    STRATEGY3_LIVE=true with the S1 Bybit mirror on. Both are trading, both on
+    Bybit, and Binance is being traded by nothing."""
+    import app as APP
+    import s1_bybit_mirror
+    import strategy3_scanner as S3
+    monkeypatch.setattr(APP, "_s1_mode", lambda: "bybit")
+    monkeypatch.setattr(APP, "_s1_runtime", lambda: {"strategy": "default"})
+    monkeypatch.setattr(s1_bybit_mirror, "enabled", lambda: True)
+    monkeypatch.setattr(S3, "mode_string", lambda: "LIVE on BYBIT")
+    monkeypatch.setattr(APP, "_scanner_live_engine", lambda: False)
+    got = APP._live_engines({"bot", "s2", "s3"})
+    assert {e["key"] for e in got} == {"bot", "s3"}
+    assert {e["venue"] for e in got} == {"Bybit"}
+
+
+def test_the_page_never_contradicts_itself_about_live_money():
+    """The whole point: a process badged LIVE and a hero saying nothing is
+    trading cannot both be on the page."""
+    import app as APP
+    with APP.app.test_request_context("/health"):
+        h = APP.build_health()
+    badged = {p["key"] for p in h["processes"] if p["live"]}
+    hero = {e["key"] for e in (h["engine"].get("live") or [])}
+    assert badged == hero
+    for p in h["processes"]:
+        assert not (p["live"] and not p["running"]), f"{p['key']} live but not running"
+
+
+def test_the_s1_role_names_its_exchange(monkeypatch):
+    """'places real orders' with no venue reads as Binance."""
+    import app as APP
+    for mode, must in (("bybit", "BYBIT"), ("binance", "Binance")):
+        monkeypatch.setattr(APP, "_s1_mode", lambda m=mode: m)
+        with APP.app.test_request_context("/health"):
+            role = next(p["role"] for p in APP.build_health()["processes"]
+                        if p["key"] == "bot")
+        assert must in role, f"{mode}: {role!r} does not say where it trades"
+    monkeypatch.setattr(APP, "_s1_mode", lambda: "scan_only")
+    with APP.app.test_request_context("/health"):
+        role = next(p["role"] for p in APP.build_health()["processes"] if p["key"] == "bot")
+    assert "NO orders" in role

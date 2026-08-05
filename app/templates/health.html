@@ -80,6 +80,10 @@
         .hero-big.warn { color: var(--amber); }
         .hero-big.down { color: var(--bad); }
         .hero-sub { font-size: .74rem; color: var(--muted); }
+        .hero-sub .venue {
+            font-size: .64rem; font-weight: 800; letter-spacing: .04em; text-transform: uppercase;
+            border: 1px solid var(--border); border-radius: 6px; padding: 1px 5px; margin-left: 2px;
+        }
         .issues { margin-top: 12px; display: flex; flex-direction: column; gap: 8px; }
         .issue {
             display: flex; align-items: baseline; gap: 9px; flex-wrap: wrap;
@@ -257,10 +261,16 @@ function render(h) {
     big.textContent = h.overall === 'ok' ? '✓ ALL SYSTEMS GO'
                     : h.overall === 'warn' ? '⚠ NEEDS ATTENTION'
                     : '⛔ SOMETHING IS DOWN';
+    // Every engine placing real orders, with its exchange. Naming the venue is
+    // the point: S1 in mirror mode and S3 both trade Bybit while Binance sits
+    // untouched, and "live engine: Strategy 1" alone reads as Binance.
     const eng = h.engine || {};
-    document.getElementById('heroSub').innerHTML = eng.running_name
-        ? 'live engine: <b>' + esc(eng.running_name) + '</b>'
-        : 'no live engine detected';
+    const live = eng.live || [];
+    document.getElementById('heroSub').innerHTML = live.length
+        ? 'trading now: ' + live.map(e =>
+              '<b>' + esc(e.name) + '</b> <span class="venue">' + esc(e.venue) + '</span>'
+          ).join(' · ')
+        : 'nothing is placing orders right now';
     const box = document.getElementById('issueBox');
     if (h.issues && h.issues.length) {
         box.innerHTML = '<div class="issues">' + h.issues.map(i =>
@@ -291,7 +301,7 @@ function render(h) {
         if (!p.running) badges.push('<span class="pbadge stopped">STOPPED</span>');
         if (p.instances > 1) badges.push('<span class="pbadge dup">' + p.instances + ' COPIES</span>');
         if (p.restart_needed) badges.push('<span class="pbadge restart">⟳ RESTART PENDING</span>');
-        if (p.running && /LIVE engine/.test(p.role)) badges.push('<span class="pbadge live">LIVE</span>');
+        if (p.live) badges.push('<span class="pbadge live">LIVE</span>');
         const stats = p.running
             ? 'pid <b class="num">' + p.pid + '</b> · up <b>' + fmtUp(p.uptime_sec) + '</b> · <b>' + (p.rss_mb != null ? p.rss_mb + ' MB' : '—') + '</b> RAM'
             : 'not found in process list';
