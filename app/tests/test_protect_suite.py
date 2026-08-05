@@ -427,9 +427,12 @@ def test_dns_failure_is_not_an_outage(monkeypatch):
 
 
 def test_the_public_alert_carries_the_right_fix(monkeypatch, tmp_path):
+    """With self-repair off (or spent), the message must name the command that
+    actually fixes THIS fault — ./run_all.sh bg restarts the wrong thing."""
     monkeypatch.setattr(W, "STATE_FILE", str(tmp_path / "wd.json"))
     monkeypatch.setattr(W, "WATCH_TUNNEL", False)
     monkeypatch.setattr(W, "WATCH_PUBLIC", True)
+    monkeypatch.setattr(W, "PUBLIC_AUTOFIX", False)
     monkeypatch.setattr(W, "_ps", lambda: "\n".join(
         f"python -u {s}" for s in W.EXPECTED))
     monkeypatch.setattr(W, "public_host", lambda: "host.test")
@@ -473,3 +476,93 @@ def test_a_measurable_outage_still_beats_an_unmeasurable_one(monkeypatch, tmp_pa
     import telegram_utils
     monkeypatch.setattr(telegram_utils, "send_message", lambda msg, **k: True)
     assert W.PUBLIC_KEY not in W.tick("strategy2_scanner.py")
+
+
+# ── the public URL repairs itself ───────────────────────────────────────────
+# 2026-08-05: the Funnel registration went stale three times in one evening —
+# `funnel status` said "Funnel on" every time, cert valid, node online, Mac
+# awake, nothing of ours touching tailscale. ./tailscale.sh rearm cured it each
+# time. A fault detected every 5 minutes with a remedy known to work should not
+# be waiting on a human to read a Telegram message.
+def test_autofix_is_capped_per_hour(monkeypatch):
+    """If rearm is not curing it, the fault is something else — and running it
+    forever would bury that fact under its own noise."""
+    monkeypatch.setattr(W, "PUBLIC_AUTOFIX", True)
+    monkeypatch.setattr(W, "PUBLIC_AUTOFIX_MAX", 3)
+    now = 1_000_000.0
+    assert W.autofix_allowed([], now) is True
+    assert W.autofix_allowed([now - 10, now - 20], now) is True
+    assert W.autofix_allowed([now - 10, now - 20, now - 30], now) is False
+    # attempts from a previous hour do not count against this one
+    old = [now - 4000, now - 5000, now - 6000]
+    assert W.autofix_allowed(old, now) is True
+    assert W.prune_attempts(old, now) == []
+
+
+def test_autofix_can_be_turned_off(monkeypatch):
+    monkeypatch.setattr(W, "PUBLIC_AUTOFIX", False)
+    assert W.autofix_allowed([], 1_000_000.0) is False
+
+
+def test_autofix_spawns_rearm_detached(monkeypatch):
+    """A restart of the stack mid-repair must not kill the repair."""
+    seen = {}
+    monkeypatch.setattr(W.subprocess, "Popen", lambda *a, **k: None)
+    W.run_autofix(spawn=lambda argv, **kw: seen.update(argv=argv, kw=kw))
+    assert seen["argv"][1].endswith("tailscale.sh")
+    assert seen["argv"][2] == "rearm"
+    assert seen["kw"]["start_new_session"] is True
+
+
+def test_a_down_url_triggers_the_repair_before_the_alert(monkeypatch, tmp_path):
+    monkeypatch.setattr(W, "STATE_FILE", str(tmp_path / "wd.json"))
+    monkeypatch.setattr(W, "WATCH_TUNNEL", False)
+    monkeypatch.setattr(W, "WATCH_PUBLIC", True)
+    monkeypatch.setattr(W, "WATCH_STALE", False)
+    monkeypatch.setattr(W, "PUBLIC_AUTOFIX", True)
+    monkeypatch.setattr(W, "_ps", lambda: "\n".join(f"python -u {s}" for s in W.EXPECTED))
+    monkeypatch.setattr(W, "public_host", lambda: "host.test")
+    monkeypatch.setattr(W, "public_ips", lambda h: ["1.1.1.1", "2.2.2.2"])
+    monkeypatch.setattr(W, "public_status",
+                        lambda h=None, i=None: {"ok": [], "bad": ["1.1.1.1", "2.2.2.2"]})
+    fired = []
+    monkeypatch.setattr(W, "run_autofix", lambda: fired.append(1) or True)
+    import telegram_utils
+    sent = []
+    monkeypatch.setattr(telegram_utils, "send_message",
+                        lambda msg, **k: sent.append(msg) or True)
+
+    W.tick("strategy2_scanner.py")
+    assert len(fired) == 1, "the repair must run, not just be recommended"
+    # A command printed while it is already executing invites a second copy.
+    assert "自動重新註冊" in sent[0]
+    assert "./tailscale.sh rearm" not in sent[0]
+    import json
+    assert len(json.loads((tmp_path / "wd.json").read_text())["public_fix"]) == 1
+
+
+def test_a_healthy_url_never_triggers_a_repair(monkeypatch, tmp_path):
+    monkeypatch.setattr(W, "STATE_FILE", str(tmp_path / "wd.json"))
+    monkeypatch.setattr(W, "WATCH_TUNNEL", False)
+    monkeypatch.setattr(W, "WATCH_PUBLIC", True)
+    monkeypatch.setattr(W, "WATCH_STALE", False)
+    monkeypatch.setattr(W, "_ps", lambda: "\n".join(f"python -u {s}" for s in W.EXPECTED))
+    monkeypatch.setattr(W, "public_host", lambda: "host.test")
+    monkeypatch.setattr(W, "public_ips", lambda h: ["1.1.1.1"])
+    monkeypatch.setattr(W, "public_status", lambda h=None, i=None: {"ok": ["1.1.1.1"], "bad": []})
+    monkeypatch.setattr(W, "run_autofix", lambda: (_ for _ in ()).throw(
+        AssertionError("repaired a URL that was working")))
+    import telegram_utils
+    monkeypatch.setattr(telegram_utils, "send_message", lambda msg, **k: True)
+    assert W.PUBLIC_KEY not in W.tick("strategy2_scanner.py")
+
+
+def test_two_scanners_writing_state_do_not_collide(tmp_path, monkeypatch):
+    """Both scanners call tick(). They shared one '<state>.tmp' path, so the
+    loser of the race died on ENOENT and abandoned the rest of its watchdog
+    pass — an alert could be skipped on a coin flip. Twice in the S2 log."""
+    monkeypatch.setattr(W, "STATE_FILE", str(tmp_path / "wd.json"))
+    W._save_state({"a": 1})
+    assert W._load_state() == {"a": 1}
+    leftovers = [p.name for p in tmp_path.iterdir() if p.name.endswith(".tmp")]
+    assert leftovers == [], f"temp files left behind: {leftovers}"

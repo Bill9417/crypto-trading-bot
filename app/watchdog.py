@@ -53,6 +53,27 @@ PUBLIC_LABEL = "對外網址（Tailscale Funnel）"
 # so the public URL went from intermittently down to fully down. An alert that
 # can be half-followed is an alert that can make things worse.
 PUBLIC_FIX = "./tailscale.sh rearm"
+# ── and then run that fix ourselves ─────────────────────────────────────────
+# 2026-08-05: the Funnel registration went stale THREE times in one evening.
+# Each time `tailscale funnel status` said "Funnel on", the cert was valid, the
+# node was online, the Mac was awake (sleep is pinned by caffeinate) and no
+# process of ours touches tailscale — the ingress simply stopped forwarding.
+# `./tailscale.sh rearm` cured it every time. A fault we can detect every five
+# minutes, with a remedy known to work, should not be waiting on a human to
+# read a message: telling the owner their public site is down is worth much
+# less than the site not being down.
+#
+# Spawned DETACHED rather than run inline: rearm takes up to a minute waiting
+# on relays, and tick() is called from inside a scanner sweep — blocking there
+# would delay signal detection to fix a web page. The next tick (5 min) sees
+# the result and the existing recovery path announces it.
+PUBLIC_AUTOFIX = os.getenv("PUBLIC_AUTOFIX", "true").strip().lower() \
+    in ("1", "true", "yes")
+# Capped per hour. If rearm is not curing it, the fault is something else and
+# re-running it forever would bury that fact under its own noise.
+PUBLIC_AUTOFIX_MAX = int(os.getenv("PUBLIC_AUTOFIX_MAX", "4"))
+PUBLIC_AUTOFIX_WINDOW_SEC = 3600
+REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 WATCH_PUBLIC = os.getenv("WATCHDOG_WATCH_PUBLIC", "true").strip().lower() \
     in ("1", "true", "yes")
 PUBLIC_PATH = os.getenv("WATCHDOG_PUBLIC_PATH", "/welcome")
@@ -267,25 +288,74 @@ def stale_tick(state: dict, now: float) -> str:
     return f"stale notice sent ({len(entries)} process(es))"
 
 
-def public_alert_text(pub: dict, fix: str) -> str:
+def autofix_allowed(attempts: list, now: float) -> bool:
+    """True while we are still inside this hour's repair budget."""
+    if not PUBLIC_AUTOFIX:
+        return False
+    recent = [t for t in attempts if now - t < PUBLIC_AUTOFIX_WINDOW_SEC]
+    return len(recent) < PUBLIC_AUTOFIX_MAX
+
+
+def prune_attempts(attempts: list, now: float) -> list:
+    return [t for t in attempts if now - t < PUBLIC_AUTOFIX_WINDOW_SEC]
+
+
+def run_autofix(spawn=None) -> bool:
+    """Fire ./tailscale.sh rearm and return immediately. start_new_session so
+    it is not tied to the scanner's process group — a restart of the stack
+    mid-repair must not kill the repair."""
+    script = os.path.join(REPO_ROOT, "tailscale.sh")
+    if not os.path.isfile(script):
+        print(f"[watchdog] autofix skipped — {script} not found")
+        return False
+    # The repair must not depend on being able to LOG the repair. A missing or
+    # unwritable logs/ directory used to abort it entirely — which would leave
+    # the public URL dead indefinitely, with the explanation sitting in the one
+    # file that could not be opened. Same shape as the auto-heal agent that
+    # failed silently for 16 days. Log if we can, run either way.
+    log = subprocess.DEVNULL
+    try:
+        os.makedirs(LOG_DIR, exist_ok=True)
+        log = open(os.path.join(LOG_DIR, "tailscale_autofix.log"), "a")  # noqa: SIM115
+    except OSError as exc:
+        print(f"[watchdog] autofix log unavailable ({exc}) — running anyway")
+    try:
+        runner = spawn or subprocess.Popen
+        runner(["/bin/bash", script, "rearm"], cwd=REPO_ROOT,
+               stdout=log, stderr=subprocess.STDOUT,
+               stdin=subprocess.DEVNULL, start_new_session=True)
+        return True
+    except Exception as exc:  # noqa: BLE001 — a failed repair must not kill the sweep
+        print(f"[watchdog] autofix failed to start: {exc}")
+        return False
+
+
+def public_alert_text(pub: dict, fix: str, *, fixing: bool = False,
+                      attempts: int = 0) -> str:
     """A half-broken public URL and a dead one need different words.
 
     "已停止運行" for a partial outage would send the owner looking for a dead
     process while the site is up — and, worse, they would load it, get served
     by the working relay, see it fine and conclude the alert was noise. Say the
-    share of visits that fail instead."""
+    share of visits that fail instead.
+
+    When the repair is already running, the message says so and does NOT print
+    a command: handing someone a fix that is executing right now invites them
+    to run a second copy of it."""
     bad, ok = pub["bad"], pub["ok"]
     total = len(bad) + len(ok)
+    tail = (f"🔧 已自動重新註冊（今天第 {attempts} 次），約 1 分鐘後生效，"
+            f"好了會再通知你。" if fixing else f"修復:  {fix}")
     if ok:
         pct = round(100 * len(bad) / total)
         return (f"⚠️ 看門狗: {PUBLIC_LABEL} 只有一半在服務\n"
                 f"{len(bad)}/{total} 個中繼沒有回應 ({'、'.join(bad)})。\n"
                 f"瀏覽器會自己挑一個，所以大約 {pct}% 的連線會出現「無法建立安全連線」。\n"
                 f"你自己開可能是好的 — 那只代表你剛好挑到活的那個。\n"
-                f"修復:  {fix}")
+                f"{tail}")
     return (f"🚨 看門狗: {PUBLIC_LABEL} 完全連不上\n"
             f"{total} 個中繼都沒有回應。對外的網頁和 LINE webhook 現在都是斷的。\n"
-            f"修復:  {fix}")
+            f"{tail}")
 
 
 def tunnel_running(ps_output: str) -> bool:
@@ -340,6 +410,19 @@ def tick(self_name: str) -> list:
     last_alert = state.get("last_alert") or {}
     was_down = set(state.get("down") or [])
 
+    # Repair BEFORE alerting, so the message can say a fix is already running
+    # instead of handing the owner a command we were about to run anyway.
+    # Attempted on every tick the URL is down (not on the 1h alert cadence) —
+    # five minutes of downtime is the target, not an hour.
+    attempts = prune_attempts(state.get("public_fix") or [], now)
+    fixing = False
+    if PUBLIC_KEY in down and autofix_allowed(attempts, now):
+        fixing = run_autofix()
+        if fixing:
+            attempts.append(now)
+            print(f"[watchdog] public URL down — auto-rearm #{len(attempts)} started")
+    state["public_fix"] = attempts
+
     def _label(name):
         return EXPECTED.get(name, PUBLIC_LABEL if name == PUBLIC_KEY else TUNNEL_LABEL)
 
@@ -354,7 +437,8 @@ def tick(self_name: str) -> list:
             # instruction only the owner can act on, and it advertises the
             # stack to everyone who joined via the invite link.
             telegram_utils.send_message(
-                public_alert_text(pub, fix) if name == PUBLIC_KEY and pub else
+                public_alert_text(pub, fix, fixing=fixing, attempts=len(attempts))
+                if name == PUBLIC_KEY and pub else
                 f"🚨 看門狗: {name} ({_label(name)}) 已停止運行!\n重啟:  {fix}",
                 force=True, channel="private")
             print(f"[watchdog] ALERT: {name} is down")
