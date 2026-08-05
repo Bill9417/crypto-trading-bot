@@ -310,6 +310,54 @@ def mark_hit(code: str, setup_date: str, kind: str, date: str, hhmm: str) -> Non
         _save_state(state)
 
 
+def _ysym(code: str) -> str:
+    """TWSE code → Yahoo symbol. OTC names live on .TWO, listed ones on .TW."""
+    return f"{code}.TWO" if code in _TW_OTC else f"{code}.TW"
+
+
+def reconcile_setup(rec: dict, rows: list) -> dict:
+    """Settle one tracked setup against its own DAILY bars. Returns the record.
+
+    tw_intraday only stamps a level it watched cross live, so anything that
+    happened while it was not polling was never recorded: 2382 廣達 first traded
+    below its 344.5 stop on 2026-07-17 and sat below it on 14 of the next 17
+    sessions, still showing 未觸發 three weeks later. An unrecorded stop-out is
+    not a cosmetic problem — the weekly scorecard counts it as open instead of
+    as the loss it was, so the win rate it reports is not the strategy's.
+
+    Stop first when both levels trade in the same session: the backtest resolves
+    it that way, and a tracker that resolves it the other way would report a
+    better record than the rules can actually produce.
+
+    Sessions are counted from the DATA, not from the calendar, so the hold
+    matches MAX_HOLD as backtested rather than a weekday guess."""
+    if rec.get("hit"):
+        return rec
+    try:
+        d0 = datetime.strptime(rec["date"], "%Y-%m-%d").date()
+    except (ValueError, KeyError, TypeError):
+        return rec
+    sl, tp = rec.get("sl"), rec.get("tp")
+    held = 0
+    for (t, o, h, l, c, v) in rows or []:
+        d = datetime.fromtimestamp(t, TZ).date()
+        if d <= d0:
+            continue                     # entry is the NEXT session's open
+        held += 1
+        ds = d.strftime("%Y-%m-%d")
+        if sl and l <= sl:
+            rec["hit"] = {"kind": "sl", "date": ds, "time": "—"}
+            return rec
+        if tp and h >= tp:
+            rec["hit"] = {"kind": "tp", "date": ds, "time": "—"}
+            return rec
+        if held >= MAX_HOLD:
+            rec["hit"] = {"kind": "timeout", "date": ds, "time": "—"}
+            return rec
+    rec["held"] = held
+    return rec
+
+
 def _due(state: dict, now) -> bool:
     """One send per TWSE trading day, after the close is final."""
     if now.weekday() >= 5 or now.hour < SEND_HOUR:
@@ -552,7 +600,7 @@ def tick() -> bool:
     setups, blocked, skipped, failures = [], 0, 0, 0
     for code, name_en in TW50:
         try:
-            rows = _yahoo_daily(f"{code}.TWO" if code in _TW_OTC else f"{code}.TW")
+            rows = _yahoo_daily(_ysym(code))
             s = setup_breakout(rows) or setup(rows)   # prefer the momentum breakout
         except Exception:  # noqa: BLE001 — one dead symbol must not kill the scan
             failures += 1
@@ -599,8 +647,37 @@ def tick() -> bool:
                         if (cutoff - datetime.strptime(d, "%Y-%m-%d").date()).days <= 60}
     # Structured copy of today's setups for the intraday watcher (tw_intraday
     # alerts when price hits a setup's SL/TP during the session).
-    active = [s for s in (state.get("active_setups") or [])
-              if (cutoff - datetime.strptime(s["date"], "%Y-%m-%d").date()).days <= 30]
+    # Settle yesterday's trackers against their own daily bars before deciding
+    # what to keep. Two things were wrong here:
+    #   • a setup was retired after 30 CALENDAR days while the backtest holds
+    #     MAX_HOLD=40 TRADING sessions (~56 calendar days) — live abandoned
+    #     trades ~26 days before the rules say to, so the tracked record could
+    #     not match the backtest that justifies the rules;
+    #   • a setup that had already hit its stop stayed on the board for the
+    #     rest of that window, because nothing dropped it once resolved.
+    # reconcile_setup now stamps sl/tp/timeout from the daily bars, resolved
+    # rows are shown once more and then dropped, and the hold is counted in
+    # sessions.
+    active = []
+    for s in (state.get("active_setups") or []):
+        try:
+            age_d = (cutoff - datetime.strptime(s["date"], "%Y-%m-%d").date()).days
+        except (ValueError, KeyError, TypeError):
+            continue
+        if age_d > MAX_HOLD * 2:          # far past any possible session count
+            continue
+        if not s.get("hit"):
+            try:
+                s = reconcile_setup(s, _yahoo_daily(_ysym(s["code"])))
+            except Exception:  # noqa: BLE001 — a quote blip must not drop a setup
+                pass
+        hit = s.get("hit") or {}
+        if hit:
+            # keep it one more digest so the outcome is visible, then let it go
+            if hit.get("shown"):
+                continue
+            hit["shown"] = True
+        active.append(s)
     active += [{"code": code, "name": name, "date": today,
                 "ref": s["ref"], "sl": s["sl"], "tp": s["tp"],
                 "strategy": s.get("kind", "pullback"),

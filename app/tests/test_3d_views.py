@@ -275,11 +275,16 @@ def test_the_exchange_bankruptcy_price_is_never_plotted(monkeypatch):
     their own minute, never from the figure the exchange sent. This pins the
     thing that must stay true: an absurd bankruptcy price must not move the
     map. They also count as derived, not as fills."""
-    now = time.time() * 1000
-    minute = int(now) // 60000 * 60000
+    # The bucket comes from the EVENT's timestamp, not from now(): with
+    # ts = now - 1000 and the bucket taken from now, a run starting in the
+    # first second of a minute put the event in the PREVIOUS minute, which the
+    # stub has no candle for — so it was dropped and this failed roughly one
+    # run in sixty.
+    ts = time.time() * 1000 - 1000
+    minute = int(ts) // 60000 * 60000
     monkeypatch.setattr(APP, "_minute_closes", lambda base: {minute: 63000.0})
-    evs = [{"sym": "BTC", "ts": now - 1000, "px": None, "usd": 9999.0, "side": "long", "ex": "Bybit"},
-           {"sym": "BTC", "ts": now - 1000, "px": 0, "usd": 8888.0, "side": "short", "ex": "OKX"}]
+    evs = [{"sym": "BTC", "ts": ts, "px": None, "usd": 9999.0, "side": "long", "ex": "Bybit"},
+           {"sym": "BTC", "ts": ts, "px": 0, "usd": 8888.0, "side": "short", "ex": "OKX"}]
     d = _levels(monkeypatch, evs, price=63000.0)
     assert d["n_est"] == 2 and d["n_fill"] == 0
     # the whole ladder hugs spot (a +/-3% band), nowhere near a bankruptcy figure

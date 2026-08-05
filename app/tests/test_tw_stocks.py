@@ -590,3 +590,81 @@ def test_biz_days_since_counts_weekdays_only():
     assert tw_stocks._biz_days_since("2026-07-17", mon) == 1   # Fri→Mon = 1 biz day
     assert tw_stocks._biz_days_since("2026-07-13", mon) == 5   # prior Mon→Mon
     assert tw_stocks._biz_days_since("garbage", mon) == 0      # unparseable → 0
+
+
+# ── settling tracked setups against their own daily bars ────────────────────
+# tw_intraday only stamps a level it watched cross LIVE, so anything that
+# happened while it was not polling was never recorded: 2382 廣達 first traded
+# below its 344.5 stop on 2026-07-17 and sat below it on 14 of the next 17
+# sessions, still showing 未觸發 three weeks later. The weekly scorecard counted
+# that stop-out as an open trade, so the win rate it reported was not the
+# strategy's.
+def _daily(prices, start_ts=1_784_000_000):
+    """[(ts,o,h,l,c,v)] from (high, low) pairs, one per session."""
+    return [(start_ts + i * 86400, l, h, l, c if (c := (h + l) / 2) else h, 1000)
+            for i, (h, l) in enumerate(prices)]
+
+
+def _rec(**kw):
+    base = {"code": "2382", "date": "2026-07-14", "ref": 380.0,
+            "sl": 344.5, "tp": 439.1}
+    base.update(kw)
+    return base
+
+
+def _rows_from(day0, pairs):
+    import datetime as dt
+    d = dt.datetime.strptime(day0, "%Y-%m-%d").replace(tzinfo=tw_stocks.TZ)
+    return [(int((d + dt.timedelta(days=i + 1)).timestamp()), l, h, l, (h + l) / 2, 1000)
+            for i, (h, l) in enumerate(pairs)]
+
+
+def test_a_missed_stop_is_settled_from_the_daily_bars():
+    rec = tw_stocks.reconcile_setup(_rec(), _rows_from("2026-07-14", [(390, 370), (360, 324.5)]))
+    assert rec["hit"]["kind"] == "sl" and rec["hit"]["date"] == "2026-07-16"
+
+
+def test_a_target_is_settled_too():
+    rec = tw_stocks.reconcile_setup(_rec(), _rows_from("2026-07-14", [(400, 380), (445, 430)]))
+    assert rec["hit"]["kind"] == "tp"
+
+
+def test_the_stop_wins_when_both_trade_in_one_session():
+    """The backtest resolves it stop-first. A tracker that resolved it the
+    other way would report a record the rules cannot produce."""
+    rec = tw_stocks.reconcile_setup(_rec(), _rows_from("2026-07-14", [(445, 320)]))
+    assert rec["hit"]["kind"] == "sl"
+
+
+def test_the_entry_session_itself_cannot_resolve_it():
+    """Entry is the NEXT session's open, so the signal bar is not a hold day."""
+    rec = tw_stocks.reconcile_setup(_rec(), [(int(tw_stocks.datetime.strptime(
+        "2026-07-14", "%Y-%m-%d").replace(tzinfo=tw_stocks.TZ).timestamp()), 380, 500, 300, 400, 1)])
+    assert not rec.get("hit")
+
+
+def test_the_hold_is_counted_in_sessions_not_calendar_days():
+    """MAX_HOLD is 40 TRADING sessions ≈ 56 calendar days. Retiring on 30
+    calendar days abandoned trades ~26 days before the rules say to, so the
+    tracked record could not match the backtest that justifies the rules."""
+    quiet = [(400, 390)] * (tw_stocks.MAX_HOLD + 5)
+    rec = tw_stocks.reconcile_setup(_rec(), _rows_from("2026-07-14", quiet))
+    assert rec["hit"]["kind"] == "timeout"
+
+
+def test_an_open_setup_is_left_alone_and_counted():
+    rec = tw_stocks.reconcile_setup(_rec(), _rows_from("2026-07-14", [(400, 390)] * 3))
+    assert not rec.get("hit") and rec["held"] == 3
+
+
+def test_an_already_stamped_setup_is_not_re_settled():
+    """An intraday stamp carries the real touch TIME; a daily re-read would
+    overwrite it with '—'."""
+    rec = _rec(hit={"kind": "sl", "date": "2026-07-17", "time": "09:59"})
+    out = tw_stocks.reconcile_setup(rec, _rows_from("2026-07-14", [(445, 300)]))
+    assert out["hit"]["time"] == "09:59"
+
+
+def test_a_junk_date_does_not_crash_the_scan():
+    assert not tw_stocks.reconcile_setup(_rec(date="not-a-date"), []).get("hit")
+    assert not tw_stocks.reconcile_setup({"code": "X"}, []).get("hit")
