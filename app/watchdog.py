@@ -33,6 +33,26 @@ TUNNEL_FIX = "./tunnel.sh start"
 # public URL again.
 WATCH_TUNNEL = os.getenv("WATCHDOG_WATCH_TUNNEL", "false").strip().lower() \
     in ("1", "true", "yes")
+
+# ── the public URL, checked the only way that tells the truth ────────────────
+# 2026-08-05: the Tailscale Funnel was registered, the ACL granted funnel, the
+# HTTPS cert was valid and `tailscale funnel status` said "Funnel on" — and the
+# public relays served nothing. LINE could not reach its webhook, so every 指令
+# silently did nothing and the Quick Reply buttons never came back; /tw, /us and
+# /welcome were dead for everyone off the tailnet. Nothing noticed, because the
+# process watchdog only watches processes.
+#
+# It must NOT be checked over localhost or by hostname. MagicDNS resolves
+# *.ts.net to the 100.x tailnet address from this Mac, so both answer 200 while
+# the public path is down — which is exactly why a browser here looked fine.
+# Public DNS gives the relay IPs; each is forced with --resolve.
+PUBLIC_KEY = "public_url"
+PUBLIC_LABEL = "對外網址（Tailscale Funnel）"
+PUBLIC_FIX = "./tailscale.sh off && ./tailscale.sh on"
+WATCH_PUBLIC = os.getenv("WATCHDOG_WATCH_PUBLIC", "true").strip().lower() \
+    in ("1", "true", "yes")
+PUBLIC_PATH = os.getenv("WATCHDOG_PUBLIC_PATH", "/welcome")
+PUBLIC_TIMEOUT = float(os.getenv("WATCHDOG_PUBLIC_TIMEOUT", "15"))
 STATE_FILE = os.path.join(os.path.dirname(__file__), "watchdog_state.json")
 CHECK_SEC = 300
 ALERT_COOLDOWN_SEC = 3600
@@ -101,6 +121,54 @@ def missing(running: set, expected=None) -> list:
     return sorted(n for n in expected if n not in running)
 
 
+def public_host() -> str:
+    """Hostname of the public URL, or '' when none is configured."""
+    import config
+    base = (os.getenv("PUBLIC_BASE_URL")
+            or getattr(config, "PUBLIC_BASE_URL", "") or "").strip()
+    return base.split("://")[-1].split("/")[0] if base else ""
+
+
+def public_ips(host: str) -> list:
+    """Relay IPs from PUBLIC DNS. The system resolver returns the 100.x tailnet
+    address on this machine, which is the whole reason a local check lies."""
+    try:
+        out = subprocess.run(["dig", "+short", "@1.1.1.1", host],
+                             capture_output=True, text=True, timeout=10).stdout
+    except Exception:  # noqa: BLE001
+        return []
+    return [l.strip() for l in out.splitlines()
+            if l.strip() and l.strip()[0].isdigit()][:3]
+
+
+def public_reachable(host: str = None, ips: list = None) -> bool:
+    """True when at least one public relay serves the site.
+
+    One relay answering is enough — Tailscale publishes several and a single
+    dead one is not an outage. Unknown (no host, no DNS, no curl) returns True:
+    a watchdog that alerts because it could not measure is worse than useless.
+    """
+    host = public_host() if host is None else host
+    if not host:
+        return True
+    ips = public_ips(host) if ips is None else ips
+    if not ips:
+        return True
+    for ip in ips:
+        try:
+            r = subprocess.run(
+                ["curl", "-s", "-o", "/dev/null", "-w", "%{http_code}",
+                 "--max-time", str(int(PUBLIC_TIMEOUT)),
+                 "--resolve", f"{host}:443:{ip}",
+                 f"https://{host}{PUBLIC_PATH}"],
+                capture_output=True, text=True, timeout=PUBLIC_TIMEOUT + 5)
+            if r.stdout.strip().startswith("2"):
+                return True
+        except Exception:  # noqa: BLE001 — try the next relay
+            continue
+    return False
+
+
 def tunnel_running(ps_output: str) -> bool:
     """Is the cloudflared quick-tunnel process alive? Its command line doesn't
     end in a bare script name like the EXPECTED python scripts (it's
@@ -136,6 +204,8 @@ def tick(self_name: str) -> list:
     down = missing(running)
     if WATCH_TUNNEL and not tunnel_running(ps_text):
         down = [*down, TUNNEL_KEY]
+    if WATCH_PUBLIC and not public_reachable():
+        down = [*down, PUBLIC_KEY]
 
     import telegram_utils
     alerted = []
@@ -143,13 +213,14 @@ def tick(self_name: str) -> list:
     was_down = set(state.get("down") or [])
 
     def _label(name):
-        return EXPECTED.get(name, TUNNEL_LABEL)
+        return EXPECTED.get(name, PUBLIC_LABEL if name == PUBLIC_KEY else TUNNEL_LABEL)
 
     for name in down:
         if now - last_alert.get(name, 0) >= ALERT_COOLDOWN_SEC:
             last_alert[name] = now
             alerted.append(name)
-            fix = TUNNEL_FIX if name == TUNNEL_KEY else "./run_all.sh bg"
+            fix = (TUNNEL_FIX if name == TUNNEL_KEY else
+               PUBLIC_FIX if name == PUBLIC_KEY else "./run_all.sh bg")
             # channel="private": send_message() defaults to "alerts", which
             # is a PUBLIC group topic. "restart with ./run_all.sh bg" is an
             # instruction only the owner can act on, and it advertises the
@@ -163,7 +234,8 @@ def tick(self_name: str) -> list:
     # thing coming back — and on 2026-08-03 that sent a "✅ cloudflared 已恢復
     # 運行" for a tunnel that had been retired, at the moment its check was
     # disabled. Unwatched names leave the state silently.
-    watched = set(EXPECTED) | ({TUNNEL_KEY} if WATCH_TUNNEL else set())
+    watched = (set(EXPECTED) | ({TUNNEL_KEY} if WATCH_TUNNEL else set())
+               | ({PUBLIC_KEY} if WATCH_PUBLIC else set()))
     for name in sorted(was_down - set(down)):
         if name not in watched:
             last_alert.pop(name, None)

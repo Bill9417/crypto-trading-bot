@@ -352,3 +352,67 @@ def test_a_watched_process_still_announces_recovery(monkeypatch, tmp_path):
                         lambda msg, **k: sent.append((msg, k.get("channel"))) or True)
     W.tick("strategy2_scanner.py")
     assert sent and "已恢復運行" in sent[0][0] and sent[0][1] == "private"
+
+
+# ── the public URL: checked from outside, or not at all ─────────────────────
+# 2026-08-05: the Tailscale Funnel was registered, the ACL granted funnel, the
+# cert was valid and `tailscale funnel status` said "Funnel on" — and the public
+# relays served nothing. LINE could not reach its webhook, so every 指令 did
+# nothing and the Quick Reply buttons never returned; /tw, /us and /welcome were
+# dead for everyone off the tailnet. The process watchdog saw four healthy
+# processes and said nothing, because a reachable site is not a process.
+def _pub(monkeypatch, tmp_path, codes):
+    """codes: HTTP code per relay IP, in order."""
+    monkeypatch.setattr(W, "STATE_FILE", str(tmp_path / "wd.json"))
+    monkeypatch.setattr(W, "WATCH_TUNNEL", False)
+    monkeypatch.setattr(W, "WATCH_PUBLIC", True)
+    monkeypatch.setattr(W, "public_host", lambda: "host.test")
+    monkeypatch.setattr(W, "public_ips", lambda h: ["1.1.1.1", "2.2.2.2"][:len(codes)])
+    seq = list(codes)
+
+    class _R:
+        def __init__(self, out):
+            self.stdout = out
+
+    monkeypatch.setattr(W.subprocess, "run",
+                        lambda *a, **k: _R(seq.pop(0) if seq else "000"))
+
+
+def test_a_dead_public_url_is_an_alert(monkeypatch, tmp_path):
+    _pub(monkeypatch, tmp_path, ["000", "000"])
+    assert W.public_reachable() is False
+
+
+def test_one_live_relay_is_enough(monkeypatch, tmp_path):
+    """Tailscale publishes several; a single dead one is not an outage."""
+    _pub(monkeypatch, tmp_path, ["000", "200"])
+    assert W.public_reachable() is True
+
+
+def test_no_public_url_configured_is_not_an_outage(monkeypatch):
+    monkeypatch.setattr(W, "public_host", lambda: "")
+    assert W.public_reachable() is True
+
+
+def test_dns_failure_is_not_an_outage(monkeypatch):
+    """A watchdog that alerts because it could not MEASURE is worse than none."""
+    monkeypatch.setattr(W, "public_host", lambda: "host.test")
+    monkeypatch.setattr(W, "public_ips", lambda h: [])
+    assert W.public_reachable() is True
+
+
+def test_the_public_alert_carries_the_right_fix(monkeypatch, tmp_path):
+    monkeypatch.setattr(W, "STATE_FILE", str(tmp_path / "wd.json"))
+    monkeypatch.setattr(W, "WATCH_TUNNEL", False)
+    monkeypatch.setattr(W, "WATCH_PUBLIC", True)
+    monkeypatch.setattr(W, "_ps", lambda: "\n".join(
+        f"python -u {s}" for s in W.EXPECTED))
+    monkeypatch.setattr(W, "public_reachable", lambda: False)
+    import telegram_utils
+    sent = []
+    monkeypatch.setattr(telegram_utils, "send_message",
+                        lambda msg, **k: sent.append((msg, k.get("channel"))) or True)
+    alerted = W.tick("strategy2_scanner.py")
+    assert W.PUBLIC_KEY in alerted
+    assert "tailscale.sh" in sent[0][0]          # not ./run_all.sh bg
+    assert sent[0][1] == "private"
