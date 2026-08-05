@@ -362,20 +362,26 @@ def test_a_watched_process_still_announces_recovery(monkeypatch, tmp_path):
 # dead for everyone off the tailnet. The process watchdog saw four healthy
 # processes and said nothing, because a reachable site is not a process.
 def _pub(monkeypatch, tmp_path, codes):
-    """codes: HTTP code per relay IP, in order."""
+    """codes: HTTP code per relay IP, in order. Keyed BY IP rather than by call
+    order, because a failing relay is retried — an ordered queue would hand the
+    retry the next relay's code and turn a dead relay into a live one."""
     monkeypatch.setattr(W, "STATE_FILE", str(tmp_path / "wd.json"))
     monkeypatch.setattr(W, "WATCH_TUNNEL", False)
     monkeypatch.setattr(W, "WATCH_PUBLIC", True)
     monkeypatch.setattr(W, "public_host", lambda: "host.test")
-    monkeypatch.setattr(W, "public_ips", lambda h: ["1.1.1.1", "2.2.2.2"][:len(codes)])
-    seq = list(codes)
+    ips = ["1.1.1.1", "2.2.2.2"][:len(codes)]
+    monkeypatch.setattr(W, "public_ips", lambda h: ips)
+    by_ip = dict(zip(ips, codes, strict=False))
 
     class _R:
         def __init__(self, out):
             self.stdout = out
 
-    monkeypatch.setattr(W.subprocess, "run",
-                        lambda *a, **k: _R(seq.pop(0) if seq else "000"))
+    def _run(argv, *a, **k):
+        resolve = next((x for x in argv if x.count(":") == 2), "")
+        return _R(by_ip.get(resolve.rsplit(":", 1)[-1], "000"))
+
+    monkeypatch.setattr(W.subprocess, "run", _run)
 
 
 def test_a_dead_public_url_is_an_alert(monkeypatch, tmp_path):
@@ -383,10 +389,29 @@ def test_a_dead_public_url_is_an_alert(monkeypatch, tmp_path):
     assert W.public_reachable() is False
 
 
-def test_one_live_relay_is_enough(monkeypatch, tmp_path):
-    """Tailscale publishes several; a single dead one is not an outage."""
+def test_one_dead_relay_out_of_two_is_an_outage(monkeypatch, tmp_path):
+    """This assertion used to be the opposite, on the reasoning that Tailscale
+    publishes several relays so one dead is a spare tyre. It isn't. Public DNS
+    hands the browser EVERY A record and it picks whichever it likes, so a dead
+    ingress fails roughly half of real visits — which is exactly what happened
+    on 2026-08-05: a phone off the tailnet got "cannot establish a secure
+    connection" intermittently while this check reported healthy."""
     _pub(monkeypatch, tmp_path, ["000", "200"])
+    assert W.public_reachable() is False
+    st = W.public_status()
+    assert st["bad"] == ["1.1.1.1"] and st["ok"] == ["2.2.2.2"]
+
+
+def test_a_relay_is_retried_before_being_called_dead(monkeypatch, tmp_path):
+    """One timeout is a blip. Alerting on the first miss would page the owner
+    every time a single curl lost a race."""
+    _pub(monkeypatch, tmp_path, ["200", "200"])
+    calls = []
+    real = W.subprocess.run
+    monkeypatch.setattr(W.subprocess, "run",
+                        lambda argv, *a, **k: (calls.append(1), real(argv, *a, **k))[1])
     assert W.public_reachable() is True
+    assert len(calls) == 2, "a healthy relay must not be probed twice"
 
 
 def test_no_public_url_configured_is_not_an_outage(monkeypatch):
@@ -407,7 +432,10 @@ def test_the_public_alert_carries_the_right_fix(monkeypatch, tmp_path):
     monkeypatch.setattr(W, "WATCH_PUBLIC", True)
     monkeypatch.setattr(W, "_ps", lambda: "\n".join(
         f"python -u {s}" for s in W.EXPECTED))
-    monkeypatch.setattr(W, "public_reachable", lambda: False)
+    monkeypatch.setattr(W, "public_host", lambda: "host.test")
+    monkeypatch.setattr(W, "public_ips", lambda h: ["1.1.1.1", "2.2.2.2"])
+    monkeypatch.setattr(W, "public_status",
+                        lambda h=None, i=None: {"ok": [], "bad": ["1.1.1.1", "2.2.2.2"]})
     import telegram_utils
     sent = []
     monkeypatch.setattr(telegram_utils, "send_message",
@@ -416,3 +444,32 @@ def test_the_public_alert_carries_the_right_fix(monkeypatch, tmp_path):
     assert W.PUBLIC_KEY in alerted
     assert "tailscale.sh" in sent[0][0]          # not ./run_all.sh bg
     assert sent[0][1] == "private"
+
+
+def test_a_half_dead_public_url_is_not_described_as_stopped(monkeypatch, tmp_path):
+    """The owner opens the link, the working relay serves them, and they
+    conclude the alert was noise. The message has to say WHY it looks fine."""
+    partial = W.public_alert_text({"ok": ["2.2.2.2"], "bad": ["1.1.1.1"]}, "./tailscale.sh rearm")
+    assert "已停止運行" not in partial and "完全連不上" not in partial
+    assert "50%" in partial and "1.1.1.1" in partial
+    assert "./tailscale.sh rearm" in partial
+
+    total = W.public_alert_text({"ok": [], "bad": ["1.1.1.1", "2.2.2.2"]}, "./tailscale.sh rearm")
+    assert "完全連不上" in total
+
+
+def test_a_measurable_outage_still_beats_an_unmeasurable_one(monkeypatch, tmp_path):
+    """No DNS answer means we could not measure — that must stay quiet."""
+    monkeypatch.setattr(W, "STATE_FILE", str(tmp_path / "wd.json"))
+    monkeypatch.setattr(W, "WATCH_TUNNEL", False)
+    monkeypatch.setattr(W, "WATCH_PUBLIC", True)
+    monkeypatch.setattr(W, "WATCH_STALE", False)
+    monkeypatch.setattr(W, "_ps", lambda: "\n".join(
+        f"python -u {s}" for s in W.EXPECTED))
+    monkeypatch.setattr(W, "public_host", lambda: "host.test")
+    monkeypatch.setattr(W, "public_ips", lambda h: [])
+    monkeypatch.setattr(W, "public_status", lambda h=None, i=None: (_ for _ in ()).throw(
+        AssertionError("must not probe when DNS gave nothing to probe")))
+    import telegram_utils
+    monkeypatch.setattr(telegram_utils, "send_message", lambda msg, **k: True)
+    assert W.PUBLIC_KEY not in W.tick("strategy2_scanner.py")

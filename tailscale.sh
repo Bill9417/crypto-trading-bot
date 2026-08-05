@@ -156,20 +156,38 @@ check)
         echo "Public  no A record in public DNS — Funnel is not published."
         exit 1
     fi
-    ok=0
+    # EVERY published relay must serve, not just one. Public DNS hands the
+    # client all the A records and it picks whichever it likes, so one dead
+    # ingress is a coin-flip outage for real visitors — not a spare tyre.
+    # Treating "any relay answers" as healthy printed a green ✓ on 2026-08-05
+    # while a phone off the tailnet got "cannot establish a secure connection"
+    # about half the time, which is exactly how the fault stayed invisible.
+    good=0; bad=0
     for ip in $IPS; do
         code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 20 \
                 --resolve "$HOST:443:$ip" "$URL/login" 2>/dev/null)"
-        [ "$code" = "200" ] && ok=1
-        echo "Public  via $ip → ${code:-fail}$([ "$code" = "200" ] || echo '   <-- this relay is not serving')"
+        if [ "$code" = "200" ]; then
+            good=$((good + 1))
+            echo "Public  via $ip → $code"
+        else
+            bad=$((bad + 1))
+            echo "Public  via $ip → ${code:-fail}   <-- this relay is not serving"
+        fi
     done
     echo
-    if [ "$ok" = "1" ]; then
-        echo "✓ reachable from the public internet (phones off the tailnet included)."
+    if [ "$bad" = "0" ]; then
+        echo "✓ reachable from the public internet on all $good relays."
+    elif [ "$good" != "0" ]; then
+        echo "⚠ PARTIAL — $good of $((good + bad)) relays serve. The browser picks one"
+        echo "  at random, so roughly $((100 * bad / (good + bad)))% of visits fail with a TLS error."
+        echo "  Re-arm the registration:"
+        echo "      $0 rearm"
+        exit 1
     else
         echo "✗ NOT reachable publicly. The tailnet path may still work, which is"
         echo "  why a browser on this Mac looks fine. Re-arm the registration:"
         echo "      $0 rearm"
+        exit 1
     fi
     ;;
 doctor)
@@ -196,12 +214,22 @@ rearm)
     # was not a command, and the public URL went from intermittently down to
     # fully down — LINE's webhook and every public page with it. A single
     # command cannot be half-executed.
+    #
+    # `funnel off` + `funnel on` is NOT enough. On 2026-08-05 it left both
+    # relays dead while `funnel status` cheerfully reported "Funnel on" — the
+    # node kept a stale ingress registration that toggling the flag never
+    # cleared. `serve reset` drops the whole serve config and forces a fresh
+    # registration, and that is what actually brought a relay back.
     echo "Re-arming the Funnel registration…"
     "$TS" funnel --https="$PORT" off >/dev/null 2>&1 || true
+    "$TS" serve reset >/dev/null 2>&1 || true
     sleep 2
     "$TS" funnel --bg "$PORT"
+    # Relays pick the new registration up at their own pace and not together —
+    # one can serve a full minute before the other, so this waits for ALL of
+    # them rather than stopping at the first green.
     echo "Waiting for the relays to pick it up…"
-    for i in 1 2 3 4 5 6; do
+    for i in 1 2 3 4 5 6 7 8 9 10 11 12; do
         sleep 5
         if "$0" check >/dev/null 2>&1; then break; fi
     done

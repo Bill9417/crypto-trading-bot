@@ -116,10 +116,24 @@ def _load_state() -> dict:
 
 
 def _save_state(state: dict) -> None:
-    tmp = STATE_FILE + ".tmp"
-    with open(tmp, "w", encoding="utf-8") as f:
-        json.dump(state, f)
-    os.replace(tmp, STATE_FILE)
+    # The temp name carries the PID. BOTH scanners call tick(), and with a
+    # shared "<file>.tmp" they raced: each wrote the same temp path, the first
+    # os.replace consumed it, and the second died with ENOENT — twice in the
+    # S2 log. Harmless in itself (the state is rewritten 5 minutes later), but
+    # it aborted the rest of that sweep's watchdog pass, so an alert could be
+    # skipped by a coin flip. A per-process temp file cannot collide, and
+    # os.replace stays atomic.
+    tmp = f"{STATE_FILE}.{os.getpid()}.tmp"
+    try:
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(state, f)
+        os.replace(tmp, STATE_FILE)
+    except OSError:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
 
 
 # ── pure helpers (unit-tested) ───────────────────────────────────────────────
@@ -161,20 +175,9 @@ def public_ips(host: str) -> list:
             if l.strip() and l.strip()[0].isdigit()][:3]
 
 
-def public_reachable(host: str = None, ips: list = None) -> bool:
-    """True when at least one public relay serves the site.
-
-    One relay answering is enough — Tailscale publishes several and a single
-    dead one is not an outage. Unknown (no host, no DNS, no curl) returns True:
-    a watchdog that alerts because it could not measure is worse than useless.
-    """
-    host = public_host() if host is None else host
-    if not host:
-        return True
-    ips = public_ips(host) if ips is None else ips
-    if not ips:
-        return True
-    for ip in ips:
+def _relay_serves(host: str, ip: str, attempts: int = 2) -> bool:
+    """One relay, retried once — a single timeout is a blip, not an outage."""
+    for _ in range(attempts):
         try:
             r = subprocess.run(
                 ["curl", "-s", "-o", "/dev/null", "-w", "%{http_code}",
@@ -184,9 +187,45 @@ def public_reachable(host: str = None, ips: list = None) -> bool:
                 capture_output=True, text=True, timeout=PUBLIC_TIMEOUT + 5)
             if r.stdout.strip().startswith("2"):
                 return True
-        except Exception:  # noqa: BLE001 — try the next relay
+        except Exception:  # noqa: BLE001 — retry, then give up on this relay
             continue
     return False
+
+
+def public_status(host: str = None, ips: list = None) -> dict:
+    """{'ok': [ip…], 'bad': [ip…]} for every relay in public DNS."""
+    host = public_host() if host is None else host
+    if not host:
+        return {"ok": [], "bad": []}
+    ips = public_ips(host) if ips is None else ips
+    out = {"ok": [], "bad": []}
+    for ip in ips:
+        out["ok" if _relay_serves(host, ip) else "bad"].append(ip)
+    return out
+
+
+def public_reachable(host: str = None, ips: list = None) -> bool:
+    """True only when EVERY published relay serves the site.
+
+    This used to accept one relay answering, on the reasoning that Tailscale
+    publishes several and a single dead one is not an outage. That reasoning is
+    wrong: public DNS hands the client all the A records and it picks whichever
+    it likes, so one dead ingress is a coin-flip failure for real visitors, not
+    a spare tyre. On 2026-08-05 one of two relays was persistently dead — the
+    watchdog reported healthy while a phone off the tailnet got "cannot
+    establish a secure connection" about half the time.
+
+    Unknown (no host, no DNS) still returns True: a watchdog that alerts
+    because it could not measure is worse than useless.
+    """
+    host = public_host() if host is None else host
+    if not host:
+        return True
+    ips = public_ips(host) if ips is None else ips
+    if not ips:
+        return True
+    st = public_status(host, ips)
+    return not st["bad"]
 
 
 def stale_due(entries: list, newest_change: float, dirty: bool,
@@ -228,6 +267,27 @@ def stale_tick(state: dict, now: float) -> str:
     return f"stale notice sent ({len(entries)} process(es))"
 
 
+def public_alert_text(pub: dict, fix: str) -> str:
+    """A half-broken public URL and a dead one need different words.
+
+    "已停止運行" for a partial outage would send the owner looking for a dead
+    process while the site is up — and, worse, they would load it, get served
+    by the working relay, see it fine and conclude the alert was noise. Say the
+    share of visits that fail instead."""
+    bad, ok = pub["bad"], pub["ok"]
+    total = len(bad) + len(ok)
+    if ok:
+        pct = round(100 * len(bad) / total)
+        return (f"⚠️ 看門狗: {PUBLIC_LABEL} 只有一半在服務\n"
+                f"{len(bad)}/{total} 個中繼沒有回應 ({'、'.join(bad)})。\n"
+                f"瀏覽器會自己挑一個，所以大約 {pct}% 的連線會出現「無法建立安全連線」。\n"
+                f"你自己開可能是好的 — 那只代表你剛好挑到活的那個。\n"
+                f"修復:  {fix}")
+    return (f"🚨 看門狗: {PUBLIC_LABEL} 完全連不上\n"
+            f"{total} 個中繼都沒有回應。對外的網頁和 LINE webhook 現在都是斷的。\n"
+            f"修復:  {fix}")
+
+
 def tunnel_running(ps_output: str) -> bool:
     """Is the cloudflared quick-tunnel process alive? Its command line doesn't
     end in a bare script name like the EXPECTED python scripts (it's
@@ -263,8 +323,17 @@ def tick(self_name: str) -> list:
     down = missing(running)
     if WATCH_TUNNEL and not tunnel_running(ps_text):
         down = [*down, TUNNEL_KEY]
-    if WATCH_PUBLIC and not public_reachable():
-        down = [*down, PUBLIC_KEY]
+    # Measured ONCE and reused for the message — probing again to describe the
+    # fault would double the curl round-trips and could describe a different
+    # moment than the one that raised the alert.
+    pub = None
+    if WATCH_PUBLIC:
+        _host = public_host()
+        _ips = public_ips(_host) if _host else []
+        if _host and _ips:                       # unknown ≠ down
+            pub = public_status(_host, _ips)
+            if pub["bad"]:
+                down = [*down, PUBLIC_KEY]
 
     import telegram_utils
     alerted = []
@@ -285,8 +354,9 @@ def tick(self_name: str) -> list:
             # instruction only the owner can act on, and it advertises the
             # stack to everyone who joined via the invite link.
             telegram_utils.send_message(
-                f"🚨 看門狗: {name} ({_label(name)}) 已停止運行!\n"
-                f"重啟:  {fix}", force=True, channel="private")
+                public_alert_text(pub, fix) if name == PUBLIC_KEY and pub else
+                f"🚨 看門狗: {name} ({_label(name)}) 已停止運行!\n重啟:  {fix}",
+                force=True, channel="private")
             print(f"[watchdog] ALERT: {name} is down")
     # Recovery is only claimable for things still being WATCHED. Turning a
     # check off drops its name from `down`, which is indistinguishable from the
