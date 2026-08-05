@@ -40,6 +40,7 @@ import liquidations
 import market_intel
 import executor
 import price_alerts
+import restart_ctl
 import strategy3_exec
 import strategy3_scanner
 
@@ -2507,9 +2508,10 @@ def api_bybit_close():
 # --- System health (/health ops page) ---------------------------------------
 # Answers, at a glance, the three questions that otherwise need a terminal:
 # is every process alive, does anything need a RESTART to pick up new code,
-# and what did the logs last complain about. Strictly READ-ONLY — it runs one
-# `ps` and reads files; it never starts, stops or restarts anything (restarts
-# are always done by the operator with ./run_all.sh).
+# and what did the logs last complain about. The page itself is READ-ONLY —
+# one `ps` and some file reads. The single exception is the explicit 重啟 button
+# (POST /api/restart), which hands the job to restart.sh; nothing here ever
+# stops the stack without being asked.
 
 # autoheal.log is here deliberately: the launchd auto-restart agent failed on
 # EVERY run for 16 days (macOS blocks launchd-spawned bash from reading anything
@@ -2518,23 +2520,15 @@ def api_bybit_close():
 # watchdog.
 _HEALTH_LOGS = ("app.log", "bot.log", "strategy2.log", "strategy3.log", "autoheal.log")
 
-# (key, command regex, source files that make the process stale when edited
-# after it started — i.e. the running code no longer matches the disk).
-_HEALTH_PROCS = (
-    ("web", r"python\S*\s+(-u\s+)?(\S*/)?app\.py",
-     ("app.py", "config.py", "market_data.py", "market_intel.py", "strategy2_meter.py",
-      "executor.py", "indicators.py", "smc.py", "telegram_utils.py", "backtest.py",
-      "strategy2_live.py", ".env")),
-    ("bot", r"python\S*\s+(-u\s+)?(\S*/)?bot\.py",
-     ("bot.py", "config.py", "market_data.py", "executor.py", "indicators.py",
-      "smc.py", "telegram_utils.py", "backtest.py", "strategy2_live.py", ".env")),
-    ("s2", r"python\S*\s+(-u\s+)?(\S*/)?strategy2_scanner\.py",
-     ("strategy2_scanner.py", "strategy2_meter.py", "strategy2_live.py", "config.py",
-      "market_data.py", "executor.py", "telegram_utils.py", ".env")),
-    ("s3", r"python\S*\s+(-u\s+)?(\S*/)?strategy3_scanner\.py",
-     ("strategy3_scanner.py", "strategy3_exec.py", "strategy2_meter.py", "config.py",
-      "market_data.py", "indicators.py", "telegram_utils.py", ".env")),
-)
+# (key, command regex, entry module). Which files make a process stale is
+# DERIVED from the entry module's import closure (restart_ctl.sources) rather
+# than hand-listed. The hand list this replaced had drifted both ways: it never
+# mentioned strategy3_risk.py or strategy_ledger.py, so editing the S3 circuit
+# breaker left /health saying S3 was up to date — and it DID list
+# strategy2_meter.py and indicators.py, which strategy3_scanner never imports,
+# so unrelated edits raised a restart flag that meant nothing.
+_HEALTH_PROCS = tuple((key, pattern, entry)
+                      for key, pattern, entry in restart_ctl.PROCS)
 
 
 def _build_pipeline(base, now) -> dict:
@@ -2579,28 +2573,8 @@ def _build_pipeline(base, now) -> dict:
 
 def _ps_snapshot():
     """One `ps` pass → [{pid, started, rss_kb, cmd}] for every process."""
-    import subprocess
-    try:
-        out = subprocess.run(
-            ["ps", "-axo", "pid=,lstart=,rss=,command="],
-            capture_output=True, text=True, timeout=5,
-            env={**os.environ, "LC_ALL": "C"},   # stable month names for lstart
-        ).stdout
-    except Exception:  # noqa: BLE001 — health must never take the page down
-        return []
-    rows = []
-    for line in out.splitlines():
-        parts = line.split(None, 7)   # pid dow mon day hh:mm:ss year rss command
-        if len(parts) < 8:
-            continue
-        pid, _dow, mon, day, hms, year, rss, cmd = parts
-        try:
-            started = datetime.strptime(f"{mon} {day} {hms} {year}", "%b %d %H:%M:%S %Y")
-        except ValueError:
-            started = None
-        rows.append({"pid": int(pid), "started": started,
-                     "rss_kb": int(rss) if rss.isdigit() else 0, "cmd": cmd})
-    return rows
+    import restart_ctl
+    return restart_ctl.ps_snapshot()
 
 
 _SECRET_RE = re.compile(
@@ -2777,7 +2751,7 @@ def build_health():
 
     ps = _ps_snapshot()
     issues, processes = [], []
-    for key, pattern, sources in _HEALTH_PROCS:
+    for key, pattern, entry in _HEALTH_PROCS:
         matches = [p for p in ps if re.search(pattern, p["cmd"])]
         label, role = labels[key]
         proc = {"key": key, "label": label, "role": role,
@@ -2790,14 +2764,8 @@ def build_health():
             proc["rss_mb"] = round(m["rss_kb"] / 1024, 1)
             if m["started"]:
                 proc["uptime_sec"] = max(0, int((now - m["started"]).total_seconds()))
-                changed = []
-                for fname in sources:
-                    fpath = os.path.join(base, fname)
-                    try:
-                        if os.path.getmtime(fpath) > m["started"].timestamp() + 2:
-                            changed.append(fname)
-                    except OSError:
-                        continue
+                changed = restart_ctl.changed_since(
+                    entry, m["started"].timestamp(), base)
                 proc["changed_files"] = changed
                 proc["restart_needed"] = bool(changed)
         processes.append(proc)
@@ -2972,6 +2940,20 @@ def threads_callback():
 @admin_required
 def api_health():
     return jsonify(build_health())
+
+
+@app.route("/api/restart", methods=["POST"])
+@admin_required
+def api_restart():
+    """The one write on this page. /health has always been able to SEE that a
+    process is running old code while the only cure was a terminal on the Mac;
+    this closes that gap. The work is handed to restart.sh, which outlives the
+    kill — this request cannot report the outcome because the process serving
+    it is one of the things being restarted. Telegram gets the result.
+
+    CSRF is handled by the global protect_post_requests() hook, not here."""
+    ok, note = restart_ctl.request("web /health button")
+    return jsonify({"ok": ok, "note": note})
 
 
 @app.route("/sw.js")

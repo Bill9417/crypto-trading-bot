@@ -25,14 +25,19 @@ the command was typed in:
                 (default 24; Telegram forbids deleting anything older than
                 48h, and only messages sent since the ledger exists are
                 tracked). Sender must be a group admin or the owner.
+    /restart    OWNER-ONLY: restart the whole stack so new code takes effect
+                (./run_all.sh bg, run detached by restart_ctl). "/restart
+                check" only reports what is running stale, and changes nothing
     /cleanall   ADMIN-ONLY, needs "/cleanall yes": one-time backfill sweep of
                 everything sent BEFORE the ledger existed (sequential-id brute
                 force below the first recorded message; 48h wall still applies)
     /help       this list
 
 Safety: commands are only honoured from the configured group / owner chats —
-anything else is silently ignored. The bot only ever READS (exchange
-snapshots, state files); no command places or closes an order. First run
+anything else is silently ignored. No command places or closes an order. Two
+commands are not pure reads — /clean deletes the bot's own messages, and
+/restart bounces the stack — and both are gated tighter than the rest
+(/restart is owner-only, and the inline button re-checks the tapper). First run
 seeds the update offset silently so a backlog of old messages never triggers
 a reply storm (same pattern as event_radar's first-run seeding).
 
@@ -70,7 +75,10 @@ OWNER_IDS = {str(c) for c in (config.CHAT_ID, config.ALERTS_CHAT_ID) if c}
 # not members — and the answer always goes to the owner's DM no matter where
 # it was typed. The group is being promoted publicly; anyone who joins could
 # otherwise type /positions and read the owner's book.
-OWNER_ONLY_COMMANDS = {"report", "positions", "pos", "winrate", "stats", "wr"}
+# restart/reboot are here rather than in ADMIN_COMMANDS on purpose: a group
+# admin is trusted to delete messages, not to bounce the live trading engine.
+OWNER_ONLY_COMMANDS = {"report", "positions", "pos", "winrate", "stats", "wr",
+                       "restart", "reboot"}
 PRIVATE_REPLY_COMMANDS = set(OWNER_ONLY_COMMANDS)
 ADMIN_CACHE_SEC = 300
 
@@ -130,6 +138,27 @@ def parse_refresh_callback(data: str):
     _, _, rest = data.partition(":")
     cmd, _, args = rest.partition(":")
     return (cmd, args) if cmd else None
+
+
+# 👆 Action buttons — a SEPARATE protocol from the r: refresh buttons above,
+# because refresh is idempotent and these are not. A refresh reply keeps its
+# own 🔄 button so it can be tapped again; an action button is stripped from
+# the message the moment it fires, so a double-tap (or a scroll back to the
+# same message tomorrow) cannot launch a second restart.
+ACTIONS = {"restart": "🔄 立即重啟"}
+
+
+def action_keyboard(action: str) -> dict:
+    return {"inline_keyboard": [[{"text": ACTIONS[action],
+                                  "callback_data": f"x:{action}"}]]}
+
+
+def parse_action_callback(data: str):
+    """'x:restart' → 'restart'; None for anything that isn't a known action."""
+    if not (data or "").startswith("x:"):
+        return None
+    action = (data or "").partition(":")[2]
+    return action if action in ACTIONS else None
 
 
 def _group_admin_ids() -> set:
@@ -408,6 +437,22 @@ def fmt_clean(summary: dict, hours: float) -> str:
     return "\n".join(lines)
 
 
+def fmt_stale(entries: list, in_flight: bool = False) -> str:
+    """'/restart check' — what is running old code, and what changed."""
+    if in_flight:
+        return "⏳ 重啟進行中，等它跑完再看。"
+    if not entries:
+        return "✅ 每個程序跑的都是硬碟上最新的程式，不需要重啟。"
+    lines = ["🆕 有新程式碼還沒生效:"]
+    for e in entries:
+        files = e["changed"]
+        shown = "、".join(files[:4]) + (f" 等 {len(files)} 個檔" if len(files) > 4 else "")
+        lines.append(f"• {e['label']} — {shown}")
+    lines.append("")
+    lines.append("按下面的按鈕或輸入 /restart 就會重啟 (先跑測試，沒過就不動)。")
+    return "\n".join(lines)
+
+
 GUIDE_CMDS = ("guide", "about", "intro")
 
 
@@ -536,6 +581,11 @@ def handle(cmd: str, args: str = "", owner: bool = False) -> str:
                 f"略過 {s['skipped']} (不存在 / 超過48h / 無權限)\n"
                 f"共掃描 {s['tried']} 個訊息 id\n"
                 f"之後用 /clean 24 做日常清理即可。")
+    if cmd in ("restart", "reboot"):
+        import restart_ctl
+        if args.strip().lower() in ("check", "status", "?"):
+            return fmt_stale(restart_ctl.stale(), restart_ctl.in_flight())
+        return restart_ctl.request("telegram /restart")[1]
     if cmd in ("help", "start"):
         return HELP
     return None                                   # unknown command → stay silent
@@ -685,12 +735,44 @@ def _leave_foreign_chat(chat_id) -> None:
         print(f"[tgcmd] leaveChat {key} failed: {telegram_utils.redact(exc)}")
 
 
+def _handle_action(cb: dict, cb_id, action: str, chat_id, message_id) -> None:
+    """Fire a one-shot action button. The button is removed BEFORE the action
+    runs — /restart kills this very process a few seconds later, so anything
+    left until after would simply never happen, and the button would still be
+    sitting there tappable in the new session's chat history."""
+    user_id = (cb.get("from") or {}).get("id")
+    if not allowed(chat_id) or str(user_id) not in OWNER_IDS:
+        _answer_callback(cb_id, "⛔ 這是擁有者專用")
+        return
+    if message_id:
+        _edit_message(chat_id, message_id,
+                      (msg_text(cb) + "\n\n👉 已按下重啟").strip(), None, None)
+    _answer_callback(cb_id, "🔄 重啟中…")
+    try:
+        import restart_ctl
+        _, note = restart_ctl.request(f"telegram button ({action})")
+    except Exception as exc:  # noqa: BLE001 — a failed tap must still answer
+        note = f"⚠️ 重啟啟動失敗: {str(exc)[:200]}"
+    telegram_utils.send_message(note, force=True, channel="private")
+
+
+def msg_text(cb: dict) -> str:
+    return ((cb.get("message") or {}).get("text") or "").strip()
+
+
 def _handle_callback(cb: dict) -> None:
     cb_id = cb.get("id")
-    parsed = parse_refresh_callback(cb.get("data") or "")
+    data = cb.get("data") or ""
     msg = cb.get("message") or {}
     chat_id = (msg.get("chat") or {}).get("id")
     message_id = msg.get("message_id")
+
+    action = parse_action_callback(data)
+    if action:
+        _handle_action(cb, cb_id, action, chat_id, message_id)
+        return
+
+    parsed = parse_refresh_callback(data)
     if not (parsed and chat_id and message_id):
         _answer_callback(cb_id)
         return

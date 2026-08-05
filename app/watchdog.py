@@ -57,6 +57,22 @@ WATCH_PUBLIC = os.getenv("WATCHDOG_WATCH_PUBLIC", "true").strip().lower() \
     in ("1", "true", "yes")
 PUBLIC_PATH = os.getenv("WATCHDOG_PUBLIC_PATH", "/welcome")
 PUBLIC_TIMEOUT = float(os.getenv("WATCHDOG_PUBLIC_TIMEOUT", "15"))
+# ── new code that isn't running yet ─────────────────────────────────────────
+# A stale process is not a broken one, so this is a nudge, not a 🚨: the code
+# on disk moved after the process started, and nothing will pick it up until
+# someone restarts. Two gates keep it from nagging mid-session:
+#   • QUIET_SEC — the changed files must have stopped changing. Otherwise it
+#     fires in the middle of a multi-file edit, when half the change is saved.
+#   • a dirty git tree suppresses it entirely. Work in progress is not a
+#     release; a clean tree is the closest honest signal that a batch is done.
+# WATCH_STALE=false turns it off; RESTART_AUTO=true makes it act instead of ask.
+WATCH_STALE = os.getenv("WATCHDOG_WATCH_STALE", "true").strip().lower() \
+    in ("1", "true", "yes")
+RESTART_AUTO = os.getenv("RESTART_AUTO", "false").strip().lower() \
+    in ("1", "true", "yes")
+STALE_QUIET_SEC = float(os.getenv("RESTART_QUIET_SEC", "600"))
+STALE_COOLDOWN_SEC = float(os.getenv("RESTART_NOTICE_COOLDOWN_SEC", "21600"))  # 6h
+
 STATE_FILE = os.path.join(os.path.dirname(__file__), "watchdog_state.json")
 CHECK_SEC = 300
 ALERT_COOLDOWN_SEC = 3600
@@ -173,6 +189,45 @@ def public_reachable(host: str = None, ips: list = None) -> bool:
     return False
 
 
+def stale_due(entries: list, newest_change: float, dirty: bool,
+              last_notice: float, now: float) -> bool:
+    """Pure gate for the 'new code is waiting' nudge. Split out from the
+    sending so the four conditions can be tested without a Telegram token."""
+    if not entries:
+        return False
+    if dirty:                                   # mid-batch — not a release
+        return False
+    if newest_change and now - newest_change < STALE_QUIET_SEC:
+        return False                            # still being edited
+    return now - last_notice >= STALE_COOLDOWN_SEC
+
+
+def stale_tick(state: dict, now: float) -> str:
+    """Notice (or auto-restart) for processes running old code. Returns what
+    it did, for the log — '' when there was nothing to do."""
+    import restart_ctl
+    if restart_ctl.in_flight(now=now):
+        return ""
+    entries = restart_ctl.stale()
+    if not stale_due(entries, restart_ctl.newest_change_ts(entries),
+                     restart_ctl.tree_dirty(), state.get("stale_notice", 0), now):
+        return ""
+    state["stale_notice"] = now
+
+    import telegram_utils
+    if RESTART_AUTO:
+        ok, note = restart_ctl.request("watchdog auto (new code settled)")
+        telegram_utils.send_message(f"🔄 偵測到新程式碼，自動重啟中\n\n{note}",
+                                    force=True, channel="private")
+        return f"auto-restart requested (ok={ok})"
+
+    import tg_commands
+    telegram_utils.send_message(
+        tg_commands.fmt_stale(entries), force=True, channel="private",
+        reply_markup=tg_commands.action_keyboard("restart"))
+    return f"stale notice sent ({len(entries)} process(es))"
+
+
 def tunnel_running(ps_output: str) -> bool:
     """Is the cloudflared quick-tunnel process alive? Its command line doesn't
     end in a bare script name like the EXPECTED python scripts (it's
@@ -249,6 +304,17 @@ def tick(self_name: str) -> list:
             f"✅ 看門狗: {name} ({_label(name)}) 已恢復運行",
             force=True, channel="private")
         print(f"[watchdog] recovered: {name}")
+
+    # New code waiting to run. Deliberately after the down/recovery pass and
+    # skipped while anything is down — "S2 is dead" and "S2 is a version
+    # behind" arriving together would bury the one that matters.
+    if WATCH_STALE and not down:
+        try:
+            did = stale_tick(state, now)
+            if did:
+                print(f"[watchdog] {did}")
+        except Exception as exc:  # noqa: BLE001 — a nudge must not kill the sweep
+            print(f"[watchdog] stale check failed: {exc}")
 
     state["down"] = down
     state["last_alert"] = last_alert

@@ -386,10 +386,15 @@ def redact(text) -> str:
     return _TOKEN_RE.sub(r"\1***", str(text))
 
 
-def send_message(message, parse_mode=None, *, force=False, retries=2, channel="alerts"):
+def send_message(message, parse_mode=None, *, force=False, retries=2, channel="alerts",
+                 reply_markup=None):
     """Long messages are split on line boundaries and sent as in-order
     chunks; returns True only when EVERY chunk was delivered. See _route()
-    for the channel routing rules."""
+    for the channel routing rules.
+
+    reply_markup (an inline keyboard dict) rides on the LAST chunk only —
+    Telegram attaches a keyboard to one specific message, and a button under
+    part 1 of 3 would sit above the text it acts on."""
     routed = _route(channel, force)
     if not routed:
         return False
@@ -402,8 +407,11 @@ def send_message(message, parse_mode=None, *, force=False, retries=2, channel="a
     parts = _chunks_of(message)
     if parse_mode == "HTML" and len(parts) > 1:
         parts = balance_pre(parts)          # a split inside <pre> must not 400
-    for part in parts:
-        sent, mid = _post_one(url, {**payload, "text": part}, retries)
+    for i, part in enumerate(parts):
+        body = {**payload, "text": part}
+        if reply_markup and i == len(parts) - 1:
+            body["reply_markup"] = json.dumps(reply_markup)
+        sent, mid = _post_one(url, body, retries)
         if sent and mid:
             _record_sent(payload["chat_id"], mid, bot)   # /clean can find it later
         if not sent:

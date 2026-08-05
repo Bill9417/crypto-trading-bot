@@ -61,6 +61,9 @@
             display: inline-flex; align-items: center; gap: 6px; transition: color .15s, border-color .15s; white-space: nowrap;
         }
         .btn:hover, .btn:active { border-color: rgba(0,210,255,.4); color: var(--text); }
+        .btn.danger { color: var(--amber); border-color: rgba(255,176,32,.28); }
+        .btn.danger:hover { border-color: var(--amber); color: var(--amber); }
+        .btn[disabled] { opacity: .5; cursor: default; }
 
         /* ── Hero verdict ── */
         .hero {
@@ -173,6 +176,7 @@
         </div>
         <div class="actions">
             <button class="btn" onclick="loadHealth(this)">↻&nbsp;Refresh</button>
+            <button class="btn danger" id="restartBtn" onclick="doRestart(this)">⟳&nbsp;重啟</button>
         </div>
     </header>
 
@@ -426,6 +430,24 @@ function freshBar(name, age, limit, sub) {
         '<div class="fresh-top"><span class="fresh-name">' + esc(name) + '</span>' +
         '<span class="fresh-val">' + val + '</span></div>' +
         '<div class="track"><div class="fill ' + cls + '" style="width:' + Math.max(3, pct) + '%"></div></div></div>';
+}
+
+const CSRF = "{{ csrf_token() }}";
+
+// The reply to this POST is the LAST thing this page hears from the server:
+// run_all.sh kills the web app a moment later. So the button stays disabled
+// and says so, rather than pretending a silent page is a broken one.
+async function doRestart(btn) {
+    if (!confirm('重啟整個系統？\n\n先跑 lint + 測試，全部綠燈才會換掉現在跑的程式。\n測試沒過的話舊的會繼續跑，不會停機。\n結果會用 Telegram 傳給你。')) return;
+    btn.disabled = true;
+    btn.textContent = '⟳ 重啟中…';
+    try {
+        const body = new URLSearchParams(); body.set('csrf_token', CSRF);
+        const r = await fetch('/api/restart', { method: 'POST', body });
+        const j = await r.json();
+        if (!j.ok) { btn.disabled = false; btn.textContent = '⟳ 重啟'; alert(j.note); return; }
+    } catch (e) { /* the web app is being killed — that IS the success path */ }
+    btn.textContent = '⟳ 重啟中…（結果看 Telegram）';
 }
 
 async function loadHealth(btn) {
