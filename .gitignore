@@ -42,7 +42,9 @@ price_alerts.json
 tg_commands_state.json
 tw_stocks_state.json
 us_stocks_state.json
+us_market_state.json
 tw_intraday_state.json
+restart_state.json
 line_ids.json
 site_link_state.json
 line_quota_state.json
