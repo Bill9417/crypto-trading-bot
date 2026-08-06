@@ -88,7 +88,7 @@ ADMIN_CACHE_SEC = 300
 # attached to a reply DO stay tappable indefinitely (they're part of that
 # specific message, not a suggestion bar), which is the closer fit here.
 REFRESHABLE_CMDS = {"positions", "price", "signals", "winrate", "alerts",
-                    "liq", "whale", "whaletop", "twnow", "paper", "us"}
+                    "liq", "whale", "whaletop", "twnow", "paper", "us", "s4"}
 _admin_cache = {"ts": 0.0, "ids": set()}
 
 
@@ -549,6 +549,9 @@ def handle(cmd: str, args: str = "", owner: bool = False) -> str:
     if cmd == "paper":
         import paper_tracker
         return paper_tracker.report_tg()
+    if cmd in ("s4", "stockperp"):
+        import strategy4
+        return strategy4.report_tg()
     if cmd == "resume":
         import strategy3_risk
         if strategy3_risk.clear_halt():

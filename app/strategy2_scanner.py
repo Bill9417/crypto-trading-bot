@@ -684,6 +684,15 @@ def main() -> None:
             us_stocks.tick()
         except Exception as exc:  # noqa: BLE001 — a watch-only scan never kills the loop
             print(f"[strategy2] us stocks error: {exc}")
+        # 📊 S4 — Bybit TradFi perp scan (stock/commodity perps). Self-paced:
+        # a no-op until a 15m bar closes, then ~60 kline calls. Alert-only, and
+        # deliberately so — the universe is weeks old and nothing here has been
+        # validated (see the strategy4 docstring).
+        try:
+            import strategy4
+            strategy4.tick()
+        except Exception as exc:  # noqa: BLE001 — a watch-only scan never kills the loop
+            print(f"[strategy2] s4 error: {exc}")
         # 📋 台股週結 — honest Sunday-morning TP/SL scorecard to LINE
         # (self-paced no-op except Sunday mornings).
         try:

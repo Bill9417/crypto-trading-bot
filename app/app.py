@@ -4240,6 +4240,25 @@ def markets_page():
                            invite_url=_config.TELEGRAM_INVITE_URL)
 
 
+@app.route("/s4")
+@login_required
+def s4_page():
+    """S4 — Bybit TradFi perp scanner. Reads the last scan's state file; it
+    never scans on a page load, or every visitor would fire 60 exchange calls.
+
+    login_required, unlike /tw and /us: those carry public market data, this
+    carries entry/stop/target levels the owner is acting on. Not admin_required
+    — there is no account information on it, and members of the signal group
+    are the intended audience."""
+    import strategy4
+    try:
+        view = strategy4.web_view()
+    except Exception as exc:  # noqa: BLE001 — a broken scan must not 500 the page
+        view = {"signals": [], "error": str(exc)[:200],
+                "disclaimer": strategy4.DISCLAIMER}
+    return render_template("s4.html", s4=view, user=current_user)
+
+
 @app.route("/us")
 def us_page():
     """美股．開盤前看盤 — the companion to /tw at the other end of the day.

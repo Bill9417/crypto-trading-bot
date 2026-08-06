@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <title>Wolf Scanner — S4 美股永續</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=Noto+Sans+TC:wght@400;500;700;900&display=swap" rel="stylesheet">
+    <link rel="manifest" href="/manifest.webmanifest">
+    <meta name="theme-color" content="#0d1220">
+    <link rel="stylesheet" href="/static/app.css?v={{ asset_ver }}">
+    <style>
+        :root { --ok:#34d399; --bad:#f87171; --amber:#ffb020; --blue:#00d2ff; }
+        .s4-wrap { max-width: 1100px; margin: 0 auto; padding: 14px; }
+        .s4-head { display:flex; align-items:center; gap:12px; flex-wrap:wrap;
+                   padding:14px 16px; border:1px solid var(--border,rgba(255,255,255,.09));
+                   border-radius:14px; background:rgba(255,255,255,.02); margin-bottom:12px; }
+        .s4-title { font-weight:900; font-size:1.05rem; letter-spacing:-.2px; }
+        .s4-sub { color:var(--muted,#8a93a6); font-size:.78rem; }
+        .s4-note { margin:0 0 14px; padding:12px 14px; border-radius:12px;
+                   border:1px solid rgba(255,176,32,.28); background:rgba(255,176,32,.07);
+                   color:#ffd08a; font-size:.8rem; line-height:1.85; }
+        .s4-card { border:1px solid var(--border,rgba(255,255,255,.09)); border-radius:14px;
+                   background:rgba(255,255,255,.02); padding:14px 16px; margin-bottom:10px; }
+        .s4-top { display:flex; justify-content:space-between; align-items:baseline;
+                  gap:10px; flex-wrap:wrap; }
+        .s4-sym { font-weight:900; font-size:1.02rem; }
+        .s4-px { font-variant-numeric:tabular-nums; font-weight:700; }
+        .s4-badge { font-size:.66rem; font-weight:800; padding:2px 8px; border-radius:999px;
+                    background:rgba(52,211,153,.16); color:var(--ok); margin-left:6px;
+                    letter-spacing:.04em; }
+        .s4-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(140px,1fr));
+                   gap:8px 18px; margin-top:10px; font-size:.8rem; }
+        .s4-grid b { display:block; color:var(--muted,#8a93a6); font-weight:600;
+                     font-size:.68rem; text-transform:uppercase; letter-spacing:.05em; }
+        .s4-lv { font-variant-numeric:tabular-nums; }
+        .s4-lv.up { color:var(--ok); } .s4-lv.dn { color:var(--bad); }
+        .s4-empty { text-align:center; color:var(--muted,#8a93a6); padding:26px 10px;
+                    font-size:.86rem; line-height:1.9; }
+        .s4-rej { display:flex; flex-wrap:wrap; gap:6px; justify-content:center; margin-top:10px; }
+        .s4-rej span { font-size:.7rem; padding:3px 9px; border-radius:999px;
+                       border:1px solid var(--border,rgba(255,255,255,.09));
+                       color:var(--muted,#8a93a6); }
+        .s4-tbl { width:100%; overflow-x:auto; }
+    </style>
+</head>
+<body>
+<div class="s4-wrap">
+    <div class="nav-standalone">{% include '_nav.html' %}</div>
+
+    <div class="s4-head">
+        <div style="flex:1;min-width:200px">
+            <div class="s4-title">📊 S4 · 美股/商品永續掃描</div>
+            <div class="s4-sub">
+                Bybit stock + commodity perps · {{ s4.tf or '15m' }} ·
+                {% if s4.ts %}上次掃描 <span id="ago">—</span>{% else %}尚未掃描{% endif %}
+                {% if s4.checked %} · 檢查 {{ s4.checked }} 檔{% endif %}
+            </div>
+        </div>
+        <div class="s4-sub" style="text-align:right">
+            成交額門檻 {{ '{:,.0f}'.format(s4.min_turnover or 0) }} USDT<br>
+            取前 {{ s4.max_symbols }} 檔 · 目標 {{ s4.tp_r }}R
+        </div>
+    </div>
+
+    <div class="s4-note">{{ s4.disclaimer }}</div>
+
+    {% if s4.signals %}
+        {% for s in s4.signals %}
+        <div class="s4-card">
+            <div class="s4-top">
+                <div>
+                    <span class="s4-sym">{{ s.base }}</span>
+                    <span class="s4-badge">做多 LONG</span>
+                    {% if s.score is not none %}<span class="s4-badge" style="background:rgba(0,210,255,.14);color:var(--blue)">信心 {{ '%.0f'|format(s.score) }}</span>{% endif %}
+                </div>
+                <div class="s4-px">{{ s.price }}</div>
+            </div>
+            <div class="s4-grid">
+                {% if s.plan %}
+                <div><b>進場</b><span class="s4-lv">{{ '%.4f'|format(s.plan.entry) }}</span></div>
+                <div><b>停損</b><span class="s4-lv dn">{{ '%.4f'|format(s.plan.sl) }} · −{{ '%.2f'|format(s.plan.stop_pct) }}%</span></div>
+                <div><b>停利 {{ s.plan.rr }}R</b><span class="s4-lv up">{{ '%.4f'|format(s.plan.tp) }} · +{{ '%.2f'|format(s.plan.tp_pct) }}%</span></div>
+                {% endif %}
+                <div><b>EMA200</b><span class="s4-lv up">上升 {% if s.slope is not none %}+{{ '%.2f'|format(s.slope) }}%{% endif %}</span></div>
+                {% if s.support %}
+                <div><b>支撐</b><span class="s4-lv">{{ '%.4f'|format(s.support.level) }} <i style="opacity:.6">{{ s.support.bars_ago }} 根前</i></span></div>
+                {% endif %}
+                <div><b>背離</b><span class="s4-lv">{% if s.div_ago is not none %}{{ s.div_ago }} 根前{% else %}—{% endif %}</span></div>
+                <div><b>未平倉</b><span class="s4-lv">{{ {1:'開多',2:'開空',3:'空單回補',4:'多單平倉'}.get(s.oi_state, '—') }}</span></div>
+            </div>
+        </div>
+        {% endfor %}
+    {% else %}
+        <div class="s4-card">
+            <div class="s4-empty">
+                目前沒有符合的設定。<br>
+                <span style="opacity:.75">五道關卡要全部通過才會通知 —— 沒有訊號是正常的，不是壞掉。</span>
+            </div>
+            {% if s4.rejected %}
+            <div class="s4-rej">
+                {% for k, v in s4.rejected.items() %}<span>{{ k }} · {{ v }}</span>{% endfor %}
+            </div>
+            {% endif %}
+        </div>
+    {% endif %}
+</div>
+<script>
+// The scan timestamp is the only live thing on this page; everything else is a
+// snapshot by design (scanning on page load would fire 60 exchange calls per
+// visitor). Render "how long ago" client-side so a cached page cannot lie.
+(function () {
+    var ts = {{ (s4.ts or 0)|float }};
+    var el = document.getElementById('ago');
+    if (!el || !ts) return;
+    function tick() {
+        var m = Math.floor((Date.now() / 1000 - ts) / 60);
+        el.textContent = m < 1 ? '剛剛' : m < 60 ? m + ' 分鐘前'
+                       : Math.floor(m / 60) + ' 小時前';
+    }
+    tick(); setInterval(tick, 30000);
+})();
+</script>
+</body>
+</html>
