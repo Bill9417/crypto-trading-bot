@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-    <title>Wolf Scanner — S4 美股永續</title>
+    <title>Wolf Scanner — S4 掃描</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=Noto+Sans+TC:wght@400;500;700;900&display=swap" rel="stylesheet">
@@ -68,16 +68,16 @@
 
     <div class="s4-head">
         <div style="flex:1;min-width:200px">
-            <div class="s4-title">📊 S4 · 美股/商品永續掃描</div>
+            <div class="s4-title">📊 S4 · 永續掃描（美股/商品 + 加密）</div>
             <div class="s4-sub">
-                Bybit stock + commodity perps · {{ s4.tf or '15m' }} ·
+                Bybit 股票/商品 + 加密永續 · {{ s4.tf or '15m' }} ·
                 {% if s4.ts %}上次掃描 <span id="ago">—</span>{% else %}尚未掃描{% endif %}
-                {% if s4.checked %} · 檢查 {{ s4.checked }} 檔{% endif %}
+                {% if s4.checked %} · 檢查 {{ s4.checked }} 檔{% if s4.checked_by %}（美股 {{ s4.checked_by.get('tradfi', 0) }} · 加密 {{ s4.checked_by.get('crypto', 0) }}）{% endif %}{% endif %}
             </div>
         </div>
         <div class="s4-sub" style="text-align:right">
             成交額門檻 {{ '{:,.0f}'.format(s4.min_turnover or 0) }} USDT<br>
-            取前 {{ s4.max_symbols }} 檔 · 目標 {{ s4.tp_r }}R
+            美股取前 {{ s4.max_tradfi }} · 加密取前 {{ s4.max_crypto }} · 目標 {{ s4.tp_r }}R
         </div>
     </div>
 
@@ -89,6 +89,7 @@
             <div class="s4-top">
                 <div>
                     <span class="s4-sym">{{ s.base }}</span>
+                    <span class="s4-badge" style="background:rgba(255,176,32,.16);color:var(--amber)">{{ '美股' if s.segment == 'tradfi' else '加密' }}</span>
                     <span class="s4-badge">做多 LONG</span>
                     {% if s.score is not none %}<span class="s4-badge" style="background:rgba(0,210,255,.14);color:var(--blue)">信心 {{ '%.0f'|format(s.score) }}</span>{% endif %}
                 </div>

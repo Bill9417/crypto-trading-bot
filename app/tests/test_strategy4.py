@@ -230,26 +230,60 @@ def test_universe_is_chosen_by_the_exchange_tag_not_the_ticker():
     assert '"stock", "commodity"' in src or "'stock', 'commodity'" in src
 
 
+def _mk(sym, stype, active=True, quote="USDT"):
+    return {"symbol": sym, "linear": True, "swap": True, "active": active,
+            "quote": quote, "info": {"symbolType": stype}}
+
+
 class _FakeEx:
     def load_markets(self):
-        return {
-            "AMD/USDT:USDT": {"symbol": "AMD/USDT:USDT", "linear": True, "swap": True,
-                              "active": True, "info": {"symbolType": ""}},
-            "AMDSTOCK/USDT:USDT": {"symbol": "AMDSTOCK/USDT:USDT", "linear": True,
-                                   "swap": True, "active": True,
-                                   "info": {"symbolType": "stock"}},
-            "XAU/USDT:USDT": {"symbol": "XAU/USDT:USDT", "linear": True, "swap": True,
-                              "active": True, "info": {"symbolType": "commodity"}},
-            "DEAD/USDT:USDT": {"symbol": "DEAD/USDT:USDT", "linear": True, "swap": True,
-                               "active": False, "info": {"symbolType": "stock"}},
-        }
+        return {m["symbol"]: m for m in [
+            _mk("AMD/USDT:USDT", ""),                 # the TOKEN
+            _mk("AMDSTOCK/USDT:USDT", "stock"),       # the EQUITY
+            _mk("XAU/USDT:USDT", "commodity"),
+            _mk("BTC/USDT:USDT", ""),
+            _mk("PEPE/USDT:USDT", "innovation"),
+            _mk("BTC/USDC:USDC", "", quote="USDC"),   # the twin
+            _mk("DEAD/USDT:USDT", "stock", active=False),
+        ]}
+
+    def fetch_tickers(self, syms):
+        vol = {"AMDSTOCK/USDT:USDT": 9e6, "XAU/USDT:USDT": 8e6,
+               "BTC/USDT:USDT": 3.8e9, "AMD/USDT:USDT": 5e6, "PEPE/USDT:USDT": 1e5}
+        return {s: {"quoteVolume": vol.get(s, 0)} for s in syms}
 
 
-def test_universe_takes_the_equity_and_the_metal_and_leaves_the_token():
-    got = set(S.universe(_FakeEx(), {}))
-    assert got == {"AMDSTOCK/USDT:USDT", "XAU/USDT:USDT"}
-    assert "AMD/USDT:USDT" not in got     # the crypto token of the same name
-    assert "DEAD/USDT:USDT" not in got    # delisted
+def test_universe_separates_the_equity_from_the_token_of_the_same_name():
+    uni = S.universe(_FakeEx(), {})
+    assert uni.get("AMDSTOCK/USDT:USDT") == "tradfi"
+    assert uni.get("AMD/USDT:USDT") == "crypto"      # same letters, different asset
+    assert uni.get("XAU/USDT:USDT") == "tradfi"
+    assert uni.get("BTC/USDT:USDT") == "crypto"
+    assert "DEAD/USDT:USDT" not in uni               # delisted
+
+
+def test_the_usdc_twin_is_dropped_so_no_base_is_scanned_twice():
+    uni = S.universe(_FakeEx(), {})
+    assert "BTC/USDC:USDC" not in uni
+
+
+def test_each_pool_is_ranked_and_capped_on_its_own():
+    """BTC alone turns over 3.8 BILLION a day against ~50M for a busy stock
+    perp. A single combined top-N list would be crypto only, and the TradFi
+    half — the whole reason this exists — would silently vanish."""
+    ex = _FakeEx()
+    picks = dict(S.select(ex, S.universe(ex, {})))
+    assert picks.get("AMDSTOCK/USDT:USDT") == "tradfi"
+    assert picks.get("BTC/USDT:USDT") == "crypto"
+    assert "PEPE/USDT:USDT" not in picks             # under the turnover floor
+
+
+def test_select_tolerates_an_old_cached_universe_shape():
+    """State written by the previous version is a LIST of tradfi symbols. A
+    scanner that crashes on its own stale cache is a scanner that stays down
+    until someone deletes a file."""
+    picks = S.select(_FakeEx(), ["AMDSTOCK/USDT:USDT"])
+    assert picks == [("AMDSTOCK/USDT:USDT", "tradfi")]
 
 
 def test_universe_is_cached_so_every_sweep_does_not_reload_markets():
@@ -287,3 +321,26 @@ def test_the_alert_actually_contains_the_levels():
     for level in ("182.4", "178.63", "189.94"):
         assert level in msg, f"the alert never states {level}"
     assert "進場" in msg and "停損" in msg and "目標" in msg
+
+
+def test_a_stale_list_cache_is_rebuilt_not_served(monkeypatch, tmp_path):
+    """Regression: the previous version cached the universe as a LIST of tradfi
+    symbols. After the crypto pool was added, that cache was still inside its
+    6h TTL — so universe() kept returning tradfi-only and the scan reported
+    success while scanning no crypto at all. The walk-forward that found this
+    came back with 0 crypto symbols and a clean exit code."""
+    state = {"universe": ["AMDSTOCK/USDT:USDT"], "universe_ts": 9e18}
+    uni = S.universe(_FakeEx(), state)
+    assert isinstance(uni, dict)
+    assert uni.get("BTC/USDT:USDT") == "crypto", "stale cache was served"
+
+
+def test_a_fresh_dict_cache_is_still_honoured():
+    state = {}
+    S.universe(_FakeEx(), state)
+
+    class _Boom:
+        def load_markets(self):
+            raise AssertionError("markets reloaded inside the cache window")
+
+    assert S.universe(_Boom(), state)

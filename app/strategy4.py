@@ -93,10 +93,16 @@ SIGNALS_FILE = os.path.join(os.path.dirname(__file__), "strategy4_signals.json")
 ENABLED = os.getenv("S4_ENABLED", "true").strip().lower() in ("1", "true", "yes", "on")
 TIMEFRAME = os.getenv("S4_TIMEFRAME", "15m")
 CANDLES = int(os.getenv("S4_CANDLES", "450"))       # meter needs ≥365
-# Ranked by 24h turnover, then cut. The tail of this universe is symbols that
-# listed last week and trade four figures a day.
-MAX_SYMBOLS = int(os.getenv("S4_MAX_SYMBOLS", "60"))
+# Two pools, ranked by 24h turnover and cut separately. One combined ranking
+# would be no ranking at all: BTC alone turns over 3.8 BILLION a day against
+# ~50M for a busy stock perp, so a single top-N list would be crypto only and
+# the TradFi side would silently vanish from the scan.
+MAX_TRADFI = int(os.getenv("S4_MAX_TRADFI", "60"))
+MAX_CRYPTO = int(os.getenv("S4_MAX_CRYPTO", "100"))
 MIN_TURNOVER = float(os.getenv("S4_MIN_TURNOVER_USDT", "2000000"))
+MIN_TURNOVER_CRYPTO = float(os.getenv("S4_MIN_TURNOVER_CRYPTO_USDT", "2000000"))
+SCAN_TRADFI = os.getenv("S4_SCAN_TRADFI", "true").strip().lower() in ("1", "true", "yes")
+SCAN_CRYPTO = os.getenv("S4_SCAN_CRYPTO", "true").strip().lower() in ("1", "true", "yes")
 EMA_SLOPE_BARS = int(os.getenv("S4_EMA_SLOPE_BARS", "20"))
 DIV_LOOKBACK = int(os.getenv("S4_DIV_LOOKBACK", "20"))    # bars since a divergence
 DIV_PIVOT = int(os.getenv("S4_DIV_PIVOT", "5"))
@@ -359,42 +365,73 @@ def _client():
                        "options": {"defaultType": "linear"}})
 
 
-def universe(client=None, state=None) -> list:
-    """Bybit's own tag decides what a TradFi perp is — symbolType 'stock' or
-    'commodity'. Guessing from the ticker would be a coin flip: this venue
-    lists AMD the token and AMDSTOCK the equity side by side, and a name-based
-    rule is exactly how a mirror once sized an order 344× off."""
+def universe(client=None, state=None) -> dict:
+    """{symbol: segment} — 'tradfi' for Bybit's stock/commodity perps, 'crypto'
+    for everything else it settles in USDT.
+
+    The segment comes from Bybit's own symbolType tag, never the ticker text.
+    Guessing from the name would be a coin flip: this venue lists AMD the token
+    and AMDSTOCK the equity side by side, and name-based mapping is exactly how
+    a mirror once sized an order 344× off."""
     st = state if state is not None else _load()
     cached = st.get("universe")
-    if cached and time.time() - float(st.get("universe_ts") or 0) < UNIVERSE_TTL_SEC:
+    # A cache written by the previous version is a LIST of tradfi symbols. It
+    # is not merely the wrong type — it is the wrong ANSWER, and serving it for
+    # the next six hours would have quietly scanned no crypto at all while
+    # reporting success. Shape mismatch invalidates the cache, it does not get
+    # coerced.
+    if isinstance(cached, dict) and cached \
+            and time.time() - float(st.get("universe_ts") or 0) < UNIVERSE_TTL_SEC:
         return cached
     ex = client or _client()
     markets = ex.load_markets()
-    syms = [m["symbol"] for m in markets.values()
-            if m.get("linear") and m.get("swap") and m.get("active")
-            and (m.get("info") or {}).get("symbolType") in ("stock", "commodity")]
+    uni = {}
+    for m in markets.values():
+        if not (m.get("linear") and m.get("swap") and m.get("active")):
+            continue
+        if m.get("quote") != "USDT":
+            continue          # the USDC twins would double every base
+        stype = (m.get("info") or {}).get("symbolType")
+        if stype in ("stock", "commodity"):
+            uni[m["symbol"]] = "tradfi"
+        elif SCAN_CRYPTO and stype in ("", None, "innovation"):
+            uni[m["symbol"]] = "crypto"
+    if not SCAN_TRADFI:
+        uni = {s: g for s, g in uni.items() if g != "tradfi"}
     if state is not None:
-        state["universe"] = syms
+        state["universe"] = uni
         state["universe_ts"] = time.time()
-    return syms
+    return uni
 
 
-def liquid_symbols(client, syms) -> list:
-    """One fetch_tickers call ranks the whole universe — 172 individual ticker
-    calls to learn the same thing would be the rate-limit incident this repo
-    already had."""
+CAPS = {"tradfi": (MAX_TRADFI, MIN_TURNOVER), "crypto": (MAX_CRYPTO, MIN_TURNOVER_CRYPTO)}
+
+
+def select(client, uni) -> list:
+    """[(symbol, segment)] — each pool ranked by 24h turnover and cut to its own
+    cap. One fetch_tickers call ranks everything; 600 individual ticker calls to
+    learn the same thing is the rate-limit incident this repo already had."""
+    if isinstance(uni, (list, tuple)):        # tolerate an old cached shape
+        uni = {s: "tradfi" for s in uni}
+    syms = list(uni)
     try:
         tk = client.fetch_tickers(syms)
     except Exception:  # noqa: BLE001 — no ranking is better than no scan
-        return syms[:MAX_SYMBOLS]
-    rows = []
+        tk = {}
+    pools = {}
     for s in syms:
-        t = tk.get(s) or {}
-        turnover = t.get("quoteVolume") or 0
-        if turnover >= MIN_TURNOVER:
-            rows.append((s, float(turnover)))
-    rows.sort(key=lambda r: -r[1])
-    return [s for s, _ in rows[:MAX_SYMBOLS]]
+        seg = uni[s]
+        turnover = float((tk.get(s) or {}).get("quoteVolume") or 0)
+        _, floor = CAPS.get(seg, (0, 0))
+        if tk and turnover < floor:
+            continue
+        pools.setdefault(seg, []).append((s, turnover))
+    out = []
+    for seg, rows in pools.items():
+        rows.sort(key=lambda r: -r[1])
+        cap = CAPS.get(seg, (MAX_TRADFI, 0))[0]
+        out += [(s, seg) for s, _ in rows[:cap]]
+    return out
 
 
 def _oi_history(client, symbol, limit=60):
@@ -409,19 +446,19 @@ def scan(client=None, limit=None) -> dict:
     """Full sweep. Returns {signals, checked, rejected, ts}. Never raises."""
     ex = client or _client()
     state = _load()
-    syms = universe(ex, state)
+    uni = universe(ex, state)
     _save(state)
-    syms = liquid_symbols(ex, syms)
+    picks = select(ex, uni)
     if limit:
-        syms = syms[:limit]
+        picks = picks[:limit]
 
-    signals, rejected, checked = [], {}, 0
-    for sym in syms:
+    signals, rejected, checked = [], {}, {"tradfi": 0, "crypto": 0}
+    for sym, seg in picks:
         try:
             ohlcv = ex.fetch_ohlcv(sym, TIMEFRAME, limit=CANDLES)
         except Exception:  # noqa: BLE001 — one bad symbol never stops the scan
             continue
-        checked += 1
+        checked[seg] = checked.get(seg, 0) + 1
         res = evaluate(ohlcv)
         # OI costs a call, so it is only asked for once everything cheaper has
         # already passed. Re-run the last gate with the data now in hand.
@@ -429,16 +466,18 @@ def scan(client=None, limit=None) -> dict:
             oi = _oi_history(ex, sym)
             res = evaluate(ohlcv, oi)
         if res["pass"]:
-            base = sym.split("/")[0]
-            signals.append({"symbol": sym, "base": base, **res,
-                            "price": ohlcv[-1][4], "bar_ts": ohlcv[-1][0]})
+            signals.append({"symbol": sym, "base": sym.split("/")[0], "segment": seg,
+                            **res, "price": ohlcv[-1][4], "bar_ts": ohlcv[-1][0]})
         else:
             rejected[res["reason"] or "?"] = rejected.get(res["reason"] or "?", 0) + 1
         time.sleep(PACE_SEC)
 
-    signals.sort(key=lambda s: -(s.get("score") or 0))
-    return {"signals": signals, "checked": checked, "rejected": rejected,
-            "ts": time.time()}
+    # TradFi first, then by score. The stock perps are the half that cannot be
+    # validated, so burying them under 100 crypto names would defeat the point
+    # of scanning them at all.
+    signals.sort(key=lambda s: (s.get("segment") != "tradfi", -(s.get("score") or 0)))
+    return {"signals": signals, "checked": sum(checked.values()),
+            "checked_by": checked, "rejected": rejected, "ts": time.time()}
 
 
 # ── presentation ─────────────────────────────────────────────────────────────
@@ -462,7 +501,8 @@ def format_signal(sig: dict) -> str:
     import tg_format as F
     p = sig.get("plan") or {}
     base = sig.get("base") or ""
-    bits = [F.headline("📊 S4 美股永續", base, "做多 LONG")]
+    tag = "美股永續" if sig.get("segment") == "tradfi" else "加密永續"
+    bits = [F.headline(f"📊 S4 {tag}", base, "做多 LONG")]
     rows = []
     if p:
         rows += [("進場", F.fmt_price(p["entry"])),
@@ -487,12 +527,15 @@ DISCLAIMER = ("⚠️ S4 是「掃描通知」，不是已驗證的策略。這�
 def build_digest(result: dict, now=None) -> str:
     now = now or datetime.now(_tz())
     sigs = result.get("signals") or []
-    head = f"📊 S4 美股永續掃描 · {now.strftime('%m-%d %H:%M')}"
+    by = result.get("checked_by") or {}
+    seg = f"（美股 {by.get('tradfi', 0)} · 加密 {by.get('crypto', 0)}）" if by else ""
+    head = f"📊 S4 掃描 · {now.strftime('%m-%d %H:%M')}"
     if not sigs:
         return ""
     body = "\n\n".join(format_signal(s) for s in sigs[:5])
     more = f"\n\n（另有 {len(sigs) - 5} 檔符合，見網頁）" if len(sigs) > 5 else ""
-    return f"{head}\n掃描 {result.get('checked', 0)} 檔，{len(sigs)} 檔符合\n\n{body}{more}\n\n{DISCLAIMER}"
+    return (f"{head}\n掃描 {result.get('checked', 0)} 檔{seg}，{len(sigs)} 檔符合"
+            f"\n\n{body}{more}\n\n{DISCLAIMER}")
 
 
 def due_signals(result: dict, state: dict, now_ts: float) -> list:
@@ -520,7 +563,9 @@ def web_view() -> dict:
             "universe": len(payload.get("universe") or []),
             "disclaimer": DISCLAIMER,
             "tf": TIMEFRAME, "tp_r": TP_R,
-            "min_turnover": MIN_TURNOVER, "max_symbols": MAX_SYMBOLS}
+            "min_turnover": MIN_TURNOVER,
+            "checked_by": payload.get("checked_by") or {},
+            "max_tradfi": MAX_TRADFI, "max_crypto": MAX_CRYPTO}
 
 
 # ── orchestration ────────────────────────────────────────────────────────────
