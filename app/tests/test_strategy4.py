@@ -271,3 +271,19 @@ def test_web_view_never_scans(monkeypatch):
         AssertionError("web_view() scanned on a page load")))
     v = S.web_view()
     assert "signals" in v and "disclaimer" in v
+
+
+def test_the_alert_actually_contains_the_levels():
+    """Regression: the plan block was built with tg_format.mono_plan(), which
+    needs TWO targets and returns '' if either is missing. S4 has one target by
+    construction, so every alert shipped with percentages and no prices — a
+    plan you cannot act on, failing silently because '' is falsy."""
+    sig = {"base": "NVDA", "score": 84.0, "slope": 0.62, "div_ago": 4,
+           "oi_state": 1, "price": 182.4,
+           "support": {"level": 178.9, "bars_ago": 7},
+           "plan": {"entry": 182.4, "sl": 178.63, "tp": 189.94,
+                    "stop_pct": 2.07, "tp_pct": 4.13, "rr": 2.0}}
+    msg = S.format_signal(sig)
+    for level in ("182.4", "178.63", "189.94"):
+        assert level in msg, f"the alert never states {level}"
+    assert "進場" in msg and "停損" in msg and "目標" in msg

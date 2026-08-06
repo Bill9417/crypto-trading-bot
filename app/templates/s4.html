@@ -11,8 +11,25 @@
     <meta name="theme-color" content="#0d1220">
     <link rel="stylesheet" href="/static/app.css?v={{ asset_ver }}">
     <style>
-        :root { --ok:#34d399; --bad:#f87171; --amber:#ffb020; --blue:#00d2ff; }
-        .s4-wrap { max-width: 1100px; margin: 0 auto; padding: 14px; }
+        /* app.css publishes --wolf-* tokens but leaves the page background to
+           each template, which is why relying on bare --border/--muted here
+           rendered this page white while every other page was dark. Same local
+           token block the other authenticated pages declare. */
+        :root {
+            --blue:#00d2ff; --slate:#0d1220; --card:rgba(33,40,62,.80);
+            --border:rgba(255,255,255,.10); --muted:#93a3b8; --text:#f2f6fb;
+            --ok:#34d399; --bad:#f87171; --amber:#ffb020;
+        }
+        * { box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+        html { -webkit-text-size-adjust:100%; }
+        body {
+            margin:0; background:var(--slate); background-image:var(--page-bg-glow);
+            color:var(--text); min-height:100vh;
+            font-family:'Inter','Noto Sans TC',-apple-system,BlinkMacSystemFont,sans-serif;
+            -webkit-font-smoothing:antialiased;
+        }
+        .s4-wrap { max-width: 1100px; margin: 0 auto;
+                   padding: 10px clamp(12px,4vw,20px) calc(34px + env(safe-area-inset-bottom)); }
         .s4-head { display:flex; align-items:center; gap:12px; flex-wrap:wrap;
                    padding:14px 16px; border:1px solid var(--border,rgba(255,255,255,.09));
                    border-radius:14px; background:rgba(255,255,255,.02); margin-bottom:12px; }

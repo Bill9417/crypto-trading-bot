@@ -451,21 +451,29 @@ def _tz():
 
 
 def format_signal(sig: dict) -> str:
-    """One setup, in the shared house style so S4 reads like S1 and S3."""
+    """One setup, in the shared house style so S4 reads like S1 and S3.
+
+    The levels go in this table rather than through tg_format.mono_plan(),
+    which needs TWO targets and returns an empty string if either is missing.
+    S4 has a single target by construction, so mono_plan silently dropped the
+    entire entry/stop/target block and the alert shipped with only percentages
+    — a plan you cannot act on. One table, one aligned column, nothing to
+    drop."""
     import tg_format as F
     p = sig.get("plan") or {}
     base = sig.get("base") or ""
     bits = [F.headline("📊 S4 美股永續", base, "做多 LONG")]
+    rows = []
     if p:
-        bits.append(F.mono_plan(p["entry"], p["sl"], p["tp"], None, is_long=True))
-    rows = [("信心", f"{sig.get('score'):.0f}/100" if sig.get("score") is not None else "—"),
-            ("EMA200", f"上升 +{sig['slope']:.2f}%" if sig.get("slope") is not None else "—"),
-            ("支撐", F.fmt_price(sig["support"]["level"]) + f"（{sig['support']['bars_ago']} 根前）"
-             if sig.get("support") else "—"),
-            ("背離", f"{sig['div_ago']} 根前" if sig.get("div_ago") is not None else "—"),
-            ("未平倉", OI_TEXT.get(sig.get("oi_state"), "—")),
-            ("風險", f"停損 −{p['stop_pct']:.2f}% · 停利 +{p['tp_pct']:.2f}%（{p['rr']:g}R）"
-             if p else "—")]
+        rows += [("進場", F.fmt_price(p["entry"])),
+                 ("停損", f"{F.fmt_price(p['sl'])}  −{p['stop_pct']:.2f}%"),
+                 ("目標", f"{F.fmt_price(p['tp'])}  +{p['tp_pct']:.2f}%  {p['rr']:g}R")]
+    rows += [("信心", f"{sig['score']:.0f}/100" if sig.get("score") is not None else "—"),
+             ("EMA200", f"上升 +{sig['slope']:.2f}%" if sig.get("slope") is not None else "—"),
+             ("支撐", F.fmt_price(sig["support"]["level"]) + f"（{sig['support']['bars_ago']} 根前）"
+              if sig.get("support") else "—"),
+             ("背離", f"{sig['div_ago']} 根前" if sig.get("div_ago") is not None else "—"),
+             ("未平倉", OI_TEXT.get(sig.get("oi_state"), "—"))]
     bits.append(F.pre_table(rows))
     bits.append(F.bybit_line(base, sig.get("price")))
     return "\n".join(b for b in bits if b)
