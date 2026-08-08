@@ -145,7 +145,8 @@ def entry_blocked() -> str:
         telegram_utils.send_message(
             f"🛑 S3 CIRCUIT BREAKER 觸發 — 今日停止新倉\n{reason}\n"
             f"已開的倉位照常由訊號管理，只擋新進場。\n"
-            f"確認過後用 /resume 解除 (限管理員)。", force=True)
+            f"確認過後用 /resume 解除 (限管理員)。",
+            force=True, channel="trades")   # S3 state — private, like the rest
     except Exception as exc:  # noqa: BLE001 — the halt itself must still hold
         print(f"[s3risk] halt alert failed: {exc}")
     print(f"[s3risk] HALTED: {reason}")

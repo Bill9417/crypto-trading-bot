@@ -281,7 +281,7 @@ def _notify_owner(gid: str) -> None:
         import telegram_utils
         telegram_utils.send_message(
             f"📱 LINE 群組已連接（{gid[:10]}…）— 台股日報＋觸價提醒將自動發送到該群組",
-            force=True)
+            force=True, channel="private")   # the docstring says owner; mean it
     except Exception as exc:  # noqa: BLE001
         print(f"[line] owner notify failed: {exc}")
 
@@ -378,7 +378,7 @@ def quota_tick() -> bool:
                 f"📱 LINE 推播額度警告:本月已用 {q['used']}/{q['limit']} 則。"
                 f"額度用完後推播會靜默停止(群組指令的免費回覆不受影響)— "
                 f"下月 1 號自動重置。",
-                force=True)
+                force=True, channel="private")   # quota is an ops concern
         except Exception as exc:  # noqa: BLE001
             print(f"[line] quota warn send failed: {exc}")
     return True

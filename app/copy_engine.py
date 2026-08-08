@@ -321,6 +321,9 @@ def _announce(what: str, symbol: str, extra: str, summary: dict) -> None:
                 f"{summary['total']}")
         if summary["failed"]:
             line += f" · ⚠️ {summary['failed']} 失敗（見 /health 或後台）"
-        telegram_utils.send_message(line, channel="strategy3", force=bool(summary["failed"]))
+        # channel="trades": this mirrors S3's live trades. "strategy3" was never
+        # a registered channel, so _route() fell through to the alerts bot —
+        # a destination nobody had chosen on purpose.
+        telegram_utils.send_message(line, channel="trades", force=bool(summary["failed"]))
     except Exception as exc:  # noqa: BLE001 — never let a TG hiccup break trading
         print(f"[copy] announce failed: {exc}")

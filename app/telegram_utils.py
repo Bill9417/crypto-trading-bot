@@ -20,8 +20,15 @@ from config import (
     TELEGRAM_S1SIGNALS_THREAD_ID,
     TELEGRAM_SIGNALS_THREAD_ID,
     TELEGRAM_TECH_THREAD_ID,
+    TELEGRAM_TRADES_CHAT_ID,
+    TELEGRAM_TRADES_THREAD_ID,
     TELEGRAM_TWSTOCKS_THREAD_ID,
 )
+
+# Channels that must NEVER reach the joinable group: the owner's DM and the
+# private S1/S3/S4 trade feed. Kept as one set so a new private channel cannot
+# be added to the routing table without landing in the guard test too.
+PRIVATE_CHANNELS = frozenset({"private", "trades"})
 
 _TOPIC_THREAD = {
     "signals": TELEGRAM_SIGNALS_THREAD_ID,
@@ -344,15 +351,27 @@ def _route(channel: str, force: bool):
          the old TELEGRAM_QUIET/force rule so a fresh checkout with none of
          the above configured behaves exactly as it always has.
 
-    channel="private" is special: it ALWAYS goes to the owner's DM with the
-    main bot (TELEGRAM_CHAT_ID) — never to the group. Account balances and
-    P&L (the daily report) are the owner's business, not the group's.
+    PRIVATE_CHANNELS bypass all three tiers:
+      "private" — the owner's DM (TELEGRAM_CHAT_ID). Account balances and P&L
+        (the daily report) are the owner's business, not the group's.
+      "trades"  — the S1/S3/S4 feed. TELEGRAM_TRADES_CHAT_ID (+ thread) when
+        the owner has made a private group, else the same DM. A topic is only
+        as private as its group, so pointing it at the JOINABLE group is
+        refused here rather than quietly publishing every trade.
     """
     thread_id = _TOPIC_THREAD.get(channel)
     payload = {}
 
-    if channel == "private":
+    if channel in PRIVATE_CHANNELS:
         token, payload["chat_id"] = BOT_TOKEN, CHAT_ID
+        dest = TELEGRAM_TRADES_CHAT_ID if channel == "trades" else ""
+        if dest and TELEGRAM_GROUP_CHAT_ID and str(dest) == str(TELEGRAM_GROUP_CHAT_ID):
+            print("Telegram: TELEGRAM_TRADES_CHAT_ID points at the joinable "
+                  "group — refusing, sending to the owner's DM instead.")
+        elif dest:
+            payload["chat_id"] = dest
+            if TELEGRAM_TRADES_THREAD_ID:
+                payload["message_thread_id"] = TELEGRAM_TRADES_THREAD_ID
     elif TELEGRAM_GROUP_CHAT_ID and thread_id:
         token, payload["chat_id"], payload["message_thread_id"] = (
             BOT_TOKEN, TELEGRAM_GROUP_CHAT_ID, thread_id,

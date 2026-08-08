@@ -145,7 +145,7 @@ def test_a_skip_records_why_and_a_fresh_flag_clears_it(monkeypatch):
 
 def test_the_card_is_announced_only_when_the_answer_changes(monkeypatch):
     sent = []
-    monkeypatch.setattr(S3, "_tg_feed", lambda m: sent.append(m))
+    monkeypatch.setattr(S3, "_tg", lambda m: sent.append(m))
     monkeypatch.setattr(S3, "live_blocked", lambda: "")
     st = live_xaut()
 
@@ -164,7 +164,7 @@ def test_the_card_is_announced_only_when_the_answer_changes(monkeypatch):
 def test_a_new_skip_reason_counts_as_a_change(monkeypatch):
     """Same state ('spent'), different reason — the owner needs to hear it."""
     sent = []
-    monkeypatch.setattr(S3, "_tg_feed", lambda m: sent.append(m))
+    monkeypatch.setattr(S3, "_tg", lambda m: sent.append(m))
     monkeypatch.setattr(S3, "live_blocked", lambda: "")
     st = live_xaut(skip_reason="A")
     S3.announce_state("XAUT", st, FLAGFLIP)
@@ -178,24 +178,24 @@ def test_a_broken_status_card_never_stops_the_trading_loop(monkeypatch):
     assert S3.announce_state("XAUT", live_xaut(), FLAGFLIP) is False
 
 
-# ── the lifecycle now lands in the S1 topic, ops noise does not ──────────────
+# ── every S3 message is private now ─────────────────────────────────────────
 
-def test_lifecycle_goes_to_the_s1_topic_and_errors_stay_on_alerts():
+def test_s3_has_exactly_one_telegram_destination_and_it_is_private():
+    """2026-08-08: S1, S3 and S4 were consolidated into one PRIVATE feed. A
+    single sender means no routing mistake can publish a live position — so
+    the count matters, not just the channel name."""
+    import telegram_utils
+    src = open(S3.__file__, encoding="utf-8").read()
+    assert src.count("telegram_utils.send_message(") == 1
+    assert 'channel="trades"' in src
+    assert "trades" in telegram_utils.PRIVATE_CHANNELS
+
+
+def test_the_naked_position_alarm_still_goes_out():
+    """Merging the two senders must not have dropped the loudest one."""
     import re
     src = open(S3.__file__, encoding="utf-8").read()
-    feed = re.findall(r"_tg_feed\(f?\"([^\"]{0,40})", src)
-    ops = re.findall(r"(?<!_)_tg\(f?\"([^\"]{0,40})", src)
-    assert any("FLIP" in m for m in feed) and any("EXIT" in m for m in feed)
-    assert any("FLAG" in m for m in feed)
-    # the naked-position alarm must NOT be diluted into the public feed
-    assert any("GUARDIAN" in m for m in ops)
-    assert not any("GUARDIAN" in m for m in feed)
-
-
-def test_the_s1_topic_send_is_the_only_channel_override():
-    src = open(S3.__file__, encoding="utf-8").read()
-    assert 'channel="s1signals"' in src
-    assert src.count("telegram_utils.send_message(") == 2   # _tg + _tg_feed
+    assert any("GUARDIAN" in m for m in re.findall(r'_tg\(f?"([^"]{0,40})', src))
 
 
 if __name__ == "__main__":       # pragma: no cover

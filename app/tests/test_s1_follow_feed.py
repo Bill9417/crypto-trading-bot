@@ -63,7 +63,7 @@ def test_follow_cancel_tells_followers_to_pull_limit():
 
 
 # ── routing ──────────────────────────────────────────────────────────────────
-def test_notify_s1_follow_routes_to_its_own_topic(monkeypatch):
+def test_notify_s1_follow_routes_to_the_private_trade_feed(monkeypatch):
     captured = {}
 
     def _fake_send(message, parse_mode=None, *, channel="alerts", **kw):
@@ -72,9 +72,15 @@ def test_notify_s1_follow_routes_to_its_own_topic(monkeypatch):
 
     monkeypatch.setattr(bot, "send_message", _fake_send)
     bot.notify_s1_follow("hi")
-    assert captured["channel"] == "s1signals"
+    # 2026-08-08: S1 moved off the public "s1signals" topic and joined S3+S4
+    # in one PRIVATE feed. A topic is only as private as its group, and the
+    # group is joinable through TELEGRAM_INVITE_URL.
+    assert captured["channel"] == "trades"
+    assert captured["channel"] in telegram_utils.PRIVATE_CHANNELS
     assert captured["parse_mode"] == "HTML"
 
 
-def test_s1signals_channel_is_registered():
-    assert "s1signals" in telegram_utils._TOPIC_THREAD
+def test_the_private_trade_channel_is_not_a_group_topic():
+    """It must NOT be in the topic table — being there would route it into
+    TELEGRAM_GROUP_CHAT_ID the moment a thread id existed for that name."""
+    assert "trades" not in telegram_utils._TOPIC_THREAD

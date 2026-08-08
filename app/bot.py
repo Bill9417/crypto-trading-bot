@@ -1426,11 +1426,13 @@ def format_trade_card(headline, symbol, direction, entry, sl, tp,
     return "\n".join(lines)
 
 
-# ── Strategy-1 copy-trade feed (📈 S1 交易訊號 topic) ─────────────────────────
-# The full live lifecycle in 中文, quoting Bybit prices/links (the user promotes
-# Bybit) so followers can mirror each trade. Everything here routes to
-# channel="s1signals"; the plain English cards above stay for internal use.
-S1_FOLLOW_CHANNEL = "s1signals"
+# ── Strategy-1 trade feed ────────────────────────────────────────────────────
+# The full live lifecycle in 中文, quoting Bybit prices/links (the user trades
+# Bybit). 2026-08-08: moved off the public "s1signals" topic to the PRIVATE
+# "trades" channel, together with S3 and S4 — the owner asked for one place
+# other people cannot reach. The plain English cards above stay for internal
+# use. See config.TELEGRAM_TRADES_CHAT_ID.
+S1_FOLLOW_CHANNEL = "trades"
 
 
 def s1_follow_card(headline, symbol, direction, entry, sl, tp1, tp2, *,
@@ -2710,8 +2712,12 @@ def startup_message() -> None:
         except Exception:  # noqa: BLE001
             pass
         if _key != "default" and executor.is_live():
+            # channel="private": which engine is armed with real money is the
+            # owner's business, and send_message() defaults to the joinable
+            # group's Alerts topic.
             send_message(f"🧠 LIVE strategy: {_name}\nManagement: {_manage} (S1 path "
-                         f"{'OFF' if _key != 'default' else 'ON'}). Real orders armed.")
+                         f"{'OFF' if _key != 'default' else 'ON'}). Real orders armed.",
+                         force=True, channel="private")
     except Exception as exc:  # noqa: BLE001 — never let this block startup
         print(f"[strategy] resolve error at startup: {exc}")
     # Live safety gates (run in order; each halts live trading on failure so the
@@ -2729,7 +2735,8 @@ def startup_message() -> None:
         if not ok:
             executor.halt_live_trading(msg)
             try:
-                send_message(f"⛔ LIVE TRADING HALTED — {msg}\nBot continues in DRY-RUN until fixed.")
+                send_message(f"⛔ LIVE TRADING HALTED — {msg}\nBot continues in DRY-RUN "
+                             f"until fixed.", force=True, channel="private")
             except Exception as exc:  # noqa: BLE001
                 print(f"Telegram halt notice failed: {exc}")
 
@@ -2740,8 +2747,10 @@ def startup_message() -> None:
     line = executor.status_line()
     print(line)
     if executor.is_live():
-        # Make it impossible to miss that real orders are armed.
-        send_message(f"⚠️ {line}")
+        # Make it impossible to miss that real orders are armed — but to the
+        # OWNER only: status_line() spells out leverage, margin per trade and
+        # the max-margin cap, which used to go straight to the group.
+        send_message(f"⚠️ {line}", force=True, channel="private")
 
 def shutdown_message() -> None:
     print("Bot stopped.")

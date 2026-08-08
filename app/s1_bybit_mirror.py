@@ -84,14 +84,15 @@ def _save(state: dict) -> None:
 
 
 def _tg(msg: str) -> None:
-    """One 🪞 note to the SAME topic bot.py's S1 follow-cards go to (not
-    Alerts) — a skipped mirror needs to sit next to the trade it explains,
-    or nobody connects the two (see the 2026-07-27 DODOX confusion this
-    fixed: 'filled' card in S1 signals, the actual reason in Alerts)."""
+    """One 🪞 note to the SAME place bot.py's S1 follow-cards go (the private
+    "trades" feed, not Alerts) — a skipped mirror needs to sit next to the
+    trade it explains, or nobody connects the two (see the 2026-07-27 DODOX
+    confusion this fixed: 'filled' card in one topic, the actual reason in
+    Alerts)."""
     try:
         import telegram_utils
         telegram_utils.send_message(f"🪞 S1鏡單(Bybit) · {msg}",
-                                    force=True, channel="s1signals")
+                                    force=True, channel="trades")
     except Exception as exc:  # noqa: BLE001 — a note must never break execution
         print(f"[s1-mirror] telegram failed: {exc}")
 
@@ -99,11 +100,11 @@ def _tg(msg: str) -> None:
 def _tg_owner(msg: str) -> None:
     """The same note WITH the account numbers, to the owner's DM only.
 
-    The public note above lives in the group so a skipped mirror sits next to
-    the trade it explains, but the reason often contains real balances — free
-    margin, 24h realised P&L, raw exchange errors. The group is joinable by
-    anyone with the invite link, so the number goes here and the reason goes
-    there."""
+    Both destinations are private since 2026-08-08, so this split is no longer
+    an access-control boundary — it is kept because the two notes serve
+    different jobs, and because "trades" becomes a shared private GROUP the
+    moment TELEGRAM_TRADES_CHAT_ID is set, at which point balances must not
+    ride along with the trade note again."""
     try:
         import telegram_utils
         telegram_utils.send_message(f"🪞 S1鏡單 · {msg}",

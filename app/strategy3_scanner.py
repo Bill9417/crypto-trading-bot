@@ -151,23 +151,17 @@ def decide(state: dict, flag, vegas: int, holding) -> tuple:
 # ── execution (Bybit via strategy3_exec) ─────────────────────────────────────
 
 def _tg(msg: str) -> None:
-    """OPS channel. S3 is the live engine — its error/safety alerts always
-    punch through quiet mode (force=True), like the naked-position alarm."""
-    try:
-        telegram_utils.send_message(msg, force=True)
-    except Exception as exc:  # noqa: BLE001 — alerts must never kill the loop
-        print(f"[strategy3] telegram failed: {exc}")
+    """Every S3 message — flags, entries, skips, break-even, exits, order
+    errors, the naked-position alarm — goes to the PRIVATE "trades" feed
+    alongside S1 and S4 (2026-08-08: "整合到一個 topic 而且是 private").
 
-
-def _tg_feed(msg: str) -> None:
-    """FEED channel — the 📈 S1 signal topic, where the owner follows trades
-    (asked for 2026-08-08: "add the information to the S1 topic"). Only the
-    trade lifecycle goes here: flag, entry, skip-with-reason, break-even, exit.
-    Ops noise (order errors, guardian stop failures, leverage warnings) stays
-    on _tg, because this is a PUBLIC group topic — nothing carrying account
-    figures may ever be routed through it."""
+    S3 is the live engine, so force=True punches through quiet mode. There is
+    deliberately no second, public channel any more: a split existed only while
+    the trade feed lived in the joinable group and the ops alerts had to be
+    kept out of it. One private destination means no routing mistake can
+    publish a live position."""
     try:
-        telegram_utils.send_message(msg, force=True, channel="s1signals")
+        telegram_utils.send_message(msg, force=True, channel="trades")
     except Exception as exc:  # noqa: BLE001 — alerts must never kill the loop
         print(f"[strategy3] telegram failed: {exc}")
 
@@ -259,8 +253,8 @@ def open_flip(symbol: str, direction: str, price: float, score, margin: float,
             if X.get_position(symbol):
                 print(f"[strategy3] skip {symbol}: a Bybit position already exists "
                       f"(manual?) — not touching it")
-                _tg_feed(f"⚠️ S3 skipped {direction.upper()} {symbol.split('/')[0]} — a position "
-                         f"already exists on Bybit (manual?). Close it or let me manage it.")
+                _tg(f"⚠️ S3 skipped {direction.upper()} {symbol.split('/')[0]} — a position "
+                    f"already exists on Bybit (manual?). Close it or let me manage it.")
                 return Outcome("skip", "Bybit 上已經有這個標的的倉位（手動？），"
                                        "不去動它")
         except Exception as exc:  # noqa: BLE001 — fail closed on an unreadable account
@@ -288,8 +282,8 @@ def open_flip(symbol: str, direction: str, price: float, score, margin: float,
     print(f"[strategy3] {tag}OPENED {direction.upper()} {symbol} @ {price:.6g} "
           f"(score {score}, emergency SL {sl:.6g}, qty {res.get('qty')})")
     why = why or f"score {score}/100 · Vegas agrees · exit = opposite flag"
-    _tg_feed(f"🔀 S3 {tag}FLIP · {direction.upper()} {symbol.split('/')[0]} @ {price:.6g} (Bybit)\n"
-             f"{why} (emergency SL {slp:.0%})")
+    _tg(f"🔀 S3 {tag}FLIP · {direction.upper()} {symbol.split('/')[0]} @ {price:.6g} (Bybit)\n"
+        f"{why} (emergency SL {slp:.0%})")
     if res.get("leverage_warning"):
         _tg(f"⚠️ S3 · {symbol.split('/')[0]} leverage may not be {leverage}x "
             f"— Bybit said: {res['leverage_warning']}\nSame {price * res.get('qty', 0):.0f} USDT "
@@ -312,7 +306,7 @@ def close_flip(symbol: str, why: str) -> bool:
         return False
     tag = "DRY-RUN " if res.get("dry") else ""
     print(f"[strategy3] {tag}CLOSED {symbol} — {why}")
-    _tg_feed(f"🔀 S3 {tag}EXIT · {symbol.split('/')[0]} (Bybit) — {why}")
+    _tg(f"🔀 S3 {tag}EXIT · {symbol.split('/')[0]} (Bybit) — {why}")
     if not res.get("dry"):                       # mirror the exit to followers
         import strategy_ledger
         strategy_ledger.record_close("S3", symbol)
@@ -396,9 +390,9 @@ def manage_breakeven(sym: str, st: dict, pos: dict) -> None:
     _mirror("mirror_set_stop", sym, be_lvl)      # move followers' stops too
     print(f"[strategy3] {base}: break-even armed — stop moved to {be_lvl:.6g} "
           f"(entry {entry:.6g}, mark {mark:.6g})")
-    _tg_feed(f"🛡️ S3 · {base} is +{trig:.2%} — stop moved to break-even "
-             f"({be_lvl:.6g}). Worst case is now ~0 instead of "
-             f"−{config.STRATEGY3_EMERGENCY_SL_PCT:.1%}.")
+    _tg(f"🛡️ S3 · {base} is +{trig:.2%} — stop moved to break-even "
+        f"({be_lvl:.6g}). Worst case is now ~0 instead of "
+        f"−{config.STRATEGY3_EMERGENCY_SL_PCT:.1%}.")
 
 
 def reconcile_position(sym: str, st: dict) -> None:
@@ -422,8 +416,8 @@ def reconcile_position(sym: str, st: dict) -> None:
     if not pos:
         print(f"[strategy3] {base}: position gone on Bybit (SL or manual "
               f"close) — standing down until the next flag")
-        _tg_feed(f"ℹ️ S3 · {base} position closed on Bybit (stop or manual) — "
-                 f"waiting for the next flag")
+        _tg(f"ℹ️ S3 · {base} position closed on Bybit (stop or manual) — "
+            f"waiting for the next flag")
         st["pos_dir"] = None
         st["consumed"] = True
         st["skip_reason"] = "倉位在 Bybit 被平掉（停損或手動）"
@@ -500,7 +494,7 @@ def announce_state(base: str, st: dict, params: dict) -> bool:
     st["notified_state"] = key
     if first:
         return False
-    _tg_feed(strategy3_status.card(info))
+    _tg(strategy3_status.card(info))
     return True
 
 
@@ -570,8 +564,8 @@ def step(client, state: dict) -> None:
                 st["open_attempts"] = 0                 # fresh cross → fresh retries
                 st["flag_ts"] = last_ts / 1000.0        # WHEN, so the card can say it
                 st["skip_reason"] = None                # a fresh signal clears the last excuse
-                _tg_feed(f"🚩 S3 CROSS · {sig.upper()} {base} ({alt_min}m open/close cross, "
-                         f"{feed.capitalize()} chart)\nstop-and-reverse — flipping the position now")
+                _tg(f"🚩 S3 CROSS · {sig.upper()} {base} ({alt_min}m open/close cross, "
+                    f"{feed.capitalize()} chart)\nstop-and-reverse — flipping the position now")
             # the cross IS the whole signal — no Vegas gate on this engine, so
             # feed decide() an always-agreeing value for the pending direction
             # to reuse the flip/consumed/manual-close state machine unchanged
@@ -618,10 +612,10 @@ def step(client, state: dict) -> None:
                 st["open_attempts"] = 0                 # fresh flag → fresh retries
                 st["flag_ts"] = last_ts / 1000.0        # WHEN, so the card can say it
                 st["skip_reason"] = None                # a fresh flag clears the last excuse
-                _tg_feed(f"🚩 S3 FLAG · {flag.upper()} {base} ({params['timeframe']}, "
-                         f"{feed.capitalize()} chart)\n"
-                         f"score {snap['score']:.0f}/100 · Vegas "
-                         f"{'agrees → entering' if (snap['vegas'] > 0) == (flag == 'long') and snap['vegas'] != 0 else 'disagrees → waiting'}")
+                _tg(f"🚩 S3 FLAG · {flag.upper()} {base} ({params['timeframe']}, "
+                    f"{feed.capitalize()} chart)\n"
+                    f"score {snap['score']:.0f}/100 · Vegas "
+                    f"{'agrees → entering' if (snap['vegas'] > 0) == (flag == 'long') and snap['vegas'] != 0 else 'disagrees → waiting'}")
 
             close, open_dir = decide(st, flag, snap["vegas"], st.get("pos_dir"))
             why = None                                  # open_flip's score/Vegas default
@@ -650,8 +644,8 @@ def step(client, state: dict) -> None:
                     st["consumed"] = True
                     st["skip_reason"] = (f"連續 {st['open_attempts']} 次下單失敗放棄"
                                          + (f"（{reason}）" if reason else ""))
-                    _tg_feed(f"⚠️ S3 gave up opening {open_dir.upper()} {base} after "
-                             f"{st['open_attempts']} attempts — waiting for the next flag")
+                    _tg(f"⚠️ S3 gave up opening {open_dir.upper()} {base} after "
+                        f"{st['open_attempts']} attempts — waiting for the next flag")
                 # else: flag stays live → retried on the next closed candle
             else:                                       # 'skip' — final for this flag
                 st["consumed"] = True

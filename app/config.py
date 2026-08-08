@@ -123,6 +123,21 @@ TELEGRAM_LIQ_THREAD_ID = os.getenv("TELEGRAM_LIQ_THREAD_ID", "")
 # 中文 with Bybit prices/links, so followers can mirror the trades. Empty =
 # falls back into the Signals thread. Provision it with create_s1_topic.py.
 TELEGRAM_S1SIGNALS_THREAD_ID = os.getenv("TELEGRAM_S1SIGNALS_THREAD_ID", "")
+# ── the PRIVATE trade feed (2026-08-08) ─────────────────────────────────────
+# S1 + S3 + S4 were spread across public topics in the joinable group. The
+# owner asked for one place that other people cannot reach, so they all now
+# send to channel="trades".
+#
+# A Telegram topic is only as private as its group — topics inherit group
+# membership, and TELEGRAM_GROUP_CHAT_ID is joinable through TELEGRAM_INVITE_URL
+# above. So "trades" defaults to the owner's own DM (TELEGRAM_CHAT_ID), which
+# nobody else can read. To use a PRIVATE group with topics instead (a group the
+# owner creates by hand and invites chosen people to — bots cannot create
+# groups), set TELEGRAM_TRADES_CHAT_ID to that group and, optionally,
+# TELEGRAM_TRADES_THREAD_ID to one topic inside it. Pointing it back at the
+# public group is refused at send time, not silently honoured.
+TELEGRAM_TRADES_CHAT_ID = os.getenv("TELEGRAM_TRADES_CHAT_ID", "").strip()
+TELEGRAM_TRADES_THREAD_ID = os.getenv("TELEGRAM_TRADES_THREAD_ID", "").strip()
 # Public invite link for the topics group (t.me/+xxxx from the group's invite
 # settings). Shown as the join CTA on the public /welcome landing page; empty
 # = the page renders without a join button (members can still log in).

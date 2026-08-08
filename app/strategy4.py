@@ -599,10 +599,11 @@ def tick(client=None) -> bool:
         import telegram_utils
         text = build_digest({**result, "signals": fresh})
         if text:
-            # channel="s1signals": the 📈 signal topic the owner asked for.
-            # It is a PUBLIC group topic, so nothing here may carry balances,
-            # position sizes or free margin — only the setup itself.
-            telegram_utils.send_message(text, force=True, channel="s1signals")
+            # channel="trades": the PRIVATE S1/S3/S4 feed (2026-08-08). It can
+            # be pointed at a private GROUP via TELEGRAM_TRADES_CHAT_ID, so the
+            # old rule still stands — nothing here may carry balances, position
+            # sizes or free margin, only the setup itself.
+            telegram_utils.send_message(text, force=True, channel="trades")
         sent = state.get("sent") or {}
         for s in fresh:
             sent[s["symbol"]] = now_ts

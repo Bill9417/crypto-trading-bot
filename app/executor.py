@@ -50,7 +50,21 @@ from config import (
     EXCLUDE_TRADFI_PERPS,
 )
 from market_data import is_tradfi_market
-from telegram_utils import send_message
+from telegram_utils import send_message as _send_message
+
+
+def send_message(message, *args, channel="trades", **kw):
+    """Every notice this module sends is about the owner's REAL S1 orders —
+    entries with margin/leverage/notional/qty, stop placements, TP1 banked, the
+    naked-position alarm. telegram_utils.send_message() defaults to
+    channel="alerts", which is a topic in the JOINABLE group, so until
+    2026-08-08 all of it was published: the entry line alone spelled out
+    "margin N USDT × Lx = M USDT notional | qty Q".
+
+    Defaulting the channel here rather than at ~17 call sites means a new alert
+    added in this module is private by construction. Callers that pass an
+    explicit channel still win."""
+    return _send_message(message, *args, channel=channel, **kw)
 
 _exchange = None
 _exchange_lock = threading.Lock()

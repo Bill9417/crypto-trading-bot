@@ -77,8 +77,11 @@ OWNER_IDS = {str(c) for c in (config.CHAT_ID, config.ALERTS_CHAT_ID) if c}
 # otherwise type /positions and read the owner's book.
 # restart/reboot are here rather than in ADMIN_COMMANDS on purpose: a group
 # admin is trusted to delete messages, not to bounce the live trading engine.
+# s3/xaut/s4 joined 2026-08-08 with the private trade feed: it would be absurd
+# to move S1/S3/S4 out of the public group and then let any member type /s3 and
+# read the same state back.
 OWNER_ONLY_COMMANDS = {"report", "positions", "pos", "winrate", "stats", "wr",
-                       "restart", "reboot"}
+                       "restart", "reboot", "s3", "xaut", "s4", "stockperp"}
 PRIVATE_REPLY_COMMANDS = set(OWNER_ONLY_COMMANDS)
 ADMIN_CACHE_SEC = 300
 
@@ -334,7 +337,6 @@ GUIDE = (
     "\n"
     "🗂 主題頻道\n"
     "📊 訊號 — S2 掃描（15m）：⭐ 精選訊號 + 訊號榜 + 週日成績單\n"
-    "📈 S1 交易訊號 — 實盤跟單流程：掛單 → 成交 → 出場 全程通知\n"
     "📈 每日報告 — 每天早上市場快報（價格、恐懼貪婪、總經日曆）\n"
     "🌍 大事件 — Fed／地緣政治／監管／駭客 突發 + 行情劇變警報\n"
     "💥 清算 — BTC/ETH 清算連鎖警報 + 🧲 清算地圖 + 🐳 巨鯨持倉追蹤\n"
@@ -377,8 +379,8 @@ HELP = ("🤖 指令列表\n"
         "/whaletop — 🐳 巨鯨候選名單: 官方排行榜篩出的大戶（已排除做市商/空投戶）\n"
         "/whaleadd <0x地址> [名稱] · /whalerm <地址> — 管理追蹤清單（限管理員）\n"
         "/whalesync [dry] — 自動加入排行榜前段的新巨鯨（限管理員）\n"
-        "/s3 [標的] — S3 目前為什麼有／沒有部位（旗標、分數、下一步）\n"
-        "/s4 — 📊 S4 永續掃描（Bybit 美股/商品 + 加密）目前的設定\n"
+        "/s3 [標的] — S3 目前為什麼有／沒有部位（擁有者專用, 只私訊回覆）\n"
+        "/s4 — S4 永續掃描目前的設定（擁有者專用, 只私訊回覆）\n"
         "/outcomes — 訊號成績單: 每個訊號 48h 後的真實結果\n"
         "/mom — ETH 14 日動能紙上前測戰績\n"
         "/paper — S1 前測戰績（紙上模擬, 無真實下單）: 完整版 vs 只做多版\n"

@@ -566,3 +566,130 @@ def test_two_scanners_writing_state_do_not_collide(tmp_path, monkeypatch):
     assert W._load_state() == {"a": 1}
     leftovers = [p.name for p in tmp_path.iterdir() if p.name.endswith(".tmp")]
     assert leftovers == [], f"temp files left behind: {leftovers}"
+
+
+# ── S1 / S3 / S4 are private (2026-08-08) ────────────────────────────────────
+# A Telegram topic is only as private as its group, and TELEGRAM_GROUP_CHAT_ID
+# is joinable through TELEGRAM_INVITE_URL. The owner asked for one place other
+# people cannot reach, so every S1/S3/S4 sender must route to channel="trades"
+# (or "private") — never to a topic in the joinable group.
+# executor.py wraps send_message with a channel="trades" default, so its ~17
+# call sites are covered by that wrapper rather than listed one by one.
+PRIVATE_FEED_MODULES = ("bot.py", "s1_bybit_mirror.py", "strategy3_scanner.py",
+                        "strategy4.py", "strategy3_risk.py", "copy_engine.py")
+
+
+def _sends_with_channels(path):
+    """[(line_no, channel)] for every send in the file; None = the "alerts"
+    default, which IS a group topic."""
+    import re
+    with open(path, encoding="utf-8") as fh:
+        lines = fh.read().split("\n")
+    out = []
+    for i, line in enumerate(lines):
+        if "send_message(" not in line or line.strip().startswith(("def ", "#")):
+            continue
+        block = "\n".join(lines[i:i + 6])
+        m = re.search(r'channel=(?:["\'](\w+)["\']|(\w+))', block)
+        out.append((i + 1, (m.group(1) or m.group(2)) if m else None))
+    return out
+
+
+def test_the_trade_engines_never_post_to_the_joinable_group():
+    import os
+    import telegram_utils
+    app_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    # names that resolve to a private channel: the literals, plus the module
+    # constants holding them (bot.py routes through S1_FOLLOW_CHANNEL)
+    ok = set(telegram_utils.PRIVATE_CHANNELS) | {"S1_FOLLOW_CHANNEL", "channel"}
+    offenders = []
+    for name in PRIVATE_FEED_MODULES:
+        path = os.path.join(app_dir, name)
+        text = open(path, encoding="utf-8").read().split("\n")
+        for line_no, ch in _sends_with_channels(path):
+            if ch in ok:
+                continue
+            # bot.py also hosts the RSI-extremes market scan, which is a
+            # PUBLIC product and has nothing to do with anyone's positions.
+            if "RSI" in "\n".join(text[line_no - 6:line_no + 4]):
+                continue
+            offenders.append(f"{name}:{line_no} → {ch or 'alerts (default)'}")
+    assert not offenders, f"trade feed leaking to a group topic: {offenders}"
+
+
+def test_s1_follow_channel_is_private():
+    import bot
+    import telegram_utils
+    assert bot.S1_FOLLOW_CHANNEL in telegram_utils.PRIVATE_CHANNELS
+
+
+def test_a_private_channel_never_resolves_to_the_group_chat(monkeypatch):
+    import telegram_utils as T
+    monkeypatch.setattr(T, "BOT_TOKEN", "tok")
+    monkeypatch.setattr(T, "CHAT_ID", "OWNER")
+    monkeypatch.setattr(T, "TELEGRAM_GROUP_CHAT_ID", "-100GROUP")
+    monkeypatch.setattr(T, "TELEGRAM_TRADES_CHAT_ID", "")
+    for ch in T.PRIVATE_CHANNELS:
+        _, payload, _ = T._route(ch, force=True)
+        assert payload["chat_id"] == "OWNER"
+        assert "message_thread_id" not in payload
+
+
+def test_pointing_the_trade_feed_at_the_joinable_group_is_refused(monkeypatch):
+    """The one configuration mistake that would publish every live trade."""
+    import telegram_utils as T
+    monkeypatch.setattr(T, "BOT_TOKEN", "tok")
+    monkeypatch.setattr(T, "CHAT_ID", "OWNER")
+    monkeypatch.setattr(T, "TELEGRAM_GROUP_CHAT_ID", "-100GROUP")
+    monkeypatch.setattr(T, "TELEGRAM_TRADES_CHAT_ID", "-100GROUP")
+    _, payload, _ = T._route("trades", force=True)
+    assert payload["chat_id"] == "OWNER"          # refused, not honoured
+
+
+def test_a_separate_private_group_and_topic_is_honoured(monkeypatch):
+    import telegram_utils as T
+    monkeypatch.setattr(T, "BOT_TOKEN", "tok")
+    monkeypatch.setattr(T, "CHAT_ID", "OWNER")
+    monkeypatch.setattr(T, "TELEGRAM_GROUP_CHAT_ID", "-100GROUP")
+    monkeypatch.setattr(T, "TELEGRAM_TRADES_CHAT_ID", "-100PRIVATE")
+    monkeypatch.setattr(T, "TELEGRAM_TRADES_THREAD_ID", "7")
+    _, payload, _ = T._route("trades", force=True)
+    assert payload["chat_id"] == "-100PRIVATE" and payload["message_thread_id"] == "7"
+    # …and the owner's DM is unaffected by the trade-feed override
+    _, dm, _ = T._route("private", force=True)
+    assert dm["chat_id"] == "OWNER" and "message_thread_id" not in dm
+
+
+def test_the_private_feed_ignores_quiet_mode(monkeypatch):
+    """S1/S3/S4 are live money — TELEGRAM_QUIET must never swallow them."""
+    import telegram_utils as T
+    monkeypatch.setattr(T, "BOT_TOKEN", "tok")
+    monkeypatch.setattr(T, "CHAT_ID", "OWNER")
+    monkeypatch.setattr(T, "TELEGRAM_QUIET", True)
+    monkeypatch.setattr(T, "TELEGRAM_TRADES_CHAT_ID", "")
+    assert T._route("trades", force=False) is not None
+
+
+def test_the_s1_executor_defaults_every_notice_to_the_private_feed():
+    """executor.py sends fills, stop placements, TP1 and the naked-position
+    alarm — its entry line spells out margin, leverage, notional and qty. It
+    shadows send_message with a private default so a NEW alert added there is
+    private by construction rather than by remembering."""
+    import inspect
+
+    import executor
+    import telegram_utils
+    sig = inspect.signature(executor.send_message)
+    assert sig.parameters["channel"].default in telegram_utils.PRIVATE_CHANNELS
+    assert executor.send_message is not telegram_utils.send_message
+
+
+def test_executor_notices_actually_route_privately(monkeypatch):
+    import executor
+    seen = {}
+    monkeypatch.setattr(executor, "_send_message",
+                        lambda m, *a, **k: seen.update(k) or True)
+    executor.send_message("hi")
+    assert seen["channel"] == "trades"
+    executor.send_message("hi", channel="private")      # explicit still wins
+    assert seen["channel"] == "private"

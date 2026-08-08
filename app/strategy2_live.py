@@ -42,7 +42,10 @@ def _warn_once(key: str, msg: str, cooldown: int = 3600) -> None:
     if now - _last_warn.get(key, 0) >= cooldown:
         _last_warn[key] = now
         try:
-            telegram_utils.send_message(msg)
+            # channel="private": these warn about the owner's LIVE engines
+            # (which one is armed, why a live entry was skipped) — ops, not
+            # group news, and send_message() defaults to the group's Alerts.
+            telegram_utils.send_message(msg, force=True, channel="private")
         except Exception:  # noqa: BLE001 — a failed alert must never block trading logic
             pass
 
