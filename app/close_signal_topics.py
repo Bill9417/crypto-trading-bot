@@ -37,7 +37,8 @@ TOPICS = [
     ("📈 每日報告", config.TELEGRAM_REPORT_THREAD_ID, "report"),
     ("🇹🇼 台股", config.TELEGRAM_TWSTOCKS_THREAD_ID, "twstocks"),
     ("💥 清算", config.TELEGRAM_LIQ_THREAD_ID, "liq"),
-    ("📈 S1 交易訊號", config.TELEGRAM_S1SIGNALS_THREAD_ID, "s1signals"),
+    # 📈 S1 交易訊號 was DELETED 2026-08-08 — S1/S3/S4 moved to the
+    # private "trades" feed, and the public topic went with them.
 ]
 
 NOTICE = "📌 本主題現為「僅限訊號公告」— 開放聊天請至一般 (General) 頻道。"

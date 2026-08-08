@@ -693,3 +693,24 @@ def test_executor_notices_actually_route_privately(monkeypatch):
     assert seen["channel"] == "trades"
     executor.send_message("hi", channel="private")      # explicit still wins
     assert seen["channel"] == "private"
+
+
+def test_the_retired_s1_topic_can_never_publish_again():
+    """The public 📈 S1 交易訊號 topic was deleted 2026-08-08. Dropping the
+    channel name outright would be worse than keeping it: an unmapped name
+    falls through _route() to the group's Alerts topic, so a leftover
+    channel="s1signals" anywhere would start posting trades publicly again."""
+    import telegram_utils as T
+    assert "s1signals" not in T._TOPIC_THREAD
+    assert "s1signals" in T.PRIVATE_CHANNELS
+
+
+def test_no_script_can_recreate_the_public_trade_topic():
+    import os
+    app_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    assert not os.path.exists(os.path.join(app_dir, "create_s1_topic.py"))
+    for name in os.listdir(app_dir):
+        if not name.endswith(".py"):
+            continue
+        with open(os.path.join(app_dir, name), encoding="utf-8") as fh:
+            assert "createForumTopic" not in fh.read(), f"{name} can recreate a topic"

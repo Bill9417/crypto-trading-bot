@@ -17,7 +17,6 @@ from config import (
     TELEGRAM_LIQ_THREAD_ID,
     TELEGRAM_QUIET,
     TELEGRAM_REPORT_THREAD_ID,
-    TELEGRAM_S1SIGNALS_THREAD_ID,
     TELEGRAM_SIGNALS_THREAD_ID,
     TELEGRAM_TECH_THREAD_ID,
     TELEGRAM_TRADES_CHAT_ID,
@@ -28,7 +27,14 @@ from config import (
 # Channels that must NEVER reach the joinable group: the owner's DM and the
 # private S1/S3/S4 trade feed. Kept as one set so a new private channel cannot
 # be added to the routing table without landing in the guard test too.
-PRIVATE_CHANNELS = frozenset({"private", "trades"})
+#
+# "s1signals" is RETIRED — its public topic (thread 4877) and every trade card
+# in it were deleted 2026-08-08 at the owner's request. It stays here, aliased
+# to the private feed, rather than being dropped: an unmapped channel name
+# falls through _route() to the group's Alerts topic, so simply deleting the
+# entry would turn any leftover reference into a public post. Failing closed
+# beats tidiness. config.TELEGRAM_S1SIGNALS_THREAD_ID is now ignored.
+PRIVATE_CHANNELS = frozenset({"private", "trades", "s1signals"})
 
 _TOPIC_THREAD = {
     "signals": TELEGRAM_SIGNALS_THREAD_ID,
@@ -40,8 +46,6 @@ _TOPIC_THREAD = {
     "report": TELEGRAM_REPORT_THREAD_ID or TELEGRAM_ALERTS_THREAD_ID,
     "twstocks": TELEGRAM_TWSTOCKS_THREAD_ID or TELEGRAM_ALERTS_THREAD_ID,
     "liq": TELEGRAM_LIQ_THREAD_ID or TELEGRAM_ALERTS_THREAD_ID,
-    # 📈 S1 copy-trade feed — falls back to the Signals thread until provisioned
-    "s1signals": TELEGRAM_S1SIGNALS_THREAD_ID or TELEGRAM_SIGNALS_THREAD_ID,
 }
 
 # Telegram hard limits (observed live 2026-07-12): ~20 messages/minute to the
