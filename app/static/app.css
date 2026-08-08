@@ -69,74 +69,132 @@ html { scrollbar-width: thin; scrollbar-color: rgba(255, 255, 255, 0.18) transpa
 ::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.14); border-radius: 999px; }
 ::-webkit-scrollbar-thumb:hover { background: rgba(0, 210, 255, 0.35); }
 
-/* ── Global navigation bar (shared partial _nav.html) ─────────────────────
-   Redesigned 2026-07-05: typography-led "private terminal" look. No emoji, no
-   per-page rainbow pills — quiet letterspaced small-caps in silver, a single
-   champagne accent for the page you are ON (hairline underline + faint tint),
-   colour otherwise reserved for the live regime chips. */
-.tb-nav { display: flex; align-items: center; gap: 2px; flex-wrap: wrap; padding-top: 10px; border-top: 1px solid var(--wolf-border); }
+/* ── Global navigation: fixed LEFT SIDEBAR (shared partial _nav.html) ──────
+   Redesigned 2026-08-09. The old horizontal pill bar had 16 destinations and
+   wrapped to two rows on a laptop / side-scrolled on a phone, which hid half
+   the site. A vertical rail shows every destination at once, grouped and
+   labelled, and hands the page its full height back.
 
-.nav-pill {
-    position: relative; display: inline-flex; align-items: center;
-    font-size: 0.66rem; font-weight: 600; letter-spacing: 0.12em; text-transform: uppercase;
-    padding: 7px 10px; border-radius: 8px; text-decoration: none;
-    border: 1px solid transparent; color: var(--wolf-muted); background: transparent;
-    transition: color .18s, background .18s, border-color .18s;
-}
-/* chips + lang + logout travel as one unit: flush right on a shared row,
-   wrapping to a clean full second row when the pills need the width —
-   never an orphaned lone "Logout" (the old wrap behaviour). */
-.nav-status { display: inline-flex; align-items: center; gap: 2px; margin-left: auto; }
-/* hairline champagne underline, grows in on hover / stays lit on the active page */
-.nav-pill::after {
-    content: ""; position: absolute; left: 12px; right: 12px; bottom: 3px; height: 1px;
-    background: linear-gradient(90deg, transparent, var(--wolf-champagne), transparent);
-    transform: scaleX(0); opacity: 0; transition: transform .22s ease, opacity .22s ease;
-}
-.nav-pill:hover { color: var(--wolf-text); background: rgba(255, 255, 255, 0.035); }
-.nav-pill:hover::after { transform: scaleX(1); opacity: .55; }
-.nav-pill.active {
-    color: var(--wolf-champagne);
-    background: linear-gradient(180deg, rgba(232, 202, 141, 0.09), rgba(232, 202, 141, 0.02));
-    border-color: rgba(232, 202, 141, 0.26);
-    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05);
-}
-.nav-pill.active::after { transform: scaleX(1); opacity: .9; }
-.nav-pill.active:hover { color: var(--wolf-champagne); }
-.nav-pill:active { transform: translateY(1px); }
-/* logout stays quiet until you mean it */
-.nav-pill.logout:hover { color: #f87171; background: rgba(239, 68, 68, 0.08); }
-/* thin divider between the pages and the session controls */
-.nav-sep { width: 1px; height: 15px; background: var(--wolf-border); margin: 0 8px; flex: 0 0 auto; }
-/* group dividers between nav clusters (overview · trading · markets · admin):
-   a hair taller with a soft vertical fade so each reads as a section break
-   rather than a hard rule. */
-.nav-gsep { height: 20px; margin: 0 10px;
-    background: linear-gradient(180deg, transparent, rgba(255,255,255,.14) 22%, rgba(255,255,255,.14) 78%, transparent); }
+   The rail is position:fixed, so it does not matter where a page includes the
+   partial. Content is offset by ONE rule — body.has-sidebar — set from JS in
+   the partial, so public pages (login / welcome / tw / us) that never include
+   it stay full-width. */
+:root { --wsb-w: 228px; }
 
-@media (max-width: 720px) {
-    .tb-nav { flex-wrap: nowrap; overflow-x: auto; -webkit-overflow-scrolling: touch; padding-top: 8px; scrollbar-width: none; }
-    .tb-nav::-webkit-scrollbar { display: none; }
-    .tb-nav .nav-pill { flex: 0 0 auto; white-space: nowrap; }
-    /* right-edge fade = "there's more, swipe" — without it the cut-off pills
-       read as a rendering bug and nobody finds the regime chips at the end */
-    .tb-nav {
-        mask-image: linear-gradient(90deg, #000 88%, transparent 99%);
-        -webkit-mask-image: linear-gradient(90deg, #000 88%, transparent 99%);
+.wsb {
+    position: fixed; top: 0; left: 0; bottom: 0; width: var(--wsb-w); z-index: 900;
+    display: flex; flex-direction: column;
+    background: linear-gradient(180deg, rgba(20, 25, 40, .96), rgba(13, 18, 32, .98));
+    border-right: 1px solid var(--wolf-border);
+    box-shadow: 1px 0 0 rgba(255, 255, 255, .02), 8px 0 34px rgba(0, 0, 0, .35);
+    backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
+    overflow: hidden auto; overscroll-behavior: contain;
+    scrollbar-width: thin;
+}
+body.has-sidebar { padding-left: var(--wsb-w); }
+
+/* brand */
+.wsb-brand {
+    display: flex; align-items: center; gap: 11px; text-decoration: none;
+    padding: 18px 18px 16px; border-bottom: 1px solid var(--wolf-border);
+    flex: 0 0 auto;
+}
+.wsb-mark {
+    width: 32px; height: 32px; border-radius: 9px; flex: 0 0 auto;
+    display: grid; place-items: center; font-weight: 900; font-size: .95rem;
+    color: #04121a; background: linear-gradient(145deg, #2be0ff, #00a7d4);
+    box-shadow: 0 3px 12px rgba(0, 210, 255, .3), inset 0 1px 0 rgba(255, 255, 255, .45);
+}
+.wsb-brand-txt { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.wsb-brand-txt b { font-size: .8rem; font-weight: 800; letter-spacing: .04em; color: var(--wolf-text); }
+.wsb-brand-txt i {
+    font-style: normal; font-size: .52rem; font-weight: 700; letter-spacing: .16em;
+    color: var(--wolf-muted); text-transform: uppercase;
+}
+
+/* items */
+.wsb-nav { flex: 1 1 auto; padding: 12px 10px 16px; display: flex; flex-direction: column; gap: 1px; }
+.wsb-group {
+    font-size: .53rem; font-weight: 800; letter-spacing: .2em; text-transform: uppercase;
+    color: rgba(147, 163, 184, .62); padding: 16px 10px 7px;
+}
+.wsb-group:first-child { padding-top: 4px; }
+.wsb-item {
+    position: relative; display: flex; align-items: center; gap: 11px;
+    padding: 9px 11px; border-radius: 9px; text-decoration: none;
+    font-size: .82rem; font-weight: 600; color: var(--wolf-muted);
+    transition: color .16s, background .16s;
+}
+.wsb-ico {
+    width: 17px; height: 17px; flex: 0 0 auto; fill: none;
+    stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round;
+    opacity: .85;
+}
+.wsb-item:hover { color: var(--wolf-text); background: rgba(255, 255, 255, .045); }
+.wsb-item.on {
+    color: var(--wolf-text);
+    background: linear-gradient(90deg, rgba(0, 210, 255, .16), rgba(0, 210, 255, .04));
+}
+.wsb-item.on .wsb-ico { color: var(--wolf-blue); opacity: 1; }
+/* the lit left edge is what makes "you are here" readable at a glance */
+.wsb-item.on::before {
+    content: ""; position: absolute; left: -10px; top: 6px; bottom: 6px; width: 3px;
+    border-radius: 0 3px 3px 0; background: var(--wolf-blue);
+    box-shadow: 0 0 10px rgba(0, 210, 255, .6);
+}
+
+/* footer: live regime chips + session controls */
+.wsb-foot {
+    flex: 0 0 auto; padding: 12px 12px 14px; border-top: 1px solid var(--wolf-border);
+    display: flex; flex-direction: column; gap: 6px;
+    background: rgba(0, 0, 0, .18);
+}
+.wsb-foot .nav-regime { margin-left: 0; justify-content: flex-start; width: 100%; }
+.wsb-actions { display: flex; gap: 6px; margin-top: 4px; }
+.wsb-act {
+    flex: 1 1 0; text-align: center; text-decoration: none; cursor: pointer;
+    appearance: none; -webkit-appearance: none; font-family: inherit;
+    font-size: .62rem; font-weight: 700; letter-spacing: .1em;
+    padding: 7px 8px; border-radius: 8px;
+    border: 1px solid var(--wolf-border); background: rgba(255, 255, 255, .03);
+    color: var(--wolf-muted); transition: color .16s, background .16s, border-color .16s;
+}
+.wsb-act:hover { color: var(--wolf-text); background: rgba(255, 255, 255, .07); }
+.wsb-out:hover { color: #f87171; border-color: rgba(239, 68, 68, .4); background: rgba(239, 68, 68, .09); }
+
+/* the wrapper divs pages put around the include are no longer a visible box */
+.nav-standalone { display: contents; }
+
+/* burger + scrim: desktop-hidden, the only way in on a phone */
+.wsb-burger { display: none; }
+.wsb-scrim { display: none; }
+
+@media (max-width: 1020px) {
+    body.has-sidebar { padding-left: 0; padding-top: 52px; }
+    .wsb { transform: translateX(-100%); transition: transform .24s cubic-bezier(.4, 0, .2, 1); }
+    .wsb.open { transform: none; }
+    .wsb-burger {
+        display: flex; position: fixed; top: 9px; left: 10px; z-index: 950;
+        width: 38px; height: 34px; flex-direction: column; justify-content: center;
+        align-items: center; gap: 4px; cursor: pointer; border-radius: 9px;
+        border: 1px solid var(--wolf-border); background: rgba(20, 25, 40, .92);
+        backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
     }
+    .wsb-burger span {
+        display: block; width: 16px; height: 1.6px; border-radius: 2px;
+        background: var(--wolf-text); transition: transform .2s, opacity .2s;
+    }
+    .wsb-burger.open span:nth-child(1) { transform: translateY(5.6px) rotate(45deg); }
+    .wsb-burger.open span:nth-child(2) { opacity: 0; }
+    .wsb-burger.open span:nth-child(3) { transform: translateY(-5.6px) rotate(-45deg); }
+    .wsb-scrim {
+        display: block; position: fixed; inset: 0; z-index: 880;
+        background: rgba(4, 8, 16, .6);
+        backdrop-filter: blur(2px); -webkit-backdrop-filter: blur(2px);
+    }
+    .wsb-scrim[hidden] { display: none; }
 }
-
-/* Standalone wrapper so the nav looks right on pages that don't have index's
-   elaborate header. (Blur softened to 10px — 2026 glassmorphism favours subtler
-   translucency over heavy blur.) */
-.nav-standalone {
-    max-width: var(--page-max); margin: 0 auto 14px; padding: 10px 14px;
-    background: rgba(23, 26, 38, 0.82); border: 1px solid var(--wolf-border);
-    border-radius: var(--radius); box-shadow: var(--shadow);
-    backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
-    position: sticky; top: 8px; z-index: 200;   /* glass nav stays reachable while scrolling */
-}
-.nav-standalone .tb-nav { border-top: none; padding-top: 0; }
+@media (prefers-reduced-motion: reduce) { .wsb { transition: none; } }
 
 /* ── Cross-page BTC regime chip (lives in the nav, fed by /api/dashboard_summary)
    so the trend that gates every trade is visible on EVERY page, not just home.

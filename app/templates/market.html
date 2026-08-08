@@ -433,7 +433,10 @@
             if (n >= 1) return '$' + n.toFixed(3);
             return '$' + n.toFixed(5);
         }
-        const esc = s => (s || '').replace(/</g, '&lt;');
+        // String() first: the macro calendar's forecast/previous arrive as
+        // NUMBERS, and `(3.4).replace` threw, taking the whole page's render
+        // down with it.
+        const esc = s => String(s ?? '').replace(/</g, '&lt;');
         const pctTxt = x => (x === null || x === undefined) ? '—' : Math.round(x * 100) + '%';
 
         // 🐋 Whales (top traders by position) vs 👤 Retail (all accounts) + taker flow.

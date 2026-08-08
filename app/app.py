@@ -40,6 +40,7 @@ import liquidations
 import market_intel
 import executor
 import price_alerts
+import pulse
 import restart_ctl
 import strategy3_exec
 import strategy3_scanner
@@ -731,7 +732,7 @@ def sync_record_states_in_scan_data() -> None:
 # this ONE value whenever app.css / i18n.js change and every template busts its
 # cache — no more hunting down 10 hardcoded copies (which once shipped an
 # unstyled page to users). Templates reference it as ?v={{ asset_ver }}.
-ASSET_VER = "20260804"
+ASSET_VER = "20260809"
 
 
 @app.context_processor
@@ -2036,6 +2037,22 @@ def get_dashboard_summary():
     summary = build_dashboard_summary(load_data())
     summary.update(_btc_vol_regime())
     return jsonify(summary)
+
+
+@app.route("/api/pulse")
+@login_required
+def api_pulse():
+    """Market Pulse — the dashboard's headline composite plus breadth, sector
+    rotation, movers and the BTC trend window. pulse.compute() is disk-cached
+    at the feed level, so this route is cheap enough to poll."""
+    try:
+        return jsonify(pulse.compute())
+    except Exception as e:  # noqa: BLE001 — the board degrades, it never 500s
+        return jsonify({"score": None, "label": "無法計算", "tone": "off",
+                        "components": [], "confidence": {"pct": 0, "ok": 0, "total": 5,
+                                                         "missing": []},
+                        "breadth": {}, "sectors": [], "movers": {"up": [], "down": []},
+                        "btc": {"ok": False, "series": []}, "errors": [str(e)]}), 200
 
 
 # Main-coin hero tiles (BTC + ETH): price/24h + funding + OI Δ + meter score +

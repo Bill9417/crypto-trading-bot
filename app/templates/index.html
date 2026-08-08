@@ -51,28 +51,9 @@
         .page-wrap { max-width: var(--page-max); margin: 0 auto; padding: 12px 16px 28px; }
 
         /* ── Header ── */
-        .top-bar {
-            background: var(--wolf-card);
-            border: 1px solid var(--wolf-border);
-            border-radius: var(--radius);
-            box-shadow: var(--shadow);
-            padding: 12px 18px;
-            margin-bottom: 14px;
-            display: flex;
-            flex-direction: column;
-            gap: 10px;
-        }
         /* Row 1: brand on the left, status + meta + actions on the right */
-        .tb-main { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
 
-        .brand { display: flex; align-items: center; gap: 12px; }
-        .brand-icon { font-size: 2rem; line-height: 1; filter: drop-shadow(0 0 6px rgba(0,210,255,.35)); }
-        .brand h1 { font-size: 1.15rem; font-weight: 800; margin: 0; letter-spacing: -0.4px; }
-        .brand h1 span { color: var(--wolf-blue); }
-        .brand-sub { font-size: 0.75rem; color: var(--wolf-muted); margin-top: 2px; }
 
-        .tb-right { display: flex; align-items: center; gap: 8px 14px; flex-wrap: wrap; justify-content: flex-end; }
-        .tb-status, .tb-meta { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
         #bot-status-badge { display: inline-flex; align-items: center; }
         .scan-age { font-size: .68rem; color: var(--wolf-muted); font-weight: 600; }
         .scan-age.stale { color: #f87171; font-weight: 800; }
@@ -87,20 +68,9 @@
         .prot-banner.warn { color:#fca5a5; background:rgba(239,68,68,.12); border-color:rgba(239,68,68,.5); }
         /* Normalise the bot-status chip (Bootstrap .badge) to the pill shape.
            !important beats Bootstrap and the inline font-size the status JS injects. */
-        .tb-status .badge {
-            display: inline-flex !important; align-items: center; justify-content: center;
-            height: 22px; padding: 0 11px !important; line-height: 1;
-            border-radius: 999px !important; font-size: 0.62rem !important;
-            font-weight: 800; letter-spacing: 0.04em; vertical-align: middle;
-        }
-        .tb-meta-item { font-size: 0.72rem; color: var(--wolf-muted); display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; }
-        .tb-meta-item b { color: var(--wolf-text); font-weight: 700; }
-        .tb-sep { width: 1px; height: 22px; background: var(--wolf-border); }
-        .tb-buttons { display: flex; align-items: center; gap: 8px; }
         .badge { margin: 0 !important; }
 
         /* Row 2: dedicated navigation strip */
-        .tb-nav { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding-top: 10px; border-top: 1px solid var(--wolf-border); }
 
         /* daily circuit-breaker banner (dashboard) */
         .cb-banner {
@@ -198,8 +168,7 @@
         .entry-status { font-size: .6rem; font-weight: 900; letter-spacing: .6px; text-transform: uppercase; padding: 3px 8px; border-radius: 6px; align-self: flex-start; }
         .entry-status.ready { background: rgba(255,207,75,.18); color: #ffcf4b; }
         .entry-status.watch { background: rgba(255,255,255,.06); color: var(--wolf-muted); }
-        .entry-lights { display: flex; align-items: center; gap: 4px; font-size: .72rem; color: var(--wolf-muted); }
-        .entry-lights b { color: var(--wolf-text); font-size: .82rem; }
+        .entry-conv { display: flex; flex-direction: column; gap: 3px; }
         .entry-levels { display: grid; grid-template-columns: repeat(3,1fr); gap: 4px; font-size: .66rem; }
         .entry-levels div { display: flex; flex-direction: column; }
         .entry-levels .lk { color: var(--wolf-muted); text-transform: uppercase; letter-spacing: .4px; font-size: .58rem; }
@@ -255,75 +224,8 @@
         /* ── 🌌 Hero: live 3D market cloud + headline numbers ──────────────
            First thing on the page, so it carries both the showpiece and the
            summary. The KPI row is the old stats strip, folded in. */
-        .hero3d {
-            position: relative; overflow: hidden;
-            background: linear-gradient(135deg, rgba(0,210,255,.09), rgba(167,139,250,.06) 45%, var(--wolf-card));
-            border: 1px solid var(--wolf-border);
-            border-radius: var(--radius);
-            box-shadow: 0 10px 30px rgba(0,0,0,.28);
-            padding: 14px clamp(12px,2vw,18px) 12px;
-            margin-bottom: 14px;
-        }
-        .hero3d::after {                       /* depth bloom behind the cloud */
-            content: ''; position: absolute; left: 50%; top: 46%;
-            width: 620px; height: 320px; transform: translate(-50%,-50%);
-            background: radial-gradient(ellipse, rgba(0,210,255,.11), transparent 70%);
-            pointer-events: none;
-        }
-        .hero3d-top { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; margin-bottom: 10px; }
-        .hero3d-title { font-size: 1rem; font-weight: 900; letter-spacing: -.2px; display: flex; align-items: center; gap: 9px; }
-        .hero3d-live {
-            font-size: .56rem; font-weight: 900; letter-spacing: .1em; padding: 3px 7px; border-radius: 999px;
-            background: rgba(74,222,128,.14); color: #4ade80; border: 1px solid rgba(74,222,128,.32);
-        }
-        .hero3d-sub { font-size: .71rem; color: var(--wolf-muted); margin-top: 3px; }
-        .hero3d-open { color: var(--wolf-blue); font-size: .74rem; font-weight: 800; text-decoration: none; white-space: nowrap; }
-        .hero3d-open:hover { color: #7ae7ff; }
-        .hero3d-stage {
-            position: relative; display: block; border-radius: 12px; overflow: hidden;
-            background: radial-gradient(ellipse at 50% 45%, rgba(0,210,255,.05), transparent 62%), rgba(8,10,17,.5);
-            border: 1px solid rgba(255,255,255,.06);
-            text-decoration: none; transition: border-color .18s;
-        }
-        .hero3d-stage:hover { border-color: rgba(0,210,255,.3); }
         /* display-only: clicks belong to the wrapping link, not the canvas */
-        #sky3d { display: block; width: 100%; height: 340px; cursor: grab; touch-action: pan-y; }
-        #sky3d.drag { cursor: grabbing; }
-        .hero3d-tip {
-            position: absolute; pointer-events: none; opacity: 0; z-index: 4;
-            transform: translate(-50%,-118%);
-            background: rgba(10,13,22,.97); border: 1px solid rgba(255,255,255,.18);
-            border-radius: 10px; padding: 8px 11px; font-size: .74rem; line-height: 1.5;
-            white-space: nowrap; box-shadow: 0 12px 30px rgba(0,0,0,.55); transition: opacity .12s;
-        }
-        .hero3d-tip.on { opacity: 1; }
-        .hero3d-tip .tt-s { font-weight: 900; font-size: .82rem; }
-        .hero3d-tip .tt-r { color: var(--wolf-muted); font-size: .68rem; }
-        .hero3d-tip .tt-r b { color: var(--wolf-text); font-weight: 700; font-variant-numeric: tabular-nums; }
-        .hero3d-legend {
-            position: absolute; left: 12px; bottom: 9px; display: flex; gap: 11px; flex-wrap: wrap;
-            font-size: .62rem; color: var(--wolf-muted); pointer-events: none; align-items: center;
-        }
-        .hero3d-legend span { display: inline-flex; align-items: center; gap: 4px; }
-        .hero3d-legend i { width: 8px; height: 8px; border-radius: 50%; display: block; }
-        .hero3d-legend i.ring { border: 1.5px solid #ffcf4b; background: transparent; }
-        .hero3d-legend .lg-dim { opacity: .7; }
-        @media (max-width: 640px) { .hero3d-legend { display: none; } }
-        .hero3d-hint {
-            position: absolute; right: 10px; bottom: 8px; font-size: .6rem;
-            color: var(--wolf-muted); opacity: .5; pointer-events: none;
-        }
 
-        .hero3d-kpis {
-            position: relative; display: grid; gap: 8px; margin-top: 12px;
-            grid-template-columns: repeat(6, minmax(0,1fr));
-        }
-        .hero3d-kpis .kpi {
-            background: rgba(255,255,255,.035); border: 1px solid var(--wolf-border);
-            border-radius: 11px; padding: 9px 11px; text-decoration: none; color: inherit;
-            display: flex; flex-direction: column; gap: 3px; min-width: 0;
-            transition: border-color .15s, transform .15s, background .15s;
-        }
         a.kpi:hover { border-color: rgba(0,210,255,.34); transform: translateY(-1px); background: rgba(255,255,255,.055); }
         .kpi-k { font-size: .6rem; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--wolf-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
         .kpi-v { font-size: 1.22rem; font-weight: 800; line-height: 1.1; font-variant-numeric: tabular-nums; }
@@ -331,12 +233,7 @@
         .kpi-v.down { color: var(--short); }
         .kpi-sep { color: var(--wolf-muted); margin: 0 3px; font-weight: 600; }
         .kpi-n { font-size: .6rem; color: var(--wolf-muted); line-height: 1.35; }
-        @media (max-width: 1100px) { .hero3d-kpis { grid-template-columns: repeat(3, minmax(0,1fr)); } }
         @media (max-width: 640px)  {
-            .hero3d-kpis { grid-template-columns: repeat(2, minmax(0,1fr)); }
-            .hero3d-kpis .kpi-wide { grid-column: 1 / -1; }
-            #sky3d { height: 230px; }
-            .hero3d-sub { display: none; }
         }
 
 
@@ -656,8 +553,6 @@
         .score-strong { background: rgba(255,153,51,.1); color: #f59e0b; border: 1px solid rgba(255,153,51,.2); }
         .score-watch { background: rgba(22,163,74,.1); color: #16a34a; border: 1px solid rgba(22,163,74,.2); }
 
-        .rsi-high { color: #ef4444; font-weight: 800; }
-        .rsi-low { color: #16a34a; font-weight: 800; }
         .price-up { color: #16a34a; font-weight: 700; }
         .price-down { color: #ef4444; font-weight: 700; }
 
@@ -675,34 +570,7 @@
         /* ── Lights — ALWAYS one row: base dots · divider · SMC bonus dots.
            The column is sized to fit the max (8 base + 3 SMC), so they never
            wrap onto a confusing second line. ── */
-        .lights {
-            display: flex; gap: 4px; align-items: center; justify-content: center;
-            flex-wrap: nowrap; max-width: 100%;
-        }
         /* Filled = passed (glows) · hollow = missed (outline, recedes) · violet = SMC bonus. */
-        .light {
-            width: 8px; height: 8px; border-radius: 50%;
-            flex: 0 0 auto;
-            box-sizing: border-box;
-            transition: background .15s ease, box-shadow .15s ease, border-color .15s ease;
-        }
-        .light.on {
-            background: #10b981;
-            box-shadow: 0 0 7px rgba(16,185,129,.6);
-        }
-        .light.off {
-            background: transparent;
-            border: 1.5px solid rgba(148,163,184,.4);
-        }
-        .light.smc {
-            background: #a855f7;
-            box-shadow: 0 0 7px rgba(168,85,247,.6);
-        }
-        .lights .smc-divider {
-            width: 1px; height: 12px; margin: 0 3px;
-            background: linear-gradient(rgba(148,163,184,0), rgba(148,163,184,.5), rgba(148,163,184,0));
-            flex: 0 0 auto;
-        }
 
         /* ── SMC ── */
         .smc-support { color: #16a34a; font-weight: 700; }
@@ -823,12 +691,16 @@
 
         .signal-row-grid {
             display: grid;
+            /* asset · side · live · conviction · smc · score · chevron · chart.
+               The RSI column and the 7-dot light strip were removed 2026-08-09:
+               a raw oscillator reading and a row of dots is the engine talking
+               to itself. One 0-100 conviction meter says the same thing in the
+               same width, and the dot detail still opens with the row. */
             grid-template-columns:
                 minmax(118px, 1.6fr)
                 56px
                 92px
-                46px
-                158px
+                150px
                 88px
                 44px
                 34px
@@ -837,7 +709,7 @@
             align-items: center;
             min-height: 46px;
             padding: 8px 14px;
-            min-width: 770px;
+            min-width: 740px;
         }
 
         .signal-list-header .signal-row-grid {
@@ -961,13 +833,21 @@
         .cell { display: flex; align-items: center; justify-content: center; min-width: 0; }
         .cell-asset { justify-content: flex-start; }
         .cell-live { justify-content: center; }
-        .cell-rsi {
-            font-weight: 800;
-            font-size: 0.82rem;
-            font-variant-numeric: tabular-nums;
-            justify-content: center;
-            text-align: center;
-        }
+        /* Conviction meter — replaces the RSI number + the light dots. The
+           bar is how many of the strategy's lights passed; the caption names
+           the tier so the colour is never the only carrier of meaning. */
+        .cell-conv { flex-direction: column; align-items: stretch; gap: 3px; justify-content: center; }
+        .conv-top { display: flex; align-items: baseline; justify-content: space-between; gap: 6px; }
+        .conv-n { font-size: 0.72rem; font-weight: 800; color: var(--wolf-text); font-variant-numeric: tabular-nums; }
+        .conv-tier { font-size: 0.54rem; font-weight: 800; letter-spacing: .07em; text-transform: uppercase; color: var(--wolf-muted); }
+        .conv-track { height: 5px; border-radius: 999px; background: rgba(255,255,255,0.07); overflow: hidden; }
+        .conv-track i { display: block; height: 100%; border-radius: 999px; }
+        .conv-max  .conv-track i { background: linear-gradient(90deg, #7c3aed, #c084fc); }
+        .conv-max  .conv-tier { color: #c084fc; }
+        .conv-high .conv-track i { background: var(--wolf-gold); }
+        .conv-high .conv-tier { color: var(--wolf-gold); }
+        .conv-mid  .conv-track i { background: var(--wolf-blue); }
+        .conv-low  .conv-track i { background: rgba(255,255,255,0.22); }
         .cell-smc .smc-zone-pill {
             font-size: 0.58rem;
             padding: 3px 7px;
@@ -1152,27 +1032,6 @@
         .modal-section-content li {
             margin-bottom: 8px;
         }
-        .light-explanation {
-            display: grid;
-            grid-template-columns: 1fr;
-            gap: 12px;
-            margin-top: 10px;
-        }
-        .light-item {
-            background: rgba(255,255,255,0.04);
-            border: 1px solid var(--wolf-border);
-            border-radius: 10px;
-            padding: 12px;
-        }
-        .light-item-title {
-            font-weight: 700;
-            color: var(--wolf-text);
-            margin-bottom: 4px;
-        }
-        .light-item-desc {
-            color: var(--wolf-muted);
-            font-size: 0.85rem;
-        }
 
         /* ── Responsive ── */
         @media (max-width: 991px) {
@@ -1188,32 +1047,7 @@
             .page-wrap { padding: 8px 8px 24px; }
 
             /* ── Header ── */
-            .top-bar {
-                padding: 10px 12px;
-                margin-bottom: 10px;
-                gap: 10px;
-            }
-            .tb-main { flex-direction: column; align-items: stretch; gap: 10px; }
-            .brand { justify-content: flex-start; }
-            .brand h1 { font-size: 0.95rem; }
-            .brand-icon { font-size: 1.5rem; }
-            .brand-sub { font-size: 0.62rem; }
-            .tb-right { justify-content: space-between; gap: 8px; }
-            .tb-status, .tb-meta { gap: 6px; }
-            .tb-meta-item { font-size: 0.66rem; }
-            .tb-sep { display: none; }
-            .tb-buttons { width: 100%; gap: 6px; }
-            .tb-buttons .btn { flex: 1 1 0; text-align: center; padding-left: 6px; padding-right: 6px; }
             /* nav becomes a single horizontally-scrollable strip (no messy wrap) */
-            .tb-nav {
-                flex-wrap: nowrap;
-                overflow-x: auto;
-                -webkit-overflow-scrolling: touch;
-                padding-top: 8px;
-                scrollbar-width: none;
-            }
-            .tb-nav::-webkit-scrollbar { display: none; }
-            .tb-nav .nav-pill { flex: 0 0 auto; white-space: nowrap; }
 
             /* ── Stats ── */
             .stats-strip {
@@ -1273,8 +1107,7 @@
                 grid-template-columns: 1fr auto auto;
                 grid-template-areas:
                     "asset   side    chart"
-                    "live    rsi     score"
-                    "lights  lights  lights"
+                    "live    conv    score"
                     "smc     smc     chevron";
                 min-width: 0;
                 padding: 12px 14px;
@@ -1299,21 +1132,10 @@
                 grid-area: live;
                 justify-content: flex-start;
             }
-            .cell-rsi {
-                grid-area: rsi;
-                justify-content: center;
-                background: rgba(255,255,255,0.05);
-                padding: 2px 8px;
-                border-radius: 6px;
-                font-size: 0.72rem;
-            }
+            .cell-conv { grid-area: conv; }
             .cell-score {
                 grid-area: score;
                 justify-content: center;
-            }
-            .cell-lights {
-                grid-area: lights;
-                justify-content: flex-start;
             }
             .cell-smc {
                 grid-area: smc;
@@ -1327,7 +1149,6 @@
             }
             .symbol-tag { font-size: 0.9rem; }
             .live-val { font-size: 0.78rem; }
-            .light { width: 11px; height: 11px; }
             .side-pill { min-width: 46px; height: 24px; font-size: 0.6rem; }
             .tv-btn { height: 28px; min-width: 46px; font-size: 0.63rem; }
 
@@ -1355,7 +1176,6 @@
 
         @media (max-width: 400px) {
             .flow-grid { grid-template-columns: repeat(2, 1fr); }
-            .brand h1 { font-size: 0.8rem; }
         }
 
         {# nav styling lives ONLY in static/app.css (quiet-luxury redesign
@@ -1442,38 +1262,200 @@
         .sym-dot { font-size: .62rem; font-weight: 800; padding: 2px 6px; border-radius: 999px; border: 1px solid var(--wolf-border); color: var(--wolf-muted); }
         .sym-dot.long { color: var(--long); border-color: rgba(34,197,94,.5); background: rgba(34,197,94,.12); }
         .sym-dot.short { color: var(--short); border-color: rgba(239,68,68,.5); background: rgba(239,68,68,.12); }
+        /* ════════════════════════════════════════════════════════════════════
+           MARKET PULSE BOARD (2026-08-09 redesign)
+           A bento grid of self-contained cards. Every card states what it is,
+           what the number means, and — where the number is a judgement rather
+           than a measurement — how it was weighted.
+           ════════════════════════════════════════════════════════════════════ */
+
+        /* Page header, now that the brand + nav live in the sidebar. */
+        .pg-head {
+            display: flex; align-items: flex-end; gap: 16px; flex-wrap: wrap;
+            padding: 4px 2px 16px; margin-bottom: 16px;
+            border-bottom: 1px solid var(--wolf-border);
+        }
+        .pg-head-l { min-width: 0; }
+        .pg-title { margin: 0; font-size: 1.45rem; font-weight: 800; letter-spacing: -.02em; color: var(--wolf-text); }
+        .pg-sub { margin-top: 4px; font-size: .74rem; color: var(--wolf-muted); }
+        .pg-sub b { color: var(--wolf-text); font-weight: 700; }
+        .pg-head-r { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-left: auto; }
+        .pg-time { font-size: .7rem; color: var(--wolf-muted); }
+        .pg-time b { color: var(--wolf-text); }
+
+        .bento { display: grid; gap: 14px; margin-bottom: 14px; }
+        .bento-hero { grid-template-columns: minmax(0, 1.15fr) minmax(0, 1.25fr) minmax(0, .95fr); }
+        .bento-4 { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+
+        .bcard {
+            background: var(--wolf-card); border: 1px solid var(--wolf-border);
+            border-radius: var(--radius); box-shadow: var(--shadow);
+            padding: 15px 16px 16px; display: flex; flex-direction: column; gap: 12px;
+            min-width: 0; transition: border-color .2s;
+        }
+        .bcard:hover { border-color: rgba(255, 255, 255, .17); }
+        .bc-head { display: flex; align-items: baseline; gap: 10px; }
+        .bc-title { font-size: .82rem; font-weight: 800; letter-spacing: .01em; color: var(--wolf-text); }
+        .bc-title.up { color: #4ade80; } .bc-title.down { color: #f87171; }
+        .bc-sub, .bc-more, .bc-tag { font-size: .64rem; color: var(--wolf-muted); margin-left: auto; }
+        .bc-more { text-decoration: none; }
+        .bc-more:hover { color: var(--wolf-blue); }
+        .bc-tag { font-weight: 800; letter-spacing: .08em; text-transform: uppercase; padding: 3px 8px;
+                  border-radius: 999px; border: 1px solid var(--wolf-border); background: rgba(255,255,255,.03); }
+        .bc-empty { font-size: .72rem; color: var(--wolf-muted); padding: 6px 2px; }
+
+        /* ── 1. composite ─────────────────────────────────────────────────── */
+        .pulse-main { display: flex; align-items: center; gap: 18px; }
+        .pulse-ring {
+            --score: 0; --ring: var(--wolf-muted);
+            position: relative; width: 132px; height: 132px; flex: 0 0 auto; border-radius: 50%;
+            background: conic-gradient(var(--ring) calc(var(--score) * 1%), rgba(255,255,255,.07) 0);
+            display: grid; place-items: center;
+            transition: background .6s ease;
+            filter: drop-shadow(0 0 14px rgba(0, 0, 0, .35));
+        }
+        .pulse-ring::before {
+            content: ""; position: absolute; inset: 10px; border-radius: 50%;
+            background: #131a2b; border: 1px solid var(--wolf-border);
+        }
+        .pulse-ring-in { position: relative; text-align: center; line-height: 1; }
+        .pulse-score { display: block; font-size: 2.35rem; font-weight: 900; color: var(--wolf-text); }
+        .pulse-of { font-size: .58rem; font-weight: 700; letter-spacing: .12em; color: var(--wolf-muted); }
+        .pulse-side { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 9px; }
+        .pulse-label {
+            width: fit-content; font-size: .74rem; font-weight: 800; letter-spacing: .04em;
+            padding: 4px 11px; border-radius: 999px; border: 1px solid var(--wolf-border);
+        }
+        .pulse-label.bull { color: #4ade80; background: rgba(34,197,94,.13); border-color: rgba(34,197,94,.4); }
+        .pulse-label.bear { color: #f87171; background: rgba(239,68,68,.13); border-color: rgba(239,68,68,.4); }
+        .pulse-label.neutral { color: var(--wolf-gold); background: rgba(255,207,75,.12); border-color: rgba(255,207,75,.38); }
+        .pulse-label.off { color: var(--wolf-muted); }
+
+        .mini-gauge { display: flex; flex-direction: column; gap: 4px; }
+        .mg-top { display: flex; justify-content: space-between; font-size: .66rem; color: var(--wolf-muted); }
+        .mg-top b { color: var(--wolf-text); font-weight: 700; }
+        .mg-track { height: 5px; border-radius: 999px; background: rgba(255,255,255,.07); overflow: hidden; }
+        .mg-track i { display: block; height: 100%; border-radius: 999px; background: var(--wolf-blue); transition: width .6s ease, background .4s; }
+        .mini-gauge.conf .mg-track i { background: linear-gradient(90deg, #f59e0b, #4ade80); }
+        .mg-note { font-size: .6rem; color: var(--wolf-muted); }
+
+        .pulse-parts { display: flex; flex-direction: column; gap: 2px; border-top: 1px solid var(--wolf-border); padding-top: 10px; }
+        .pp-row { display: flex; align-items: center; gap: 9px; padding: 5px 7px; border-radius: 8px; font-size: .7rem; }
+        .pp-row:hover { background: rgba(255,255,255,.03); }
+        .pp-k { color: var(--wolf-text); font-weight: 600; }
+        .pp-w { font-size: .58rem; color: var(--wolf-muted); }
+        .pp-bar { flex: 1 1 auto; height: 4px; border-radius: 999px; background: rgba(255,255,255,.07); min-width: 40px; }
+        .pp-bar i { display: block; height: 100%; border-radius: 999px; transition: width .6s ease; }
+        .pp-s { font-weight: 800; font-size: .72rem; min-width: 34px; text-align: right; }
+        .pp-row.dead .pp-k, .pp-row.dead .pp-s { color: var(--wolf-muted); }
+        .pp-row.dead .pp-s { font-weight: 600; }
+
+        /* ── 2. trend ─────────────────────────────────────────────────────── */
+        .trend-hero { display: flex; align-items: baseline; gap: 10px; }
+        .trend-price { font-size: 1.7rem; font-weight: 800; color: var(--wolf-text); }
+        .trend-chg { font-size: .82rem; font-weight: 800; }
+        .trend-chart { position: relative; }
+        #trend-svg { width: 100%; height: 118px; display: block; overflow: visible; }
+        #trend-svg .tl-line { fill: none; stroke: var(--wolf-blue); stroke-width: 2; vector-effect: non-scaling-stroke; }
+        #trend-svg .tl-fill { fill: url(#tl-grad); stroke: none; }
+        #trend-svg .tl-dot { fill: var(--wolf-blue); }
+        .trend-dates { display: flex; justify-content: space-between; font-size: .58rem; color: var(--wolf-muted); margin-top: 2px; }
+        .trend-stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; border-top: 1px solid var(--wolf-border); padding-top: 10px; }
+        .trend-stats div { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+        .trend-stats span { font-size: .58rem; letter-spacing: .08em; text-transform: uppercase; color: var(--wolf-muted); }
+        .trend-stats b { font-size: .8rem; font-weight: 700; color: var(--wolf-text); }
+        .trend-stats b.up { color: #4ade80; } .trend-stats b.down { color: #f87171; }
+
+        /* ── 3. flows ─────────────────────────────────────────────────────── */
+        .flow-list { display: flex; flex-direction: column; gap: 1px; }
+        .flow-row {
+            display: grid; grid-template-columns: 1fr auto; grid-template-areas: "k v" "n n";
+            gap: 2px 10px; padding: 8px 9px; border-radius: 9px; background: rgba(255,255,255,.022);
+        }
+        .fl-k { grid-area: k; font-size: .72rem; color: var(--wolf-text); }
+        .fl-v { grid-area: v; font-size: .84rem; font-weight: 800; color: var(--wolf-text); }
+        .fl-n { grid-area: n; font-size: .6rem; color: var(--wolf-muted); }
+        .fl-v.up { color: #4ade80; } .fl-v.down { color: #f87171; } .fl-v.warn { color: var(--wolf-gold); }
+        .flow-foot { margin-top: auto; font-size: .6rem; color: var(--wolf-muted); border-top: 1px solid var(--wolf-border); padding-top: 9px; }
+
+        /* ── 4. breadth ───────────────────────────────────────────────────── */
+        .breadth-body { display: flex; align-items: center; gap: 14px; }
+        .donut-wrap { position: relative; width: 108px; height: 108px; flex: 0 0 auto; }
+        .donut { width: 100%; height: 100%; transform: rotate(-90deg); }
+        .donut circle { fill: none; stroke-width: 3.4; }
+        .dn-bg { stroke: rgba(255,255,255,.07); }
+        .dn-up { stroke: #22c55e; transition: stroke-dasharray .6s ease; }
+        .dn-down { stroke: #ef4444; transition: stroke-dasharray .6s ease, stroke-dashoffset .6s ease; }
+        .donut-mid { position: absolute; inset: 0; display: grid; place-content: center; text-align: center; line-height: 1.15; }
+        .donut-mid b { font-size: 1.25rem; font-weight: 900; color: var(--wolf-text); }
+        .donut-mid span { font-size: .54rem; letter-spacing: .1em; text-transform: uppercase; color: var(--wolf-muted); }
+        .breadth-legend { display: flex; flex-direction: column; gap: 7px; min-width: 0; }
+        .breadth-legend div { display: flex; align-items: center; gap: 7px; font-size: .72rem; color: var(--wolf-muted); }
+        .breadth-legend b { margin-left: auto; color: var(--wolf-text); font-weight: 700; }
+        .sw { width: 9px; height: 9px; border-radius: 3px; flex: 0 0 auto; }
+        .sw.up { background: #22c55e; } .sw.down { background: #ef4444; } .sw.flat { background: rgba(255,255,255,.22); }
+        .breadth-foot { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; border-top: 1px solid var(--wolf-border); padding-top: 10px; margin-top: auto; }
+        .breadth-foot div { display: flex; flex-direction: column; gap: 2px; }
+        .breadth-foot span { font-size: .58rem; letter-spacing: .08em; text-transform: uppercase; color: var(--wolf-muted); }
+        .breadth-foot b { font-size: .9rem; font-weight: 800; color: var(--wolf-text); }
+
+        /* ── 5. sectors ───────────────────────────────────────────────────── */
+        .sect-list { display: flex; flex-direction: column; gap: 7px; }
+        .sect-row { display: grid; grid-template-columns: 82px 1fr 46px; align-items: center; gap: 8px; }
+        .sect-name { font-size: .68rem; color: var(--wolf-text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        /* one shared zero line so a +2% bar and a -2% bar are visibly mirrored */
+        .sect-bar { position: relative; height: 8px; border-radius: 4px; background: rgba(255,255,255,.05); }
+        .sect-bar::before { content: ""; position: absolute; left: 50%; top: -1px; bottom: -1px; width: 1px; background: rgba(255,255,255,.16); }
+        .sect-bar i { position: absolute; top: 0; bottom: 0; border-radius: 3px; transition: width .5s ease, left .5s ease; }
+        .sect-pct { font-size: .68rem; font-weight: 800; text-align: right; }
+        .sect-pct.up { color: #4ade80; } .sect-pct.down { color: #f87171; }
+
+        /* ── 6/7. movers ──────────────────────────────────────────────────── */
+        .mv-list { display: flex; flex-direction: column; gap: 1px; }
+        .mv-row {
+            display: grid; grid-template-columns: 1fr auto auto; align-items: center; gap: 9px;
+            padding: 6px 8px; border-radius: 8px; text-decoration: none;
+        }
+        .mv-row:hover { background: rgba(255,255,255,.04); }
+        .mv-sym { font-size: .74rem; font-weight: 700; color: var(--wolf-text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .mv-px { font-size: .66rem; color: var(--wolf-muted); font-variant-numeric: tabular-nums; }
+        .mv-pct { font-size: .74rem; font-weight: 800; min-width: 56px; text-align: right; }
+        .mv-pct.up { color: #4ade80; } .mv-pct.down { color: #f87171; }
+
+        @media (max-width: 1320px) {
+            .bento-hero { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+            .bento-hero .bc-flows { grid-column: 1 / -1; }
+            .bento-4 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+        }
+        @media (max-width: 820px) {
+            .bento-hero, .bento-4 { grid-template-columns: minmax(0, 1fr); }
+            .bento-hero .bc-flows { grid-column: auto; }
+            .pg-head { align-items: flex-start; flex-direction: column; gap: 10px; }
+            .pg-head-r { margin-left: 0; }
+            .pulse-ring { width: 112px; height: 112px; }
+            .pulse-score { font-size: 2rem; }
+        }
     </style>
 </head>
 <body>
     <div class="page-wrap">
-        <!-- Header -->
-        <header class="top-bar">
-            <div class="tb-main">
-                <div class="brand">
-                    <div class="brand-icon">🐺</div>
-                    <div>
-                        <h1>WOLF <span>SCANNER</span></h1>
-                        <div class="brand-sub">Scan top {{ scan_limit }} · trade top {{ trade_limit }} · 1h</div>
-                    </div>
-                </div>
-                <div class="tb-right">
-                    <div class="tb-status">
-                        <span id="bot-status-badge">
-                            <span class="badge bg-success" style="font-size:.65rem;">BOT IDLE</span>
-                        </span>
-                    </div>
-                    <div class="tb-meta">
-                        <span class="tb-meta-item">👤 <b>{{ user.username|upper }}</b></span>
-                        <span class="tb-meta-item">🕐 <b id="last-update">{{ last_update }}</b> <span id="scan-age" class="scan-age"></span></span>
-                    </div>
-                    <span class="tb-sep"></span>
-                    <div class="tb-buttons">
-                        <button class="btn btn-ghost" onclick="openStrategyModal()">Rules</button>
-                        <button class="btn btn-wolf refresh-btn" onclick="fetchLivePrices()">↻ Refresh</button>
-                    </div>
-                </div>
-            </div>
+        <!-- Page header. The brand and all 16 destinations moved into the fixed
+             sidebar (2026-08-09), so this row is now only about THIS page: what
+             it is, how fresh it is, and the two actions it owns. -->
+        <header class="pg-head">
             {% include '_nav.html' %}
+            <div class="pg-head-l">
+                <h1 class="pg-title">Market Overview</h1>
+                <div class="pg-sub">Scanning top {{ scan_limit }} · trading top {{ trade_limit }} · 1h timeframe · <b>{{ user.username|upper }}</b></div>
+            </div>
+            <div class="pg-head-r">
+                <span id="bot-status-badge">
+                    <span class="badge bg-success" style="font-size:.65rem;">BOT IDLE</span>
+                </span>
+                <span class="pg-time">Updated <b id="last-update">{{ last_update }}</b> <span id="scan-age" class="scan-age"></span></span>
+                <button class="btn btn-ghost" onclick="openStrategyModal()">Rules</button>
+                <button class="btn btn-wolf refresh-btn" onclick="fetchLivePrices()">↻ Refresh</button>
+            </div>
         </header>
 
         <!-- Health banners — shown ONLY when something needs attention (the
@@ -1496,63 +1478,163 @@
             {% endif %}
         </div>
 
-        <!-- ══ Hero: the live 3D market cloud, carrying the headline numbers.
-             This is the first thing on the page, so it has to be both the
-             showpiece and the summary — the old stats strip lived three
-             sections down and repeated what the cloud already shows. -->
-        <section class="hero3d">
-            <div class="hero3d-top">
-                <div>
-                    <div class="hero3d-title">🌌 Market Cloud <span class="hero3d-live">LIVE</span></div>
-                    <div class="hero3d-sub">Every scanned symbol in space — left-right is RSI, height is confluence, size is conviction</div>
-                </div>
-                <a href="/universe" class="hero3d-open">Open 3D →</a>
-            </div>
+        <!-- ══════════════════════════════════════════════════════════════════
+             MARKET PULSE BOARD (2026-08-09)
 
-            <div class="hero3d-stage">
-                <canvas id="sky3d"></canvas>
-                <div class="hero3d-tip" id="sky3d-tip"></div>
-                <div class="hero3d-legend">
-                    <span><i style="background:#4ade80"></i>LONG</span>
-                    <span><i style="background:#f87171"></i>SHORT</span>
-                    <span><i class="ring"></i>Armed</span>
-                    <span class="lg-dim">size = conviction</span>
-                </div>
-                <div class="hero3d-hint">Drag to rotate · hover a body for detail · click to open its chart</div>
-            </div>
+             Replaces the 3D hero + the RSI/lights strips that used to open the
+             page. Those showed the ENGINE's opinion of individual symbols; a
+             dashboard's first screen should answer the market question — is
+             money flowing in, how broad is the move, and can I trust the read.
 
-            <div class="hero3d-kpis">
-                <a class="kpi" href="{{ url_for('funnel') }}">
-                    <span class="kpi-k">Hunting signals</span>
-                    <span class="kpi-v accent" id="stat-total">{{ signals|length }}</span>
-                </a>
-                <div class="kpi">
-                    <span class="kpi-k">Long / Short</span>
-                    <span class="kpi-v"><b style="color:var(--long)" id="stat-long">0</b><span class="kpi-sep">/</span><b style="color:var(--short)" id="stat-short">0</b></span>
+             Every number here comes from /api/pulse, which excludes (never
+             zeroes) any input it could not fetch and reports the resulting
+             confidence, so a partial read is visible as a partial read.
+             ══════════════════════════════════════════════════════════════════ -->
+        <section class="bento bento-hero">
+
+            <!-- ── 1. The composite ───────────────────────────────────────── -->
+            <article class="bcard bc-pulse">
+                <div class="bc-head">
+                    <span class="bc-title">Market Pulse</span>
+                    <a class="bc-more" href="/market">detail →</a>
                 </div>
-                <a class="kpi" href="{{ url_for('performance') }}">
-                    <span class="kpi-k">Win rate · 4+ lights</span>
-                    <span class="kpi-v" style="color:var(--long)">{{ perf_stats.win_rate }}%</span>
-                </a>
-                <a class="kpi" href="{{ url_for('performance') }}">
-                    <span class="kpi-k">Strategy P&amp;L</span>
-                    <span class="kpi-v {% if perf_stats.total_pnl >= 0 %}accent{% else %}down{% endif %}">{{ "+" if perf_stats.total_pnl > 0 }}{{ perf_stats.total_pnl }}%</span>
-                    {% if perf_stats.open_partials and perf_stats.open_partials > 0 %}
-                    <span class="kpi-n">incl. {{ perf_stats.open_partials }} open partial{{ "s" if perf_stats.open_partials > 1 }}</span>
-                    {% endif %}
-                </a>
-                <a class="kpi" href="{{ url_for('funnel') }}" title="Why setups aren't queuing — full breakdown on the Funnel page">
-                    <span class="kpi-k">🔻 Funnel · queued</span>
-                    <span class="kpi-v" id="funnel-queued" style="{% if funnel_summary.queued > 0 %}color:var(--wolf-gold,#ffcf4b);{% endif %}">{{ funnel_summary.queued }}</span>
-                    {% if funnel_summary.top_blocker %}
-                    <span class="kpi-n" id="funnel-blocker">Blocker: {{ funnel_summary.top_blocker.label }} ({{ funnel_summary.top_blocker.pct }}%)</span>
-                    {% endif %}
-                </a>
-                <div class="kpi kpi-wide">
-                    <span class="kpi-k">Market</span>
-                    <span class="kpi-v" style="font-size:.9rem;" id="hero3d-hud">—</span>
+                <div class="pulse-main">
+                    <div class="pulse-ring" id="pulse-ring" style="--score:0;--ring:var(--wolf-muted)">
+                        <div class="pulse-ring-in">
+                            <span class="pulse-score" id="pulse-score">—</span>
+                            <span class="pulse-of">/ 100</span>
+                        </div>
+                    </div>
+                    <div class="pulse-side">
+                        <span class="pulse-label off" id="pulse-label">reading…</span>
+                        <div class="mini-gauge">
+                            <div class="mg-top"><span>Breadth</span><b id="mg-breadth-v">—</b></div>
+                            <div class="mg-track"><i id="mg-breadth" style="width:0%"></i></div>
+                        </div>
+                        <div class="mini-gauge">
+                            <div class="mg-top"><span>Momentum</span><b id="mg-mom-v">—</b></div>
+                            <div class="mg-track"><i id="mg-mom" style="width:0%"></i></div>
+                        </div>
+                        <div class="mini-gauge conf">
+                            <div class="mg-top"><span>Data confidence</span><b id="mg-conf-v">—</b></div>
+                            <div class="mg-track"><i id="mg-conf" style="width:0%"></i></div>
+                            <div class="mg-note" id="mg-conf-note">—</div>
+                        </div>
+                    </div>
                 </div>
-            </div>
+                <!-- What the score is actually made of. Weights are printed
+                     because they are a judgement call, not a measurement. -->
+                <div class="pulse-parts" id="pulse-parts"></div>
+            </article>
+
+            <!-- ── 2. BTC trend window ────────────────────────────────────── -->
+            <article class="bcard bc-trend">
+                <div class="bc-head">
+                    <span class="bc-title">BTC · 30-day trend</span>
+                    <span class="bc-tag" id="trend-tag">—</span>
+                </div>
+                <div class="trend-hero">
+                    <span class="trend-price" id="trend-price">—</span>
+                    <span class="trend-chg" id="trend-chg">—</span>
+                </div>
+                <div class="trend-chart">
+                    <svg id="trend-svg" viewBox="0 0 600 150" preserveAspectRatio="none"></svg>
+                    <div class="trend-dates"><span id="trend-d0">—</span><span id="trend-d1">—</span></div>
+                </div>
+                <div class="trend-stats">
+                    <div><span>Open</span><b id="trend-open">—</b></div>
+                    <div><span>High</span><b id="trend-high" class="up">—</b></div>
+                    <div><span>Low</span><b id="trend-low" class="down">—</b></div>
+                    <div><span>Last</span><b id="trend-last">—</b></div>
+                </div>
+            </article>
+
+            <!-- ── 3. Money & mood (crypto's answer to institutional flows) ── -->
+            <article class="bcard bc-flows">
+                <div class="bc-head">
+                    <span class="bc-title">Money &amp; Mood</span>
+                    <span class="bc-sub">who is paying to hold their side</span>
+                </div>
+                <div class="flow-list">
+                    <div class="flow-row" title="Average funding across the liquid perp universe. Positive = longs pay shorts = the crowd is long.">
+                        <span class="fl-k">Funding (avg)</span>
+                        <b class="fl-v" id="fl-funding">—</b>
+                        <span class="fl-n" id="fl-funding-n">—</span>
+                    </div>
+                    <div class="flow-row" title="alternative.me Fear &amp; Greed index, 0-100.">
+                        <span class="fl-k">Fear &amp; Greed</span>
+                        <b class="fl-v" id="fl-fng">—</b>
+                        <span class="fl-n" id="fl-fng-n">—</span>
+                    </div>
+                    <div class="flow-row" title="BTC share of total crypto market cap. Rising = money hiding in BTC, falling = rotating into alts.">
+                        <span class="fl-k">BTC dominance</span>
+                        <b class="fl-v" id="fl-dom">—</b>
+                        <span class="fl-n" id="fl-dom-n">—</span>
+                    </div>
+                    <div class="flow-row" title="Total crypto market capitalisation and its 24h change (CoinGecko).">
+                        <span class="fl-k">Total market cap</span>
+                        <b class="fl-v" id="fl-mcap">—</b>
+                        <span class="fl-n" id="fl-mcap-n">—</span>
+                    </div>
+                    <div class="flow-row" title="The regime the scanner is acting on. LONGs are blocked in BEAR, SHORTs in BULL.">
+                        <span class="fl-k">Scanner regime</span>
+                        <b class="fl-v" id="fl-regime">—</b>
+                        <span class="fl-n" id="fl-regime-n">gates every trade</span>
+                    </div>
+                </div>
+                <div class="flow-foot" id="flow-foot">—</div>
+            </article>
+        </section>
+
+        <section class="bento bento-4">
+
+            <!-- ── 4. Breadth ─────────────────────────────────────────────── -->
+            <article class="bcard bc-breadth">
+                <div class="bc-head"><span class="bc-title">Market Breadth</span></div>
+                <div class="breadth-body">
+                    <div class="donut-wrap">
+                        <svg class="donut" viewBox="0 0 42 42">
+                            <circle class="dn-bg" cx="21" cy="21" r="15.9"></circle>
+                            <circle class="dn-up" id="dn-up" cx="21" cy="21" r="15.9"
+                                    stroke-dasharray="0 100" stroke-dashoffset="25"></circle>
+                            <circle class="dn-down" id="dn-down" cx="21" cy="21" r="15.9"
+                                    stroke-dasharray="0 100" stroke-dashoffset="25"></circle>
+                        </svg>
+                        <div class="donut-mid">
+                            <b id="bd-total">—</b>
+                            <span>contracts</span>
+                        </div>
+                    </div>
+                    <div class="breadth-legend">
+                        <div><i class="sw up"></i>Up<b id="bd-up">—</b></div>
+                        <div><i class="sw down"></i>Down<b id="bd-down">—</b></div>
+                        <div><i class="sw flat"></i>Flat<b id="bd-flat">—</b></div>
+                    </div>
+                </div>
+                <div class="breadth-foot">
+                    <div><span>Up share</span><b id="bd-pct">—</b></div>
+                    <div><span>Up : down</span><b id="bd-ratio">—</b></div>
+                </div>
+            </article>
+
+            <!-- ── 5. Sector rotation ─────────────────────────────────────── -->
+            <article class="bcard bc-sectors">
+                <div class="bc-head">
+                    <span class="bc-title">Sector Rotation</span>
+                    <span class="bc-sub">median 24h</span>
+                </div>
+                <div class="sect-list" id="sect-list"><div class="bc-empty">loading…</div></div>
+            </article>
+
+            <!-- ── 6/7. Movers ────────────────────────────────────────────── -->
+            <article class="bcard bc-movers">
+                <div class="bc-head"><span class="bc-title up">Top Gainers</span><span class="bc-sub">24h</span></div>
+                <div class="mv-list" id="mv-up"><div class="bc-empty">loading…</div></div>
+            </article>
+            <article class="bcard bc-movers">
+                <div class="bc-head"><span class="bc-title down">Top Losers</span><span class="bc-sub">24h</span></div>
+                <div class="mv-list" id="mv-down"><div class="bc-empty">loading…</div></div>
+            </article>
         </section>
 
         <!-- ── Top entry candidates ── -->
@@ -1654,182 +1736,6 @@
             <div id="briefing-body"></div>
         </section>
 
-<script src="{{ url_for('static', filename='wolf3d.js') }}?v={{ asset_ver }}"></script>
-        <script>
-        /* Mini market cloud. This lives on the page the user keeps open all
-           day, so it is deliberately frugal: it stops animating when the tab
-           is hidden OR the panel is scrolled out of view, honours
-           prefers-reduced-motion, and reuses /api/universe (already cached
-           scan data — no extra exchange load). */
-        (function () {
-            var cv = document.getElementById('sky3d');
-            if (!cv || !window.Wolf3D) return;
-            var reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-            var scene = new Wolf3D(cv, { spin: !reduce, spinRate: 0.0016, wheel: false,
-                                         view: { yaw: -0.6, pitch: 0.38, dist: 3.1 } });
-            var PTS = [], onScreen = true;
-
-            // Don't burn frames on an off-screen canvas.
-            if (window.IntersectionObserver) {
-                new IntersectionObserver(function (es) {
-                    onScreen = es[0].isIntersecting;
-                    scene.spin = onScreen && !reduce;
-                    if (onScreen) scene.dirty();
-                }, { threshold: 0.05 }).observe(cv);
-            }
-
-            scene.onDraw = function (s) {
-                if (!PTS.length) return;
-                var dRsi = [0, 100];
-                var dScore = Wolf3D.domain(PTS.map(function (p) { return p.score; }));
-                var dHigh = Wolf3D.domain(PTS.map(function (p) { return p.dhigh; }));
-                // This panel is a wide, short banner, and the projector scales
-                // off the SHORTER side — so the cloud rendered tiny in a sea of
-                // empty width. Stretch horizontally in SCREEN space (not before
-                // projection, which would make the cloud breathe as it spins).
-                var ar = Math.max(1, Math.min(s.W / Math.max(s.H, 1) / 1.8, 3.4));
-                var list = [], sumX = 0;
-                PTS.forEach(function (p) {
-                    if (p.dhigh == null) return;
-                    var q = s.project(Wolf3D.norm(p.rsi, dRsi),
-                                      Wolf3D.norm(p.score, dScore),
-                                      Wolf3D.norm(p.dhigh, dHigh));
-                    if (!q) return;
-                    sumX += q.x;
-                    list.push({ p: p, q: q });
-                });
-                if (!list.length) return;
-                // Stretch around the cloud's own centre, not the canvas centre:
-                // the symbols don't sit centred inside the data box, so
-                // stretching around W/2 shoved the whole thing off to one side.
-                var midX = sumX / list.length;
-                var shift = function (x) { return s.W / 2 + (x - midX) * ar; };
-                list.forEach(function (o) { o.q.x = shift(o.q.x); });
-                var ctx = s.ctx;
-
-                // Reference planes at RSI 30 / 70. Without them the cloud is
-                // pretty but unreadable — you cannot see WHERE oversold ends,
-                // which is the whole reason RSI is on the x axis.
-                [[30, '#4ade80', 'oversold 30'], [70, '#f87171', 'overbought 70']].forEach(function (g) {
-                    var nx = Wolf3D.norm(g[0], dRsi), seg = [];
-                    for (var k = 0; k <= 1; k++) {
-                        for (var j2 = 0; j2 <= 1; j2++) {
-                            var q2 = s.project(nx, k ? 1 : -1, j2 ? 1 : -1);
-                            if (q2) { q2.x = shift(q2.x); seg.push(q2); }
-                        }
-                    }
-                    if (seg.length < 4) return;
-                    ctx.strokeStyle = g[1] + '33'; ctx.lineWidth = 1; ctx.setLineDash([4, 4]);
-                    ctx.beginPath();
-                    ctx.moveTo(seg[0].x, seg[0].y); ctx.lineTo(seg[1].x, seg[1].y);
-                    ctx.lineTo(seg[3].x, seg[3].y); ctx.lineTo(seg[2].x, seg[2].y); ctx.closePath();
-                    ctx.stroke(); ctx.setLineDash([]);
-                    ctx.font = '700 9px Inter, sans-serif';
-                    ctx.fillStyle = g[1] + 'aa'; ctx.textAlign = 'center';
-                    ctx.fillText(g[2], seg[1].x, seg[1].y - 5);
-                });
-                list.sort(function (a, b) { return b.q.z - a.q.z; });
-
-                // Constellation lines between nearby high-conviction setups —
-                // near in this space means similar RSI + confluence, so the
-                // webs are real clusters, not noise. Restricted to the top 70
-                // by conviction: all 245 would be ~30k pair-checks EVERY frame
-                // on a page that stays open all day.
-                var web = list.filter(function (o) { return o.p.conv >= 2; })
-                              .sort(function (a, b) { return b.p.conv - a.p.conv; })
-                              .slice(0, 70);
-                var maxD = Math.min(s.W, s.H) * 0.30, maxD2 = maxD * maxD, drawn = 0;
-                ctx.lineWidth = 1;
-                for (var i = 0; i < web.length && drawn < 340; i++) {
-                    for (var j = i + 1; j < web.length && drawn < 340; j++) {
-                        var dx = web[i].q.x - web[j].q.x, dy = web[i].q.y - web[j].q.y;
-                        var d2 = dx * dx + dy * dy;
-                        if (d2 > maxD2) continue;
-                        var same = web[i].p.d === web[j].p.d;
-                        ctx.strokeStyle = (same && web[i].p.d > 0) ? 'rgba(74,222,128,'
-                                        : same ? 'rgba(248,113,113,' : 'rgba(140,160,190,';
-                        ctx.strokeStyle += (0.16 * (1 - d2 / maxD2)).toFixed(3) + ')';
-                        ctx.beginPath();
-                        ctx.moveTo(web[i].q.x, web[i].q.y);
-                        ctx.lineTo(web[j].q.x, web[j].q.y);
-                        ctx.stroke();
-                        drawn++;
-                    }
-                }
-
-                list.forEach(function (o) {
-                    var col = o.p.d > 0 ? '#4ade80' : '#f87171';
-                    var r = Math.max(1.6, Math.min((2.0 + o.p.conv * 1.4) * (o.q.f / 300), 10));
-                    var a = Math.max(0.14, Math.min(1, 1.5 - (o.q.z - s.view.dist + 1.6) * 0.42));
-                    var hot = s.hover === o.p;
-                    if (o.p.conv >= 3 || hot) { ctx.shadowColor = col; ctx.shadowBlur = hot ? 16 : 8; }
-                    ctx.globalAlpha = hot ? 1 : a; ctx.fillStyle = col;
-                    ctx.beginPath(); ctx.arc(o.q.x, o.q.y, hot ? r * 1.7 : r, 0, 6.2832); ctx.fill();
-                    ctx.shadowBlur = 0;
-                    if (o.p.rr != null) {          // engine armed it: levels exist
-                        ctx.globalAlpha = Math.min(1, a + 0.3);
-                        ctx.strokeStyle = '#ffcf4b'; ctx.lineWidth = 1.3;
-                        ctx.beginPath(); ctx.arc(o.q.x, o.q.y, r + 3, 0, 6.2832); ctx.stroke();
-                    }
-                    s.hit.push({ x: o.q.x, y: o.q.y, r: Math.max(r, 7), data: o.p });
-                });
-                // Name the strongest setups so the cloud is scannable without
-                // hovering every dot. Collision-avoiding and capped — 76 bodies
-                // can carry max conviction on a busy scan.
-                ctx.globalAlpha = 1;
-                ctx.font = '800 10px Inter, sans-serif';
-                ctx.textAlign = 'center'; ctx.textBaseline = 'bottom';
-                ctx.fillStyle = 'rgba(241,245,249,.9)';
-                var place = s.labelPlacer(12);
-                list.slice().sort(function (a, b) { return (b.p.conv - a.p.conv) || (a.q.z - b.q.z); })
-                    .forEach(function (o) {
-                        if (o.p.conv < 3 || s.hover === o.p) return;
-                        if (place(o.p.b, o.q.x, o.q.y - 9)) ctx.fillText(o.p.b, o.q.x, o.q.y - 9);
-                    });
-                ctx.globalAlpha = 1;
-            };
-
-            var tip = document.getElementById('sky3d-tip');
-            scene.onHover = function (p, mx, my) {
-                if (!p) { tip.classList.remove('on'); return; }
-                var col = p.d > 0 ? '#4ade80' : '#f87171';
-                tip.innerHTML =
-                    '<div class="tt-s" style="color:' + col + '">' + p.b +
-                    ' <span style="font-size:.64rem;opacity:.8">' + (p.d > 0 ? 'LONG' : 'SHORT') + '</span></div>' +
-                    '<div class="tt-r">RSI <b>' + (p.rsi == null ? '—' : p.rsi) + '</b>' +
-                    ' · 匯合 <b>' + (p.score == null ? '—' : p.score) + '</b>' +
-                    ' · 燈 <b>' + (p.lights == null ? '—' : p.lights) + '</b></div>' +
-                    '<div class="tt-r">' + (p.zone || '—') +
-                    (p.px != null ? ' · <b>' + p.px + '</b>' : '') +
-                    (p.rr != null ? ' · 已掛單' : '') + '</div>';
-                tip.classList.add('on');
-                var tw = tip.offsetWidth || 170;
-                tip.style.left = Math.max(tw / 2 + 4, Math.min(scene.W - tw / 2 - 4, mx)) + 'px';
-                tip.style.top = Math.max(tip.offsetHeight + 8, my) + 'px';
-            };
-            scene.onClick = function (p) {
-                if (p && p.tv) window.open(p.tv, '_blank', 'noopener');
-            };
-
-            function load() {
-                fetch('/api/universe').then(function (r) { return r.ok ? r.json() : null; })
-                .then(function (d) {
-                    if (!d || !d.ok) return;
-                    PTS = d.points || [];
-                    var lng = PTS.filter(function (p) { return p.d > 0; }).length;
-                    var max = PTS.filter(function (p) { return p.conv >= 3; }).length;
-                    // Feeds the hero's Market KPI; the long/short split has its
-                    // own tile, so this one carries what the cloud can't show.
-                    document.getElementById('hero3d-hud').innerHTML =
-                        '<b>' + max + '</b> <span style="font-size:.62rem;color:var(--wolf-muted)">max-conviction of ' +
-                        PTS.length + '</span>';
-                    scene.dirty();
-                }).catch(function () {});
-            }
-            load();
-            if (window.wolfPoll) wolfPoll(load, 120000);
-        })();
-        </script>
         <!-- 🚀 Pump Radar — coins moving RIGHT NOW (1h change + volume vs normal).
              Data rides on /api/strategy2_signals (the S2 sweep computes it from
              candles it already fetched); rows marked HOT crossed both alert
@@ -2311,14 +2217,6 @@
                         </div>
                     </div>
                     <div class="insight-card">
-                        <div class="insight-label">Average RSI</div>
-                        <div class="insight-value gold" id="avg-rsi">{{ dashboard_summary.signals.avg_rsi }}</div>
-                        <div class="insight-note">
-                            OB <span id="extreme-overbought">{{ dashboard_summary.signals.overbought }}</span> /
-                            OS <span id="extreme-oversold">{{ dashboard_summary.signals.oversold }}</span>
-                        </div>
-                    </div>
-                    <div class="insight-card">
                         <div class="insight-label">Rejected Setups</div>
                         <div class="insight-value red" id="signal-rejected">{{ dashboard_summary.signals.rejected }}</div>
                         <div class="insight-note">Filtered out by trend, SMC, or direction edge</div>
@@ -2433,21 +2331,16 @@
                     <button class="dash-filter-btn" data-dash-status="closed">Closed</button>
                 </div>
                 <div class="dash-filter-group">
-                    <button class="dash-filter-btn active" data-dash-lights="ALL">All Lights</button>
-                    <button class="dash-filter-btn" data-dash-lights="4">4+</button>
-                    <button class="dash-filter-btn" data-dash-lights="5">5+</button>
-                    <button class="dash-filter-btn" data-dash-lights="6">6+</button>
+                    <button class="dash-filter-btn active" data-dash-lights="ALL">All Conviction</button>
+                    <button class="dash-filter-btn" data-dash-lights="4">4+ GOOD</button>
+                    <button class="dash-filter-btn" data-dash-lights="5">5+ HIGH</button>
+                    <button class="dash-filter-btn" data-dash-lights="6">6+ MAX</button>
                 </div>
                 <div class="dash-filter-group">
                     <button class="dash-filter-btn active" data-dash-score="ALL">All Scores</button>
                     <button class="dash-filter-btn" data-dash-score="7">7+</button>
                     <button class="dash-filter-btn" data-dash-score="8">8+</button>
                     <button class="dash-filter-btn" data-dash-score="10">10</button>
-                </div>
-                <div class="dash-filter-group">
-                    <button class="dash-filter-btn active" data-dash-rsi="ALL">All RSI</button>
-                    <button class="dash-filter-btn" data-dash-rsi="normal" title="Hide coins whose RSI is ≥ 90 or ≤ 10 (overextended / exhausted)">Hide ≥90/≤10</button>
-                    <button class="dash-filter-btn" data-dash-rsi="extreme" title="Show only coins whose RSI is ≥ 90 or ≤ 10">Only ≥90/≤10</button>
                 </div>
             </div>
 
@@ -2458,8 +2351,7 @@
                         <span class="h-cell">Asset</span>
                         <span class="h-cell">Side</span>
                         <span class="h-cell">Live</span>
-                        <span class="h-cell">RSI</span>
-                        <span class="h-cell">Lights</span>
+                        <span class="h-cell">Conviction</span>
                         <span class="h-cell">SMC</span>
                         <span class="h-cell">Score</span>
                         <span class="h-cell"></span>
@@ -2740,8 +2632,6 @@
         });
 
         let lastScanTime = "{{ last_update }}";
-        const rsiUpper = Number("{{ rsi_upper }}");
-        const rsiLower = Number("{{ rsi_lower }}");
         const expandedCards = new Set();
 
         function rowId(symbol) {
@@ -2754,10 +2644,20 @@
             return 'score-watch';
         }
 
-        function rsiClass(rsi) {
-            if (rsi >= rsiUpper) return 'rsi-high';
-            if (rsi <= rsiLower) return 'rsi-low';
-            return '';
+        /* Conviction tier — the same 4 / 5 / 6+ bands the filters and the
+           historical win-rate breakdown use, so one vocabulary covers the
+           whole page. Named, not just coloured. */
+        function convClass(n) {
+            if (n >= 6) return 'conv-max';
+            if (n >= 5) return 'conv-high';
+            if (n >= 4) return 'conv-mid';
+            return 'conv-low';
+        }
+        function convTier(n) {
+            if (n >= 6) return 'MAX';
+            if (n >= 5) return 'HIGH';
+            if (n >= 4) return 'GOOD';
+            return 'WATCH';
         }
 
         function smcPillClass(zoneType) {
@@ -2765,20 +2665,6 @@
             if (zoneType === 'resistance') return 'resistance';
             if (zoneType === 'equilibrium') return 'equilibrium';
             return 'neutral';
-        }
-
-        function renderLights(lights, effectiveLights) {
-            if (!lights || !lights.length) {
-                return '<div class="light off"></div>'.repeat(5);
-            }
-            const dots = lights.map(on => `<div class="light ${on ? 'on' : 'off'}"></div>`).join('');
-            const baseCount = lights.filter(Boolean).length;
-            const bonus = (Number(effectiveLights) || 0) - baseCount;
-            let smc = '';
-            if (bonus > 0) {
-                smc = '<span class="smc-divider"></span>' + '<div class="light smc"></div>'.repeat(bonus);
-            }
-            return dots + smc;
         }
 
         function statusInfo(signal) {
@@ -2935,7 +2821,7 @@
                 : `<div class="card-expand-inner"></div>`;
 
             return `
-                <div class="signal-card ${cardCls}${isExpanded ? ' expanded' : ''}" id="card-${id}" data-card-id="${id}" data-dir="${signal.direction}" data-status="${signal.trade_status || ''}" data-lights="${effLights}" data-score="${signal.score || 0}" data-rsi="${signal.rsi}">
+                <div class="signal-card ${cardCls}${isExpanded ? ' expanded' : ''}" id="card-${id}" data-card-id="${id}" data-dir="${signal.direction}" data-status="${signal.trade_status || ''}" data-lights="${effLights}" data-score="${signal.score || 0}">
                     <div class="signal-row-grid signal-row-hit" role="button" tabindex="0" aria-expanded="${isExpanded}">
                         <div class="cell cell-asset">
                             <div class="asset-line">
@@ -2946,8 +2832,10 @@
                         <div class="cell cell-live live-price-cell">
                             <span class="live-val">${liveValue}</span>
                         </div>
-                        <div class="cell cell-rsi ${rsiClass(signal.rsi)}">${signal.rsi.toFixed(1)}</div>
-                        <div class="cell cell-lights"><div class="lights" title="Filled = passed light · hollow = missed · violet = SMC bonus. Total dots = lights used by the 4+/5+/6+ filter.">${renderLights(signal.lights, effLights)}</div></div>
+                        <div class="cell cell-conv ${convClass(effLights)}" title="${effLights} of 7 strategy lights passed. Open the row for which ones.">
+                            <div class="conv-top"><span class="conv-n">${effLights}/7</span><span class="conv-tier">${convTier(effLights)}</span></div>
+                            <div class="conv-track"><i style="width:${Math.round(effLights / 7 * 100)}%"></i></div>
+                        </div>
                         <div class="cell cell-smc">${smcCell}</div>
                         <div class="cell cell-score"><span class="score-badge ${scoreClass(signal.score)}">${signal.score}</span></div>
                         <div class="cell cell-chevron"><span class="chevron">▼</span></div>
@@ -2996,17 +2884,18 @@
             });
         }
 
-        function updateStats(signals) {
-            const longs = signals.filter(s => s.direction === 'LONG').length;
-            const shorts = signals.filter(s => s.direction === 'SHORT').length;
-            document.getElementById('stat-total').innerText = signals.length;
-            document.getElementById('stat-long').innerText = longs;
-            document.getElementById('stat-short').innerText = shorts;
-        }
-
         function setText(id, value) {
             const el = document.getElementById(id);
             if (el) el.innerText = value;
+        }
+
+        // The hero KPI strip these used to feed was replaced by the Market Pulse
+        // board (2026-08-09), so every write goes through the guarded setText —
+        // a missing element must never throw and take the render down with it.
+        function updateStats(signals) {
+            setText('stat-total', signals.length);
+            setText('stat-long', signals.filter(s => s.direction === 'LONG').length);
+            setText('stat-short', signals.filter(s => s.direction === 'SHORT').length);
         }
 
         function setWidth(id, value) {
@@ -3047,9 +2936,6 @@
             setText('signal-bias', summary.signals?.bias ?? 'Balanced');
             setText('signal-long-pct-note', summary.signals?.long_pct ?? 0);
             setText('signal-short-pct-note', summary.signals?.short_pct ?? 0);
-            setText('avg-rsi', summary.signals?.avg_rsi ?? 0);
-            setText('extreme-overbought', summary.signals?.overbought ?? 0);
-            setText('extreme-oversold', summary.signals?.oversold ?? 0);
             setText('signal-rejected', summary.signals?.rejected ?? 0);
             setText('signal-high-conviction', summary.signals?.high_conviction ?? 0);
             setText('signal-max-conviction', summary.signals?.max_conviction ?? 0);
@@ -3094,7 +2980,6 @@
         let dashStatusFilter = 'ALL';
         let dashLightsFilter = 'ALL';
         let dashScoreFilter = 'ALL';
-        let dashRsiFilter = 'ALL';
         let dashSearch = '';
         // The sweep covers 200+ perps — show the top rows (list is already
         // sorted best-first) and let "Show all" expand on demand.
@@ -3110,17 +2995,12 @@
                 const status = (card.dataset.status || '').toLowerCase();
                 const lights = parseInt(card.dataset.lights || '0', 10);
                 const score = parseFloat(card.dataset.score || '0');
-                const rsi = parseFloat(card.dataset.rsi);
                 const symEl = card.querySelector('.symbol-tag');
                 const symbol = (symEl ? symEl.textContent : (card.dataset.cardId || '')).toUpperCase();
 
                 const dirOk = dashDirFilter === 'ALL' || dir === dashDirFilter;
                 const lightsOk = dashLightsFilter === 'ALL' || lights >= parseInt(dashLightsFilter, 10);
                 const scoreOk = dashScoreFilter === 'ALL' || score >= parseInt(dashScoreFilter, 10);
-                const rsiExtreme = !isNaN(rsi) && (rsi >= 90 || rsi <= 10);
-                const rsiOk = dashRsiFilter === 'ALL'
-                    || (dashRsiFilter === 'extreme' && rsiExtreme)
-                    || (dashRsiFilter === 'normal' && !rsiExtreme);
                 const searchOk = !dashSearch || symbol.includes(dashSearch);
                 let statusOk = true;
                 if (dashStatusFilter === 'queued') {
@@ -3131,7 +3011,7 @@
                     statusOk = ['tp', 'sl', 'manual_close'].includes(status);
                 }
 
-                const show = dirOk && lightsOk && scoreOk && statusOk && searchOk && rsiOk;
+                const show = dirOk && lightsOk && scoreOk && statusOk && searchOk;
                 if (show) {
                     matched++;
                     const capped = !dashShowAll && matched > DASH_VISIBLE_CAP;
@@ -3198,14 +3078,6 @@
                     document.querySelectorAll('[data-dash-score]').forEach(b => b.classList.remove('active'));
                     btn.classList.add('active');
                     dashScoreFilter = btn.dataset.dashScore;
-                    applySignalFilters();
-                });
-            });
-            document.querySelectorAll('[data-dash-rsi]').forEach(btn => {
-                btn.addEventListener('click', () => {
-                    document.querySelectorAll('[data-dash-rsi]').forEach(b => b.classList.remove('active'));
-                    btn.classList.add('active');
-                    dashRsiFilter = btn.dataset.dashRsi;
                     applySignalFilters();
                 });
             });
@@ -3357,12 +3229,14 @@
                     </div>` : '';
                 const needs = (!ready && e.blockers && e.blockers.length)
                     ? `<div class="entry-needs">${e.blockers.map(b => `<span class="entry-need">${escTop(b)}</span>`).join('')}</div>` : '';
-                const rsi = (e.rsi !== null && e.rsi !== undefined) ? ` · RSI ${escTop(Number(e.rsi).toFixed ? Number(e.rsi).toFixed(0) : e.rsi)}` : '';
                 const href = e.tv_url ? `href="${escTop(e.tv_url)}" target="_blank" rel="noopener"` : '';
                 return `<a class="entry-card ${ready ? 'ready' : ''}" ${href}>
                     <div class="entry-top"><span class="entry-sym">${escTop(e.symbol)}</span><span class="entry-dir ${dir}">${dir || '—'}</span></div>
                     ${status}
-                    <div class="entry-lights"><b>${e.lights ?? '—'}</b> lights${rsi}</div>
+                    <div class="entry-conv ${convClass(e.lights || 0)}" title="${e.lights ?? 0} of 7 strategy lights passed">
+                        <div class="conv-top"><span class="conv-n">${e.lights ?? '—'}/7</span><span class="conv-tier">${convTier(e.lights || 0)}</span></div>
+                        <div class="conv-track"><i style="width:${Math.round((e.lights || 0) / 7 * 100)}%"></i></div>
+                    </div>
                     ${levels}
                     ${needs}
                 </a>`;
@@ -3700,6 +3574,233 @@
                 navigator.serviceWorker.register('/sw.js', { scope: '/' }).catch(() => {});
             });
         }
+    </script>
+    <script>
+    /* ════════════════════════════════════════════════════════════════════════
+       Market Pulse board — /api/pulse → the seven cards at the top of the page.
+
+       Nothing here invents a value. When the API reports a component as not
+       ok, the row renders greyed with "no data" rather than a zero, and the
+       confidence meter already accounts for it. Same rule for the panels:
+       an empty list says so.
+       ════════════════════════════════════════════════════════════════════════ */
+    (function () {
+        var UP = '#4ade80', DOWN = '#f87171', GOLD = '#ffcf4b', MUT = '#93a3b8';
+
+        function n(v, d) { return (v === null || v === undefined || v !== v) ? '—' : Number(v).toFixed(d === undefined ? 2 : d); }
+        function pct(v, d) { return (v === null || v === undefined) ? '—' : (v > 0 ? '+' : '') + Number(v).toFixed(d === undefined ? 2 : d) + '%'; }
+        function usd(v) {
+            if (v === null || v === undefined) return '—';
+            var a = Math.abs(v);
+            if (a >= 1e12) return '$' + (v / 1e12).toFixed(2) + 'T';
+            if (a >= 1e9) return '$' + (v / 1e9).toFixed(2) + 'B';
+            if (a >= 1e6) return '$' + (v / 1e6).toFixed(1) + 'M';
+            return '$' + Number(v).toLocaleString();
+        }
+        function price(v) {
+            if (v === null || v === undefined) return '—';
+            var d = v >= 1000 ? 0 : v >= 1 ? 2 : v >= 0.01 ? 4 : 6;
+            return Number(v).toLocaleString(undefined, { minimumFractionDigits: d, maximumFractionDigits: d });
+        }
+        function toneColor(t) { return t === 'bull' ? UP : t === 'bear' ? DOWN : t === 'neutral' ? GOLD : MUT; }
+        function scoreColor(s) { return s >= 62 ? UP : s >= 45 ? GOLD : DOWN; }
+        function set(id, txt, cls) {
+            var el = document.getElementById(id);
+            if (!el) return;
+            if (txt !== undefined) el.textContent = txt;
+            if (cls !== undefined) el.className = cls;
+        }
+
+        /* ── 1. composite ────────────────────────────────────────────────── */
+        function paintPulse(d) {
+            var ring = document.getElementById('pulse-ring');
+            var s = d.score;
+            ring.style.setProperty('--score', s === null ? 0 : s);
+            ring.style.setProperty('--ring', s === null ? MUT : scoreColor(s));
+            set('pulse-score', s === null ? '—' : s.toFixed(1));
+            set('pulse-label', d.label, 'pulse-label ' + (d.tone || 'off'));
+
+            var byKey = {};
+            (d.components || []).forEach(function (c) { byKey[c.key] = c; });
+            var br = byKey.breadth || {}, mo = byKey.momentum || {};
+            document.getElementById('mg-breadth').style.width = (br.score || 0) + '%';
+            set('mg-breadth-v', br.ok ? br.value + '% of contracts up' : 'no data');
+            document.getElementById('mg-mom').style.width = (mo.score || 0) + '%';
+            set('mg-mom-v', mo.ok ? 'median ' + pct(mo.value) : 'no data');
+
+            var cf = d.confidence || {};
+            document.getElementById('mg-conf').style.width = (cf.pct || 0) + '%';
+            set('mg-conf-v', n(cf.pct, 0) + '%');
+            set('mg-conf-note', (cf.missing && cf.missing.length)
+                ? cf.ok + '/' + cf.total + ' inputs live — missing: ' + cf.missing.join(', ')
+                : cf.ok + '/' + cf.total + ' inputs live'
+                  + (d.stale ? ' · showing last good data (a feed is down)' : ''));
+
+            document.getElementById('pulse-parts').innerHTML = (d.components || []).map(function (c) {
+                if (!c.ok) {
+                    return '<div class="pp-row dead" title="' + (c.note || '') + '"><span class="pp-k">' + c.label +
+                           '</span><span class="pp-w">w' + c.weight + '</span>' +
+                           '<span class="pp-bar"></span><span class="pp-s">no data</span></div>';
+                }
+                return '<div class="pp-row" title="' + (c.note || '') + '"><span class="pp-k">' + c.label +
+                       '</span><span class="pp-w">w' + c.weight + '</span>' +
+                       '<span class="pp-bar"><i style="width:' + c.score + '%;background:' + scoreColor(c.score) + '"></i></span>' +
+                       '<span class="pp-s" style="color:' + scoreColor(c.score) + '">' + c.score.toFixed(0) + '</span></div>';
+            }).join('');
+        }
+
+        /* ── 2. BTC trend ────────────────────────────────────────────────── */
+        function paintTrend(b) {
+            var svg = document.getElementById('trend-svg');
+            if (!b || !b.ok || !b.series.length) {
+                svg.innerHTML = '';
+                set('trend-price', '—'); set('trend-chg', '—');
+                set('trend-tag', 'no data');
+                return;
+            }
+            var pts = b.series.map(function (p) { return p.c; });
+            var lo = Math.min.apply(null, pts), hi = Math.max.apply(null, pts);
+            var pad = (hi - lo) * 0.12 || 1;
+            lo -= pad; hi += pad;
+            var W = 600, H = 150;
+            var xy = pts.map(function (v, i) {
+                return [i / (pts.length - 1) * W, H - (v - lo) / (hi - lo) * H];
+            });
+            var line = xy.map(function (p, i) { return (i ? 'L' : 'M') + p[0].toFixed(1) + ' ' + p[1].toFixed(1); }).join(' ');
+            var up = (b.change_pct || 0) >= 0;
+            var col = up ? UP : DOWN;
+            svg.innerHTML =
+                '<defs><linearGradient id="tl-grad" x1="0" y1="0" x2="0" y2="1">' +
+                '<stop offset="0%" stop-color="' + col + '" stop-opacity=".26"/>' +
+                '<stop offset="100%" stop-color="' + col + '" stop-opacity="0"/></linearGradient></defs>' +
+                '<path class="tl-fill" d="' + line + ' L' + W + ' ' + H + ' L0 ' + H + ' Z"/>' +
+                '<path class="tl-line" d="' + line + '" style="stroke:' + col + '"/>' +
+                '<circle class="tl-dot" cx="' + xy[xy.length - 1][0].toFixed(1) + '" cy="' +
+                xy[xy.length - 1][1].toFixed(1) + '" r="3.5" style="fill:' + col + '"/>';
+
+            set('trend-price', price(b.close));
+            set('trend-chg', pct(b.change_pct), 'trend-chg');
+            document.getElementById('trend-chg').style.color = col;
+            set('trend-tag', b.days + 'd ' + (up ? 'uptrend' : 'downtrend'));
+            set('trend-open', price(b.open)); set('trend-high', price(b.high));
+            set('trend-low', price(b.low)); set('trend-last', price(b.close));
+            var f = new Date(b.series[0].t), l = new Date(b.series[b.series.length - 1].t);
+            var fmt = function (dt) { return (dt.getMonth() + 1) + '/' + dt.getDate(); };
+            set('trend-d0', fmt(f)); set('trend-d1', fmt(l));
+        }
+
+        /* ── 3. money & mood ─────────────────────────────────────────────── */
+        function paintFlows(d) {
+            var byKey = {};
+            (d.components || []).forEach(function (c) { byKey[c.key] = c; });
+            var fn = byKey.funding || {}, fg = byKey.sentiment || {}, tr = byKey.trend || {};
+
+            var fv = document.getElementById('fl-funding');
+            fv.textContent = fn.ok ? (fn.value > 0 ? '+' : '') + fn.value.toFixed(4) + '%' : 'no data';
+            fv.className = 'fl-v' + (fn.ok ? (fn.value > 0.01 ? ' up' : fn.value < 0 ? ' down' : '') : '');
+            set('fl-funding-n', fn.ok
+                ? (fn.value > 0 ? 'longs are paying shorts' : 'shorts are paying longs')
+                : (fn.note || 'unavailable'));
+
+            set('fl-fng', fg.ok ? String(fg.value) : 'no data');
+            document.getElementById('fl-fng').className = 'fl-v' +
+                (fg.ok ? (fg.value >= 55 ? ' up' : fg.value <= 35 ? ' down' : ' warn') : '');
+            set('fl-fng-n', fg.ok ? (fg.note || '') : 'index unavailable');
+
+            set('fl-regime', tr.ok ? tr.value : 'unknown');
+            document.getElementById('fl-regime').className = 'fl-v' +
+                (tr.value === 'BULL' ? ' up' : tr.value === 'BEAR' ? ' down' : ' warn');
+
+            var errs = (d.errors || []).length;
+            set('flow-foot', errs
+                ? errs + ' feed error(s) this refresh — affected rows read "no data", never 0'
+                : 'Updated ' + new Date((d.generated_at || 0) * 1000).toLocaleTimeString());
+        }
+
+        /* Dominance + market cap ride on the existing market-intel endpoint,
+           which is cached server-side — no extra exchange load. */
+        function loadGlobal() {
+            fetch('/api/market_intel').then(function (r) { return r.ok ? r.json() : null; })
+                .then(function (m) {
+                    if (!m) return;
+                    var g = m.global_mkt || {};
+                    set('fl-dom', g.btc_dominance === null || g.btc_dominance === undefined
+                        ? 'no data' : g.btc_dominance.toFixed(1) + '%');
+                    set('fl-dom-n', g.eth_dominance ? 'ETH ' + g.eth_dominance.toFixed(1) + '%' : '');
+                    set('fl-mcap', usd(g.total_mcap_usd));
+                    var c = g.mcap_change_24h_pct;
+                    set('fl-mcap-n', c === null || c === undefined ? '' : pct(c) + ' in 24h');
+                    var el = document.getElementById('fl-mcap');
+                    if (el) el.className = 'fl-v' + (c > 0 ? ' up' : c < 0 ? ' down' : '');
+                }).catch(function () {});
+        }
+
+        /* ── 4. breadth donut ────────────────────────────────────────────── */
+        function paintBreadth(b) {
+            var total = b.total || 0;
+            var upPct = total ? b.up / total * 100 : 0;
+            var dnPct = total ? b.down / total * 100 : 0;
+            document.getElementById('dn-up').setAttribute('stroke-dasharray', upPct.toFixed(2) + ' ' + (100 - upPct).toFixed(2));
+            var dn = document.getElementById('dn-down');
+            dn.setAttribute('stroke-dasharray', dnPct.toFixed(2) + ' ' + (100 - dnPct).toFixed(2));
+            dn.setAttribute('stroke-dashoffset', (25 - upPct).toFixed(2));
+            set('bd-total', total || '—');
+            set('bd-up', b.up === undefined ? '—' : b.up);
+            set('bd-down', b.down === undefined ? '—' : b.down);
+            set('bd-flat', b.flat === undefined ? '—' : b.flat);
+            set('bd-pct', total ? upPct.toFixed(1) + '%' : '—');
+            set('bd-ratio', b.ratio === null || b.ratio === undefined ? '—' : b.ratio.toFixed(2));
+        }
+
+        /* ── 5. sectors ──────────────────────────────────────────────────── */
+        function paintSectors(rows) {
+            var el = document.getElementById('sect-list');
+            if (!rows || !rows.length) { el.innerHTML = '<div class="bc-empty">No sector had enough live tickers to average.</div>'; return; }
+            var max = Math.max.apply(null, rows.map(function (r) { return Math.abs(r.median); })) || 1;
+            el.innerHTML = rows.map(function (r) {
+                var w = Math.abs(r.median) / max * 50;          // half-width, mirrored about the zero line
+                var up = r.median >= 0;
+                var style = up ? 'left:50%;width:' + w + '%;background:' + UP
+                               : 'left:' + (50 - w) + '%;width:' + w + '%;background:' + DOWN;
+                return '<div class="sect-row" title="' + r.n + ' contracts · ' + r.up + ' up · leader ' +
+                       r.leader + ' ' + pct(r.leader_pct) + ' · laggard ' + r.laggard + ' ' + pct(r.laggard_pct) + '">' +
+                       '<span class="sect-name">' + r.name + '</span>' +
+                       '<span class="sect-bar"><i style="' + style + '"></i></span>' +
+                       '<span class="sect-pct ' + (up ? 'up' : 'down') + '">' + pct(r.median, 1) + '</span></div>';
+            }).join('');
+        }
+
+        /* ── 6/7. movers ─────────────────────────────────────────────────── */
+        function paintMovers(m) {
+            [['mv-up', m.up, 'up'], ['mv-down', m.down, 'down']].forEach(function (spec) {
+                var el = document.getElementById(spec[0]);
+                var rows = spec[1] || [];
+                if (!rows.length) { el.innerHTML = '<div class="bc-empty">No data.</div>'; return; }
+                el.innerHTML = rows.map(function (r) {
+                    return '<a class="mv-row" href="/strategy2?symbol=' + encodeURIComponent(r.base + '/USDT:USDT') +
+                           '" title="24h volume ' + usd(r.volume) + '">' +
+                           '<span class="mv-sym">' + r.base + '</span>' +
+                           '<span class="mv-px">' + price(r.price) + '</span>' +
+                           '<span class="mv-pct ' + spec[2] + '">' + pct(r.pct, 1) + '</span></a>';
+                }).join('');
+            });
+        }
+
+        function load() {
+            fetch('/api/pulse').then(function (r) { return r.ok ? r.json() : null; })
+                .then(function (d) {
+                    if (!d) return;
+                    paintPulse(d);
+                    paintTrend(d.btc);
+                    paintFlows(d);
+                    paintBreadth(d.breadth || {});
+                    paintSectors(d.sectors);
+                    paintMovers(d.movers || {});
+                }).catch(function () {});
+        }
+        load(); loadGlobal();
+        if (window.wolfPoll) { wolfPoll(load, 90000); wolfPoll(loadGlobal, 300000); }
+    })();
     </script>
 </body>
 </html>
