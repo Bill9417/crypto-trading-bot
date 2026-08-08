@@ -151,12 +151,37 @@ def decide(state: dict, flag, vegas: int, holding) -> tuple:
 # ── execution (Bybit via strategy3_exec) ─────────────────────────────────────
 
 def _tg(msg: str) -> None:
-    """S3 is the live engine — its flag/trade/error alerts always punch through
-    quiet mode (force=True), like the naked-position safety alarm."""
+    """OPS channel. S3 is the live engine — its error/safety alerts always
+    punch through quiet mode (force=True), like the naked-position alarm."""
     try:
         telegram_utils.send_message(msg, force=True)
     except Exception as exc:  # noqa: BLE001 — alerts must never kill the loop
         print(f"[strategy3] telegram failed: {exc}")
+
+
+def _tg_feed(msg: str) -> None:
+    """FEED channel — the 📈 S1 signal topic, where the owner follows trades
+    (asked for 2026-08-08: "add the information to the S1 topic"). Only the
+    trade lifecycle goes here: flag, entry, skip-with-reason, break-even, exit.
+    Ops noise (order errors, guardian stop failures, leverage warnings) stays
+    on _tg, because this is a PUBLIC group topic — nothing carrying account
+    figures may ever be routed through it."""
+    try:
+        telegram_utils.send_message(msg, force=True, channel="s1signals")
+    except Exception as exc:  # noqa: BLE001 — alerts must never kill the loop
+        print(f"[strategy3] telegram failed: {exc}")
+
+
+class Outcome(str):
+    """open_flip's verdict — a plain 'opened'/'retry'/'skip' string (so every
+    existing comparison and test still reads naturally) that also carries WHY.
+    The reason is what the state file was missing when the owner asked why the
+    2026-08-04 XAUT long never opened; it is now persisted as skip_reason."""
+
+    def __new__(cls, kind: str, reason: str = ""):
+        obj = super().__new__(cls, kind)
+        obj.reason = reason
+        return obj
 
 
 def _mirror(action: str, *args) -> None:
@@ -197,14 +222,15 @@ def open_flip(symbol: str, direction: str, price: float, score, margin: float,
     config.strategy3_params for this symbol — sizes, stops and even the engine
     differ per symbol. `why` is the engine-specific Telegram explanation (the
     flag-flip default mentions score/Vegas, the OCC engine passes its own).
-    Returns an outcome for the signal bookkeeping:
+    Returns an Outcome for the signal bookkeeping — a string that also carries
+    .reason, so a burnt flag can say why days later:
       'opened' — in a position now (real fill or dry-run)
       'retry'  — transient failure; try again on the next closed candle
       'skip'   — final for this signal (alert-only mode, manual position, sizing)"""
     blocked = live_blocked()
     if blocked:
         print(f"[strategy3] would OPEN {direction.upper()} {symbol} — {blocked}")
-        return "skip"
+        return Outcome("skip", blocked)
     # 🛑 Daily circuit breaker — refuses NEW entries after a bad day (real
     # Bybit closed-P&L, 24h window). Exits are never blocked. /resume clears.
     try:
@@ -215,7 +241,7 @@ def open_flip(symbol: str, direction: str, price: float, score, margin: float,
         halt = ""
     if halt:
         print(f"[strategy3] entry blocked by circuit breaker: {halt}")
-        return "skip"
+        return Outcome("skip", f"熔斷器擋下（{halt}）")
     # 🛑 Account-wide daily loss limit — S3's own breaker only counts
     # STRATEGY3_SYMBOLS, so it cannot see a bad day made by the other engines
     # sharing this sub-account.
@@ -227,18 +253,19 @@ def open_flip(symbol: str, direction: str, price: float, score, margin: float,
         day_halt = ""
     if day_halt:
         print(f"[strategy3] entry blocked by daily loss limit: {day_halt}")
-        return "skip"
+        return Outcome("skip", f"當日虧損上限擋下（{day_halt}）")
     if X.is_live():
         try:
             if X.get_position(symbol):
                 print(f"[strategy3] skip {symbol}: a Bybit position already exists "
                       f"(manual?) — not touching it")
-                _tg(f"⚠️ S3 skipped {direction.upper()} {symbol.split('/')[0]} — a position "
-                    f"already exists on Bybit (manual?). Close it or let me manage it.")
-                return "skip"
+                _tg_feed(f"⚠️ S3 skipped {direction.upper()} {symbol.split('/')[0]} — a position "
+                         f"already exists on Bybit (manual?). Close it or let me manage it.")
+                return Outcome("skip", "Bybit 上已經有這個標的的倉位（手動？），"
+                                       "不去動它")
         except Exception as exc:  # noqa: BLE001 — fail closed on an unreadable account
             print(f"[strategy3] cannot read Bybit positions ({exc}) — will retry")
-            return "retry"
+            return Outcome("retry", f"讀不到 Bybit 倉位（{exc}）")
 
     is_long = direction == "long"
     slp = sl_pct if sl_pct is not None else config.STRATEGY3_EMERGENCY_SL_PCT
@@ -249,9 +276,9 @@ def open_flip(symbol: str, direction: str, price: float, score, margin: float,
         err = res.get("error")
         print(f"[strategy3] order error {symbol}: {err}")
         if _is_transient(err):
-            return "retry"
+            return Outcome("retry", f"暫時性下單錯誤（{str(err)[:80]}）")
         _tg(f"⚠️ S3 order error {symbol.split('/')[0]} {direction.upper()}: {err}")
-        return "skip"
+        return Outcome("skip", f"下單被交易所拒絕（{str(err)[:80]}）")
     tag = "DRY-RUN " if res.get("dry") else ""
     if not res.get("dry"):
         # Recorded HERE, not inside X.open_flip — the S1 mirror calls that same
@@ -261,8 +288,8 @@ def open_flip(symbol: str, direction: str, price: float, score, margin: float,
     print(f"[strategy3] {tag}OPENED {direction.upper()} {symbol} @ {price:.6g} "
           f"(score {score}, emergency SL {sl:.6g}, qty {res.get('qty')})")
     why = why or f"score {score}/100 · Vegas agrees · exit = opposite flag"
-    _tg(f"🔀 S3 {tag}FLIP · {direction.upper()} {symbol.split('/')[0]} @ {price:.6g} (Bybit)\n"
-        f"{why} (emergency SL {slp:.0%})")
+    _tg_feed(f"🔀 S3 {tag}FLIP · {direction.upper()} {symbol.split('/')[0]} @ {price:.6g} (Bybit)\n"
+             f"{why} (emergency SL {slp:.0%})")
     if res.get("leverage_warning"):
         _tg(f"⚠️ S3 · {symbol.split('/')[0]} leverage may not be {leverage}x "
             f"— Bybit said: {res['leverage_warning']}\nSame {price * res.get('qty', 0):.0f} USDT "
@@ -270,7 +297,7 @@ def open_flip(symbol: str, direction: str, price: float, score, margin: float,
             f"before the next flip.")
     if not res.get("dry"):                       # only a REAL fill mirrors to followers
         _mirror("mirror_open", symbol, direction, price, sl, leverage)
-    return "opened"
+    return Outcome("opened")
 
 
 def close_flip(symbol: str, why: str) -> bool:
@@ -285,7 +312,7 @@ def close_flip(symbol: str, why: str) -> bool:
         return False
     tag = "DRY-RUN " if res.get("dry") else ""
     print(f"[strategy3] {tag}CLOSED {symbol} — {why}")
-    _tg(f"🔀 S3 {tag}EXIT · {symbol.split('/')[0]} (Bybit) — {why}")
+    _tg_feed(f"🔀 S3 {tag}EXIT · {symbol.split('/')[0]} (Bybit) — {why}")
     if not res.get("dry"):                       # mirror the exit to followers
         import strategy_ledger
         strategy_ledger.record_close("S3", symbol)
@@ -369,9 +396,9 @@ def manage_breakeven(sym: str, st: dict, pos: dict) -> None:
     _mirror("mirror_set_stop", sym, be_lvl)      # move followers' stops too
     print(f"[strategy3] {base}: break-even armed — stop moved to {be_lvl:.6g} "
           f"(entry {entry:.6g}, mark {mark:.6g})")
-    _tg(f"🛡️ S3 · {base} is +{trig:.2%} — stop moved to break-even "
-        f"({be_lvl:.6g}). Worst case is now ~0 instead of "
-        f"−{config.STRATEGY3_EMERGENCY_SL_PCT:.1%}.")
+    _tg_feed(f"🛡️ S3 · {base} is +{trig:.2%} — stop moved to break-even "
+             f"({be_lvl:.6g}). Worst case is now ~0 instead of "
+             f"−{config.STRATEGY3_EMERGENCY_SL_PCT:.1%}.")
 
 
 def reconcile_position(sym: str, st: dict) -> None:
@@ -395,10 +422,11 @@ def reconcile_position(sym: str, st: dict) -> None:
     if not pos:
         print(f"[strategy3] {base}: position gone on Bybit (SL or manual "
               f"close) — standing down until the next flag")
-        _tg(f"ℹ️ S3 · {base} position closed on Bybit (stop or manual) — "
-            f"waiting for the next flag")
+        _tg_feed(f"ℹ️ S3 · {base} position closed on Bybit (stop or manual) — "
+                 f"waiting for the next flag")
         st["pos_dir"] = None
         st["consumed"] = True
+        st["skip_reason"] = "倉位在 Bybit 被平掉（停損或手動）"
         st["be_armed"] = False
         return
 
@@ -445,6 +473,35 @@ def ensure_engine(st: dict, engine: str) -> None:
         st["last_bucket"] = 0
         st["open_attempts"] = 0
     st["engine"] = engine
+
+
+def announce_state(base: str, st: dict, params: dict) -> bool:
+    """Post the "why am I / am I not in a position" card to the 📈 S1 topic
+    when — and only when — the answer CHANGES. Event-driven on purpose: the
+    state moves a handful of times a week, so this can never become a periodic
+    spammer, and the one moment the owner wanted it (a flag burnt without an
+    entry) is exactly a change.
+
+    The very first observation is recorded silently; `notified_state` lives in
+    the state file, so restarts do not re-announce. Only live_blocked() is
+    consulted here (config-only, no network) — a breaker/daily-limit block
+    already arrives as the skip_reason on the flag it stopped, and /xaut runs
+    the full gate check on demand."""
+    try:
+        import strategy3_status
+        info = strategy3_status.explain(base, st, params, blocked=live_blocked())
+    except Exception as exc:  # noqa: BLE001 — a status card must never stop trading
+        print(f"[strategy3] status card failed {base}: {exc}")
+        return False
+    key = f"{info['state']}:{info.get('flag')}:{info.get('skip_reason')}"
+    if st.get("notified_state") == key:
+        return False
+    first = "notified_state" not in st
+    st["notified_state"] = key
+    if first:
+        return False
+    _tg_feed(strategy3_status.card(info))
+    return True
 
 
 def step(client, state: dict) -> None:
@@ -511,8 +568,10 @@ def step(client, state: dict) -> None:
 
             if sig and sig != st.get("last_flag"):
                 st["open_attempts"] = 0                 # fresh cross → fresh retries
-                _tg(f"🚩 S3 CROSS · {sig.upper()} {base} ({alt_min}m open/close cross, "
-                    f"{feed.capitalize()} chart)\nstop-and-reverse — flipping the position now")
+                st["flag_ts"] = last_ts / 1000.0        # WHEN, so the card can say it
+                st["skip_reason"] = None                # a fresh signal clears the last excuse
+                _tg_feed(f"🚩 S3 CROSS · {sig.upper()} {base} ({alt_min}m open/close cross, "
+                         f"{feed.capitalize()} chart)\nstop-and-reverse — flipping the position now")
             # the cross IS the whole signal — no Vegas gate on this engine, so
             # feed decide() an always-agreeing value for the pending direction
             # to reuse the flip/consumed/manual-close state machine unchanged
@@ -549,10 +608,12 @@ def step(client, state: dict) -> None:
 
             if flag and flag != st.get("last_flag"):
                 st["open_attempts"] = 0                 # fresh flag → fresh retries
-                _tg(f"🚩 S3 FLAG · {flag.upper()} {base} ({params['timeframe']}, "
-                    f"{feed.capitalize()} chart)\n"
-                    f"score {snap['score']:.0f}/100 · Vegas "
-                    f"{'agrees → entering' if (snap['vegas'] > 0) == (flag == 'long') and snap['vegas'] != 0 else 'disagrees → waiting'}")
+                st["flag_ts"] = last_ts / 1000.0        # WHEN, so the card can say it
+                st["skip_reason"] = None                # a fresh flag clears the last excuse
+                _tg_feed(f"🚩 S3 FLAG · {flag.upper()} {base} ({params['timeframe']}, "
+                         f"{feed.capitalize()} chart)\n"
+                         f"score {snap['score']:.0f}/100 · Vegas "
+                         f"{'agrees → entering' if (snap['vegas'] > 0) == (flag == 'long') and snap['vegas'] != 0 else 'disagrees → waiting'}")
 
             close, open_dir = decide(st, flag, snap["vegas"], st.get("pos_dir"))
             why = None                                  # open_flip's score/Vegas default
@@ -566,20 +627,29 @@ def step(client, state: dict) -> None:
             outcome = open_flip(sym, open_dir, snap["price"], score,
                                  params["margin"], params["leverage"],
                                  sl_pct=params["sl_pct"], why=why)
+            # .reason rides along on the Outcome string — persisted so the
+            # status card can still say WHY a flag was burnt days afterwards.
+            reason = getattr(outcome, "reason", "")
             if outcome == "opened":
                 st["pos_dir"] = open_dir
                 st["consumed"] = True
                 st["be_armed"] = False              # fresh position → fresh break-even
+                st["skip_reason"] = None
             elif outcome == "retry":
                 st["open_attempts"] = st.get("open_attempts", 0) + 1
+                st["skip_reason"] = reason
                 if st["open_attempts"] >= 3:            # give up after 3 candles
                     st["consumed"] = True
-                    _tg(f"⚠️ S3 gave up opening {open_dir.upper()} {base} after "
-                        f"{st['open_attempts']} attempts — waiting for the next flag")
+                    st["skip_reason"] = (f"連續 {st['open_attempts']} 次下單失敗放棄"
+                                         + (f"（{reason}）" if reason else ""))
+                    _tg_feed(f"⚠️ S3 gave up opening {open_dir.upper()} {base} after "
+                             f"{st['open_attempts']} attempts — waiting for the next flag")
                 # else: flag stays live → retried on the next closed candle
             else:                                       # 'skip' — final for this flag
                 st["consumed"] = True
+                st["skip_reason"] = reason
 
+        announce_state(base, st, params)
         save_state(state)                               # persist after each symbol
 
     save_state(state)

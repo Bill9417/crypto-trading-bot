@@ -193,7 +193,9 @@ def test_open_flip_uses_the_per_symbol_sl_pct(monkeypatch):
     monkeypatch.setattr(S3.config, "STRATEGY3_LIVE", True)
     monkeypatch.setattr(S3.X, "is_live", lambda: False)
     monkeypatch.setattr(S3.X, "open_flip", fake_exec_open)
-    monkeypatch.setattr(S3, "_tg", sent.append)
+    # the FLIP notice moved to the 📈 S1 topic on 2026-08-08 (_tg_feed);
+    # only ops/safety alerts still go to _tg
+    monkeypatch.setattr(S3, "_tg_feed", sent.append)
     import strategy3_risk
     monkeypatch.setattr(strategy3_risk, "entry_blocked", lambda: "")
     out = S3.open_flip("ETH/USDT:USDT", "long", 2500.0, None, 50.0, 10,

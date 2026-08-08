@@ -3300,12 +3300,21 @@ def build_strategies_status() -> dict:
             p = config.strategy3_params(base)
             holding = (stt.get("pos_dir") or "").lower() or None
             armed = bool(stt.get("last_flag")) and not stt.get("consumed") and not holding
+            # "armed: —, holding: —, score 97.5" is exactly the display that
+            # made the owner ask why nothing had opened. Same explanation the
+            # Telegram card gives, so the two can never disagree.
+            try:
+                import strategy3_status
+                why = strategy3_status.explain(base, stt, p)
+            except Exception:  # noqa: BLE001 — the pane must still render
+                why = {}
             syms.append({
                 "base": base, "engine": p.get("engine"), "tf": p.get("timeframe"),
                 "leverage": p.get("leverage"),
                 "holding": holding.upper() if holding else None,
                 "armed": (stt.get("last_flag") or "").upper() if armed else None,
                 "score": stt.get("last_score"),
+                "why": why.get("headline"), "next": why.get("next_step"),
             })
         out["s3"] = {"symbols": syms}
     except Exception as exc:  # noqa: BLE001

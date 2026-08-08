@@ -129,6 +129,7 @@
         .kv .k { color: var(--muted); } .kv .v { font-weight: 800; }
         .srow { display: flex; align-items: center; gap: 8px; padding: 8px 0; border-top: 1px solid rgba(255,255,255,.05); font-size: .83rem; flex-wrap: wrap; }
         .srow:first-child { border-top: none; }
+        .swhy { font-size: .76rem; line-height: 1.75; padding: 0 0 8px 2px; opacity: .9; }
         .srow .b { font-weight: 900; min-width: 52px; }
         .srow .conv { margin-left: auto; font-weight: 800; color: var(--gold); }
         .dir { font-size: .64rem; font-weight: 900; padding: 2px 8px; border-radius: 999px; letter-spacing: .4px; }
@@ -372,6 +373,13 @@ function renderS3(d) {
         h += '<div class="srow"><span class="b">' + esc(s.base) + '</span>' +
              '<span class="eng">' + esc(s.engine || 'flag') + ' · ' + esc(s.tf) + '</span>' +
              '<span class="st">' + st + '</span></div>';
+        // "空手 · 等旗標" next to a 97.5/100 score is what made this confusing.
+        // Spell out WHY, same sentence the Telegram card and /s3 use.
+        if (s.why) {
+            h += '<div class="swhy">' + esc(s.why) +
+                 (s['next'] ? '<br><span class="muted">' + esc(s['next']) + '</span>' : '') +
+                 '</div>';
+        }
     });
     el.innerHTML = h;
     var dot = document.getElementById('dot-s3'); if (dot) dot.className = 'tdot' + (anyPos ? ' on' : '');

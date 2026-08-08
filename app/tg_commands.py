@@ -88,7 +88,8 @@ ADMIN_CACHE_SEC = 300
 # attached to a reply DO stay tappable indefinitely (they're part of that
 # specific message, not a suggestion bar), which is the closer fit here.
 REFRESHABLE_CMDS = {"positions", "price", "signals", "winrate", "alerts",
-                    "liq", "whale", "whaletop", "twnow", "paper", "us", "s4"}
+                    "liq", "whale", "whaletop", "twnow", "paper", "us", "s4",
+                    "s3", "xaut"}
 _admin_cache = {"ts": 0.0, "ids": set()}
 
 
@@ -376,6 +377,8 @@ HELP = ("🤖 指令列表\n"
         "/whaletop — 🐳 巨鯨候選名單: 官方排行榜篩出的大戶（已排除做市商/空投戶）\n"
         "/whaleadd <0x地址> [名稱] · /whalerm <地址> — 管理追蹤清單（限管理員）\n"
         "/whalesync [dry] — 自動加入排行榜前段的新巨鯨（限管理員）\n"
+        "/s3 [標的] — S3 目前為什麼有／沒有部位（旗標、分數、下一步）\n"
+        "/s4 — 📊 S4 永續掃描（Bybit 美股/商品 + 加密）目前的設定\n"
         "/outcomes — 訊號成績單: 每個訊號 48h 後的真實結果\n"
         "/mom — ETH 14 日動能紙上前測戰績\n"
         "/paper — S1 前測戰績（紙上模擬, 無真實下單）: 完整版 vs 只做多版\n"
@@ -384,7 +387,7 @@ HELP = ("🤖 指令列表\n"
         "/cleanall — 一次清掉記錄功能上線前的全部舊訊息（限管理員, 需確認）\n"
         "/help — 顯示這份清單\n"
         "\n💡 /positions /price /signals /winrate /alerts /liq /whale /twnow /paper "
-        "的回覆下方有 🔄 按鈕，點一下就能直接更新，不用重打指令")
+        "/s3 /s4 的回覆下方有 🔄 按鈕，點一下就能直接更新，不用重打指令")
 
 
 # ── /price — quick quotes (Binance spot public REST, no key) ────────────────
@@ -552,6 +555,11 @@ def handle(cmd: str, args: str = "", owner: bool = False) -> str:
     if cmd in ("s4", "stockperp"):
         import strategy4
         return strategy4.report_tg()
+    if cmd in ("s3", "xaut"):
+        # "why is S3 not in a position right now" — the question that needed a
+        # throwaway diagnostic script on 2026-08-08.
+        import strategy3_status
+        return strategy3_status.report_tg(args.strip() or None)
     if cmd == "resume":
         import strategy3_risk
         if strategy3_risk.clear_halt():
