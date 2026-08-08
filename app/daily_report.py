@@ -7,15 +7,17 @@ topic — group members should never see the owner's account numbers. The
 
 Sent once per local (Asia/Taipei) calendar day, the first Strategy-2 sweep
 after DAILY_REPORT_HOUR (default 08:00). One glance answers: what did both
-live accounts do yesterday, what's open right now, and what does today look
-like (BTC, Fear & Greed, today's and this week's high-impact US prints,
-and what broke overnight)?
+live accounts do yesterday, and what is open right now — including positions
+opened BY HAND, whose P&L the balance line already counts.
+
+ACCOUNT ONLY, by request (2026-08-08). The market view — prices, the macro
+calendar, overnight events — lives in the OTHER daily DM: threads_post's 🧵
+draft, which is written to be posted publicly and carries the group invite and
+the Bybit referral. Two messages, two jobs.
 
 All numbers come from the same ground-truth helpers the web pages use:
   • Binance — executor.account_snapshot() + realized_pnl_summary()
   • Bybit   — strategy3_exec.account_snapshot() + closed_pnl_summary()
-  • Market  — market_intel btc_snapshot / fear_greed
-  • 大事件  — macro_events (US macro calendar) + event_radar (last 24h)
 
 Every data source is optional: an API blip degrades that section to
 "unavailable" instead of skipping the day's report. State (the last local
@@ -122,56 +124,23 @@ def _acct_section(icon: str, name: str, snap: dict, pnl: dict) -> list:
     return lines
 
 
-def _big_events(rows: list, now: datetime) -> list:
-    """The last 24h of event-radar alerts (Fed / war / regulation / hack /
-    whale / price shock), compact. These already went out one-by-one as they
-    broke; the point here is the morning re-read — "what moved while I slept"
-    next to the day's account numbers, in one place."""
-    import tg_format
-    out = []
-    for cat, headline in rows or []:
-        out.append(f"  {cat} {tg_format.esc(headline[:96])}"
-                   if cat else f"  • {tg_format.esc(headline[:96])}")
-    return out
-
-
 _WD = "一二三四五六日"
 
 
 def build_report(data: dict, now: datetime) -> str:
-    lines = [f"📈 每日報告 · {now.strftime('%Y-%m-%d')}（週{_WD[now.weekday()]}）", ""]
+    lines = [f"📈 每日帳戶報告 · {now.strftime('%Y-%m-%d')}（週{_WD[now.weekday()]}）", ""]
     lines += _acct_section("🟨", "Binance · S1/S2",
                            data.get("binance_snap"), data.get("binance_pnl"))
     lines.append("")
     lines += _acct_section("🟧", "Bybit · S3",
                            data.get("bybit_snap"), data.get("bybit_pnl"))
 
-    market_bits = []
-    btc = data.get("btc") or {}
-    if btc.get("price"):
-        market_bits.append(f"BTC {_n(btc['price'], 0)}（{_pnl(btc.get('change_pct'))}% 24h）")
-    fng = data.get("fng") or {}
-    if fng.get("value") is not None:
-        import tg_format
-        market_bits.append(f"貪婪指數 {fng['value']}（{tg_format.esc(fng.get('label'))}）")
-    if market_bits:
-        lines += ["", "🌡 市場", "  " + " · ".join(market_bits)]
-
-    # 🗓 was "無 — 平靜的總經日" EVERY day because its only feed had been
-    # answering 429; macro_events reads three sources and says so when it
-    # cannot read any, instead of asserting a quiet week.
-    import macro_events
-    lines += ["", "🗓 今日 · 美國高影響數據"]
-    lines += macro_events.today_lines(now, TZ)
-    week = macro_events.lines(now, TZ, days=7, limit=6)
-    if week:
-        lines += ["", "📅 本週大事 — 別在這些時間點抱滿倉"]
-        lines += week
-
-    events = _big_events(data.get("events") or [], now)
-    if events:
-        lines += ["", "🌍 過去 24h 重大事件"]
-        lines += events
+    # NO market section here. 2026-08-08 the owner asked for the two daily DMs
+    # to be about two different things: this one is the account, and the
+    # separate 🧵 draft (threads_post) is the one built to be posted publicly.
+    # Prices, the macro calendar and overnight events belong to that second
+    # message and to the public morning brief — mixing them in here made the
+    # account message something you had to scroll to read.
 
     # Monday: each live engine must justify its slot with REAL numbers.
     if now.weekday() == 0:
@@ -231,7 +200,6 @@ def record_balance(data: dict, now: datetime) -> bool:
 # ── data gathering (each piece optional) ─────────────────────────────────────
 def _gather() -> dict:
     import executor
-    import market_intel
     import strategy3_exec
 
     data = {}
@@ -240,22 +208,12 @@ def _gather() -> dict:
         ("binance_pnl", executor.realized_pnl_summary),
         ("bybit_snap", strategy3_exec.account_snapshot),
         ("bybit_pnl", strategy3_exec.closed_pnl_summary),
-        ("btc", market_intel.btc_snapshot),
-        ("fng", market_intel.fear_greed),
     ):
         try:
             data[key] = fn()
         except Exception as exc:  # noqa: BLE001 — one dead source ≠ no report
             print(f"[report] {key} unavailable: {exc}")
             data[key] = None
-    # The calendar is read inside build_report via macro_events (three
-    # sources, disk-cached), so it is no longer gathered here.
-    try:
-        import event_radar
-        data["events"] = event_radar.recent_digest(hours=24.0, limit=5)
-    except Exception as exc:  # noqa: BLE001 — one dead source ≠ no report
-        print(f"[report] event radar unavailable: {exc}")
-        data["events"] = []
     return data
 
 

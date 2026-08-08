@@ -150,3 +150,25 @@ def lines(now, tz, days: int = 7, limit: int = 6, indent: str = "  ") -> list:
 def today_lines(now, tz, indent: str = "  ") -> list:
     """Only what lands today — the 'do not hold 4x into this' line."""
     return lines(now, tz, days=1, limit=4, indent=indent)
+
+
+def headline(now, tz, days: int = 7) -> str:
+    """The ONE event worth a line when there is only room for one — biggest
+    first, not soonest. A public post that leads with 成屋銷售 while CPI sits two
+    days out has spent its single line badly. Ties break toward the earlier
+    date. Returns '' when the calendar is empty or unreadable: a marketing post
+    should carry real events or none, never our plumbing's status."""
+    try:
+        import market_intel
+        data = market_intel.upcoming_macro(now, days=days, limit=40)
+    except Exception:  # noqa: BLE001
+        return ""
+    rows = collapse(data.get("events") or [], tz) if data.get("ok") else []
+    if not rows:
+        return ""
+    best = max(rows, key=lambda r: (r["weight"], -r["when"].timestamp()))
+    today = now.astimezone(tz).date()
+    d = best["when"].date()
+    when = ("今天" if d == today else "明天" if (d - today).days == 1
+            else best["when"].strftime("%m/%d"))
+    return f"{when} {best['when'].strftime('%H:%M')} {best['zh']}{_fp(best)}"

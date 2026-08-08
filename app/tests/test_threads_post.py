@@ -76,8 +76,25 @@ def test_post_carries_the_market_facts():
     body = T.build_post(DATA, NOW)
     assert "BTC" in body and "63,094" in body.replace(",", ",")
     assert "恐懼貪婪 42" in body and "58.3%" in body
-    assert "CPI" in body
     assert "12 個訊號" in body
+
+
+def test_post_leads_with_the_biggest_event_not_the_soonest(monkeypatch):
+    """One line of calendar is all 500 chars buys. Spending it on 成屋銷售 while
+    CPI sits two days out wastes the only macro line the post has."""
+    import macro_events
+    monkeypatch.setattr(macro_events, "headline",
+                        lambda *a, **k: "08/12 20:30 CPI 通膨年增（預估 3.4）")
+    assert "CPI 通膨年增" in T.build_post(DATA, NOW)
+
+
+def test_a_dead_calendar_leaves_the_post_clean(monkeypatch):
+    """The owner's own reports say 「行事曆讀不到」; a stranger scrolling Threads
+    does not need our plumbing's status — real events or nothing."""
+    import macro_events
+    monkeypatch.setattr(macro_events, "headline", lambda *a, **k: "")
+    body = T.build_post(DATA, NOW)
+    assert "🗓" not in body and T.threads_len(body) > 0
 
 
 def test_post_is_account_free():

@@ -330,13 +330,20 @@ def build_post(data: dict, now: datetime, inline_link: str = "",
     if mood:
         lines += ["", "🌡 " + " · ".join(mood)]
 
-    cal = data.get("today_events") or []
-    if cal:
-        # The Telegram brief lists them all; 500 chars buys one headline. This
-        # is the ONLY unbounded input in the post, so capping it here is what
-        # makes the total length predictable instead of hoping a trim loop
-        # catches it later.
-        head = str(cal[0]).lstrip("• ").strip()
+    # The macro line: today first, otherwise the next thing worth waiting for
+    # this week. 500 chars buys ONE headline, and this used to read
+    # data["today_events"], which morning_brief stopped gathering when the
+    # calendar moved to macro_events — a silently empty section.
+    #
+    # macro_events also returns "cannot read the calendar" wording, which is
+    # right for the owner's own reports and wrong for a public post: a stranger
+    # scrolling Threads does not need our plumbing. So only real events print.
+    try:
+        import macro_events
+        head = macro_events.headline(now, now.tzinfo, days=7)
+    except Exception:  # noqa: BLE001 — a marketing post must never fail to build
+        head = ""
+    if head:
         lines += ["", "🗓 " + (head[:39] + "…" if len(head) > 40 else head)]
 
     sig = data.get("signals") or {}

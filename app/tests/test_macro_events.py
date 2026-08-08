@@ -126,3 +126,33 @@ def test_classify_knows_the_market_movers():
     assert ME.classify("FOMC rate decision")[1] == "fomc"
     assert ME.classify("Non-Farm Payrolls")[1] == "nfp"
     assert ME.classify("Core PCE Price Index YoY")[1] == "pce"
+
+
+# ── headline(): the one line a 500-char public post can afford ───────────────
+
+def test_headline_picks_the_biggest_event_not_the_soonest(monkeypatch):
+    import market_intel
+    monkeypatch.setattr(market_intel, "upcoming_macro", lambda *a, **k: {
+        "events": [_ev("Existing Home Sales", NOW + timedelta(days=1), "4.07"),
+                   _ev("Inflation Rate YoY", NOW + timedelta(days=4), "3.4", "3.5")],
+        "ok": True, "stale": False})
+    out = ME.headline(NOW, TZ)
+    assert "CPI 通膨年增" in out and "成屋銷售" not in out
+
+
+def test_headline_breaks_ties_toward_the_earlier_date(monkeypatch):
+    import market_intel
+    monkeypatch.setattr(market_intel, "upcoming_macro", lambda *a, **k: {
+        "events": [_ev("Inflation Rate YoY", NOW + timedelta(days=5), "9.9"),
+                   _ev("Inflation Rate YoY", NOW + timedelta(days=2), "3.4")],
+        "ok": True, "stale": False})
+    assert "預估 3.4" in ME.headline(NOW, TZ)
+
+
+def test_headline_is_empty_when_the_calendar_is_unreadable(monkeypatch):
+    """lines() says 「讀不到」 because the owner needs to know. headline() feeds a
+    PUBLIC marketing post, which should carry a real event or nothing at all."""
+    import market_intel
+    monkeypatch.setattr(market_intel, "upcoming_macro",
+                        lambda *a, **k: {"events": [], "ok": False, "stale": False})
+    assert ME.headline(NOW, TZ) == ""
