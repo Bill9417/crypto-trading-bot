@@ -417,7 +417,10 @@ def test_bybit_account_snapshot_no_keys(monkeypatch):
     monkeypatch.setattr(X, "keys_present", lambda: False)
     snap = X.account_snapshot()
     assert snap == {"ok": False, "error": "No Bybit API keys configured.",
-                    "live": False, "balance": None, "positions": []}
+                    "live": False, "balance": None, "positions": [],
+                    # hand-opened positions the bot must never act on, but which
+                    # the daily report has to show — see test_daily_report
+                    "foreign": []}
 
 
 def _reset_account_cache(monkeypatch):

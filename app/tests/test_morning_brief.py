@@ -38,15 +38,18 @@ def test_due_once_per_day():
 
 
 # ── brief body ───────────────────────────────────────────────────────────────
-def test_brief_has_all_sections():
+def test_brief_has_all_sections(monkeypatch):
+    import macro_events
+    monkeypatch.setattr(macro_events, "today_lines", lambda *a, **k: ["  今日無高影響美國數據"])
+    monkeypatch.setattr(macro_events, "lines", lambda *a, **k: ["  🔴 08/12 20:30 CPI 通膨年增"])
     msg = MB.build_brief(_data(), _now())
+    assert "🗓 今日" in msg and "📅 本週要看的數據" in msg and "CPI 通膨年增" in msg
     assert "早安市場快報" in msg and "2026-07-17" in msg and "週五" in msg
     assert "BTC 108,432（+1.2%）" in msg
     assert "ETH 3,520.5（−2.0%）" in msg          # real minus glyph
     assert "SOL 155" in msg                        # missing pct → price only
     assert "恐懼貪婪 61（貪婪） · 週前 48" in msg
     assert "BTC 佔比 62.3%" in msg
-    assert "CPI y/y" in msg
     assert "14 個訊號" in msg and "⭐ 精選 2 個" in msg
     assert "已結算 9 個訊號" in msg and "56%" in msg
     assert "/guide" in msg and "非投資建議" in msg

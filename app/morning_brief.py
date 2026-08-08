@@ -13,7 +13,8 @@ Sections (each optional — a dead source degrades to absence, never a crash):
   • BTC / ETH / SOL price + 24h%          (scanner's own exchange client)
   • Fear & Greed vs a week ago            (market_intel, alternative.me)
   • BTC dominance                         (market_intel, CoinGecko)
-  • Today's high-impact US macro prints   (market_intel, ForexFactory)
+  • High-impact US macro, today + this week (macro_events: TradingView
+    + ForexFactory + the Fed's own FOMC calendar, disk-cached)
   • Signal tally: last-24h fires + ⭐     (strategy2_signals.json)
   • 7-day outcome stat                    (signal_outcomes — the honesty loop)
 
@@ -93,11 +94,14 @@ def build_brief(data: dict, now: datetime) -> str:
     if mood_bits:
         lines += ["", "🌡 " + " · ".join(mood_bits)]
 
-    cal = data.get("today_events") or []
-    if cal:
-        lines += ["", "🗓 今日美國高影響數據"] + cal
-    else:
-        lines += ["", "🗓 今日無高影響美國數據"]
+    # Same calendar renderer as the private daily report, so the public brief
+    # and the owner's report can never describe the same week differently —
+    # and so neither claims a quiet day when the feed simply could not be read.
+    import macro_events
+    lines += ["", "🗓 今日"] + macro_events.today_lines(now, TZ)
+    week = macro_events.lines(now, TZ, days=7, limit=5)
+    if week:
+        lines += ["", "📅 本週要看的數據"] + week
 
     sig = data.get("signals") or {}
     if sig.get("n"):
@@ -164,7 +168,6 @@ def _outcome_stat(now_ts: float) -> dict:
 
 
 def _gather(client, now: datetime) -> dict:
-    import daily_report
     import market_intel
 
     data = {"prices": _gather_prices(client)}
@@ -175,12 +178,8 @@ def _gather(client, now: datetime) -> dict:
         except Exception as exc:  # noqa: BLE001 — one dead source ≠ no brief
             print(f"[brief] {key} unavailable: {exc}")
             data[key] = None
-    try:
-        events = market_intel.econ_calendar().get("events") or []
-        data["today_events"] = daily_report._today_events(events, now)
-    except Exception as exc:  # noqa: BLE001
-        print(f"[brief] calendar unavailable: {exc}")
-        data["today_events"] = []
+    # The calendar is rendered inside build_brief via macro_events (three
+    # sources, disk-cached, honest about failure) — nothing to gather here.
     now_ts = time.time()
     data["signals"] = _signal_tally(now_ts)
     data["outcomes"] = _outcome_stat(now_ts)

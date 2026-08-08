@@ -45,6 +45,8 @@ us_stocks_state.json
 us_market_state.json
 tw_intraday_state.json
 restart_state.json
+app/cache/
+cache/
 strategy4_state.json
 strategy4_signals.json
 line_ids.json

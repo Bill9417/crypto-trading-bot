@@ -244,3 +244,30 @@ def tick(client) -> int:
         state.setdefault("recent", []).insert(0, {"ts": now, "text": msg})
     _save_state(state)
     return sent
+
+
+def recent_digest(hours: float = 24.0, limit: int = 5, now: float = None) -> list:
+    """[(category, headline)] for alerts fired in the last `hours`, newest
+    first — the compact form the daily report and morning brief need.
+
+    The stored `text` is the full Telegram alert:
+        🌍 重大事件 · <category>
+        <headline>
+        ↳ <summary>
+        來源 <src> · <url>
+    so the first two lines are exactly the digest; anything that does not
+    parse is skipped rather than shown as a broken row."""
+    now = now or time.time()
+    cutoff = now - hours * 3600.0
+    out = []
+    for row in (_load_state().get("recent") or []):
+        if row.get("ts", 0) < cutoff:
+            continue
+        parts = [p for p in (row.get("text") or "").split("\n") if p.strip()]
+        if len(parts) < 2:
+            continue
+        cat = parts[0].split("·")[-1].strip() if "·" in parts[0] else ""
+        out.append((cat, parts[1].strip()))
+        if len(out) >= limit:
+            break
+    return out

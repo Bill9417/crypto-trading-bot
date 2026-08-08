@@ -109,7 +109,7 @@ def account_snapshot(*, force: bool = False) -> dict:
     _account_cache for why this matters here specifically."""
     if not keys_present():
         return {"ok": False, "error": "No Bybit API keys configured.",
-                "live": False, "balance": None, "positions": []}
+                "live": False, "balance": None, "positions": [], "foreign": []}
     now = time.time()
     with _account_cache_lock:
         cached = _account_cache["data"]
@@ -146,13 +146,31 @@ def account_snapshot(*, force: bool = False) -> dict:
             pass
         our_symbols = s3_symbols | mirror_symbols
         positions = []
+        foreign = []
         for p in ex.fetch_positions(None, params={"settleCoin": config.QUOTE_ASSET}):
-            if p.get("symbol") not in our_symbols:
-                continue                      # ignore anything manually opened elsewhere
             qty = float(p.get("contracts") or 0)
             if not qty:
                 continue
             sl = str((p.get("info") or {}).get("stopLoss") or "").strip()
+            if p.get("symbol") not in our_symbols:
+                # NOT ours to manage — but it is the owner's money, and
+                # `balance.unrealized_pnl` already counts it. Reporting the
+                # account as 持倉 無 while quoting that number was a
+                # self-contradiction the daily report printed for weeks.
+                # Kept in a SEPARATE list so nothing that acts on positions can
+                # pick it up by accident.
+                foreign.append({
+                    "symbol": p.get("symbol"),
+                    "side": (p.get("side") or "").upper(),
+                    "contracts": qty,
+                    "entry": p.get("entryPrice"),
+                    "mark": p.get("markPrice"),
+                    "unrealized_pnl": p.get("unrealizedPnl"),
+                    "pnl_pct": p.get("percentage"),
+                    "sl": float(sl) if sl not in ("", "0") else None,
+                    "engine": "手動",
+                })
+                continue
             positions.append({
                 "symbol": p.get("symbol"),
                 "side": (p.get("side") or "").upper(),
@@ -168,14 +186,14 @@ def account_snapshot(*, force: bool = False) -> dict:
                 "engine": "s1鏡" if p.get("symbol") in mirror_symbols else "s3",
             })
         data = {"ok": True, "error": None, "live": is_live(),
-                "balance": balance, "positions": positions}
+                "balance": balance, "positions": positions, "foreign": foreign}
         with _account_cache_lock:
             _account_cache["ts"] = now
             _account_cache["data"] = data
         return data
     except Exception as exc:  # noqa: BLE001 — a read-only page must never 500 on an API blip
         return {"ok": False, "error": str(exc)[:300], "live": is_live(),
-                "balance": None, "positions": []}
+                "balance": None, "positions": [], "foreign": []}
 
 
 def _closed_pnl_rows(limit: int = 200) -> list:

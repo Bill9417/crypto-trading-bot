@@ -65,9 +65,15 @@ def test_jobs_actually_run_concurrently():
     assert elapsed < 0.35, f"ran serially ({elapsed:.2f}s)"
 
 
-def test_market_intel_degrades_to_empty_panels_when_every_feed_is_dead():
+def test_market_intel_degrades_to_empty_panels_when_every_feed_is_dead(tmp_path,
+                                                                       monkeypatch):
     """conftest kills the network seams, so this exercises the real aggregator
-    with all eight providers failing — the page must still render a payload."""
+    with all eight providers failing — the page must still render a payload.
+
+    The calendar now keeps a DISK cache and serves the last good copy when the
+    fetch fails (that is the whole point — a 429 used to empty it silently), so
+    point that cache at an empty tmp dir or this test reads the real one."""
+    monkeypatch.setattr(M, "_DISK_CACHE_DIR", str(tmp_path))
     out = M.market_intel(top_n=5)
     assert out["futures"] == []
     assert out["positioning"] == []

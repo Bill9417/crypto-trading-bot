@@ -16,7 +16,9 @@ A small in-memory TTL cache keeps the page snappy and avoids rate limits.
 """
 
 import concurrent.futures as _cf
+import datetime as _dt
 import json
+import os
 import re
 import time
 import urllib.request
@@ -40,6 +42,57 @@ def _cached(key: str, ttl: float, producer):
     return value
 
 
+# ── disk cache with stale-if-error ──────────────────────────────────────────
+# The in-memory cache above is PER PROCESS, and four of them run (web, bot, S2,
+# S3) plus every /market visitor. For a provider that rate-limits by IP that
+# multiplies into a ban: 2026-08-08 the ForexFactory weekly calendar had been
+# answering 429 for long enough that the daily report printed "無 — 平靜的總經日"
+# every single day. An empty result rendered as "nothing scheduled" is a
+# fabricated fact, not a missing one.
+#
+# So the calendar caches to DISK (shared by all four processes, survives
+# restarts) and, when the fetch fails, keeps serving the last good copy with
+# `stale: True` rather than an empty list. Callers must render staleness.
+_DISK_CACHE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "cache")
+
+
+def _disk_cached(key: str, ttl: float, producer, is_good=None):
+    """Fresh → serve. Stale but producer succeeds → refresh. Producer fails →
+    serve the old copy tagged {'stale': True, 'stale_age': seconds}; only when
+    there is nothing at all does the caller see the empty producer result."""
+    path = os.path.join(_DISK_CACHE_DIR, f"{key}.json")
+    now = time.time()
+    old, old_ts = None, 0.0
+    try:
+        with open(path, encoding="utf-8") as fh:
+            blob = json.load(fh)
+        old, old_ts = blob.get("data"), float(blob.get("ts") or 0)
+    except Exception:  # noqa: BLE001 — missing/corrupt cache = cold start
+        pass
+    if old is not None and (now - old_ts) < ttl:
+        return {**old, "stale": False}
+
+    try:
+        fresh = producer()
+    except Exception as exc:  # noqa: BLE001 — a dead feed must not raise here
+        fresh = {"errors": [f"{key}: {exc}"]}
+    good = is_good(fresh) if is_good else not fresh.get("errors")
+    if good:
+        try:
+            os.makedirs(_DISK_CACHE_DIR, exist_ok=True)
+            tmp = f"{path}.{os.getpid()}.tmp"      # four processes share this file
+            with open(tmp, "w", encoding="utf-8") as fh:
+                json.dump({"ts": now, "data": fresh}, fh)
+            os.replace(tmp, path)
+        except Exception:  # noqa: BLE001 — caching is an optimisation, not a duty
+            pass
+        return {**fresh, "stale": False}
+    if old is not None:
+        return {**old, "stale": True, "stale_age": now - old_ts,
+                "errors": fresh.get("errors") or []}
+    return {**fresh, "stale": False}
+
+
 # ── low-level HTTP helpers ──────────────────────────────────────────────────
 # A real browser UA — Binance's /futures/data endpoints 403 unusual UAs
 # (e.g. one mentioning "localhost"); the news/TVL feeds accept it fine too.
@@ -47,8 +100,9 @@ _UA = ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
        "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36")
 
 
-def _get_json(url: str, timeout: float = 8.0):
-    req = urllib.request.Request(url, headers={"User-Agent": _UA, "Accept": "application/json"})
+def _get_json(url: str, timeout: float = 8.0, headers: dict = None):
+    hdrs = {"User-Agent": _UA, "Accept": "application/json", **(headers or {})}
+    req = urllib.request.Request(url, headers=hdrs)
     with urllib.request.urlopen(req, timeout=timeout) as resp:
         return json.loads(resp.read().decode("utf-8"))
 
@@ -515,9 +569,152 @@ def _econ_calendar() -> dict:
     return out
 
 
+def _tv_calendar(days: int = 21) -> dict:
+    """High-importance US macro from TradingView's public calendar endpoint —
+    the same data the site's own widget reads, and it carries forecast vs
+    previous, which is what makes an event readable at a glance.
+
+    It 403s without an Origin header (the ForexFactory feed needed none, which
+    is why this wasn't noticed until that one started answering 429)."""
+    out = {"events": [], "errors": []}
+    now = _dt.datetime.now(_dt.timezone.utc)
+    fmt = "%Y-%m-%dT00:00:00.000Z"
+    url = ("https://economic-calendar.tradingview.com/events"
+           f"?from={now.strftime(fmt)}"
+           f"&to={(now + _dt.timedelta(days=days)).strftime(fmt)}"
+           "&countries=US&minImportance=1")
+    try:
+        data = _get_json(url, timeout=15.0,
+                         headers={"Origin": "https://www.tradingview.com",
+                                  "Referer": "https://www.tradingview.com/"})
+        if (data or {}).get("status") != "ok":
+            raise ValueError(f"status={(data or {}).get('status')}")
+        for r in data.get("result") or []:
+            out["events"].append({
+                "title": r.get("title"),
+                "date": r.get("date"),               # ISO 8601, Zulu
+                "forecast": r.get("forecast"),
+                "previous": r.get("previous"),
+                "source": "tradingview",
+            })
+    except Exception as e:  # noqa: BLE001
+        out["errors"].append(f"tvcal: {e}")
+    return out
+
+
+def _fomc_dates() -> dict:
+    """FOMC meeting dates from the Fed's own calendar page — an INDEPENDENT
+    source, because the ForexFactory feed above is a single point of failure
+    that rate-limits by IP, and FOMC is the one macro event that reliably
+    moves crypto. The page publishes years ahead, so a weekly refresh is
+    generous. Rate decisions land on the SECOND day of a two-day meeting.
+    """
+    out = {"events": [], "errors": []}
+    try:
+        html = _get_text("https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm",
+                         timeout=15.0)
+        for ym in re.finditer(r"(\d{4})\s+FOMC\s+Meetings", html):
+            year = int(ym.group(1))
+            seg = html[ym.end():]
+            nxt = re.search(r"\d{4}\s+FOMC\s+Meetings", seg)
+            seg = seg[:nxt.start()] if nxt else seg
+            months = re.findall(r'fomc-meeting__month[^>]*>\s*<strong>([^<]+)</strong>', seg)
+            days = re.findall(r'fomc-meeting__date[^>]*>([^<]+)<', seg)
+            for month, day in zip(months, days, strict=False):
+                # "27-28", "17-18*" (* = press conference), "9/10" across months
+                nums = re.findall(r"\d+", day)
+                if not nums:
+                    continue
+                mon = month.strip().split("/")[-1].strip()[:3]
+                try:
+                    when = _dt.datetime.strptime(f"{mon} {nums[-1]} {year}", "%b %d %Y")
+                except ValueError:
+                    continue
+                out["events"].append({
+                    "title": "FOMC 利率決議 (FOMC rate decision)",
+                    # 14:00 ET is the statement; stored with the offset the
+                    # ForexFactory rows use so both sort together.
+                    "date": when.strftime("%Y-%m-%dT14:00:00-05:00"),
+                    "forecast": None, "previous": None, "source": "fed",
+                })
+    except Exception as e:  # noqa: BLE001
+        out["errors"].append(f"fomc: {e}")
+    return out
+
+
 def econ_calendar(ttl: float = 21600.0) -> dict:
-    # The weekly file barely changes — 6h cache is plenty.
-    return _cached("econ_cal", ttl, _econ_calendar)
+    """High-impact US macro from THREE independent sources, disk-cached so one
+    provider's IP-level rate limit cannot silently empty the calendar.
+
+      tradingview  primary — carries forecast vs previous
+      forexfactory backup  — used only when TradingView returns nothing, since
+                             the two word the same print differently ("CPI m/m"
+                             vs "Inflation Rate MoM") and cannot be deduped
+      fed          FOMC decision days, always merged — the one date that
+                   reliably moves crypto, from the Fed's own calendar page
+
+    Adds `stale` (serving the last good copy) and `ok` so callers can say the
+    calendar is unreadable instead of claiming a quiet week."""
+    tv = _disk_cached("tv_cal", ttl, _tv_calendar,
+                      is_good=lambda d: bool(d.get("events")))
+    fomc = _disk_cached("fomc_cal", 7 * 86400.0, _fomc_dates,
+                        is_good=lambda d: bool(d.get("events")))
+    primary, errors = tv, list(tv.get("errors") or [])
+    if not primary.get("events"):
+        ff = _disk_cached("econ_cal", ttl, _econ_calendar,
+                          is_good=lambda d: bool(d.get("events")))
+        errors += list(ff.get("errors") or [])
+        primary = ff if ff.get("events") else primary
+
+    merged = list(primary.get("events") or [])
+    have = {(e.get("date") or "")[:10] for e in merged
+            if "FOMC" in (e.get("title") or "").upper()}
+    merged += [e for e in (fomc.get("events") or [])
+               if (e.get("date") or "")[:10] not in have]
+    # The Fed page publishes years of history; only what is still ahead is
+    # useful, and shipping 70 dead rows to /market on every poll is not free.
+    cutoff = (_dt.datetime.now(_dt.timezone.utc) - _dt.timedelta(hours=2)).isoformat()
+    merged = [e for e in merged if (e.get("date") or "") >= cutoff[:10]]
+    merged.sort(key=lambda e: e.get("date") or "")
+    return {"events": merged,
+            "errors": errors + list(fomc.get("errors") or []),
+            # FOMC dates a week old are still correct, so staleness tracks the
+            # source that actually carries this week's prints
+            "stale": bool(primary.get("stale")),
+            "stale_age": primary.get("stale_age"),
+            "sources": {"tradingview": bool(tv.get("events")) and not tv.get("stale"),
+                        "fed": bool(fomc.get("events"))}}
+
+
+def upcoming_macro(now=None, days: int = 7, limit: int = 8) -> dict:
+    """High-impact USD prints from `now` to now+days, soonest first.
+
+    Returns {events, stale, ok}. `ok` is False when the calendar could not be
+    read at all — the caller MUST then say so rather than print "no events
+    scheduled", which is a claim the data does not support.
+
+    Each event: {when (aware datetime), title, forecast, previous, source}.
+    """
+    cal = econ_calendar()
+    now = now or _dt.datetime.now(_dt.timezone.utc)
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=_dt.timezone.utc)
+    horizon = now + _dt.timedelta(days=days)
+    rows = []
+    for e in cal.get("events") or []:
+        try:
+            when = _dt.datetime.fromisoformat(e["date"])
+        except (ValueError, KeyError, TypeError):
+            continue
+        if when.tzinfo is None:
+            when = when.replace(tzinfo=_dt.timezone.utc)
+        if now <= when <= horizon:
+            rows.append({"when": when, "title": e.get("title") or "",
+                         "forecast": e.get("forecast"), "previous": e.get("previous"),
+                         "source": e.get("source") or "forexfactory"})
+    rows.sort(key=lambda r: r["when"])
+    return {"events": rows[:limit], "stale": bool(cal.get("stale")),
+            "ok": bool(cal.get("events"))}
 
 
 # ── top-level aggregator used by the web route ──────────────────────────────

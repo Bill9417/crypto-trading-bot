@@ -72,13 +72,41 @@ def test_report_positions_and_flat():
     assert "持倉" in msg and "無" in msg          # Bybit is flat
 
 
-def test_report_calendar_today_only():
+def test_report_shows_today_and_the_week_ahead(monkeypatch):
+    """The calendar moved to macro_events (three sources, disk cache). The
+    report asks it for TWO windows: what lands today, and what to avoid
+    holding size into this week."""
+    import macro_events
+    monkeypatch.setattr(macro_events, "today_lines",
+                        lambda *a, **k: ["  🔴 今天 20:30 CPI 通膨年增（預估 2.4）"])
+    monkeypatch.setattr(macro_events, "lines",
+                        lambda *a, **k: ["  🔴 08/12 20:30 CPI 通膨年增"])
     msg = DR.build_report(_data(), _now())
-    assert "CPI y/y（預測 2.4%）" in msg and "20:30" in msg
-    assert "NFP" not in msg                      # tomorrow's print stays out
+    assert "🗓 今日" in msg and "CPI 通膨年增（預估 2.4）" in msg
+    assert "📅 本週大事" in msg
 
 
-def test_report_degrades_without_data():
+def test_report_never_claims_a_quiet_macro_day_it_cannot_verify(monkeypatch):
+    """This section used to print 「無 — 平靜的總經日」EVERY day because its only
+    feed was answering 429 — an unreadable calendar rendered as a promise."""
+    import macro_events
+    import market_intel
+    monkeypatch.setattr(market_intel, "upcoming_macro",
+                        lambda *a, **k: {"events": [], "ok": False, "stale": False})
     msg = DR.build_report({}, _now())
     assert "餘額暫時無法取得" in msg
-    assert "無 — 平靜的總經日" in msg             # calendar section still renders
+    assert "讀不到" in msg and "平靜" not in msg
+    assert macro_events                          # the section still renders
+
+
+def test_report_lists_hand_opened_positions_it_does_not_manage():
+    """The balance line counts their P&L, so calling the account 持倉 無 was a
+    self-contradiction — and a manual position with no stop stayed invisible."""
+    data = _data()
+    data["bybit_snap"]["foreign"] = [
+        {"symbol": "ETH/USDT:USDT", "side": "LONG", "contracts": 0.41,
+         "unrealized_pnl": -1.11, "pnl_pct": -0.5, "sl": None, "engine": "手動"}]
+    msg = DR.build_report(data, _now())
+    row = next(ln for ln in msg.splitlines() if "手動" in ln)
+    assert "ETH" in row and "-1.11" in row and "無停損" in row
+    assert "機器人持倉" in msg                    # bot itself is flat, said plainly

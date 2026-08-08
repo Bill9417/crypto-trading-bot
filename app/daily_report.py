@@ -8,12 +8,14 @@ topic — group members should never see the owner's account numbers. The
 Sent once per local (Asia/Taipei) calendar day, the first Strategy-2 sweep
 after DAILY_REPORT_HOUR (default 08:00). One glance answers: what did both
 live accounts do yesterday, what's open right now, and what does today look
-like (BTC, Fear & Greed, high-impact US prints)?
+like (BTC, Fear & Greed, today's and this week's high-impact US prints,
+and what broke overnight)?
 
 All numbers come from the same ground-truth helpers the web pages use:
   • Binance — executor.account_snapshot() + realized_pnl_summary()
   • Bybit   — strategy3_exec.account_snapshot() + closed_pnl_summary()
-  • Market  — market_intel btc_snapshot / fear_greed / econ_calendar
+  • Market  — market_intel btc_snapshot / fear_greed
+  • 大事件  — macro_events (US macro calendar) + event_radar (last 24h)
 
 Every data source is optional: an API blip degrades that section to
 "unavailable" instead of skipping the day's report. State (the last local
@@ -100,29 +102,37 @@ def _acct_section(icon: str, name: str, snap: dict, pnl: dict) -> list:
         rows.append((f"▸ {base}{eng}", tg_format.dir_zh(p.get("side"), arrow=False),
                      _pnl(p.get("unrealized_pnl")),
                      f"{_pnl(pct)}%" if pct is not None else ""))
-    if not positions:
+    # Positions the bot does NOT manage (opened by hand) still belong to the
+    # owner, and their P&L is already inside the 未實現 figure above — listing
+    # only bot positions made the report contradict its own balance line.
+    foreign = (snap or {}).get("foreign") or []
+    for p in foreign[:6]:
+        base = (p.get("symbol") or "?").split("/")[0]
+        pct = p.get("pnl_pct")
+        naked = " ⚠️無停損" if p.get("sl") is None else ""
+        rows.append((f"▸ {base}（手動）{naked}",
+                     tg_format.dir_zh(p.get("side"), arrow=False),
+                     _pnl(p.get("unrealized_pnl")),
+                     f"{_pnl(pct)}%" if pct is not None else ""))
+    if not positions and not foreign:
         rows.append(("持倉", "無", "", ""))
+    elif not positions:
+        rows.append(("機器人持倉", "無", "", ""))
     lines.append(tg_format.pre_table(rows, align="llll"))
     return lines
 
 
-def _today_events(events: list, now: datetime) -> list:
-    """Today's high-impact US prints, local (HH:MM) times, chronological."""
-    import market_intel
-    today = now.strftime("%Y-%m-%d")
-    rows = []
-    for ev in events or []:
-        ts = market_intel._pub_ts({"published": ev.get("date")})
-        if not ts:
-            continue
-        local = datetime.fromtimestamp(ts, TZ)
-        if local.strftime("%Y-%m-%d") != today:
-            continue
-        import tg_format
-        extra = f"（預測 {tg_format.esc(ev['forecast'])}）" if ev.get("forecast") else ""
-        rows.append((ts, f"  • {local.strftime('%H:%M')} "
-                         f"{tg_format.esc(ev.get('title'))}{extra}"))
-    return [r[1] for r in sorted(rows)]
+def _big_events(rows: list, now: datetime) -> list:
+    """The last 24h of event-radar alerts (Fed / war / regulation / hack /
+    whale / price shock), compact. These already went out one-by-one as they
+    broke; the point here is the morning re-read — "what moved while I slept"
+    next to the day's account numbers, in one place."""
+    import tg_format
+    out = []
+    for cat, headline in rows or []:
+        out.append(f"  {cat} {tg_format.esc(headline[:96])}"
+                   if cat else f"  • {tg_format.esc(headline[:96])}")
+    return out
 
 
 _WD = "一二三四五六日"
@@ -147,9 +157,21 @@ def build_report(data: dict, now: datetime) -> str:
     if market_bits:
         lines += ["", "🌡 市場", "  " + " · ".join(market_bits)]
 
-    cal = _today_events(data.get("calendar") or [], now)
+    # 🗓 was "無 — 平靜的總經日" EVERY day because its only feed had been
+    # answering 429; macro_events reads three sources and says so when it
+    # cannot read any, instead of asserting a quiet week.
+    import macro_events
     lines += ["", "🗓 今日 · 美國高影響數據"]
-    lines += cal if cal else ["  無 — 平靜的總經日"]
+    lines += macro_events.today_lines(now, TZ)
+    week = macro_events.lines(now, TZ, days=7, limit=6)
+    if week:
+        lines += ["", "📅 本週大事 — 別在這些時間點抱滿倉"]
+        lines += week
+
+    events = _big_events(data.get("events") or [], now)
+    if events:
+        lines += ["", "🌍 過去 24h 重大事件"]
+        lines += events
 
     # Monday: each live engine must justify its slot with REAL numbers.
     if now.weekday() == 0:
@@ -226,11 +248,14 @@ def _gather() -> dict:
         except Exception as exc:  # noqa: BLE001 — one dead source ≠ no report
             print(f"[report] {key} unavailable: {exc}")
             data[key] = None
+    # The calendar is read inside build_report via macro_events (three
+    # sources, disk-cached), so it is no longer gathered here.
     try:
-        data["calendar"] = market_intel.econ_calendar().get("events") or []
-    except Exception as exc:  # noqa: BLE001
-        print(f"[report] calendar unavailable: {exc}")
-        data["calendar"] = []
+        import event_radar
+        data["events"] = event_radar.recent_digest(hours=24.0, limit=5)
+    except Exception as exc:  # noqa: BLE001 — one dead source ≠ no report
+        print(f"[report] event radar unavailable: {exc}")
+        data["events"] = []
     return data
 
 
