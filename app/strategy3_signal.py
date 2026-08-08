@@ -229,6 +229,16 @@ def compute(ohlcv, score_th: int = 70, adx_th: int = 20) -> dict:
 
 
 def last_bar(ohlcv, score_th: int = 70, adx_th: int = 20) -> dict:
-    """Scanner entry point — last-closed-bar summary only."""
+    """Scanner entry point — last-closed-bar summary, plus WHEN the most recent
+    flag of the replay fired (flag_ts, epoch seconds; None if the window holds
+    none). compute() already walks the whole series, so this costs nothing and
+    lets the scanner heal a state file written before flag_ts existed — which
+    matters because that file is owned by the running process: an external
+    backfill is silently overwritten on the next poll."""
     res = compute(ohlcv, score_th, adx_th)
-    return {k: res[k] for k in ("flag", "score", "vegas", "msb", "price", "insufficient")}
+    out = {k: res[k] for k in ("flag", "score", "vegas", "msb", "price", "insufficient")}
+    fired = np.flatnonzero(res["flags"])
+    out["flag_ts"] = float(ohlcv[fired[-1]][0]) / 1000.0 if len(fired) else None
+    out["last_flag_dir"] = ("long" if res["flags"][fired[-1]] > 0 else "short") \
+        if len(fired) else None
+    return out

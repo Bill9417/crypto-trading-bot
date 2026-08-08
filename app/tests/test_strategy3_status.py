@@ -200,3 +200,43 @@ def test_the_s1_topic_send_is_the_only_channel_override():
 
 if __name__ == "__main__":       # pragma: no cover
     pytest.main([__file__, "-q"])
+
+
+# ── flag_ts heals itself: the state file belongs to the running process ──────
+
+def test_last_bar_reports_when_the_last_flag_fired():
+    """An external backfill of strategy3_state.json is overwritten on the next
+    poll — the scanner holds the state in memory. So the timestamp has to come
+    from the replay the scanner already runs, not from a one-off script."""
+    import numpy as np
+    import strategy3_signal as SIG
+
+    bars = [[1_000_000 + i * 1800_000, 1, 1, 1, 1, 1] for i in range(5)]
+    flags = np.array([0, 1, 0, -1, 0])
+    monkey = {"flag": None, "score": 50.0, "vegas": 0, "msb": None,
+              "price": 1.0, "insufficient": False, "flags": flags,
+              "scores": np.full(5, 50.0)}
+    real = SIG.compute
+    SIG.compute = lambda *a, **k: monkey
+    try:
+        out = SIG.last_bar(bars)
+    finally:
+        SIG.compute = real
+    assert out["flag_ts"] == bars[3][0] / 1000.0      # the SHORT at index 3
+    assert out["last_flag_dir"] == "short"
+
+
+def test_no_flags_in_the_window_reports_none_not_zero():
+    import numpy as np
+    import strategy3_signal as SIG
+
+    bars = [[1_000_000, 1, 1, 1, 1, 1]]
+    real = SIG.compute
+    SIG.compute = lambda *a, **k: {"flag": None, "score": 50.0, "vegas": 0,
+                                   "msb": None, "price": 1.0, "insufficient": False,
+                                   "flags": np.zeros(1, int), "scores": np.full(1, 50.0)}
+    try:
+        out = SIG.last_bar(bars)
+    finally:
+        SIG.compute = real
+    assert out["flag_ts"] is None and out["last_flag_dir"] is None

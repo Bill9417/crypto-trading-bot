@@ -606,6 +606,14 @@ def step(client, state: dict) -> None:
             st["last_price"] = snap["price"]
             st["last_seen"] = time.time()
 
+            # Heal a state file written before flag_ts existed. The replay just
+            # computed WHEN the pending flag fired; only trust it when the
+            # direction still matches what the state is holding, so a window
+            # that has slid past the real flag cannot invent a wrong date.
+            if (not st.get("flag_ts") and st.get("last_flag")
+                    and snap.get("last_flag_dir") == st["last_flag"]):
+                st["flag_ts"] = snap["flag_ts"]
+
             if flag and flag != st.get("last_flag"):
                 st["open_attempts"] = 0                 # fresh flag → fresh retries
                 st["flag_ts"] = last_ts / 1000.0        # WHEN, so the card can say it
