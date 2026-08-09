@@ -1262,6 +1262,53 @@
         .sym-dot { font-size: .62rem; font-weight: 800; padding: 2px 6px; border-radius: 999px; border: 1px solid var(--wolf-border); color: var(--wolf-muted); }
         .sym-dot.long { color: var(--long); border-color: rgba(34,197,94,.5); background: rgba(34,197,94,.12); }
         .sym-dot.short { color: var(--short); border-color: rgba(239,68,68,.5); background: rgba(239,68,68,.12); }
+        /* ── S4 perp setups (dashboard mirror of the Telegram alert) ─────── */
+        .s4d-warn {
+            font-size: .66rem; line-height: 1.55; color: #fcd34d;
+            background: rgba(255, 176, 32, .07); border: 1px solid rgba(255, 176, 32, .25);
+            border-radius: 10px; padding: 9px 12px; margin-bottom: 11px;
+        }
+        .s4d-row { display: grid; grid-template-columns: repeat(auto-fill, minmax(285px, 1fr)); gap: 10px; }
+        .s4d-card {
+            border: 1px solid var(--wolf-border); border-radius: 12px; padding: 12px 13px;
+            background: rgba(255, 255, 255, .022); display: flex; flex-direction: column; gap: 9px;
+        }
+        .s4d-top { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; }
+        .s4d-sym { font-size: .95rem; font-weight: 800; color: var(--wolf-text); }
+        .s4d-tag {
+            font-size: .55rem; font-weight: 800; letter-spacing: .07em; text-transform: uppercase;
+            padding: 2px 7px; border-radius: 999px; border: 1px solid var(--wolf-border); color: var(--wolf-muted);
+        }
+        .s4d-tag.long { color: #4ade80; border-color: rgba(34,197,94,.42); background: rgba(34,197,94,.12); }
+        .s4d-tag.conf { color: var(--wolf-blue); border-color: rgba(0,210,255,.4); background: rgba(0,210,255,.1); }
+        .s4d-px { margin-left: auto; font-size: .82rem; font-weight: 700; color: var(--wolf-muted); white-space: nowrap; }
+        .s4d-top { row-gap: 5px; }
+        /* levels get their own row so entry / stop / target read as one plan */
+        .s4d-plan { display: grid; grid-template-columns: repeat(3, 1fr); gap: 7px; }
+        .s4d-plan div { display: flex; flex-direction: column; gap: 2px; }
+        .s4d-plan span { font-size: .55rem; letter-spacing: .08em; text-transform: uppercase; color: var(--wolf-muted); }
+        .s4d-plan b { font-size: .8rem; font-weight: 700; color: var(--wolf-text); font-variant-numeric: tabular-nums; }
+        .s4d-plan b.sl { color: #f87171; } .s4d-plan b.tp { color: #4ade80; }
+        .s4d-plan em { font-style: normal; font-size: .62rem; font-weight: 700; color: var(--wolf-muted); }
+        .s4d-plan em.sl { color: rgba(248,113,113,.8); } .s4d-plan em.tp { color: rgba(74,222,128,.8); }
+        .s4d-meta { display: flex; flex-direction: column; gap: 3px; border-top: 1px solid var(--wolf-border); padding-top: 8px; }
+        .s4d-meta div { display: flex; justify-content: space-between; gap: 8px; font-size: .66rem; color: var(--wolf-muted); }
+        .s4d-meta b { color: var(--wolf-text); font-weight: 600; }
+        .s4d-buy {
+            display: block; text-align: center; text-decoration: none; margin-top: 2px;
+            font-size: .68rem; font-weight: 800; letter-spacing: .05em;
+            padding: 8px; border-radius: 9px; color: #04121a;
+            background: linear-gradient(180deg, #ffc94b, #f7a600);
+        }
+        .s4d-buy:hover { filter: brightness(1.07); color: #04121a; }
+        .s4d-empty { font-size: .76rem; color: var(--wolf-muted); padding: 14px 2px; }
+        .s4d-empty i { display: block; font-style: normal; font-size: .68rem; opacity: .75; margin-top: 4px; }
+        .s4d-rej { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 9px; }
+        .s4d-rej span {
+            font-size: .6rem; color: var(--wolf-muted); padding: 3px 9px;
+            border-radius: 999px; border: 1px solid var(--wolf-border); background: rgba(255,255,255,.03);
+        }
+
         /* ════════════════════════════════════════════════════════════════════
            MARKET PULSE BOARD (2026-08-09 redesign)
            A bento grid of self-contained cards. Every card states what it is,
@@ -1305,7 +1352,7 @@
         .bc-empty { font-size: .72rem; color: var(--wolf-muted); padding: 6px 2px; }
 
         /* ── 1. composite ─────────────────────────────────────────────────── */
-        .pulse-main { display: flex; align-items: center; gap: 18px; }
+        .pulse-main { display: flex; align-items: center; gap: 20px; }
         .pulse-ring {
             --score: 0; --ring: var(--wolf-muted);
             position: relative; width: 132px; height: 132px; flex: 0 0 auto; border-radius: 50%;
@@ -1321,7 +1368,11 @@
         .pulse-ring-in { position: relative; text-align: center; line-height: 1; }
         .pulse-score { display: block; font-size: 2.35rem; font-weight: 900; color: var(--wolf-text); }
         .pulse-of { font-size: .58rem; font-weight: 700; letter-spacing: .12em; color: var(--wolf-muted); }
-        .pulse-side { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 9px; }
+        .pulse-side { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 10px; }
+        /* One plain-language sentence instead of two bars that repeated the
+           component list below. */
+        .pulse-read { margin: 0; font-size: .74rem; line-height: 1.5; color: var(--wolf-muted); }
+        .pulse-read b { color: var(--wolf-text); font-weight: 700; }
         .pulse-label {
             width: fit-content; font-size: .74rem; font-weight: 800; letter-spacing: .04em;
             padding: 4px 11px; border-radius: 999px; border: 1px solid var(--wolf-border);
@@ -1367,7 +1418,9 @@
         .trend-stats b.up { color: #4ade80; } .trend-stats b.down { color: #f87171; }
 
         /* ── 3. flows ─────────────────────────────────────────────────────── */
-        .flow-list { display: flex; flex-direction: column; gap: 1px; }
+        /* grow to fill the card so the rows spread instead of leaving a gap
+           above the footer when this column is shorter than its neighbours */
+        .flow-list { display: flex; flex-direction: column; gap: 1px; flex: 1 1 auto; justify-content: space-between; }
         .flow-row {
             display: grid; grid-template-columns: 1fr auto; grid-template-areas: "k v" "n n";
             gap: 2px 10px; padding: 8px 9px; border-radius: 9px; background: rgba(255,255,255,.022);
@@ -1507,14 +1560,7 @@
                     </div>
                     <div class="pulse-side">
                         <span class="pulse-label off" id="pulse-label">reading…</span>
-                        <div class="mini-gauge">
-                            <div class="mg-top"><span>Breadth</span><b id="mg-breadth-v">—</b></div>
-                            <div class="mg-track"><i id="mg-breadth" style="width:0%"></i></div>
-                        </div>
-                        <div class="mini-gauge">
-                            <div class="mg-top"><span>Momentum</span><b id="mg-mom-v">—</b></div>
-                            <div class="mg-track"><i id="mg-mom" style="width:0%"></i></div>
-                        </div>
+                        <p class="pulse-read" id="pulse-read">reading the tape…</p>
                         <div class="mini-gauge conf">
                             <div class="mg-top"><span>Data confidence</span><b id="mg-conf-v">—</b></div>
                             <div class="mg-track"><i id="mg-conf" style="width:0%"></i></div>
@@ -1635,6 +1681,27 @@
                 <div class="bc-head"><span class="bc-title down">Top Losers</span><span class="bc-sub">24h</span></div>
                 <div class="mv-list" id="mv-down"><div class="bc-empty">loading…</div></div>
             </article>
+        </section>
+
+        <!-- ══ S4 · live perp setups ══════════════════════════════════════════
+             The same setups the bot pushes to Telegram, on the page. They used
+             to exist only in the message and on /s4, so acting on one meant
+             remembering a second page. Levels, confidence and the Bybit order
+             link are carried verbatim from strategy4.format_signal() so the
+             card and the alert can never say different things.
+
+             S4 is a SCAN NOTICE, not a validated strategy — the disclaimer
+             rides along with the setups rather than living on another page. -->
+        <section class="analytics-panel s4-panel">
+            <div class="analytics-head">
+                <div>
+                    <div class="analytics-title">📊 S4 · Perp Setups</div>
+                    <div class="analytics-subtitle" id="s4d-sub">Loading the last scan…</div>
+                </div>
+                <a class="bc-more" href="/s4" style="margin-left:auto;">full page →</a>
+            </div>
+            <div class="s4d-warn" id="s4d-warn"></div>
+            <div class="s4d-row" id="s4d-row"></div>
         </section>
 
         <!-- ── Top entry candidates ── -->
@@ -1932,7 +1999,7 @@
             <div class="analytics-head">
                 <div>
                     <div class="analytics-title">💥 Liquidation Map</div>
-                    <div class="analytics-subtitle" id="lq2-sub">Where stops actually got run, by price level</div>
+                    <div class="analytics-subtitle" id="lq2-sub">Modelled: where stops WOULD be run if price got there — not a record of what happened</div>
                 </div>
                 <div style="display:flex;gap:6px;align-items:center;">
                     <div class="seg3" id="lq2-mode">
@@ -2065,6 +2132,15 @@
             function draw(){
                 ctx.clearRect(0,0,W,H);
                 if(!D||!D.grid||!D.grid.length){ return; }
+                if(!D.max_usd){
+                    // Every estimated level fell outside the window. Say so —
+                    // a blank canvas reads as a bug, not as "no clusters here".
+                    ctx.fillStyle='#93a3b8'; ctx.font='500 13px Inter,system-ui,sans-serif';
+                    ctx.textAlign='center';
+                    ctx.fillText('此區間內沒有推估到的清算價位', (W-PADR)/2, H/2);
+                    ctx.textAlign='left';
+                    return;
+                }
                 var nx=D.grid.length, nb=D.nb, gw=(W-PADR)/nx, gh=H/nb;
                 var mx=D.max_usd||1;
                 for(var i=0;i<nx;i++){
@@ -2150,6 +2226,15 @@
                 this.querySelectorAll('button').forEach(function(x){x.classList.remove('on')});
                 b.classList.add('on');
                 var heatOn=b.dataset.m==='heat';
+                // The two modes describe different tenses and the subtitle used
+                // to claim the past tense for both: the estimate shows where
+                // stops WOULD be run, only the realised feed shows where they
+                // WERE. One word, but it is the difference between a forecast
+                // and a record.
+                var sb=document.getElementById('lq2-sub');
+                if(sb) sb.textContent = heatOn
+                    ? 'Modelled: where stops WOULD be run if price got there — not a record of what happened'
+                    : 'Realised: where stops actually got run, by price level';
                 document.getElementById('lq2-heatwrap').style.display=heatOn?'':'none';
                 document.getElementById('lq2-magnets').style.display=heatOn?'none':'';
                 document.querySelector('.liq2d-wrap').style.display=heatOn?'none':'';
@@ -3623,10 +3708,16 @@
             var byKey = {};
             (d.components || []).forEach(function (c) { byKey[c.key] = c; });
             var br = byKey.breadth || {}, mo = byKey.momentum || {};
-            document.getElementById('mg-breadth').style.width = (br.score || 0) + '%';
-            set('mg-breadth-v', br.ok ? br.value + '% of contracts up' : 'no data');
-            document.getElementById('mg-mom').style.width = (mo.score || 0) + '%';
-            set('mg-mom-v', mo.ok ? 'median ' + pct(mo.value) : 'no data');
+            // One sentence in plain language. The per-component detail is the
+            // list underneath — repeating it as bars up here just made the card
+            // long without adding a number.
+            var el = document.getElementById('pulse-read');
+            if (el) {
+                el.innerHTML = (br.ok
+                        ? '<b>' + br.value + '%</b> of liquid contracts are up'
+                        : 'breadth unavailable')
+                    + ' · median move <b>' + (mo.ok ? pct(mo.value) : '—') + '</b>';
+            }
 
             var cf = d.confidence || {};
             document.getElementById('mg-conf').style.width = (cf.pct || 0) + '%';
@@ -3800,6 +3891,94 @@
         }
         load(); loadGlobal();
         if (window.wolfPoll) { wolfPoll(load, 90000); wolfPoll(loadGlobal, 300000); }
+    })();
+    </script>
+    <script>
+    /* ════════════════════════════════════════════════════════════════════════
+       S4 perp setups — the dashboard mirror of the Telegram alert.
+
+       Field for field the same card strategy4.format_signal() sends: entry,
+       stop, target with its R multiple, confidence, the EMA200 slope, the
+       support level it is leaning on, how long ago the divergence printed, and
+       what open interest is doing. Plus the Bybit order link the message
+       carries, because a setup you have to go and find is a setup you miss.
+
+       Empty is a RESULT, not a failure: all five gates have to pass. The card
+       says that and shows which gate rejected how many, instead of a blank box.
+       ════════════════════════════════════════════════════════════════════════ */
+    (function () {
+        var OI = {1: 'longs building', 2: 'shorts building',
+                  3: 'shorts closing', 4: 'longs closing'};
+        function esc(v) { return String(v === null || v === undefined ? '' : v).replace(/[&<>"]/g, function (c) {
+            return {'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;'}[c]; }); }
+        function px(v) {
+            if (v === null || v === undefined) return '—';
+            var a = Math.abs(v), s;
+            if (a === 0) return '0';
+            if (a >= 1000) s = Number(v).toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2});
+            else if (a >= 1) s = Number(v).toFixed(4);
+            else if (a >= 0.01) s = Number(v).toFixed(6);
+            else s = Number(v).toFixed(8);
+            return s.indexOf('.') < 0 ? s : s.replace(/0+$/, '').replace(/\.$/, '');
+        }
+        function ago(ts) {
+            if (!ts) return 'never scanned';
+            var m = Math.floor((Date.now() / 1000 - ts) / 60);
+            return m < 1 ? 'just now' : m < 60 ? m + 'm ago' : Math.floor(m / 60) + 'h ago';
+        }
+        function card(g) {
+            var p = g.plan || {};
+            var plan = p.entry === undefined ? '' :
+                '<div class="s4d-plan">' +
+                  '<div><span>Entry</span><b>' + px(p.entry) + '</b><em>&nbsp;</em></div>' +
+                  '<div><span>Stop</span><b class="sl">' + px(p.sl) + '</b><em class="sl">−' + Number(p.stop_pct).toFixed(2) + '%</em></div>' +
+                  '<div><span>Target ' + (p.rr || '') + 'R</span><b class="tp">' + px(p.tp) + '</b><em class="tp">+' + Number(p.tp_pct).toFixed(2) + '%</em></div>' +
+                '</div>';
+            var rows = [
+                ['EMA200', g.slope === null || g.slope === undefined ? '—' : 'rising +' + Number(g.slope).toFixed(2) + '%'],
+                ['Support', g.support ? px(g.support.level) + ' (' + g.support.bars_ago + ' bars ago)' : '—'],
+                ['Divergence', g.div_ago === null || g.div_ago === undefined ? '—' : g.div_ago + ' bars ago'],
+                ['Open interest', OI[g.oi_state] || '—']
+            ].map(function (r) { return '<div><span>' + r[0] + '</span><b>' + esc(r[1]) + '</b></div>'; }).join('');
+            var base = esc(g.base || '');
+            return '<div class="s4d-card">' +
+                '<div class="s4d-top"><span class="s4d-sym">' + base + '</span>' +
+                  '<span class="s4d-tag">' + (g.segment === 'tradfi' ? 'US STOCK' : 'CRYPTO') + '</span>' +
+                  '<span class="s4d-tag long">LONG</span>' +
+                  (g.score === null || g.score === undefined ? ''
+                     : '<span class="s4d-tag conf">' + Number(g.score).toFixed(0) + '/100</span>') +
+                  '<span class="s4d-px">' + px(g.price) + '</span></div>' +
+                plan +
+                '<div class="s4d-meta">' + rows + '</div>' +
+                '<a class="s4d-buy" href="https://www.bybit.com/trade/usdt/' + encodeURIComponent(base) +
+                  'USDT" target="_blank" rel="noopener">Trade ' + base + ' on Bybit ↗</a>' +
+              '</div>';
+        }
+        function render(d) {
+            var sigs = d.signals || [];
+            var by = d.checked_by || {};
+            document.getElementById('s4d-sub').textContent =
+                'Bybit stock/commodity + crypto perps · ' + (d.tf || '15m') + ' · scanned ' +
+                (d.checked || 0) + (by.tradfi !== undefined ? ' (US ' + by.tradfi + ' · crypto ' + by.crypto + ')' : '') +
+                ' · ' + ago(d.ts) + ' · ' + sigs.length + ' passing';
+            document.getElementById('s4d-warn').textContent = d.disclaimer || '';
+            var row = document.getElementById('s4d-row');
+            if (!sigs.length) {
+                var rej = Object.keys(d.rejected || {}).map(function (k) {
+                    return '<span>' + esc(k) + ' · ' + d.rejected[k] + '</span>'; }).join('');
+                row.innerHTML = '<div class="s4d-empty">Nothing passing right now.' +
+                    '<i>All five gates have to clear before this alerts — no signal is the normal state, not a fault.</i>' +
+                    (rej ? '<div class="s4d-rej">' + rej + '</div>' : '') + '</div>';
+                return;
+            }
+            row.innerHTML = sigs.slice(0, 6).map(card).join('');
+        }
+        function load() {
+            fetch('/api/s4').then(function (r) { return r.ok ? r.json() : null; })
+                .then(function (d) { if (d) render(d); }).catch(function () {});
+        }
+        load();
+        if (window.wolfPoll) wolfPoll(load, 120000);
     })();
     </script>
 </body>

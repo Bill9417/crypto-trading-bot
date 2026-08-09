@@ -3785,10 +3785,21 @@ def api_liq_heatmap():
         weights = [float(c[5]) * float(c[4]) for c in oh]
         used_oi = False
 
+    # Vertical window. Deriving it from the candle range ALONE renders an empty
+    # map on any quiet day (fixed 2026-08-09): BTC ranged 1% that session, so a
+    # range-derived window spanned ±0.5% of spot while the tightest leverage
+    # band — 100x — liquidates at ±1.0%. Every one of the four bands fell
+    # outside, every cell came back 0, and the canvas drew nothing at all with
+    # no explanation. So the window is now the WIDER of the price range and a
+    # band that is guaranteed to contain the two highest-leverage tiers
+    # (100x = ±1%, 50x = ±2%), which are also the ones close enough to matter.
+    HEAT_MIN_HALF_SPAN = 0.025          # ±2.5% of spot, floor
     lo_p = min(c[3] for c in oh)
     hi_p = max(c[2] for c in oh)
+    spot_now = float(oh[-1][4])
     pad = (hi_p - lo_p) * 0.35 or hi_p * 0.02   # room for levels beyond the range
-    lo_p, hi_p = lo_p - pad, hi_p + pad
+    lo_p = min(lo_p - pad, spot_now * (1 - HEAT_MIN_HALF_SPAN))
+    hi_p = max(hi_p + pad, spot_now * (1 + HEAT_MIN_HALF_SPAN))
     NB = 64
     step = (hi_p - lo_p) / NB
 
@@ -4283,6 +4294,21 @@ def s4_page():
         view = {"signals": [], "error": str(exc)[:200],
                 "disclaimer": strategy4.DISCLAIMER}
     return render_template("s4.html", s4=view, user=current_user)
+
+
+@app.route("/api/s4")
+@login_required
+def api_s4():
+    """The last S4 scan as JSON — same payload the /s4 page renders, so the
+    dashboard can carry the live setups instead of making the owner remember
+    to open a second page. Login-gated for the same reason /s4 is: these are
+    entry/stop/target levels, not public market data."""
+    import strategy4
+    try:
+        return jsonify(strategy4.web_view())
+    except Exception as exc:  # noqa: BLE001 — a broken scan must not 500 a card
+        return jsonify({"signals": [], "rejected": {}, "error": str(exc)[:200],
+                        "disclaimer": strategy4.DISCLAIMER}), 200
 
 
 @app.route("/us")
