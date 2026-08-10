@@ -233,6 +233,55 @@ def test_weak_reason_catches_username_derived_passwords():
     assert SP.weak_reason("wolfman", strong) is None
 
 
+# ── the credential audit must not cost 7s of CPU per page load ──────────────
+# 2026-08-09: /api/health took 6.8s on EVERY load, of which 7.3s of CPU was 101
+# scrypt verifications — the audit re-checked ~44 candidate passwords against
+# every user on every render, on a box whose real job is a live trading engine,
+# for a page built to be refreshed. Cost was linear in users, and copy-trading
+# adds users.
+def test_weak_reason_is_memoised_per_hash(monkeypatch):
+    import set_password as SP
+    from werkzeug.security import generate_password_hash
+
+    SP._WEAK_CACHE.clear()
+    h = generate_password_hash("k7#pQx2vLm9!Rt", method="pbkdf2:sha256")
+    assert SP.weak_reason("wolfman", h) is None
+
+    # Second call must not touch the (deliberately expensive) hash function.
+    # weak_reason imports it inside the body, so patching the module reaches it.
+    import werkzeug.security as WS
+    calls = []
+    monkeypatch.setattr(WS, "check_password_hash",
+                        lambda *a, **k: calls.append(1) or False)
+    assert SP.weak_reason("wolfman", h) is None
+    assert calls == [], f"cache miss — {len(calls)} hash checks on a repeat call"
+
+
+def test_a_changed_password_is_re_audited_not_served_from_cache():
+    """The hash IS the key, so caching can never hide a newly-weak password —
+    the property that makes memoising a security check safe."""
+    import set_password as SP
+    from werkzeug.security import generate_password_hash
+
+    SP._WEAK_CACHE.clear()
+    strong = generate_password_hash("k7#pQx2vLm9!Rt", method="pbkdf2:sha256")
+    assert SP.weak_reason("wolfman", strong) is None
+
+    weak = generate_password_hash("admin", method="pbkdf2:sha256")
+    assert SP.weak_reason("wolfman", weak), \
+        "a changed hash must be re-audited, not answered from the old entry"
+
+
+def test_the_weak_cache_cannot_grow_without_bound():
+    import set_password as SP
+    SP._WEAK_CACHE.clear()
+    for i in range(SP._WEAK_CACHE_MAX + 20):
+        SP._WEAK_CACHE[("u%d" % i, "h%d" % i)] = None
+        if len(SP._WEAK_CACHE) >= SP._WEAK_CACHE_MAX:
+            SP._WEAK_CACHE.clear()          # mirrors the eviction in weak_reason
+    assert len(SP._WEAK_CACHE) <= SP._WEAK_CACHE_MAX
+
+
 # ── which engine is actually trading ────────────────────────────────────────
 # 2026-08-05: /health printed "no live engine detected" in the hero directly
 # above a process list that badged S1 as LIVE and S3 as "LIVE on BYBIT". Two

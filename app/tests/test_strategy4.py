@@ -344,3 +344,125 @@ def test_a_fresh_dict_cache_is_still_honoured():
             raise AssertionError("markets reloaded inside the cache window")
 
     assert S.universe(_Boom(), state)
+
+
+# ── divergence quality, ported from Divergence_Radar_PRO.pine ───────────────
+# Each of these is a hole the first version left open. They are written as
+# rejections because that is what the fixes do: the old rule said yes to all of
+# them.
+def test_a_pivot_from_far_back_is_not_a_divergence_partner():
+    """The old rule compared each pivot to the previous one however old it was.
+
+    Two swing lows 90 bars apart are not one structure, and comparing them is
+    arithmetic rather than analysis. TradingView's own built-in divergence
+    indicator has always capped this at 60 bars.
+    """
+    lows = ([10.0, 9, 8, 9, 10] + [12.0] * 90 + [10, 9, 7, 8, 9, 10])
+    highs = [v + 2 for v in lows]
+    osc = ([1.0, 0, -5, 0, 1] + [3.0] * 90 + [1, 0, -2, 0, 1, 2])
+    assert S.bullish_divergence(highs, lows, osc, pivot=2, lookback=200,
+                                max_gap=60, min_leg_atr=0) is None
+    # ...and the identical shape inside the window still fires
+    assert S.bullish_divergence(highs, lows, osc, pivot=2, lookback=200,
+                                max_gap=200, min_leg_atr=0) is not None
+
+
+def test_a_trivial_oscillator_gap_is_not_a_divergence():
+    """Higher by 1e-9 satisfied the textbook definition and nothing else."""
+    lows = [10.0, 9, 8, 9, 10, 11, 10, 9, 7, 8, 9, 10, 11, 12, 13, 14]
+    highs = [v + 2 for v in lows]
+    big = [1.0, 0, -5, 0, 1, 2, 1, 0, -2, 0, 1, 2, 3, 4, 5, 6]
+    assert S.bullish_divergence(highs, lows, big, pivot=2, lookback=50,
+                                min_leg_atr=0) is not None
+    # same pivots, oscillator higher by a rounding error against a wide range
+    tiny = list(big)
+    tiny[8] = tiny[2] + 1e-9
+    assert S.bullish_divergence(highs, lows, tiny, pivot=2, lookback=50,
+                                min_leg_atr=0) is None
+
+
+def test_a_chop_wiggle_is_not_a_swing():
+    """Prominence is measured in ATR AT THE PIVOT. A low that barely dents its
+    own neighbourhood is noise no matter what the oscillator did."""
+    lows = [100.0, 99.9, 99.8, 99.9, 100.0, 100.1, 100.0, 99.9, 99.7, 99.8,
+            99.9, 100.0, 100.1, 100.2, 100.3, 100.4]
+    highs = [v + 0.1 for v in lows]
+    closes = list(lows)
+    osc = [1.0, 0, -5, 0, 1, 2, 1, 0, -2, 0, 1, 2, 3, 4, 5, 6]
+    atr = S.atr_series(highs, lows, closes, period=5)
+    assert S.bullish_divergence(highs, lows, osc, pivot=2, lookback=50,
+                                atr=atr, min_leg_atr=0) is not None
+    assert S.bullish_divergence(highs, lows, osc, pivot=2, lookback=50,
+                                atr=atr, min_leg_atr=3.0) is None
+
+
+def test_detrending_removes_the_drift_that_made_flow_divergence_free():
+    """A cumulative series that only rises reports a higher low at EVERY pivot.
+
+    That is not a measurement of flow, it is a measurement of the fact that the
+    series is cumulative — and it was a quarter of the divergence gate.
+    """
+    rising = [float(i) for i in range(400)]          # pure drift, no information
+    flat = S.detrend(rising, period=50)
+    # after the baseline settles, the detrended series is level, not climbing
+    tail = flat[-100:]
+    assert max(tail) - min(tail) < (max(rising) - min(rising)) / 10
+
+
+def test_ad_is_not_added_because_it_is_cvd_under_another_name():
+    """A/D's money-flow multiplier IS cvd_series()'s per-bar term here.
+
+    On the chart they differ, because CVD there is built from real 1-minute
+    deltas and only falls back to this estimate on older bars. This scan has no
+    intrabar data at all, so they would be the same series — a second vote for
+    one measurement, which is the one thing a confluence count must not do.
+    """
+    bars = _bars([100 + (i % 7) for i in range(60)])
+    cvd = S.cvd_series(bars)
+    ad, run = [], 0.0
+    for c in bars:
+        h, lo, cl, v = c[2], c[3], c[4], c[5]
+        run += 0.0 if h == lo else v * ((cl - lo) - (h - cl)) / (h - lo)
+        ad.append(run)
+    assert all(abs(a - b) < 1e-9 for a, b in zip(cvd, ad, strict=False))
+    assert "A/D" not in S.divergence_scan(bars, [c[2] for c in bars],
+                                          [c[3] for c in bars], [c[4] for c in bars])
+
+
+def test_fisher_is_bounded_and_reacts_to_extremes():
+    closes = [100 + i * 0.5 for i in range(60)]
+    bars = _bars(closes)
+    f = S.fisher_series([c[2] for c in bars], [c[3] for c in bars], length=9)
+    assert len(f) == len(bars)
+    assert all(abs(v) < 20 for v in f), "the 0.999 clamp keeps the log finite"
+    assert f[-1] > f[0], "a monotonic climb should end positive"
+
+
+# ── quality: abstain, never fabricate a middle ──────────────────────────────
+def test_quality_drops_an_unreadable_component_instead_of_scoring_it_neutral():
+    full = {"div_sources": ["MACD", "KD"], "score": 80.0, "slope": 1.0,
+            "oi_state": S.OI_LONGS_OPENING,
+            "plan": {"stop_pct": 1.0}}
+    partial = dict(full, oi_state=0)          # OI feed missing entirely
+    S.quality(full)
+    S.quality(partial)
+    assert full["quality_basis"] == 100
+    assert partial["quality_basis"] == 100 - S.QUALITY_WEIGHTS["oi"]
+
+
+def test_quality_is_a_percentage_of_what_could_be_read():
+    """Every live component at its maximum must read 100, whatever was live."""
+    ev = {"div_sources": ["MACD", "KD", "FISH", "CVD"], "score": 100.0,
+          "slope": 5.0, "oi_state": S.OI_LONGS_OPENING,
+          "plan": {"stop_pct": S.MIN_STOP_PCT * 100}}
+    assert S.quality(ev) == 100
+    del ev["oi_state"]
+    assert S.quality(ev) == 100, "removing a maxed component cannot change a percentage"
+
+
+def test_more_agreeing_sources_scores_higher():
+    def q(n):
+        return S.quality({"div_sources": ["MACD", "KD", "FISH", "CVD"][:n],
+                          "score": 70.0, "slope": 1.0,
+                          "oi_state": S.OI_LONGS_OPENING, "plan": {"stop_pct": 1.0}})
+    assert q(1) < q(2) < q(3) < q(4)

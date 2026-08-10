@@ -138,6 +138,29 @@ def _no_live_side_effects(request, monkeypatch, tmp_path):
     # the S1→Bybit mirror must also stay OFF unless a test opts in
     import config as _cfg
     monkeypatch.setattr(_cfg, "S1_BYBIT_MIRROR", False)
+    # liquidations.start() is called lazily by THREE web routes, so any test
+    # that renders /market, /api/liquidations or the heatmap opened three real
+    # WebSockets (Binance/Bybit/OKX) inside the pytest process. Two live side
+    # effects followed, both found 2026-08-09:
+    #
+    #   1. Real liquidation events streamed into the module's shared _events
+    #      deque, so test_liquidations' parser tests — which push one fixture
+    #      and read _events[-1] — asserted against whatever the market had just
+    #      printed. It failed with "expected BTC, got LIT": a real LIT
+    #      liquidation had arrived in the microseconds between the two lines.
+    #      Intermittent by construction, and this suite is the pre-flight gate
+    #      that every restart (including auto-heal) has to pass — a suite that
+    #      goes red at random is a stack that stays down at random.
+    #
+    #   2. start() LOADS the production liquidations_buffer.json, and _push
+    #      saves it back. A test run could overwrite real collected data.
+    #
+    # Both seams are closed: no collector, and the buffer path is redirected
+    # into tmp_path so even a direct _push cannot reach the real file.
+    import liquidations
+    monkeypatch.setattr(liquidations, "BUFFER_FILE",
+                        str(tmp_path / "liquidations_buffer.json"))
+    monkeypatch.setattr(liquidations, "start", lambda: None)
     # Learned Bybit position modes: redirect the file AND reset the in-process
     # cache, or a test that trips the hedge-retry would teach the real engines
     # that a live symbol is hedge mode and mis-index the next real order.

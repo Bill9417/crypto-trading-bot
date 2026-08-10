@@ -773,3 +773,22 @@ if __name__ == "__main__":
                 line_push.send_lifecycle(line_push.STOP_MSG)
         except Exception:  # noqa: BLE001 — dying anyway
             pass
+        # Hard exit — same call, same reason as bot.py's.
+        #
+        # The _term handler above traded the kernel's guaranteed kill for a
+        # Python-level unwind, and that unwind still has to get through
+        # threading._shutdown(), which joins non-daemon threads. Every thread
+        # this app starts is daemon=True, but market_intel runs a
+        # concurrent.futures pool whose workers are not, and a worker parked in
+        # a socket read is not obliged to come back. os._exit skips all of it.
+        #
+        # Prompted by 2026-08-09: a scanner outlived the pkill that was meant to
+        # replace it and ran ~11h beside its replacement. Two getUpdates
+        # pollers means Telegram serves one of them 409 Conflict, so every bot
+        # command was dead for half a day while `ps` showed a healthy stack.
+        # That process died on a plain SIGTERM when finally tested, so this exit
+        # path is NOT confirmed to be what saved it — the true cause is still
+        # unidentified. This closes a real hang that bot.py already had to fix;
+        # the actual containment for duplicates is in run_all.sh, which now
+        # verifies its kills instead of trusting pkill's exit code.
+        os._exit(0)

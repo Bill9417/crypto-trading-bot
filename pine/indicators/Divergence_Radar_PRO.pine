@@ -1,0 +1,1070 @@
+// ════════════════════════════════════════════════════════════════════════════
+//  DIVERGENCE RADAR PRO — 背離雷達 v3
+//
+//  This is Divergence Radar with ONE problem fixed: it fired too often, and
+//  most of what it fired on was not a price event.
+//
+//  ── WHY THE OLD ONE OVER-FIRED ────────────────────────────────────────────
+//  The v1 rule was the textbook definition and nothing else:
+//      bear = price pivot high > previous pivot high AND osc < its previous
+//  Every clause below is a hole that rule leaves open. They are listed in the
+//  order of how much noise each one was letting through.
+//
+//  1. NO AGE LIMIT BETWEEN THE TWO PIVOTS.  v1 compared each new pivot against
+//     whatever the previous one was — 8 bars ago or 800. Two highs 400 bars
+//     apart are not one swing structure; comparing them is arithmetic, not
+//     analysis. TradingView's own built-in divergence indicator constrains this
+//     to 5…60 bars and always has. This was the single biggest leak, and
+//     neither the Deepseek nor the Gemini fork closed it.
+//
+//  2. CVD DRIFT MADE ONE DIRECTION FREE.  CVD is an unbounded running sum. In
+//     any tape with a persistent delta lean it climbs monotonically, so the
+//     later pivot's CVD is higher almost by construction. Concretely: while CVD
+//     drifts up, EVERY price lower-low satisfies "CVD higher low" — a third of
+//     the sources was voting bullish on structure it had not measured. PRO
+//     detrends it (CVD − its own EMA) so only flow RELATIVE to the trend counts
+//     and the arbitrary anchor cancels out. Raw mode is still selectable so the
+//     difference is visible rather than asserted.
+//
+//  3. NO NOISE FLOOR ON EITHER AXIS.  A high 0.01% above the last one, with
+//     MACD lower by 1e-9, is a divergence by the letter of the definition and
+//     nothing by any other measure. PRO requires (a) the pivot to be a real
+//     swing — `Min Swing Size` in ATR measured AT THE PIVOT BAR — and (b) the
+//     momentum gap to clear `Min Momentum Gap`, expressed as a fraction of that
+//     oscillator's own recent range so one number means the same thing to MACD
+//     (price units), KD (0-100) and CVD (volume units). Both forks filtered
+//     price only; the momentum side is where most of the junk was.
+//
+//  4. KD DIVERGENCE ANYWHERE IN THE RANGE.  A K lower-high at 45 versus 48 is
+//     not exhaustion. PRO can require KD to have been in its extreme at the
+//     pivot — applied to the KD source ONLY, because gating MACD on a KD
+//     reading would stop the three sources from being independent, which is the
+//     entire reason there are three.
+//
+//  ── FIVE SOURCES, TWO KINDS ───────────────────────────────────────────────
+//    MOMENTUM — MACD (trend momentum), KD (position in range), FISHER.
+//    FLOW     — CVD (who hit the book), A/D (where the bar settled).
+//  Fisher maps price into a near-Gaussian distribution, where extremes are by
+//  construction RARE — so a Fisher extreme is a sharper statement than a KD
+//  extreme, which a ranging market prints all day. A/D needs no intrabar data,
+//  so unlike CVD it reads the same at the left edge of the chart as the right.
+//
+//  ── CVD AND A/D ARE THE SAME NUMBER WHERE INTRABAR DATA RUNS OUT ──────────
+//  A/D's money-flow multiplier and CVD's fallback estimate are one formula:
+//      2·(c−l)/(h−l) − 1  ≡  ((c−l) − (h−c))/(h−l)  ≡  (2c − l − h)/(h−l)
+//  So beyond TradingView's intrabar limit the two series move identically and
+//  would cast two votes for one measurement — inflating the agreement term,
+//  which is 35 of the quality score's 100 points, and lifting markers a tier
+//  for free. Intrabar availability is monotonic in age, so if the LATER pivot
+//  had no minute data the whole span was estimate-only and the verdicts are
+//  necessarily identical. Where that holds the pair counts ONCE and the label
+//  reads CVD≡A/D rather than CVD+A/D. Adding a source must add a measurement.
+//
+//  ── THE ONE KNOB ──────────────────────────────────────────────────────────
+//  Every surviving divergence is scored 0-100 from six measured parts
+//  (agreement 35 · momentum gap 25 · swing size 10 · extreme zone 10 · trend
+//  regime 10 · flow confluence 10) and `Min Quality` is the only control most
+//  people should touch. Marker size is the QUALITY TIER, not the source count —
+//  the count is in the label and the panel.
+//
+//  ── THE FILTER DECLARES WHAT IT ATE ───────────────────────────────────────
+//  A quality gate that silently deletes signals is indistinguishable from a
+//  quiet market. The panel prints `Filtered` — how many structurally valid
+//  divergences the gate suppressed in the count window. If that number is large
+//  the gate is too tight, and you can only know that if it is on screen.
+//
+//  ── UNCHANGED FROM v1, ON PURPOSE ─────────────────────────────────────────
+//  Markers are still LATE: a pivot is not a pivot until `Pivot Length` bars
+//  close after it, and confirming earlier would mean redrawing history that
+//  never existed live. The panel prints the pivot's own timestamp and the lag.
+//  A missing OI venue is still skipped rather than smoothed in as 0%, and a
+//  closed dollar market is still not counted as a flat-return day.
+//
+//  Divergence remains a warning about momentum, NOT an entry. None of this has
+//  been walk-forward tested — it is a noise reduction, not a proven edge, and
+//  the honest way to find out is to measure it.
+// ════════════════════════════════════════════════════════════════════════════
+//@version=6
+indicator("Divergence Radar PRO", overlay=false, format=format.price, precision=1,
+     max_labels_count=500)
+
+// ╔═══════════════════════════════════════════════════════════════════════════
+// ║  INPUTS — every one is read BELOW this block, never above it. Pine
+// ║  resolves names top-down; an input under the function that reads it is
+// ║  CE10272, visible only in the browser. pine/check_pine.py catches it here.
+// ╚═══════════════════════════════════════════════════════════════════════════
+gView = "① 版面 View"
+oscView   = input.string("MACD", "Draw which oscillator", ["MACD", "KD", "Fisher", "MACD+KD", "None"], group=gView, tooltip="LINES only. All five sources (MACD, KD, Fisher, CVD, A/D) are always MEASURED for divergence regardless of what is drawn — this setting only decides what competes for space in the pane.")
+showBias  = input.bool(true,  "Draw Whale Bias",  group=gView, inline="v1")
+showOI    = input.bool(true,  "OI strip",         group=gView, inline="v1")
+showDxyLn = input.bool(false, "Draw DXY correlation line", group=gView)
+showDelta = input.bool(false, "Draw raw delta columns", group=gView)
+
+gQ = "② 品質 Quality — start here"
+minQual   = input.int(45, "Min Quality (0 = show everything)", minval=0, maxval=100, group=gQ, tooltip="THE knob. Every structurally valid divergence is scored 0-100; below this it is suppressed and counted in the panel's 'Filtered' row. 0 shows the unfiltered v1 behaviour so you can see what the gate is removing. Raise until the pane is readable, then check 'Filtered' — if it is huge you are throwing away most of the sample.")
+showTier  = input.bool(true, "Marker size = quality tier", group=gQ, tooltip="On: size is A/B/C quality. Off: size is how many sources agreed, as in v1.")
+
+gDiv = "③ 背離 Divergence"
+divLen    = input.int(5, "Pivot Length", minval=2, maxval=30, group=gDiv, tooltip="Bars required on BOTH sides of a pivot. Also the confirmation lag: markers appear this many bars after the pivot.")
+rangeLo   = input.int(5,  "Min bars between pivots", minval=1, maxval=200, group=gDiv, inline="rng")
+rangeHi   = input.int(60, "Max", minval=5, maxval=1000, group=gDiv, inline="rng", tooltip="The two pivots being compared must be this far apart in bars. This is the fix for v1's biggest leak — it had no limit, so a pivot from 400 bars ago could still generate a 'divergence'. 5…60 is what TradingView's own built-in divergence indicator uses.")
+minLegAtr = input.float(0.8, "Min Swing Size (ATR×)", minval=0.0, maxval=5.0, step=0.1, group=gDiv, tooltip="How far the pivot must stand out from its own neighbourhood, in ATR measured AT THE PIVOT BAR. This is what rejects chop wiggles. Set 0 to disable.")
+minSepAtr = input.float(0.05, "Min New-Extreme Margin (ATR×)", minval=0.0, maxval=2.0, step=0.05, group=gDiv, tooltip="How much higher the new high must be than the old one. DELIBERATELY TINY — a marginal new high with momentum fading is the textbook exhaustion divergence, so this is a noise floor to reject sub-tick ties, NOT a demand for thrust. Gemini's fork set the equivalent to 0.8 ATR, which preferentially deletes the good ones.")
+minOscGap = input.float(0.05, "Min Momentum Gap (× osc range)", minval=0.0, maxval=1.0, step=0.01, group=gDiv, tooltip="How far the oscillator must have FALLEN SHORT, as a fraction of its own recent range. Normalising by each oscillator's own range is what lets one number mean the same thing to MACD (price units), KD (0-100) and CVD (volume units). Both other forks filtered price only and left this axis wide open.")
+useMacdD  = input.bool(true, "MACD",   group=gDiv, inline="src")
+useKdD    = input.bool(true, "KD",     group=gDiv, inline="src")
+useFishD  = input.bool(true, "Fisher", group=gDiv, inline="src")
+useCvdD   = input.bool(true, "CVD",    group=gDiv, inline="src2")
+useAdD    = input.bool(true, "A/D",    group=gDiv, inline="src2", tooltip="Five sources. Two of them (CVD and A/D) measure FLOW rather than momentum, so agreement between a momentum source and a flow source is worth more than agreement between two of the same kind. See the A/D note in ⑦ — on bars with no intrabar data CVD and A/D are the same arithmetic, and the count says so instead of voting twice.")
+countLen  = input.int(200, "Count Window (bars)", minval=20, maxval=2000, group=gDiv, tooltip="How far back the panel counts. 200 bars ≈ 2 days on 15m.")
+labelStrong = input.bool(true, "Label when 2+ sources agree", group=gDiv)
+
+gCtx = "④ 情境 Context filters"
+useObOs   = input.bool(true, "Momentum sources must be at an extreme", group=gCtx, tooltip="Gates KD by the KD levels below, and Fisher by the Fisher levels in ⑥ — each on ITS OWN source only. MACD, CVD and A/D are never gated by another oscillator's reading; Gemini's fork did exactly that and it stops the sources from being independent, which is the whole reason there is more than one.")
+obLevel   = input.int(70, "KD Overbought", minval=50, maxval=95, group=gCtx, inline="ob")
+osLevel   = input.int(30, "Oversold",   minval=5,  maxval=50, group=gCtx, inline="ob")
+trendLen  = input.int(200, "Trend EMA", minval=10, maxval=500, group=gCtx, tooltip="Regime context, scored not enforced. A bearish divergence below the EMA is with-trend and scores 10; above it is counter-trend and scores 0. Counter-trend divergences are the ones that get run over in a crypto impulse.")
+hardTrend = input.bool(false, "Hard-block counter-trend", group=gCtx, tooltip="Off by default. Counter-trend divergences are where the big reversals live — penalising them is defensible, deleting them is not.")
+atrLen    = input.int(14, "ATR Length", minval=2, maxval=100, group=gCtx)
+pivSrc    = input.string("Wick", "Pivot on", ["Wick", "Body"], group=gCtx, tooltip="Wick = ta.pivothigh(high). Body = pivots on close, which ignores stop-hunt spikes entirely. Wick is the default because a liquidity sweep IS a real price event and often the best divergence there is — the swing-size and momentum-gap filters are the right tools against wick noise. Switch to Body if your symbol is thin and wicks are structural.")
+
+gMacd = "⑤ MACD ReLoaded"
+macdSrc   = input.source(close, "Source", group=gMacd)
+mav       = input.string("VAR", "Moving Average Type", ["SMA","EMA","WMA","DEMA","TMA","VAR","WWMA","ZLEMA","TSF","HULL","TILL"], group=gMacd, tooltip="Kivanc Ozbilgic's MACD ReLoaded: the same MACD structure with a swappable average. VAR (VIDYA) scales its smoothing with |CMO|, so it tracks hard in a trend and goes quiet in chop.")
+macdFast  = input.int(12, "Fast", minval=2, group=gMacd, inline="m")
+macdSlow  = input.int(26, "Slow", minval=3, group=gMacd, inline="m")
+macdSig   = input.int(9,  "Signal", minval=1, group=gMacd, inline="m")
+t3factor  = input.float(0.7, "TILLSON T3 Volume Factor", minval=0.0, maxval=1.0, step=0.1, group=gMacd)
+showHist  = input.bool(false, "Draw MACD histogram", group=gMacd)
+normLen   = input.int(200, "Oscillator Range Window", minval=50, maxval=2000, group=gMacd, tooltip="Used for two things: scaling MACD onto this shared pane for DISPLAY, and normalising every oscillator's divergence gap. Divergence is detected on the RAW series, so scaling can never create or hide one.")
+
+gKd = "⑥ KDJ"
+kLen      = input.int(9, "Range Length (%K)", minval=1, group=gKd, tooltip="9 is canonical — the 2/3 · 1/3 recursion IS the Chinese KDJ.")
+kSmooth   = input.int(1, "%K extra smooth", minval=1, group=gKd, inline="s")
+dSmooth   = input.int(1, "%D extra smooth", minval=1, group=gKd, inline="s")
+jSmooth   = input.int(1, "J smooth", minval=1, group=gKd, inline="s")
+kdDivSrc  = input.string("K", "Divergence uses", ["K","D","J"], group=gKd, tooltip="J overshoots by design and produces far more, far noisier divergences.")
+showJ     = input.bool(true, "Draw J line", group=gKd)
+
+gFish = "⑥b Fisher Transform"
+fishLen   = input.int(9, "Length", minval=2, maxval=100, group=gFish, tooltip="Ehlers' Fisher Transform of the normalised median price. It maps price into a near-Gaussian distribution, which is the point: in a normal distribution extreme values are RARE, so a Fisher extreme is a sharper, less frequent statement than an RSI or KD extreme. Turns are correspondingly abrupt. 9 is Ehlers' own default.")
+fishOb    = input.float(1.5, "Overbought", minval=0.5, maxval=5.0, step=0.1, group=gFish, inline="fo")
+fishOs    = input.float(-1.5, "Oversold",  minval=-5.0, maxval=-0.5, step=0.1, group=gFish, inline="fo", tooltip="Fisher is unbounded — it can print ±4 on a violent move — so these are conventions, not limits. ±1.5 is the usual reading.")
+showFishSig = input.bool(true, "Draw Fisher signal line", group=gFish, tooltip="The 1-bar lag of Fisher. Their cross is the classic Fisher trigger and is wired to alerts either way.")
+
+gW = "⑦ Whale Bias + Flow (CVD · A/D)"
+ltfInput   = input.timeframe("1", "Intrabar Timeframe", group=gW, tooltip="Splits each chart bar into buy/sell volume — the raw material for Whale Bias and CVD. TradingView limits intrabar history; older bars fall back to a close-position estimate automatically.")
+whalePct   = input.int(90, "Whale Percentile", minval=70, maxval=99, group=gW)
+pctLen     = input.int(200, "Percentile Lookback", minval=50, maxval=1000, group=gW)
+biasLen    = input.int(96, "Bias Window (bars)", minval=20, maxval=500, group=gW, tooltip="96 bars = 1 day on 15m; use 48 on 30m.")
+biasTh     = input.int(40, "Bias Threshold (±)", minval=10, maxval=90, group=gW)
+flowMode   = input.string("Detrended", "Flow divergence uses", ["Detrended", "Raw cumulative"], group=gW, tooltip="Governs BOTH cumulative flow series, because both have the identical pathology. Raw CVD and raw A/D are unbounded running sums: while one drifts, every price extreme on that side clears the divergence test for free — that is a third of the sources voting on structure they never measured. Detrended = series − EMA(series), which removes the drift and the arbitrary starting anchor. Switch to Raw to see how many signals that alone was inventing.")
+flowDeLen  = input.int(200, "Flow Detrend EMA", minval=20, maxval=2000, group=gW, tooltip="Must be comfortably longer than 'Max bars between pivots' or the baseline will chase the swing you are trying to measure.")
+showAdLn   = input.bool(false, "Draw A/D line", group=gW, tooltip="Accumulation/Distribution, detrended and scaled to the pane. Off by default — it is a slow series and the panel reports its state as words.")
+
+gO = "⑧ Open Interest"
+useBinance = input.bool(true, "Binance", inline="ven", group=gO)
+useBybit   = input.bool(true, "Bybit",   inline="ven", group=gO)
+useOkx     = input.bool(true, "OKX",     inline="ven", group=gO, tooltip="A venue that does not list this coin returns nothing and is skipped.")
+oiSmoothLen= input.int(3, "OI Smoothing (EMA)", minval=1, maxval=20, group=gO)
+oiOverride = input.symbol("", "OI Symbol Override", group=gO)
+
+gD = "⑨ DXY"
+dxySym     = input.symbol("TVC:DXY", "Dollar Index (blank = off)", group=gD, tooltip="Correlation of RETURNS. Bars where the dollar market was shut are SKIPPED, not counted as zero-return.")
+corrLen    = input.int(200, "Correlation Length (bars)", minval=30, maxval=1000, group=gD)
+dxyTrendLen= input.int(50, "DXY Trend EMA", minval=10, maxval=500, group=gD)
+
+gP = "⑩ Panel"
+showTbl   = input.bool(true, "Show Panel", group=gP)
+panelMode = input.string("Compact", "Detail", ["Compact", "Full"], group=gP, tooltip="COMPACT (default) is four readings and nothing else: which way money is leaning right now, the trend regime, Fisher, and A/D — plus one line for the divergence tally so a radar that found nothing is distinguishable from a radar whose filter ate everything.\n\nFULL adds Whale Bias, the OI numbers, DXY, KDJ J, the consecutive-divergence run, and the timestamped event log. Everything is still computed in Compact — this only decides how many rows are printed.")
+tblPos    = input.string("Top Right", "Position", ["Top Right","Top Left","Bottom Right","Bottom Left"], group=gP)
+tblSize   = input.string(size.small, "Text Size", [size.tiny, size.small, size.normal], group=gP)
+histN     = input.int(3, "Recent events listed (Full only)", minval=1, maxval=6, group=gP)
+
+// palette — deliberately small. Direction is red/green everywhere.
+BUY  = #26a69a
+SELL = #ef5350
+AMBR = #ffb300
+TEAL = #4dd0e1
+ORNG = #ff9800
+MCOL = #42a5f5
+KCOL = #ab47bc
+FCOL = #f06292
+ADCOL = #9ccc65
+
+tfSec = math.max(60, timeframe.in_seconds(timeframe.period))
+
+drawMacd = oscView == "MACD" or oscView == "MACD+KD"
+drawKd   = oscView == "KD"   or oscView == "MACD+KD"
+drawFish = oscView == "Fisher"
+
+// ╔═══════════════════════════════════════════════════════════════════════════
+// ║  HELPERS
+// ╚═══════════════════════════════════════════════════════════════════════════
+f_delta() =>
+    close > open ? volume : close < open ? -volume : close >= nz(close[1], close) ? volume : -volume
+
+f_oiDeltaPct(string tick) =>
+    c = request.security(tick, timeframe.period, close, ignore_invalid_symbol=true)
+    not na(c) and nz(c[1]) > 0 ? (c - c[1]) / c[1] * 100 : na
+
+f_pos(string p) =>
+    p == "Top Left" ? position.top_left : p == "Bottom Right" ? position.bottom_right : p == "Bottom Left" ? position.bottom_left : position.top_right
+
+f_clamp(float v, float lim) =>
+    math.max(-lim, math.min(lim, v))
+
+// ── the MA library, written ONCE ───────────────────────────────────────────
+// `simple int len` is load-bearing, not decoration: a length that reaches
+// ta.sma() as `series` is a compile error, and that is how it arrives if the
+// parameter is left to be inferred.
+f_ma(simple string t, float s, simple int len) =>
+    sma_  = ta.sma(s, len)
+    ema_  = ta.ema(s, len)
+    wma_  = ta.wma(s, len)
+    dema_ = 2 * ema_ - ta.ema(ema_, len)
+    tma_  = ta.sma(ta.sma(s, int(math.ceil(len / 2.0))), int(math.floor(len / 2.0)) + 1)
+
+    vud  = s > s[1] ? s - s[1] : 0.0
+    vdd  = s < s[1] ? s[1] - s : 0.0
+    vUD  = math.sum(vud, 9)
+    vDD  = math.sum(vdd, 9)
+    vCMO = vUD + vDD != 0 ? (vUD - vDD) / (vUD + vDD) : 0.0
+    vk   = 2.0 / (len + 1) * math.abs(vCMO)
+    // Seeded with the source. Seeding from 0 makes the line crawl up from zero
+    // over dozens of bars — a warm-up artefact this script would read as a
+    // monster divergence at the left edge of the chart.
+    var float var_ = na
+    var_ := na(var_) ? s : vk * s + (1 - vk) * var_
+
+    var float wwma_ = na
+    wwa = 1.0 / len
+    wwma_ := na(wwma_) ? s : wwa * s + (1 - wwa) * wwma_
+
+    zlag   = int(len / 2)
+    zlema_ = ta.ema(s + (s - s[zlag]), len)
+
+    lr0  = ta.linreg(s, len, 0)
+    lr1  = ta.linreg(s, len, 1)
+    tsf_ = 2 * lr0 - lr1
+
+    hull_ = ta.wma(2 * ta.wma(s, int(math.max(1, math.round(len / 2.0)))) - ta.wma(s, len), int(math.max(1, math.round(math.sqrt(len)))))
+
+    e1 = ta.ema(s, len)
+    e2 = ta.ema(e1, len)
+    e3 = ta.ema(e2, len)
+    e4 = ta.ema(e3, len)
+    e5 = ta.ema(e4, len)
+    e6 = ta.ema(e5, len)
+    a  = t3factor
+    till_ = -a*a*a * e6 + (3*a*a + 3*a*a*a) * e5 + (-6*a*a - 3*a - 3*a*a*a) * e4 + (1 + 3*a + a*a*a + 3*a*a) * e3
+
+    switch t
+        "SMA"   => sma_
+        "EMA"   => ema_
+        "WMA"   => wma_
+        "DEMA"  => dema_
+        "TMA"   => tma_
+        "VAR"   => var_
+        "WWMA"  => wwma_
+        "ZLEMA" => zlema_
+        "TSF"   => tsf_
+        "HULL"  => hull_
+        "TILL"  => till_
+        => ema_
+
+// `dup` = CVD and A/D were the same arithmetic at this pivot (no intrabar data),
+// so they are named as the single measurement they were rather than listed twice.
+f_srcTxt(bool m, bool k, bool f, bool c, bool a, bool dup) =>
+    string s = m ? "MACD" : ""
+    s := k ? (s == "" ? "KD"   : s + "+KD")   : s
+    s := f ? (s == "" ? "FISH" : s + "+FISH") : s
+    if dup
+        s := s == "" ? "CVD≡A/D" : s + "+CVD≡A/D"
+    else
+        s := c ? (s == "" ? "CVD" : s + "+CVD") : s
+        s := a ? (s == "" ? "A/D" : s + "+A/D") : s
+    s
+
+// ── the tracker ────────────────────────────────────────────────────────────
+// Everything measurable AT THE PIVOT is computed outside and handed in at its
+// pivot-bar value. That indexing is the bug in both other forks: they read
+// volume, ATR, hour and dayofweek at the CONFIRMATION bar, which is `divLen`
+// bars after the pivot they claim to be describing.
+//
+// Returns the structural hit plus the momentum gap that produced it. Scoring
+// and the quality gate stay OUTSIDE, which is what makes it possible to count
+// what the gate suppressed instead of just not drawing it.
+//
+// `var` inside a function is instantiated per CALL SITE, so calling this three
+// times keeps three independent memories — which is exactly what is wanted.
+f_divTrackPro(float phVal, float plVal, int pvBar, float oscAtPivot,
+     float oscRange, float atrPv, bool legOkH, bool legOkL,
+     bool obOk, bool osOk, int rLo, int rHi, float minGap, float minSep) =>
+    var float lastPH  = na
+    var float lastPHo = na
+    var int   lastPHb = na
+    var float lastPL  = na
+    var float lastPLo = na
+    var int   lastPLb = na
+
+    // The PARAMETERS above deliberately carry the same names as the values
+    // passed in — that is what makes the call sites readable. These four
+    // accumulators deliberately do NOT (they are not bearGap/bullGap), because
+    // a local shadowing a global that is declared further DOWN the file reads
+    // as a forward reference to anyone skimming, pine/check_pine.py included.
+    bool  bOut  = false
+    bool  uOut  = false
+    float bGapO = 0.0                      // in units of the osc's own range
+    float uGapO = 0.0
+
+    if not na(phVal) and not na(oscAtPivot)
+        if not na(lastPH) and not na(lastPHo) and not na(lastPHb)
+            int   age = pvBar - lastPHb
+            float gapH = oscRange > 0 ? (lastPHo - oscAtPivot) / oscRange : 0.0
+            float sepH = na(atrPv) or atrPv <= 0 ? 0.0 : (phVal - lastPH) / atrPv
+            if phVal > lastPH and oscAtPivot < lastPHo
+                if age >= rLo and age <= rHi and legOkH and obOk and gapH >= minGap and sepH >= minSep
+                    bOut  := true
+                    bGapO := gapH
+        lastPH  := phVal
+        lastPHo := oscAtPivot
+        lastPHb := pvBar
+
+    if not na(plVal) and not na(oscAtPivot)
+        if not na(lastPL) and not na(lastPLo) and not na(lastPLb)
+            int   age = pvBar - lastPLb
+            float gapL = oscRange > 0 ? (oscAtPivot - lastPLo) / oscRange : 0.0
+            float sepL = na(atrPv) or atrPv <= 0 ? 0.0 : (lastPL - plVal) / atrPv
+            if plVal < lastPL and oscAtPivot > lastPLo
+                if age >= rLo and age <= rHi and legOkL and osOk and gapL >= minGap and sepL >= minSep
+                    uOut  := true
+                    uGapO := gapL
+        lastPL  := plVal
+        lastPLo := oscAtPivot
+        lastPLb := pvBar
+
+    // The new-extreme margin (sepH/sepL) is a hard floor only — it is tiny by
+    // design, so it carries almost no information and is not returned for
+    // scoring. Swing PROMINENCE is the meaningful size measure and is computed
+    // once at the call site, since it is the same for all three sources.
+    [bOut, uOut, bGapO, uGapO]
+
+// ╔═══════════════════════════════════════════════════════════════════════════
+// ║  ① OSCILLATORS
+// ╚═══════════════════════════════════════════════════════════════════════════
+macdLine   = f_ma(mav, macdSrc, macdFast) - f_ma(mav, macdSrc, macdSlow)
+macdSignal = f_ma(mav, macdLine, macdSig)
+macdHist   = macdLine - macdSignal
+
+// KDJ — the Chinese variant. K and D are recursive 2/3 · 1/3 smoothings of the
+// raw stochastic, seeded at 50 so the first bars are neutral rather than pinned
+// to an extreme. Exact fractions: 0.666/0.334 sum to 1 but compound an error
+// through a recursion that never forgets.
+rsv = ta.stoch(close, high, low, kLen)
+var float kRaw = na
+var float dRaw = na
+kRaw := (2.0 / 3.0) * nz(kRaw[1], 50) + (1.0 / 3.0) * nz(rsv, 50)
+dRaw := (2.0 / 3.0) * nz(dRaw[1], 50) + (1.0 / 3.0) * nz(kRaw, 50)
+
+// ta.sma(x, 1) is x, so length 1 is a genuine no-op. J is built from the SAME
+// k and d that get plotted.
+k = ta.sma(kRaw, kSmooth)
+d = ta.sma(dRaw, dSmooth)
+j = ta.sma(3 * k - 2 * d, jSmooth)
+
+kdDiv = kdDivSrc == "D" ? d : kdDivSrc == "J" ? j : k
+
+// ── FISHER TRANSFORM (Ehlers) ──────────────────────────────────────────────
+// Normalise the median price into −0.5…+0.5 over `fishLen`, then push it
+// through 0.5·ln((1+x)/(1−x)). That transform turns a roughly uniform input
+// into a roughly Gaussian one, and the point of a Gaussian is that extremes
+// are RARE — so a Fisher extreme is a stronger statement than a KD extreme,
+// which a ranging market prints all day. The price of that sharpness is that
+// Fisher is UNBOUNDED and turns violently, which is why the pane clamps the
+// drawn line and the panel prints the real number.
+//
+// The 0.999 clamp is not cosmetic: at x = ±1 the log term is infinite, and one
+// bar of the median price sitting exactly on the window extreme is enough to
+// reach it. Both recursions are seeded at 0 rather than na so the first bars
+// are neutral instead of dragging a warm-up artefact into the divergence
+// tracker — the same trap the VAR moving average had.
+fishHi  = ta.highest(hl2, fishLen)
+fishLo  = ta.lowest(hl2, fishLen)
+fishSpan = fishHi - fishLo
+var float fishVal = 0.0
+fishVal := fishSpan > 0 ? 0.33 * 2 * ((hl2 - fishLo) / fishSpan - 0.5) + 0.67 * nz(fishVal[1]) : nz(fishVal[1])
+fishVal := math.max(math.min(fishVal, 0.999), -0.999)
+var float fisher = 0.0
+fisher := 0.5 * math.log((1 + fishVal) / (1 - fishVal)) + 0.5 * nz(fisher[1])
+fishSig = nz(fisher[1])
+
+// ╔═══════════════════════════════════════════════════════════════════════════
+// ║  ② WHALE FLOW + CVD
+// ╚═══════════════════════════════════════════════════════════════════════════
+deltaArr = request.security_lower_tf(syminfo.tickerid, ltfInput, f_delta())
+
+// Beyond TradingView's intrabar history limit there is no minute data, so the
+// buy share is ESTIMATED from where the bar closed inside its own range. Used
+// only where no measurement exists — CVD divergences deep in history therefore
+// rest on an estimate while recent ones rest on real intrabar volume.
+float rawDelta = deltaArr.size() > 0 ? deltaArr.sum() : (high == low ? 0.0 : nz(volume) * (2 * (close - low) / (high - low) - 1))
+float deltaPct = nz(volume) > 0 ? rawDelta / volume * 100 : 0.0
+
+whaleThr = ta.percentile_nearest_rank(volume, pctLen, whalePct)
+isWhale  = not na(whaleThr) and nz(volume) >= whaleThr
+
+biasNum   = math.sum(isWhale ? rawDelta : 0.0, biasLen)
+biasDen   = math.sum(isWhale ? math.abs(rawDelta) : 0.0, biasLen)
+whaleBias = biasDen > 0 ? biasNum / biasDen * 100 : 0.0
+
+var float cvd = 0.0
+cvd += rawDelta
+
+// THE FLOW FIX. Both cumulative series are unbounded running sums whose
+// absolute level depends on where the chart's history happens to start. While
+// one drifts, the later pivot's value is higher by construction, so every price
+// low on that side clears "flow made a higher low" without any flow having been
+// measured. Subtracting each series' own EMA leaves only flow relative to the
+// prevailing trend, and the arbitrary anchor cancels.
+cvdBase = ta.ema(cvd, flowDeLen)
+cvdOsc  = flowMode == "Raw cumulative" ? cvd : cvd - cvdBase
+
+// ── ACCUMULATION / DISTRIBUTION ────────────────────────────────────────────
+// ta.accdist is the running sum of volume × ((c−l) − (h−c)) / (h−l): where the
+// bar CLOSED inside its own range, weighted by how much traded. It is a
+// different question from CVD — CVD asks who was hitting the book, A/D asks
+// where the bar settled — and it needs no intrabar data, so it is the one flow
+// source that reads the same at the left edge of the chart as at the right.
+adRaw  = ta.accdist
+adBase = ta.ema(adRaw, flowDeLen)
+adOsc  = flowMode == "Raw cumulative" ? adRaw : adRaw - adBase
+// The panel and the plot ALWAYS use the detrended form, whatever flowMode says.
+// "A/D is above its baseline" is a statement about accumulation; "raw A/D is
+// 4.2 billion" is a statement about how much history the chart happens to hold.
+// flowMode governs what the DIVERGENCE tracker reads, nothing else.
+adDet  = adRaw - adBase
+
+// ── WHERE A/D AND CVD ARE THE SAME NUMBER ──────────────────────────────────
+// A/D's money-flow multiplier and the estimate CVD falls back to when intrabar
+// data runs out are the SAME ALGEBRA:
+//     2·(c−l)/(h−l) − 1  =  (2c − 2l − h + l)/(h−l)  =  (2c − l − h)/(h−l)
+//     ((c−l) − (h−c))/(h−l)                          =  (2c − l − h)/(h−l)
+// So on any bar with no intrabar data the two series move identically, and a
+// divergence found by one is found by the other — two votes for one
+// measurement, inflating the agreement term that is worth 35 of the quality
+// score's 100 points.
+//
+// Intrabar availability is monotonic in age: if the LATER pivot had no minute
+// data, neither did anything before it, so the whole span was estimate-only and
+// the two verdicts are necessarily identical. That makes one flag sufficient.
+// Where it fires, the pair is counted ONCE and the panel says "CVD≡A/D".
+cvdIntrabar = deltaArr.size() > 0
+
+// ╔═══════════════════════════════════════════════════════════════════════════
+// ║  ③ DIVERGENCE — one set of price pivots, three sources, measured filters
+// ╚═══════════════════════════════════════════════════════════════════════════
+// Pivot source. Wick is the default: a liquidity sweep is a real price event,
+// and the swing-size / momentum-gap filters are the correct tools against wick
+// noise. Body ignores spikes entirely, for thin symbols where they are not.
+pHiSrc = pivSrc == "Body" ? close : high
+pLoSrc = pivSrc == "Body" ? close : low
+
+ph = ta.pivothigh(pHiSrc, divLen, divLen)
+pl = ta.pivotlow(pLoSrc, divLen, divLen)
+
+pvBar = bar_index - divLen
+
+// ATR AT THE PIVOT BAR, not at confirmation. Both other forks used the
+// confirmation-bar value, so every ATR-scaled threshold in them is describing
+// volatility `divLen` bars after the event it is filtering.
+atrS  = ta.atr(atrLen)
+atrPv = atrS[divLen]
+
+// Swing prominence: how far the pivot stands out from its own neighbourhood.
+// The window 2·divLen+1 ending at the confirmation bar is exactly centred on
+// the pivot, so this is the pivot's own leg — the test that rejects chop.
+legWin  = 2 * divLen + 1
+legLoW  = ta.lowest(low,   legWin)
+legHiW  = ta.highest(high, legWin)
+bool atrPvOk = not na(atrPv) and atrPv > 0
+// Prominence in ATR — the number, kept for scoring as well as gating, so the
+// quality score's "swing size" part measures the swing and not something else.
+float legAtrH = atrPvOk and not na(ph) ? (ph - legLoW) / atrPv : 0.0
+float legAtrL = atrPvOk and not na(pl) ? (legHiW - pl) / atrPv : 0.0
+bool legOkH = minLegAtr <= 0 or (not na(ph) and atrPvOk and legAtrH >= minLegAtr)
+bool legOkL = minLegAtr <= 0 or (not na(pl) and atrPvOk and legAtrL >= minLegAtr)
+
+// Each oscillator normalised by ITS OWN recent range, so one "Min Momentum
+// Gap" number means the same thing to MACD (price units), KD (0-100) and the
+// detrended CVD (volume units).
+// Named first, then history-indexed. `(a - b)[n]` on a bare expression is the
+// kind of thing that either compiles or does not depending on the Pine
+// version; a named series always indexes.
+macdRngS = ta.highest(macdLine, normLen) - ta.lowest(macdLine, normLen)
+kdRngS   = ta.highest(kdDiv,    normLen) - ta.lowest(kdDiv,    normLen)
+fishRngS = ta.highest(fisher,   normLen) - ta.lowest(fisher,   normLen)
+cvdRngS  = ta.highest(cvdOsc,   normLen) - ta.lowest(cvdOsc,   normLen)
+adRngS   = ta.highest(adOsc,    normLen) - ta.lowest(adOsc,    normLen)
+macdRng  = macdRngS[divLen]
+kdRng    = kdRngS[divLen]
+fishRng  = fishRngS[divLen]
+cvdRng   = cvdRngS[divLen]
+adRng    = adRngS[divLen]
+
+// KD extreme AT THE PIVOT. MEASURED unconditionally, ENFORCED only if asked —
+// two different things. Deriving the score from the enforcement flag would mean
+// that turning the filter OFF silently costs every signal 10 quality points,
+// so relaxing a filter would produce fewer signals. Measurement and policy are
+// kept apart so that cannot happen.
+kAtPv = k[divLen]
+bool kdWasOb = not na(kAtPv) and kAtPv >= obLevel
+bool kdWasOs = not na(kAtPv) and kAtPv <= osLevel
+bool kdObOk  = not useObOs or kdWasOb
+bool kdOsOk  = not useObOs or kdWasOs
+
+// Fisher gets the SAME treatment on its OWN levels, and gates only itself.
+fishAtPv = fisher[divLen]
+bool fishWasOb = not na(fishAtPv) and fishAtPv >= fishOb
+bool fishWasOs = not na(fishAtPv) and fishAtPv <= fishOs
+bool fishObOk  = not useObOs or fishWasOb
+bool fishOsOk  = not useObOs or fishWasOs
+
+[macdBear, macdBull, macdBearG, macdBullG] = f_divTrackPro(ph, pl, pvBar, macdLine[divLen], macdRng,  atrPv, legOkH, legOkL, true,     true,     rangeLo, rangeHi, minOscGap, minSepAtr)
+[kdBear,   kdBull,   kdBearG,   kdBullG]   = f_divTrackPro(ph, pl, pvBar, kdDiv[divLen],    kdRng,    atrPv, legOkH, legOkL, kdObOk,   kdOsOk,   rangeLo, rangeHi, minOscGap, minSepAtr)
+[fishBear, fishBull, fishBearG, fishBullG] = f_divTrackPro(ph, pl, pvBar, fishAtPv,         fishRng,  atrPv, legOkH, legOkL, fishObOk, fishOsOk, rangeLo, rangeHi, minOscGap, minSepAtr)
+[cvdBear,  cvdBull,  cvdBearG,  cvdBullG]  = f_divTrackPro(ph, pl, pvBar, cvdOsc[divLen],   cvdRng,   atrPv, legOkH, legOkL, true,     true,     rangeLo, rangeHi, minOscGap, minSepAtr)
+[adBear,   adBull,   adBearG,   adBullG]   = f_divTrackPro(ph, pl, pvBar, adOsc[divLen],    adRng,    atrPv, legOkH, legOkL, true,     true,     rangeLo, rangeHi, minOscGap, minSepAtr)
+
+mBear = useMacdD and macdBear
+mBull = useMacdD and macdBull
+kBear = useKdD   and kdBear
+kBull = useKdD   and kdBull
+fBear = useFishD and fishBear
+fBull = useFishD and fishBull
+cBear = useCvdD  and cvdBear
+cBull = useCvdD  and cvdBull
+aBear = useAdD   and adBear
+aBull = useAdD   and adBull
+
+// The CVD≡A/D collision, applied. When the pivot had no intrabar data the two
+// flow series were the same arithmetic, so a hit from both is ONE measurement
+// and is counted once. Without this, every historical flow divergence would
+// score as "2 sources agree" and jump a quality tier for free.
+bool flowDup     = useCvdD and useAdD and not cvdIntrabar[divLen]
+bool bearFlowDup = flowDup and cBear and aBear
+bool bullFlowDup = flowDup and cBull and aBull
+
+int bearN = (mBear ? 1 : 0) + (kBear ? 1 : 0) + (fBear ? 1 : 0) + (cBear ? 1 : 0) + (aBear ? 1 : 0) - (bearFlowDup ? 1 : 0)
+int bullN = (mBull ? 1 : 0) + (kBull ? 1 : 0) + (fBull ? 1 : 0) + (cBull ? 1 : 0) + (aBull ? 1 : 0) - (bullFlowDup ? 1 : 0)
+
+// Strongest momentum gap among whichever sources actually fired. The swing
+// prominence (legAtrH/legAtrL) is a property of the PRICE pivot, so it is the
+// same for all three and was already measured above.
+float bearGap = math.max(mBear ? macdBearG : 0.0, math.max(kBear ? kdBearG : 0.0, math.max(fBear ? fishBearG : 0.0, math.max(cBear ? cvdBearG : 0.0, aBear ? adBearG : 0.0))))
+float bullGap = math.max(mBull ? macdBullG : 0.0, math.max(kBull ? kdBullG : 0.0, math.max(fBull ? fishBullG : 0.0, math.max(cBull ? cvdBullG : 0.0, aBull ? adBullG : 0.0))))
+
+// ╔═══════════════════════════════════════════════════════════════════════════
+// ║  ④ OPEN INTEREST  (needed before quality — flow confluence scores it)
+// ╚═══════════════════════════════════════════════════════════════════════════
+baseCoin = syminfo.basecurrency
+dBin = f_oiDeltaPct("BINANCE:" + baseCoin + "USDT.P_OI")
+dByb = f_oiDeltaPct("BYBIT:"   + baseCoin + "USDT.P_OI")
+dOkx = f_oiDeltaPct("OKX:"     + baseCoin + "USDT.P_OI")
+dMan = f_oiDeltaPct(oiOverride == "" ? syminfo.tickerid + "_OI" : oiOverride)
+
+float sumD = 0.0
+int   cntD = 0
+if useBinance and not na(dBin)
+    sumD += dBin
+    cntD += 1
+if useBybit and not na(dByb)
+    sumD += dByb
+    cntD += 1
+if useOkx and not na(dOkx)
+    sumD += dOkx
+    cntD += 1
+
+float oiRawDelta = oiOverride != "" ? dMan : cntD > 0 ? sumD / cntD : dMan
+string venueTxt  = oiOverride != "" ? "manual" : cntD > 0 ? str.tostring(cntD) + " ex" : "chart"
+oiOk = not na(oiRawDelta)
+
+// A missing reading is NOT smoothed as a zero. ta.ema(nz(x)) feeds 0 in
+// whenever a venue drops out, asserting "open interest did not move" — a
+// measurement this chart never made. This EMA advances only on bars that
+// carried a reading; the strip greys out so the gap shows.
+var float oiEma = na
+float alpha = 2.0 / (oiSmoothLen + 1)
+if oiOk
+    oiEma := na(oiEma) ? oiRawDelta : oiEma + alpha * (oiRawDelta - oiEma)
+
+priceChgS = ta.ema(ta.change(close), oiSmoothLen)
+
+// 1 longs opening · 2 shorts opening · 3 shorts closing · 4 longs closing
+int oiState = not oiOk or na(oiEma) ? 0 : oiEma > 0 ? (priceChgS >= 0 ? 1 : 2) : oiEma < 0 ? (priceChgS >= 0 ? 3 : 4) : 0
+color oiCol = oiState == 1 ? BUY : oiState == 2 ? SELL : oiState == 3 ? TEAL : oiState == 4 ? ORNG : color.new(color.gray, 55)
+string oiTxt = oiState == 1 ? "Longs opening 開多" : oiState == 2 ? "Shorts opening 開空" : oiState == 3 ? "Shorts closing 空單回補" : oiState == 4 ? "Longs closing 多單平倉" : oiOk ? "Flat" : "no OI feed"
+
+// ╔═══════════════════════════════════════════════════════════════════════════
+// ║  ⑤ QUALITY — six measured parts, 100 total
+// ╚═══════════════════════════════════════════════════════════════════════════
+//   agreement 35 · momentum gap 25 · swing size 10 · KD extreme 10 ·
+//   trend regime 10 · flow confluence 10
+// Every part is something the script measured on this chart. Nothing here is
+// weighted by a backtest, because no backtest has been run — these are
+// priorities, stated openly, not fitted coefficients.
+trendEma  = ta.ema(close, trendLen)
+bool upAtPv = not na(trendEma[divLen]) and close[divLen] > trendEma[divLen]
+
+f_qual(int n, float gap, float leg, bool withTrend, bool extremeOk, bool flowOi, bool flowBias) =>
+    float q = 0.0
+    // Rescaled for five sources. The ladder is deliberately steep at the bottom
+    // and flat at the top: the jump from one source to two is the meaningful
+    // one, while the fifth adds little that the fourth did not already say.
+    q += n >= 4 ? 35.0 : n == 3 ? 30.0 : n == 2 ? 21.0 : n == 1 ? 10.0 : 0.0
+    // gap scales from the minimum required up to 3× it; beyond that it is
+    // already convincing and more does not add information.
+    float gRef = math.max(minOscGap, 0.01)
+    q += 25.0 * math.min(1.0, math.max(0.0, (gap - gRef) / (2.0 * gRef)))
+    float lRef = math.max(minLegAtr, 0.1)
+    q += 10.0 * math.min(1.0, math.max(0.0, (leg - lRef) / (2.0 * lRef)))
+    q += extremeOk ? 10.0 : 0.0
+    q += withTrend ? 10.0 : 0.0
+    q += flowOi   ? 5.0 : 0.0
+    q += flowBias ? 5.0 : 0.0
+    int(math.round(math.min(100.0, q)))
+
+// Flow confluence: a bearish divergence while NEW LONGS are opening is the
+// trap setup — size building into momentum that is already fading. Same in
+// mirror for bullish. Whale Bias leaning the WRONG way is the same idea read
+// from executed volume rather than open positions.
+bool bearFlowOi   = oiState == 1
+bool bullFlowOi   = oiState == 2
+bool bearFlowBias = whaleBias >= biasTh
+bool bullFlowBias = whaleBias <= -biasTh
+
+// The extreme-zone point is earned if EITHER momentum source was stretched at
+// the pivot — Fisher and KD answer the same question on different scales, so
+// requiring both would make the point nearly unreachable.
+int bearQ = bearN > 0 ? f_qual(bearN, bearGap, legAtrH, not upAtPv, kdWasOb or fishWasOb, bearFlowOi, bearFlowBias) : 0
+int bullQ = bullN > 0 ? f_qual(bullN, bullGap, legAtrL, upAtPv,     kdWasOs or fishWasOs, bullFlowOi, bullFlowBias) : 0
+
+// The gate. `bearRaw` is what the pane would draw with the structural fixes
+// but no scoring; `bearOk` is what survives the quality gate. The difference
+// is COUNTED, never silently dropped — a filter that hides its own
+// aggressiveness is indistinguishable from a quiet market.
+bool bearRaw = bearN > 0
+bool bullRaw = bullN > 0
+
+bool bearTrendKill = hardTrend and upAtPv       // counter-trend bear = into an uptrend
+bool bullTrendKill = hardTrend and not upAtPv
+
+bool bearOk = bearRaw and bearQ >= minQual and not bearTrendKill
+bool bullOk = bullRaw and bullQ >= minQual and not bullTrendKill
+
+bool bearCut = bearRaw and not bearOk
+bool bullCut = bullRaw and not bullOk
+
+// Consecutive same-direction divergences — the number that actually matters.
+// One is noise; three stacked without the opposite firing is a condition. The
+// run resets on the opposite signal, not on a timer, so it measures structure.
+var int bearRun = 0
+var int bullRun = 0
+if bearOk
+    bearRun += 1
+    bullRun := 0
+if bullOk
+    bullRun += 1
+    bearRun := 0
+
+bearAny = math.sum(bearOk ? 1 : 0, countLen)
+bullAny = math.sum(bullOk ? 1 : 0, countLen)
+bearStr = math.sum(bearOk and bearN >= 2 ? 1 : 0, countLen)
+bullStr = math.sum(bullOk and bullN >= 2 ? 1 : 0, countLen)
+cutCnt  = math.sum((bearCut ? 1 : 0) + (bullCut ? 1 : 0), countLen)
+
+// Quality tier drives the marker. A ≥ 75, B ≥ 60, C = whatever passed the gate.
+f_tier(int q) =>
+    q >= 75 ? "A" : q >= 60 ? "B" : "C"
+
+int bearTier = bearOk ? (bearQ >= 75 ? 3 : bearQ >= 60 ? 2 : 1) : 0
+int bullTier = bullOk ? (bullQ >= 75 ? 3 : bullQ >= 60 ? 2 : 1) : 0
+// v1 behaviour, kept selectable: size = how many sources agreed.
+int bearSz = showTier ? bearTier : (bearOk ? bearN : 0)
+int bullSz = showTier ? bullTier : (bullOk ? bullN : 0)
+
+// ── event log: the PIVOT's own time, not the confirmation time ─────────────
+var array<int>    evTime = array.new_int()
+var array<int>    evBar  = array.new_int()
+var array<string> evSrc  = array.new_string()
+var array<int>    evDir  = array.new_int()      // +1 bullish, −1 bearish
+var array<int>    evN    = array.new_int()      // how many sources agreed
+var array<int>    evQ    = array.new_int()      // quality 0-100
+
+f_push(int t, int b, string s, int dir, int n, int q) =>
+    array.push(evTime, t)
+    array.push(evBar, b)
+    array.push(evSrc, s)
+    array.push(evDir, dir)
+    array.push(evN, n)
+    array.push(evQ, q)
+    if array.size(evTime) > 40                  // bounded — a log, not a database
+        array.shift(evTime)
+        array.shift(evBar)
+        array.shift(evSrc)
+        array.shift(evDir)
+        array.shift(evN)
+        array.shift(evQ)
+
+pivotTime = time[divLen]
+if bearOk
+    f_push(pivotTime, pvBar, f_srcTxt(mBear, kBear, fBear, cBear, aBear, bearFlowDup), -1, bearN, bearQ)
+if bullOk
+    f_push(pivotTime, pvBar, f_srcTxt(mBull, kBull, fBull, cBull, aBull, bullFlowDup), 1, bullN, bullQ)
+
+// ╔═══════════════════════════════════════════════════════════════════════════
+// ║  ⑥ DXY — correlation over DOLLAR-TRADING bars only
+// ╚═══════════════════════════════════════════════════════════════════════════
+// gaps_on so a closed dollar market returns na instead of repeating its last
+// close. Repeated closes read as "the dollar was flat" — a fabricated
+// observation, and enough of them drive any correlation toward zero.
+useDxy = dxySym != ""
+dxyRaw = request.security(useDxy ? dxySym : syminfo.tickerid, timeframe.period, close, gaps=barmerge.gaps_on, ignore_invalid_symbol=true)
+bool dxyFresh = useDxy and not na(dxyRaw)
+
+var float dxyHeld = na
+if dxyFresh
+    dxyHeld := dxyRaw
+dxyOk = not na(dxyHeld)
+
+// Pair each dollar return with the crypto return over the SAME span, so a
+// two-day dollar move is never matched against one 15m candle. Pairs spanning
+// a longer closure than this are dropped entirely.
+dxyMaxGap = math.min(500, math.max(4, int(math.round(2.0 * 3600 / tfSec))))
+var float prevDxy   = na
+var float prevClose = na
+var int   prevBar   = na
+float rx = na
+float ry = na
+if dxyFresh
+    gap = na(prevBar) ? 999999 : bar_index - prevBar
+    if not na(prevDxy) and prevDxy > 0 and not na(prevClose) and prevClose > 0 and gap <= dxyMaxGap
+        rx := close / prevClose - 1
+        ry := dxyRaw / prevDxy - 1
+    prevDxy   := dxyRaw
+    prevClose := close
+    prevBar   := bar_index
+
+// Rolling Pearson over just the valid pairs. O(1) per bar, but the five sums
+// are rebuilt exactly from the window once per window length: returns are ~1e-4
+// and their squares ~1e-8, so add-one/subtract-one accumulators lose
+// significance over a long history and can even drive the variance negative.
+var array<float> cxA = array.new<float>()
+var array<float> cyA = array.new<float>()
+var float sX  = 0.0
+var float sY  = 0.0
+var float sXX = 0.0
+var float sYY = 0.0
+var float sXY = 0.0
+var int   sinceExact = 0
+
+if not na(rx) and not na(ry)
+    array.push(cxA, rx)
+    array.push(cyA, ry)
+    sX  += rx
+    sY  += ry
+    sXX += rx * rx
+    sYY += ry * ry
+    sXY += rx * ry
+    if array.size(cxA) > corrLen
+        ox = array.shift(cxA)
+        oy = array.shift(cyA)
+        sX  -= ox
+        sY  -= oy
+        sXX -= ox * ox
+        sYY -= oy * oy
+        sXY -= ox * oy
+    sinceExact += 1
+    // `for 0 to size-1` counts DOWN when size is 0, so the guard is load-bearing
+    if sinceExact >= corrLen and array.size(cxA) > 0
+        sinceExact := 0
+        sX  := 0.0
+        sY  := 0.0
+        sXX := 0.0
+        sYY := 0.0
+        sXY := 0.0
+        for i = 0 to array.size(cxA) - 1
+            vx = array.get(cxA, i)
+            vy = array.get(cyA, i)
+            sX  += vx
+            sY  += vy
+            sXX += vx * vx
+            sYY += vy * vy
+            sXY += vx * vy
+
+int   nPair  = array.size(cxA)
+minN         = math.max(30, corrLen / 4)
+float varX   = nPair * sXX - sX * sX
+float varY   = nPair * sYY - sY * sY
+float denomC = varX > 0 and varY > 0 ? math.sqrt(varX * varY) : 0.0
+float corr   = nPair >= minN and denomC > 0 ? (nPair * sXY - sX * sY) / denomC * 100 : na
+
+dxyEma = ta.ema(dxyHeld, dxyTrendLen)
+dxyUp  = dxyOk and not na(dxyEma) and dxyHeld > dxyEma
+var int lastDxyBar = na
+if dxyFresh
+    lastDxyBar := bar_index
+dxyAge = na(lastDxyBar) ? 999999 : bar_index - lastDxyBar
+bool dxyStale = dxyAge > dxyMaxGap
+
+// ╔═══════════════════════════════════════════════════════════════════════════
+// ║  ⑦ PLOTS — normalised to −100…+100 so one pane can hold it
+// ╚═══════════════════════════════════════════════════════════════════════════
+// MACD lives in price units. Dividing by its own recent maximum is a DISPLAY
+// transform only: divergence was already detected on the raw series above.
+macdAbsMax = ta.highest(math.abs(macdLine), normLen)
+macdPlot   = macdAbsMax > 0 ? macdLine / macdAbsMax * 100 : 0.0
+sigPlot    = macdAbsMax > 0 ? macdSignal / macdAbsMax * 100 : 0.0
+
+// KDJ is 0…100 → (v−50)×2 puts 50 on the zero line and maps 80/20 to ±60.
+// J deliberately overshoots that range — that overshoot is the whole point of
+// J — so the DRAWN value is clamped. Without it a single J spike to 140 sets
+// the pane's scale and flattens every other line into a straight edge. The
+// clamp is display only: divergence, the panel and the alerts use the true J.
+kPlot = (k - 50) * 2
+dPlot = (d - 50) * 2
+jPlot = f_clamp((j - 50) * 2, 125)
+
+colDelta = isWhale ? (rawDelta >= 0 ? color.new(BUY, 25) : color.new(SELL, 25)) : (rawDelta >= 0 ? color.new(BUY, 88) : color.new(SELL, 88))
+plot(showDelta ? deltaPct : na, "Delta % of volume", style=plot.style_columns, color=colDelta)
+
+// Histogram first so the lines sit on top of it.
+histPlot = macdAbsMax > 0 ? macdHist / macdAbsMax * 100 : 0.0
+histCol  = macdHist >= 0 ? (macdHist > macdHist[1] ? color.new(BUY, 30) : color.new(BUY, 72)) : (macdHist > macdHist[1] ? color.new(SELL, 72) : color.new(SELL, 30))
+plot(drawMacd and showHist ? histPlot : na, "MACD histogram", style=plot.style_columns, color=histCol)
+
+plot(drawMacd ? macdPlot : na, "MACD (scaled)", color=color.new(MCOL, 0),  linewidth=2)
+plot(drawMacd ? sigPlot  : na, "MACD signal",   color=color.new(MCOL, 60), linewidth=1)
+plot(drawKd   ? kPlot    : na, "%K (scaled)",   color=color.new(KCOL, 0),  linewidth=1)
+plot(drawKd   ? dPlot    : na, "%D (scaled)",   color=color.new(KCOL, 60), linewidth=1)
+plot(drawKd and showJ ? jPlot : na, "J (scaled, clamped)", color=color.new(AMBR, 25), linewidth=1)
+
+// Fisher is unbounded, so like MACD it is divided by its own recent maximum to
+// fit the shared pane. Display only — divergence read the raw series, and the
+// panel prints the true value because ±1.5 means nothing once rescaled.
+fishAbsMax  = ta.highest(math.abs(fisher), normLen)
+fishPlot    = fishAbsMax > 0 ? fisher  / fishAbsMax * 100 : 0.0
+fishSigPlot = fishAbsMax > 0 ? fishSig / fishAbsMax * 100 : 0.0
+plot(drawFish ? fishPlot : na, "Fisher (scaled)", color=color.new(FCOL, 0), linewidth=2)
+plot(drawFish and showFishSig ? fishSigPlot : na, "Fisher signal", color=color.new(FCOL, 60), linewidth=1)
+
+// A/D drawn from the DETRENDED series regardless of the divergence mode: the
+// raw cumulative level is an artefact of where the chart's history starts, so
+// plotting it would draw a line whose height means nothing.
+adAbsMax = ta.highest(math.abs(adDet), normLen)
+adPlot   = adAbsMax > 0 ? adDet / adAbsMax * 100 : 0.0
+plot(showAdLn ? adPlot : na, "A/D (detrended, scaled)", color=color.new(ADCOL, 20), linewidth=2)
+
+biasCol = whaleBias >= biasTh ? color.new(BUY, 0) : whaleBias <= -biasTh ? color.new(SELL, 0) : color.new(color.silver, 35)
+plot(showBias ? whaleBias : na, "Whale Bias", color=biasCol, linewidth=3)
+
+plot(showDxyLn and dxyOk ? corr : na, "DXY correlation ×100", color=color.new(ORNG, 25), linewidth=1)
+
+hline(0, "Zero", color=color.new(color.gray, 55))
+hline(60,  "KD 80 / bias +", color=color.new(color.gray, 82), linestyle=hline.style_dotted)
+hline(-60, "KD 20 / bias −", color=color.new(color.gray, 82), linestyle=hline.style_dotted)
+
+plotshape(showOI and oiState != 0, "OI strip", shape.square, location.top, color=oiCol, size=size.tiny)
+
+// ONE marker per direction per bar. Size and opacity ARE the strength, so the
+// pane never grows extra rows of dots. Colour is direction only.
+plotshape(bearSz == 1, "▼ C",  shape.triangledown, location.bottom, color.new(SELL, 62), size=size.tiny)
+plotshape(bearSz == 2, "▼ B",  shape.triangledown, location.bottom, color.new(SELL, 20), size=size.small)
+plotshape(bearSz >= 3, "▼ A",  shape.triangledown, location.bottom, color.new(SELL, 0),  size=size.normal)
+plotshape(bullSz == 1, "▲ C",  shape.triangleup,   location.bottom, color.new(BUY, 62),  size=size.tiny)
+plotshape(bullSz == 2, "▲ B",  shape.triangleup,   location.bottom, color.new(BUY, 20),  size=size.small)
+plotshape(bullSz >= 3, "▲ A",  shape.triangleup,   location.bottom, color.new(BUY, 0),   size=size.normal)
+
+// The suppressed ones leave a faint tick. Knowing WHERE the gate fired is how
+// you tell "the market is quiet" from "my filter is too tight".
+plotshape(bearCut, "▽ filtered", shape.triangledown, location.bottom, color.new(color.gray, 82), size=size.tiny)
+plotshape(bullCut, "△ filtered", shape.triangleup,   location.bottom, color.new(color.gray, 82), size=size.tiny)
+
+if labelStrong and bearOk and bearN >= 2
+    label.new(bar_index, 0, "▼ " + f_srcTxt(mBear, kBear, fBear, cBear, aBear, bearFlowDup) + " " + f_tier(bearQ) + str.tostring(bearQ), color=color.new(SELL, 12), textcolor=color.white, style=label.style_label_down, size=size.tiny)
+if labelStrong and bullOk and bullN >= 2
+    label.new(bar_index, 0, "▲ " + f_srcTxt(mBull, kBull, fBull, cBull, aBull, bullFlowDup) + " " + f_tier(bullQ) + str.tostring(bullQ), color=color.new(BUY, 12), textcolor=color.white, style=label.style_label_up, size=size.tiny)
+
+// ╔═══════════════════════════════════════════════════════════════════════════
+// ║  ⑧ PANEL
+// ╚═══════════════════════════════════════════════════════════════════════════
+// COMPACT (default) answers four questions and stops: which way is money
+// leaning, what regime are we in, what is Fisher doing, what is A/D doing —
+// plus ONE divergence line. That last line is not decoration: a radar showing
+// nothing and a radar whose quality gate ate everything look identical without
+// it, so the kept count and the filtered count stay even in the short panel.
+//
+// FULL restores Whale Bias, the OI numbers, DXY, KDJ J, the run counter and the
+// timestamped event log. Everything is computed in both modes — this only
+// decides what is printed.
+//
+// Rows are emitted through a running counter rather than hard-coded indices.
+// The old version wrote row 8 + histN + 2 and had to be reasoned about every
+// time a row moved; table.cell() past the declared row count is a runtime
+// error, not a clipped table, so the arithmetic had to be right by inspection.
+// Worst case here is 6 fixed + 6 event + 6 detail = 18, declared at 22.
+var table tbl = table.new(f_pos(tblPos), 2, 22, bgcolor=color.new(#0d0d12, 12), border_color=color.new(color.gray, 65), border_width=1, frame_color=color.new(color.gray, 45), frame_width=1)
+
+if barstate.islast and showTbl
+    bool full = panelMode == "Full"
+
+    // ── ① NOW — is money leaning long or short ───────────────────────────
+    // Only claims a side when the two INDEPENDENT reads agree. Whale Bias is
+    // executed volume; OI is open positions. They measure different things, so
+    // agreement is information and disagreement is also information — calling
+    // it anyway would invent a signal neither one gave. Resolved as a STATE
+    // first, then rendered: deriving the colour by comparing the finished
+    // string would break silently the day the wording changes.
+    int biasSide = whaleBias >= biasTh ? 1 : whaleBias <= -biasTh ? -1 : 0
+    int oiSide   = oiState == 1 ? 1 : oiState == 2 ? -1 : 0
+    int nowState = biasSide != 0 and biasSide == oiSide ? biasSide * 2 : biasSide == 0 and oiSide == 0 ? 0 : biasSide != 0 and oiSide != 0 ? 9 : (biasSide + oiSide > 0 ? 1 : -1)
+    string nowTxt = nowState == 2 ? "LONG 偏多 — 兩邊一致" : nowState == -2 ? "SHORT 偏空 — 兩邊一致" : nowState == 9 ? "分歧 — 兩邊相反" : nowState == 1 ? "微偏多" : nowState == -1 ? "微偏空" : "沒有方向"
+    color nowC = nowState == 2 ? BUY : nowState == -2 ? SELL : AMBR
+
+    // ── ② REGIME ─────────────────────────────────────────────────────────
+    string trendTxt = (upAtPv ? "Above EMA" + str.tostring(trendLen) : "Below EMA" + str.tostring(trendLen)) + (hardTrend ? " · 反向封鎖" : "")
+    color  trendC   = upAtPv ? BUY : SELL
+
+    // ── ③ FISHER ─────────────────────────────────────────────────────────
+    // The classic Fisher trigger is not the extreme but the cross back OUT of
+    // it — Fisher can sit overbought through an entire impulse, so "overbought"
+    // alone is a description, not an event. The turn is the event.
+    string fishZone = fisher >= fishOb ? "超買 overbought" : fisher <= fishOs ? "超賣 oversold" : fisher > fishSig ? "上升 rising" : "下降 falling"
+    string fishTurn = (fisher < fishSig and fishSig >= fishOb) ? " · 轉空 turning down" : (fisher > fishSig and fishSig <= fishOs) ? " · 轉多 turning up" : ""
+    color  fishC    = fisher >= fishOb ? SELL : fisher <= fishOs ? BUY : fisher > fishSig ? BUY : SELL
+    string fishTxt  = str.tostring(fisher, "#.##") + " · " + fishZone + fishTurn
+
+    // ── ④ A/D ────────────────────────────────────────────────────────────
+    // LEVEL says whether money has been accumulating or leaving; DIRECTION says
+    // whether that is still happening. Either one alone is half a sentence — an
+    // A/D far above its baseline but rolling over is distribution starting, not
+    // accumulation continuing. The % is A/D's distance from its own baseline as
+    // a share of its recent range, so it is comparable across symbols.
+    float adRelNow = adAbsMax > 0 ? adDet / adAbsMax * 100 : 0.0
+    bool  adUp     = adDet > nz(adDet[1], adDet)
+    string adTxt   = (adDet > 0 ? (adUp ? "吸籌 accumulation" : "買盤轉弱 accum. fading") : (adUp ? "賣壓轉弱 distrib. fading" : "出貨 distribution")) + " · " + str.tostring(adRelNow, "+#") + "%"
+    color  adC     = adDet > 0 ? (adUp ? BUY : AMBR) : (adUp ? AMBR : SELL)
+
+    // ── ⑤ the one divergence line ────────────────────────────────────────
+    color  cutC   = cutCnt == 0 ? color.gray : cutCnt > bearAny + bullAny ? AMBR : color.silver
+    string divTxt = "▼" + str.tostring(bearAny) + "  ▲" + str.tostring(bullAny) + " · " + str.tostring(cutCnt) + " 過濾"
+
+    int r = 0
+    table.cell(tbl, 0, r, "背離雷達 PRO", text_color=color.white, text_size=tblSize, text_halign=text.align_left, bgcolor=color.new(#1c1c28, 0))
+    table.cell(tbl, 1, r, (full ? "FULL" : "") + " ", text_color=color.new(color.silver, 40), text_size=tblSize, text_halign=text.align_right, bgcolor=color.new(#1c1c28, 0))
+    r += 1
+
+    table.cell(tbl, 0, r, " NOW 現在", text_color=color.silver, text_size=tblSize, text_halign=text.align_left)
+    table.cell(tbl, 1, r, nowTxt + " ", text_color=nowC, text_size=tblSize, text_halign=text.align_right)
+    r += 1
+
+    table.cell(tbl, 0, r, " Regime 趨勢", text_color=color.silver, text_size=tblSize, text_halign=text.align_left)
+    table.cell(tbl, 1, r, trendTxt + " ", text_color=trendC, text_size=tblSize, text_halign=text.align_right)
+    r += 1
+
+    table.cell(tbl, 0, r, " Fisher", text_color=color.silver, text_size=tblSize, text_halign=text.align_left)
+    table.cell(tbl, 1, r, fishTxt + " ", text_color=fishC, text_size=tblSize, text_halign=text.align_right)
+    r += 1
+
+    table.cell(tbl, 0, r, " A/D 籌碼", text_color=color.silver, text_size=tblSize, text_halign=text.align_left)
+    table.cell(tbl, 1, r, adTxt + " ", text_color=adC, text_size=tblSize, text_halign=text.align_right)
+    r += 1
+
+    table.cell(tbl, 0, r, " 背離 近" + str.tostring(countLen) + "根", text_color=color.white, text_size=tblSize, text_halign=text.align_left, bgcolor=color.new(#1c1c28, 0))
+    table.cell(tbl, 1, r, divTxt + " ", text_color=cutC, text_size=tblSize, text_halign=text.align_right, bgcolor=color.new(#1c1c28, 0))
+    r += 1
+
+    if full
+        biasTxt = whaleBias >= biasTh ? "LONG lean" : whaleBias <= -biasTh ? "SHORT lean" : "Neutral"
+        biasC   = whaleBias >= biasTh ? BUY : whaleBias <= -biasTh ? SELL : AMBR
+        corrTxt = na(corr) ? "…" : str.tostring(corr, "#")
+        dxyTxt  = not dxyOk ? "off" : (dxyUp ? "Rising" : "Falling") + " · corr " + corrTxt + (dxyStale ? " (mkt shut)" : "")
+        dxyC    = not dxyOk ? color.gray : dxyStale ? color.new(color.silver, 30) : dxyUp ? SELL : BUY   // rising dollar = usual crypto headwind (tendency, not a rule)
+        // J is the reason KDJ exists: it overshoots 0…100 and those excursions
+        // are the signal. The pane clamps the LINE; this prints the real number.
+        jTxt = str.tostring(j, "#") + (j > 100 ? " · 超買 overbought" : j < 0 ? " · 超賣 oversold" : k > d ? " · K>D" : " · K<D")
+        jC   = j > 100 ? SELL : j < 0 ? BUY : k > d ? BUY : SELL
+        runTxt = bearRun > 0 ? str.tostring(bearRun) + "× ▼ 連續看空" : bullRun > 0 ? str.tostring(bullRun) + "× ▲ 連續看多" : "—"
+        runC   = bearRun > 0 ? SELL : bullRun > 0 ? BUY : color.gray
+
+        table.cell(tbl, 0, r, " Whale Bias", text_color=color.silver, text_size=tblSize, text_halign=text.align_left)
+        table.cell(tbl, 1, r, str.tostring(math.round(whaleBias)) + " · " + biasTxt + " ", text_color=biasC, text_size=tblSize, text_halign=text.align_right)
+        r += 1
+        table.cell(tbl, 0, r, " OI Read", text_color=color.silver, text_size=tblSize, text_halign=text.align_left)
+        table.cell(tbl, 1, r, oiTxt + " ", text_color=oiCol, text_size=tblSize, text_halign=text.align_right)
+        r += 1
+        table.cell(tbl, 0, r, " OI Δ", text_color=color.silver, text_size=tblSize, text_halign=text.align_left)
+        table.cell(tbl, 1, r, (oiOk and not na(oiEma) ? str.tostring(oiEma, "#.###") + "% · " + venueTxt : "—") + " ", text_color=oiCol, text_size=tblSize, text_halign=text.align_right)
+        r += 1
+        table.cell(tbl, 0, r, " DXY", text_color=color.silver, text_size=tblSize, text_halign=text.align_left)
+        table.cell(tbl, 1, r, dxyTxt + " ", text_color=dxyC, text_size=tblSize, text_halign=text.align_right)
+        r += 1
+        table.cell(tbl, 0, r, " KDJ  J", text_color=color.silver, text_size=tblSize, text_halign=text.align_left)
+        table.cell(tbl, 1, r, jTxt + " ", text_color=jC, text_size=tblSize, text_halign=text.align_right)
+        r += 1
+        table.cell(tbl, 0, r, " 連續背離 Run", text_color=color.silver, text_size=tblSize, text_halign=text.align_left)
+        table.cell(tbl, 1, r, runTxt + " ", text_color=runC, text_size=tblSize, text_halign=text.align_right)
+        r += 1
+
+        // Recent events, newest first. Each row prints the PIVOT's own time plus
+        // how many bars ago — the second number is the confirmation lag you are
+        // living with, and it should never be a surprise.
+        int n = array.size(evTime)
+        for i = 0 to histN - 1
+            if i < n
+                int idx  = n - 1 - i
+                int t    = array.get(evTime, idx)
+                int b    = array.get(evBar, idx)
+                string s = array.get(evSrc, idx)
+                int dir  = array.get(evDir, idx)
+                int cnt  = array.get(evN, idx)
+                int q    = array.get(evQ, idx)
+                color c  = dir > 0 ? BUY : SELL
+                table.cell(tbl, 0, r + i, " " + (dir > 0 ? "▲" : "▼") + " " + s + " " + f_tier(q) + str.tostring(q) + (cnt >= 2 ? " ●" : ""), text_color=c, text_size=tblSize, text_halign=text.align_left)
+                table.cell(tbl, 1, r + i, str.format_time(t, "MM-dd HH:mm", syminfo.timezone) + " · " + str.tostring(bar_index - b) + " bars ago ", text_color=color.silver, text_size=tblSize, text_halign=text.align_right)
+            else
+                table.cell(tbl, 0, r + i, " —", text_color=color.gray, text_size=tblSize, text_halign=text.align_left)
+                table.cell(tbl, 1, r + i, " ", text_color=color.gray, text_size=tblSize, text_halign=text.align_right)
+        r += histN
+
+        table.cell(tbl, 0, r, " 其中 2+ 同時", text_color=color.silver, text_size=tblSize, text_halign=text.align_left)
+        table.cell(tbl, 1, r, "▼" + str.tostring(bearStr) + "  ▲" + str.tostring(bullStr) + " ", text_color=bearStr > bullStr ? SELL : bullStr > bearStr ? BUY : color.silver, text_size=tblSize, text_halign=text.align_right)
+        r += 1
+
+// ╔═══════════════════════════════════════════════════════════════════════════
+// ║  ⑨ ALERTS — all quality-gated except where marked
+// ╚═══════════════════════════════════════════════════════════════════════════
+alertcondition(bearOk, "Bearish Divergence (passed gate)", "價格創新高但動能沒有跟上 — 看空背離（已過品質門檻）")
+alertcondition(bullOk, "Bullish Divergence (passed gate)", "價格創新低但動能沒有跟上 — 看多背離（已過品質門檻）")
+alertcondition(bearOk and bearN >= 2, "Bearish Divergence 2+ agree", "2 個以上來源同時出現看空背離")
+alertcondition(bullOk and bullN >= 2, "Bullish Divergence 2+ agree", "2 個以上來源同時出現看多背離")
+alertcondition(bearOk and bearQ >= 75, "Bearish Divergence A-tier", "A 級看空背離 — 品質 75 以上")
+alertcondition(bullOk and bullQ >= 75, "Bullish Divergence A-tier", "A 級看多背離 — 品質 75 以上")
+alertcondition(bearOk and bearRun >= 3, "Bearish Divergence run of 3", "連續 3 次看空背離未被打斷")
+alertcondition(bullOk and bullRun >= 3, "Bullish Divergence run of 3", "連續 3 次看多背離未被打斷")
+alertcondition(ta.crossover(whaleBias, biasTh),   "Whale Bias Flip Long",  "大單流向轉多")
+alertcondition(ta.crossunder(whaleBias, -biasTh), "Whale Bias Flip Short", "大單流向轉空")
+alertcondition(oiState == 1 and oiState[1] != 1, "New Longs Opening",  "未平倉上升 + 價格上升 — 新多單進場")
+alertcondition(oiState == 2 and oiState[1] != 2, "New Shorts Opening", "未平倉上升 + 價格下跌 — 新空單進場")
+// Fisher: the tradeable event is the cross back OUT of an extreme, not the
+// extreme itself — Fisher can hold overbought through a whole impulse.
+alertcondition(ta.crossunder(fisher, fishSig) and fishSig >= fishOb, "Fisher turning down", "Fisher 從超買區翻下 — 動能轉弱")
+alertcondition(ta.crossover(fisher, fishSig)  and fishSig <= fishOs, "Fisher turning up",   "Fisher 從超賣區翻上 — 動能轉強")
+alertcondition(ta.crossover(adDet, 0),  "A/D above baseline", "A/D 翻上基準 — 開始吸籌")
+alertcondition(ta.crossunder(adDet, 0), "A/D below baseline", "A/D 跌破基準 — 開始出貨")
+alertcondition(ta.crossover(j, 0),    "J back above 0",   "J 從超賣區翻上 0 — 極端賣壓收手")
+alertcondition(ta.crossunder(j, 100), "J back below 100", "J 從超買區翻下 100 — 極端買盤收手")
+alertcondition(ta.crossover(k, d),    "KDJ golden cross", "K 向上穿越 D — KD 黃金交叉")
+alertcondition(ta.crossunder(k, d),   "KDJ death cross",  "K 向下穿越 D — KD 死亡交叉")
+alertcondition(ta.crossover(macdLine, macdSignal),  "MACD cross up",   "MACD 向上穿越訊號線")
+alertcondition(ta.crossunder(macdLine, macdSignal), "MACD cross down", "MACD 向下穿越訊號線")

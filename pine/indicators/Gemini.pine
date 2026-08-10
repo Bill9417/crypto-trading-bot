@@ -1,0 +1,545 @@
+// ════════════════════════════════════════════════════════════════════════════
+//  DIVERGENCE RADAR PRO — CRYPTO EDITION
+//  Optimized for high-volatility 24/7 crypto markets with ATR noise filtering,
+//  trend-regime context, and open interest squeeze detection.
+// ════════════════════════════════════════════════════════════════════════════
+//@version=6
+indicator("Divergence Radar Pro [Crypto]", overlay=false, format=format.price, precision=1, max_labels_count=500)
+
+// ╔═══════════════════════════════════════════════════════════════════════════
+// ║  INPUTS
+// ╚═══════════════════════════════════════════════════════════════════════════
+gView = "① 版面 View"
+oscView   = input.string("MACD", "Draw which oscillator", ["MACD", "KD", "Both", "None"], group=gView)
+showBias  = input.bool(true,  "Draw Whale Bias",  group=gView, inline="v1")
+showOI    = input.bool(true,  "OI strip",         group=gView, inline="v1")
+showDxyLn = input.bool(false, "Draw DXY correlation line", group=gView)
+showDelta = input.bool(false, "Draw raw delta columns", group=gView)
+
+gCrypto = "⚡ 加密貨幣精準過濾 Crypto Precision Filters"
+useAtrFilter = input.bool(true, "Filter Wick Noise with ATR", group=gCrypto, tooltip="Pivots must exceed ATR threshold to avoid wick manipulation.")
+atrLen       = input.int(14, "ATR Length", minval=1, group=gCrypto)
+atrMult      = input.float(0.8, "Pivot ATR Multiplier", minval=0.1, maxval=3.0, step=0.1, group=gCrypto)
+useObOs      = input.bool(true, "Require Extreme Zones (KD OB/OS)", group=gCrypto, tooltip="KD divergence only counts if KD was in overbought (>70) or oversold (<30) zone at the pivot.")
+useTrendFilt = input.bool(true, "Trend Regime Filter (200 EMA)", group=gCrypto, tooltip="Identifies counter-trend divergences which carry higher failure risk in strong crypto trends.")
+trendLen     = input.int(200, "Trend EMA Length", minval=10, maxval=500, group=gCrypto)
+
+gDiv = "② 背離 Divergence"
+divLen    = input.int(5, "Pivot Length", minval=2, maxval=30, group=gDiv)
+useMacdD  = input.bool(true, "MACD", group=gDiv, inline="src")
+useKdD    = input.bool(true, "KD",   group=gDiv, inline="src")
+useCvdD   = input.bool(true, "CVD",  group=gDiv, inline="src")
+countLen  = input.int(200, "Count Window (bars)", minval=20, maxval=2000, group=gDiv)
+labelStrong = input.bool(true, "Label when 2+ sources agree", group=gDiv)
+
+gMacd = "③ MACD ReLoaded"
+macdSrc   = input.source(close, "Source", group=gMacd)
+mav       = input.string("VAR", "Moving Average Type", ["SMA","EMA","WMA","DEMA","TMA","VAR","WWMA","ZLEMA","TSF","HULL","TILL"], group=gMacd)
+macdFast  = input.int(12, "Fast", minval=2, group=gMacd, inline="m")
+macdSlow  = input.int(26, "Slow", minval=3, group=gMacd, inline="m")
+macdSig   = input.int(9,  "Signal", minval=1, group=gMacd, inline="m")
+t3factor  = input.float(0.7, "TILLSON T3 Volume Factor", minval=0.0, maxval=1.0, step=0.1, group=gMacd)
+showHist  = input.bool(false, "Draw MACD histogram", group=gMacd)
+normLen   = input.int(200, "Display Scaling Window", minval=50, maxval=2000, group=gMacd)
+
+gKd = "④ KDJ"
+kLen      = input.int(9, "Range Length (%K)", minval=1, group=gKd)
+kSmooth   = input.int(1, "%K extra smooth", minval=1, group=gKd, inline="s")
+dSmooth   = input.int(1, "%D extra smooth", minval=1, group=gKd, inline="s")
+jSmooth   = input.int(1, "J smooth", minval=1, group=gKd, inline="s")
+kdDivSrc  = input.string("K", "Divergence uses", ["K","D","J"], group=gKd)
+showJ     = input.bool(true, "Draw J line", group=gKd)
+
+gW = "⑤ Whale Bias"
+ltfInput   = input.timeframe("1", "Intrabar Timeframe", group=gW)
+whalePct   = input.int(90, "Whale Percentile", minval=70, maxval=99, group=gW)
+pctLen     = input.int(200, "Percentile Lookback", minval=50, maxval=1000, group=gW)
+biasLen    = input.int(96, "Bias Window (bars)", minval=20, maxval=500, group=gW)
+biasTh     = input.int(40, "Bias Threshold (±)", minval=10, maxval=90, group=gW)
+
+gO = "⑥ Open Interest"
+useBinance = input.bool(true, "Binance", inline="ven", group=gO)
+useBybit   = input.bool(true, "Bybit",   inline="ven", group=gO)
+useOkx     = input.bool(true, "OKX",     inline="ven", group=gO)
+oiSmoothLen= input.int(3, "OI Smoothing (EMA)", minval=1, maxval=20, group=gO)
+oiOverride = input.symbol("", "OI Symbol Override", group=gO)
+
+gD = "⑦ DXY"
+dxySym     = input.symbol("TVC:DXY", "Dollar Index (blank = off)", group=gD)
+corrLen    = input.int(200, "Correlation Length (bars)", minval=30, maxval=1000, group=gD)
+dxyTrendLen= input.int(50, "DXY Trend EMA", minval=10, maxval=500, group=gD)
+
+gP = "⑧ Panel"
+showTbl   = input.bool(true, "Show Panel", group=gP)
+tblPos    = input.string("Top Right", "Position", ["Top Right","Top Left","Bottom Right","Bottom Left"], group=gP)
+tblSize   = input.string(size.small, "Text Size", [size.tiny, size.small, size.normal], group=gP)
+histN     = input.int(3, "Recent events listed", minval=1, maxval=6, group=gP)
+
+// Palette
+BUY  = #26a69a
+SELL = #ef5350
+AMBR = #ffb300
+TEAL = #4dd0e1
+ORNG = #ff9800
+MCOL = #42a5f5
+KCOL = #ab47bc
+
+tfSec = math.max(60, timeframe.in_seconds(timeframe.period))
+drawMacd = oscView == "MACD" or oscView == "Both"
+drawKd   = oscView == "KD"   or oscView == "Both"
+
+// ╔═══════════════════════════════════════════════════════════════════════════
+// ║  HELPERS
+// ╚═══════════════════════════════════════════════════════════════════════════
+f_delta() =>
+    close > open ? volume : close < open ? -volume : close >= nz(close[1], close) ? volume : -volume
+
+f_oiDeltaPct(string tick) =>
+    c = request.security(tick, timeframe.period, close, ignore_invalid_symbol=true)
+    not na(c) and nz(c[1]) > 0 ? (c - c[1]) / c[1] * 100 : na
+
+f_pos(string p) =>
+    p == "Top Left" ? position.top_left : p == "Bottom Right" ? position.bottom_right : p == "Bottom Left" ? position.bottom_left : position.top_right
+
+f_clamp(float v, float lim) =>
+    math.max(-lim, math.min(lim, v))
+
+f_ma(simple string t, float s, simple int len) =>
+    sma_  = ta.sma(s, len)
+    ema_  = ta.ema(s, len)
+    wma_  = ta.wma(s, len)
+    dema_ = 2 * ema_ - ta.ema(ema_, len)
+    tma_  = ta.sma(ta.sma(s, int(math.ceil(len / 2.0))), int(math.floor(len / 2.0)) + 1)
+
+    vud  = s > s[1] ? s - s[1] : 0.0
+    vdd  = s < s[1] ? s[1] - s : 0.0
+    vUD  = math.sum(vud, 9)
+    vDD  = math.sum(vdd, 9)
+    vCMO = vUD + vDD != 0 ? (vUD - vDD) / (vUD + vDD) : 0.0
+    vk   = 2.0 / (len + 1) * math.abs(vCMO)
+    var float var_ = na
+    var_ := na(var_) ? s : vk * s + (1 - vk) * var_
+
+    var float wwma_ = na
+    wwa = 1.0 / len
+    wwma_ := na(wwma_) ? s : wwa * s + (1 - wwa) * wwma_
+
+    zlag   = int(len / 2)
+    zlema_ = ta.ema(s + (s - s[zlag]), len)
+
+    lr0  = ta.linreg(s, len, 0)
+    lr1  = ta.linreg(s, len, 1)
+    tsf_ = 2 * lr0 - lr1
+
+    hull_ = ta.wma(2 * ta.wma(s, int(math.max(1, math.round(len / 2.0)))) - ta.wma(s, len), int(math.max(1, math.round(math.sqrt(len)))))
+
+    e1 = ta.ema(s, len)
+    e2 = ta.ema(e1, len)
+    e3 = ta.ema(e2, len)
+    e4 = ta.ema(e3, len)
+    e5 = ta.ema(e4, len)
+    e6 = ta.ema(e5, len)
+    a  = t3factor
+    till_ = -a*a*a * e6 + (3*a*a + 3*a*a*a) * e5 + (-6*a*a - 3*a - 3*a*a*a) * e4 + (1 + 3*a + a*a*a + 3*a*a) * e3
+
+    switch t
+        "SMA"   => sma_
+        "EMA"   => ema_
+        "WMA"   => wma_
+        "DEMA"  => dema_
+        "TMA"   => tma_
+        "VAR"   => var_
+        "WWMA"  => wwma_
+        "ZLEMA" => zlema_
+        "TSF"   => tsf_
+        "HULL"  => hull_
+        "TILL"  => till_
+        => ema_
+
+f_srcTxt(bool m, bool k, bool c) =>
+    string s = m ? "MACD" : ""
+    s := k ? (s == "" ? "KD" : s + "+KD") : s
+    s := c ? (s == "" ? "CVD" : s + "+CVD") : s
+    s
+
+// Advanced Divergence Tracker with Crypto Filters (ATR & OB/OS)
+f_divTrackCrypto(float phVal, float plVal, float oscAtPivot, float rawKdVal, float minAtrDist, bool checkObOs) =>
+    var float lastPH  = na
+    var float lastPHo = na
+    var float lastPL  = na
+    var float lastPLo = na
+    bool bear = false
+    bool bull = false
+
+    if not na(phVal) and not na(oscAtPivot)
+        bool obCond = not checkObOs or (rawKdVal >= 70)
+        bool atrBearCond = na(lastPH) or (phVal - lastPH >= minAtrDist)
+        if not na(lastPH) and phVal > lastPH and oscAtPivot < lastPHo and obCond and atrBearCond
+            bear := true
+        lastPH  := phVal
+        lastPHo := oscAtPivot
+
+    if not na(plVal) and not na(oscAtPivot)
+        bool osCond = not checkObOs or (rawKdVal <= 30)
+        bool atrBullCond = na(lastPL) or (lastPL - plVal >= minAtrDist)
+        if not na(lastPL) and plVal < lastPL and oscAtPivot > lastPLo and osCond and atrBullCond
+            bull := true
+        lastPL  := plVal
+        lastPLo := oscAtPivot
+    [bear, bull]
+
+// ╔═══════════════════════════════════════════════════════════════════════════
+// ║  ① OSCILLATORS & CRYPTO REGIME
+// ╚═══════════════════════════════════════════════════════════════════════════
+atrVal = ta.atr(atrLen)
+minAtrDist = useAtrFilter ? atrVal * atrMult : 0.0
+
+trendEma = ta.ema(close, trendLen)
+isUptrend = close > trendEma
+
+macdLine   = f_ma(mav, macdSrc, macdFast) - f_ma(mav, macdSrc, macdSlow)
+macdSignal = f_ma(mav, macdLine, macdSig)
+macdHist   = macdLine - macdSignal
+
+rsv = ta.stoch(close, high, low, kLen)
+var float kRaw = na
+var float dRaw = na
+kRaw := (2.0 / 3.0) * nz(kRaw[1], 50) + (1.0 / 3.0) * nz(rsv, 50)
+dRaw := (2.0 / 3.0) * nz(dRaw[1], 50) + (1.0 / 3.0) * nz(kRaw, 50)
+
+k = ta.sma(kRaw, kSmooth)
+d = ta.sma(dRaw, dSmooth)
+j = ta.sma(3 * k - 2 * d, jSmooth)
+
+kdDiv = kdDivSrc == "D" ? d : kdDivSrc == "J" ? j : k
+
+// ╔═══════════════════════════════════════════════════════════════════════════
+// ║  ② WHALE FLOW + CVD
+// ╚═══════════════════════════════════════════════════════════════════════════
+deltaArr = request.security_lower_tf(syminfo.tickerid, ltfInput, f_delta())
+
+float rawDelta = deltaArr.size() > 0 ? deltaArr.sum() : (high == low ? 0.0 : nz(volume) * (2 * (close - low) / (high - low) - 1))
+float deltaPct = nz(volume) > 0 ? rawDelta / volume * 100 : 0.0
+
+whaleThr = ta.percentile_nearest_rank(volume, pctLen, whalePct)
+isWhale  = not na(whaleThr) and nz(volume) >= whaleThr
+
+biasNum   = math.sum(isWhale ? rawDelta : 0.0, biasLen)
+biasDen   = math.sum(isWhale ? math.abs(rawDelta) : 0.0, biasLen)
+whaleBias = biasDen > 0 ? biasNum / biasDen * 100 : 0.0
+
+var float cvd = 0.0
+cvd += rawDelta
+
+// ╔═══════════════════════════════════════════════════════════════════════════
+// ║  ③ DIVERGENCE (WITH CRYPTO FILTERS)
+// ╚═══════════════════════════════════════════════════════════════════════════
+ph = ta.pivothigh(high, divLen, divLen)
+pl = ta.pivotlow(low, divLen, divLen)
+
+[macdBear, macdBull] = f_divTrackCrypto(ph, pl, macdLine[divLen], k[divLen], minAtrDist, useObOs)
+[kdBear,   kdBull]   = f_divTrackCrypto(ph, pl, kdDiv[divLen],    k[divLen], minAtrDist, useObOs)
+[cvdBear,  cvdBull]  = f_divTrackCrypto(ph, pl, cvd[divLen],      k[divLen], minAtrDist, useObOs)
+
+mBear = useMacdD and macdBear
+mBull = useMacdD and macdBull
+kBear = useKdD   and kdBear
+kBull = useKdD   and kdBull
+cBear = useCvdD  and cvdBear
+cBull = useCvdD  and cvdBull
+
+int bearN = (mBear ? 1 : 0) + (kBear ? 1 : 0) + (cBear ? 1 : 0)
+int bullN = (mBull ? 1 : 0) + (kBull ? 1 : 0) + (cBull ? 1 : 0)
+
+var int bearRun = 0
+var int bullRun = 0
+if bearN > 0
+    bearRun += 1
+    bullRun := 0
+if bullN > 0
+    bullRun += 1
+    bearRun := 0
+
+bearAny = math.sum(bearN > 0 ? 1 : 0, countLen)
+bullAny = math.sum(bullN > 0 ? 1 : 0, countLen)
+bearStr = math.sum(bearN >= 2 ? 1 : 0, countLen)
+bullStr = math.sum(bullN >= 2 ? 1 : 0, countLen)
+
+var array<int>    evTime = array.new_int()
+var array<int>    evBar  = array.new_int()
+var array<string> evSrc  = array.new_string()
+var array<int>    evDir  = array.new_int()
+var array<int>    evN    = array.new_int()
+
+f_push(int t, int b, string s, int dir, int n) =>
+    array.push(evTime, t)
+    array.push(evBar, b)
+    array.push(evSrc, s)
+    array.push(evDir, dir)
+    array.push(evN, n)
+    if array.size(evTime) > 40
+        array.shift(evTime)
+        array.shift(evBar)
+        array.shift(evSrc)
+        array.shift(evDir)
+        array.shift(evN)
+
+pivotTime = time[divLen]
+pivotBar  = bar_index - divLen
+if bearN > 0
+    f_push(pivotTime, pivotBar, f_srcTxt(mBear, kBear, cBear), -1, bearN)
+if bullN > 0
+    f_push(pivotTime, pivotBar, f_srcTxt(mBull, kBull, cBull), 1, bullN)
+
+// ╔═══════════════════════════════════════════════════════════════════════════
+// ║  ④ OPEN INTEREST
+// ╚═══════════════════════════════════════════════════════════════════════════
+baseCoin = syminfo.basecurrency
+dBin = f_oiDeltaPct("BINANCE:" + baseCoin + "USDT.P_OI")
+dByb = f_oiDeltaPct("BYBIT:"   + baseCoin + "USDT.P_OI")
+dOkx = f_oiDeltaPct("OKX:"     + baseCoin + "USDT.P_OI")
+dMan = f_oiDeltaPct(oiOverride == "" ? syminfo.tickerid + "_OI" : oiOverride)
+
+float sumD = 0.0
+int   cntD = 0
+if useBinance and not na(dBin)
+    sumD += dBin
+    cntD += 1
+if useBybit and not na(dByb)
+    sumD += dByb
+    cntD += 1
+if useOkx and not na(dOkx)
+    sumD += dOkx
+    cntD += 1
+
+float oiRawDelta = oiOverride != "" ? dMan : cntD > 0 ? sumD / cntD : dMan
+string venueTxt  = oiOverride != "" ? "manual" : cntD > 0 ? str.tostring(cntD) + " ex" : "chart"
+oiOk = not na(oiRawDelta)
+
+var float oiEma = na
+float alpha = 2.0 / (oiSmoothLen + 1)
+if oiOk
+    oiEma := na(oiEma) ? oiRawDelta : oiEma + alpha * (oiRawDelta - oiEma)
+
+priceChgS = ta.ema(ta.change(close), oiSmoothLen)
+
+int oiState = not oiOk or na(oiEma) ? 0 : oiEma > 0 ? (priceChgS >= 0 ? 1 : 2) : oiEma < 0 ? (priceChgS >= 0 ? 3 : 4) : 0
+color oiCol = oiState == 1 ? BUY : oiState == 2 ? SELL : oiState == 3 ? TEAL : oiState == 4 ? ORNG : color.new(color.gray, 55)
+string oiTxt = oiState == 1 ? "Longs opening (開多)" : oiState == 2 ? "Shorts opening (開空)" : oiState == 3 ? "Short Squeeze (空單軋空/回補)" : oiState == 4 ? "Long Flush (多單爆倉/平倉)" : oiOk ? "Flat" : "no OI feed"
+
+// ╔═══════════════════════════════════════════════════════════════════════════
+// ║  ⑤ DXY CORRELATION
+// ╚═══════════════════════════════════════════════════════════════════════════
+useDxy = dxySym != ""
+dxyRaw = request.security(useDxy ? dxySym : syminfo.tickerid, timeframe.period, close, gaps=barmerge.gaps_on, ignore_invalid_symbol=true)
+bool dxyFresh = useDxy and not na(dxyRaw)
+
+var float dxyHeld = na
+if dxyFresh
+    dxyHeld := dxyRaw
+dxyOk = not na(dxyHeld)
+
+dxyMaxGap = math.min(500, math.max(4, int(math.round(2.0 * 3600 / tfSec))))
+var float prevDxy   = na
+var float prevClose = na
+var int   prevBar   = na
+float rx = na
+float ry = na
+if dxyFresh
+    gap = na(prevBar) ? 999999 : bar_index - prevBar
+    if not na(prevDxy) and prevDxy > 0 and not na(prevClose) and prevClose > 0 and gap <= dxyMaxGap
+        rx := close / prevClose - 1
+        ry := dxyRaw / prevDxy - 1
+    prevDxy   := dxyRaw
+    prevClose := close
+    prevBar   := bar_index
+
+var array<float> cxA = array.new<float>()
+var array<float> cyA = array.new<float>()
+var float sX  = 0.0
+var float sY  = 0.0
+var float sXX = 0.0
+var float sYY = 0.0
+var float sXY = 0.0
+var int   sinceExact = 0
+
+if not na(rx) and not na(ry)
+    array.push(cxA, rx)
+    array.push(cyA, ry)
+    sX  += rx
+    sY  += ry
+    sXX += rx * rx
+    sYY += ry * ry
+    sXY += rx * ry
+    if array.size(cxA) > corrLen
+        ox = array.shift(cxA)
+        oy = array.shift(cyA)
+        sX  -= ox
+        sY  -= oy
+        sXX -= ox * ox
+        sYY -= oy * oy
+        sXY -= ox * oy
+    sinceExact += 1
+    if sinceExact >= corrLen and array.size(cxA) > 0
+        sinceExact := 0
+        sX  := 0.0
+        sY  := 0.0
+        sXX := 0.0
+        sYY := 0.0
+        sXY := 0.0
+        for i = 0 to array.size(cxA) - 1
+            vx = array.get(cxA, i)
+            vy = array.get(cyA, i)
+            sX  += vx
+            sY  += vy
+            sXX += vx * vx
+            sYY += vy * vy
+            sXY += vx * vy
+
+int   nPair  = array.size(cxA)
+minN         = math.max(30, corrLen / 4)
+float varX   = nPair * sXX - sX * sX
+float varY   = nPair * sYY - sY * sY
+float denomC = varX > 0 and varY > 0 ? math.sqrt(varX * varY) : 0.0
+float corr   = nPair >= minN and denomC > 0 ? (nPair * sXY - sX * sY) / denomC * 100 : na
+
+dxyEma = ta.ema(dxyHeld, dxyTrendLen)
+dxyUp  = dxyOk and not na(dxyEma) and dxyHeld > dxyEma
+var int lastDxyBar = na
+if dxyFresh
+    lastDxyBar := bar_index
+dxyAge = na(lastDxyBar) ? 999999 : bar_index - lastDxyBar
+bool dxyStale = dxyAge > dxyMaxGap
+
+// ╔═══════════════════════════════════════════════════════════════════════════
+// ║  ⑥ PLOTS
+// ╚═══════════════════════════════════════════════════════════════════════════
+macdAbsMax = ta.highest(math.abs(macdLine), normLen)
+macdPlot   = macdAbsMax > 0 ? macdLine / macdAbsMax * 100 : 0.0
+sigPlot    = macdAbsMax > 0 ? macdSignal / macdAbsMax * 100 : 0.0
+
+kPlot = (k - 50) * 2
+dPlot = (d - 50) * 2
+jPlot = f_clamp((j - 50) * 2, 125)
+
+colDelta = isWhale ? (rawDelta >= 0 ? color.new(BUY, 25) : color.new(SELL, 25)) : (rawDelta >= 0 ? color.new(BUY, 88) : color.new(SELL, 88))
+plot(showDelta ? deltaPct : na, "Delta % of volume", style=plot.style_columns, color=colDelta)
+
+histPlot = macdAbsMax > 0 ? macdHist / macdAbsMax * 100 : 0.0
+histCol  = macdHist >= 0 ? (macdHist > macdHist[1] ? color.new(BUY, 30) : color.new(BUY, 72)) : (macdHist > macdHist[1] ? color.new(SELL, 72) : color.new(SELL, 30))
+plot(drawMacd and showHist ? histPlot : na, "MACD histogram", style=plot.style_columns, color=histCol)
+
+plot(drawMacd ? macdPlot : na, "MACD (scaled)", color=color.new(MCOL, 0),  linewidth=2)
+plot(drawMacd ? sigPlot  : na, "MACD signal",   color=color.new(MCOL, 60), linewidth=1)
+plot(drawKd   ? kPlot    : na, "%K (scaled)",   color=color.new(KCOL, 0),  linewidth=1)
+plot(drawKd   ? dPlot    : na, "%D (scaled)",   color=color.new(KCOL, 60), linewidth=1)
+plot(drawKd and showJ ? jPlot : na, "J (scaled, clamped)", color=color.new(AMBR, 25), linewidth=1)
+
+biasCol = whaleBias >= biasTh ? color.new(BUY, 0) : whaleBias <= -biasTh ? color.new(SELL, 0) : color.new(color.silver, 35)
+plot(showBias ? whaleBias : na, "Whale Bias", color=biasCol, linewidth=3)
+
+plot(showDxyLn and dxyOk ? corr : na, "DXY correlation ×100", color=color.new(ORNG, 25), linewidth=1)
+
+hline(0, "Zero", color=color.new(color.gray, 55))
+hline(60,  "KD 80 / bias +", color=color.new(color.gray, 82), linestyle=hline.style_dotted)
+hline(-60, "KD 20 / bias −", color=color.new(color.gray, 82), linestyle=hline.style_dotted)
+
+plotshape(showOI and oiState != 0, "OI strip", shape.square, location.top, color=oiCol, size=size.tiny)
+
+// Visual Dimming for Counter-Trend Signals
+bool isCounterBear = useTrendFilt and isUptrend
+bool isCounterBull = useTrendFilt and not isUptrend
+
+plotshape(bearN == 1, "▼ 1 source",  shape.triangledown, location.bottom, color=color.new(SELL, isCounterBear ? 80 : 62), size=size.tiny)
+plotshape(bearN == 2, "▼ 2 sources", shape.triangledown, location.bottom, color=color.new(SELL, isCounterBear ? 50 : 20), size=size.small)
+plotshape(bearN >= 3, "▼ 3 sources", shape.triangledown, location.bottom, color=color.new(SELL, isCounterBear ? 30 : 0),  size=size.normal)
+plotshape(bullN == 1, "▲ 1 source",  shape.triangleup,   location.bottom, color=color.new(BUY, isCounterBull ? 80 : 62),  size=size.tiny)
+plotshape(bullN == 2, "▲ 2 sources", shape.triangleup,   location.bottom, color=color.new(BUY, isCounterBull ? 50 : 20),  size=size.small)
+plotshape(bullN >= 3, "▲ 3 sources", shape.triangleup,   location.bottom, color=color.new(BUY, isCounterBull ? 30 : 0),   size=size.normal)
+
+if labelStrong and bearN >= 2
+    label.new(bar_index, 0, "▼ " + f_srcTxt(mBear, kBear, cBear) + (isCounterBear ? " [CR]" : ""), color=color.new(SELL, 12), textcolor=color.white, style=label.style_label_down, size=size.tiny)
+if labelStrong and bullN >= 2
+    label.new(bar_index, 0, "▲ " + f_srcTxt(mBull, kBull, cBull) + (isCounterBull ? " [CR]" : ""), color=color.new(BUY, 12), textcolor=color.white, style=label.style_label_up, size=size.tiny)
+
+// ╔═══════════════════════════════════════════════════════════════════════════
+// ║  ⑦ PANEL
+// ╚═══════════════════════════════════════════════════════════════════════════
+var table tbl = table.new(f_pos(tblPos), 2, 16, bgcolor=color.new(#0d0d12, 12), border_color=color.new(color.gray, 65), border_width=1, frame_color=color.new(color.gray, 45), frame_width=1)
+
+if barstate.islast and showTbl
+    biasTxt = whaleBias >= biasTh ? "LONG lean" : whaleBias <= -biasTh ? "SHORT lean" : "Neutral"
+    biasC   = whaleBias >= biasTh ? BUY : whaleBias <= -biasTh ? SELL : AMBR
+
+    int biasSide = whaleBias >= biasTh ? 1 : whaleBias <= -biasTh ? -1 : 0
+    int oiSide   = oiState == 1 ? 1 : oiState == 2 ? -1 : 0
+    int nowState = biasSide != 0 and biasSide == oiSide ? biasSide * 2 : biasSide == 0 and oiSide == 0 ? 0 : biasSide != 0 and oiSide != 0 ? 9 : (biasSide + oiSide > 0 ? 1 : -1)
+    string nowTxt = nowState == 2 ? "LONG 偏多 — 兩邊一致" : nowState == -2 ? "SHORT 偏空 — 兩邊一致" : nowState == 9 ? "分歧 — 兩邊相反" : nowState == 1 ? "微偏多" : nowState == -1 ? "微偏空" : "沒有方向"
+    color nowC = nowState == 2 ? BUY : nowState == -2 ? SELL : AMBR
+
+    string runTxt = bearRun > 0 ? "▼ " + str.tostring(bearRun) + " 次連發 (BEAR)" : bullRun > 0 ? "▲ " + str.tostring(bullRun) + " 次連發 (BULL)" : "無 None"
+    color runC   = bearRun > 0 ? SELL : bullRun > 0 ? BUY : color.gray
+
+    // Trend Context Read
+    string trendTxt = isUptrend ? "Bullish (200 EMA 上)" : "Bearish (200 EMA 下)"
+    color trendC   = isUptrend ? BUY : SELL
+
+    table.cell(tbl, 0, 0, "現在狀態 NOW", text_color=color.white, bgcolor=color.new(color.gray, 80), text_size=tblSize)
+    table.cell(tbl, 1, 0, nowTxt, text_color=nowC, bgcolor=color.new(color.gray, 80), text_size=tblSize)
+
+    table.cell(tbl, 0, 1, "趨勢環境 Regime", text_color=color.silver, text_size=tblSize)
+    table.cell(tbl, 1, 1, trendTxt, text_color=trendC, text_size=tblSize)
+
+    table.cell(tbl, 0, 2, "主力偏向 Whale Bias", text_color=color.silver, text_size=tblSize)
+    table.cell(tbl, 1, 2, str.tostring(whaleBias, "#.#") + "% (" + biasTxt + ")", text_color=biasC, text_size=tblSize)
+
+    table.cell(tbl, 0, 3, "持倉與擠壓 OI Read", text_color=color.silver, text_size=tblSize)
+    table.cell(tbl, 1, 3, oiTxt, text_color=oiCol, text_size=tblSize)
+
+    string dxyStr = dxyStale ? "mkt shut / 關閉" : not na(corr) ? str.tostring(corr, "#.#") + "% " + (dxyUp ? "(美元強)" : "(美元弱)") : "無資料 N/A"
+    color dxyC = dxyStale ? color.gray : not na(corr) and corr < -30 ? BUY : not na(corr) and corr > 30 ? SELL : color.silver
+    table.cell(tbl, 0, 4, "美元相關 DXY (" + str.tostring(corrLen) + "b)", text_color=color.silver, text_size=tblSize)
+    table.cell(tbl, 1, 4, dxyStr, text_color=dxyC, text_size=tblSize)
+
+    table.cell(tbl, 0, 5, "連續背離 Active Stack", text_color=color.silver, text_size=tblSize)
+    table.cell(tbl, 1, 5, runTxt, text_color=runC, text_size=tblSize)
+
+    string statStr = "▼" + str.tostring(bearAny) + " (強:" + str.tostring(bearStr) + ") | ▲" + str.tostring(bullAny) + " (強:" + str.tostring(bullStr) + ")"
+    table.cell(tbl, 0, 6, "背離統計 Window (" + str.tostring(countLen) + "b)", text_color=color.silver, text_size=tblSize)
+    table.cell(tbl, 1, 6, statStr, text_color=color.white, text_size=tblSize)
+
+    table.cell(tbl, 0, 7, "歷史背離記錄 Recent Events", text_color=color.gray, bgcolor=color.new(color.black, 50), text_size=tblSize)
+    table.cell(tbl, 1, 7, "時間 / 來源 Time & Source", text_color=color.gray, bgcolor=color.new(color.black, 50), text_size=tblSize)
+
+    int logSize = array.size(evTime)
+    int displayN = math.min(histN, logSize)
+    if displayN > 0
+        for i = 0 to displayN - 1
+            int idx = logSize - 1 - i
+            int eT = array.get(evTime, idx)
+            int eB = array.get(evBar, idx)
+            string eS = array.get(evSrc, idx)
+            int eD = array.get(evDir, idx)
+
+            int barsAgo = bar_index - eB
+            string dirSymbol = eD < 0 ? "▼ BEAR" : "▲ BULL"
+            color eventC = eD < 0 ? SELL : BUY
+            
+            string timeStr = str.format("{0,date,MM-dd HH:mm}", eT)
+            string evDetails = str.format("{0} ({1}) - {2}b 前", dirSymbol, eS, barsAgo)
+
+            table.cell(tbl, 0, 8 + i, timeStr, text_color=color.silver, text_size=tblSize)
+            table.cell(tbl, 1, 8 + i, evDetails, text_color=eventC, text_size=tblSize)
+
+    int usedRows = 8 + displayN
+    for r = usedRows to 15
+        table.cell(tbl, 0, r, "", bgcolor=color.new(color.black, 100))
+        table.cell(tbl, 1, r, "", bgcolor=color.new(color.black, 100))
+
+// ╔═══════════════════════════════════════════════════════════════════════════
+// ║  ⑧ ALERTS
+// ╚═══════════════════════════════════════════════════════════════════════════
+alertcondition(bearN > 0, "Bearish Divergence Detected", "Divergence Radar Pro: Bearish divergence confirmed.")
+alertcondition(bullN > 0, "Bullish Divergence Detected", "Divergence Radar Pro: Bullish divergence confirmed.")
+alertcondition(bearN >= 2, "Strong Bearish Divergence (2+ Sources)", "Divergence Radar Pro: Strong bearish divergence (2+ sources) confirmed.")
+alertcondition(bullN >= 2, "Strong Bullish Divergence (2+ Sources)", "Divergence Radar Pro: Strong bullish divergence (2+ sources) confirmed.")

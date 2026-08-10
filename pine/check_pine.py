@@ -47,14 +47,31 @@ def check(path):
 
     # Names bound LOCALLY — function parameters and for-loop variables. They are
     # not top-level declarations and must never be judged by file order.
+    #
+    # A signature may wrap across lines, and Pine is perfectly happy with that.
+    # Matching only single-line signatures left every parameter of a wrapped one
+    # unregistered, so each use inside the body looked like a forward reference
+    # to whatever global shared its name — 12 false positives on the first
+    # multi-line function in the tree. Continuation lines are joined until the
+    # parentheses balance, then the parameters are read off the whole thing.
     local = set()
-    for l in code:
-        m = re.match(r"^[A-Za-z_]\w*\s*\(([^)]*)\)\s*=>", l)
+    for i, l in enumerate(code):
+        if not re.match(r"^[A-Za-z_]\w*\s*\(", l):
+            continue
+        sig, depth = "", 0
+        for cont in code[i:i + 12]:            # a signature is not 12 lines long
+            sig += cont
+            depth += cont.count("(") - cont.count(")")
+            if depth <= 0:
+                break
+        m = re.match(r"^[A-Za-z_]\w*\s*\((.*)\)\s*=>", sig, re.S)
         if m:
             for part in m.group(1).split(","):
                 w = re.findall(r"[A-Za-z_]\w*", part)
                 if w:
                     local.add(w[-1])
+
+    for l in code:
         for m in re.finditer(r"\bfor\s+\[?\s*([A-Za-z_]\w*)(?:\s*,\s*([A-Za-z_]\w*))?", l):
             local.update(g for g in m.groups() if g)
 

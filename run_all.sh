@@ -49,12 +49,46 @@ read_env_bool() {
     [ "$val" = "1" ] || [ "$val" = "true" ] || [ "$val" = "yes" ] || [ "$val" = "on" ]
 }
 
+# kill_pattern PATTERN LABEL — SIGTERM, VERIFY, then SIGKILL what refused.
+#
+# `pkill` reports that a signal was SENT, never that the target acted on it, and
+# the old code took that exit status as proof of death. On 2026-08-09 a scanner
+# outlived its own replacement by ~11h: two processes then long-polled
+# getUpdates, Telegram answered the second with 409 Conflict, and every bot
+# command (/winrate /positions /restart …) was dead for half a day while `ps`
+# showed a healthy stack, because the replacement had started perfectly.
+#
+# The mechanism that let it survive was never identified — it died on a plain
+# SIGTERM when tested afterwards. That is precisely why this verifies instead of
+# reasoning about which processes "should" die: send TERM, confirm it is
+# actually gone, then KILL. SIGKILL cannot be trapped, blocked or deferred, so
+# it is the only kill that is a fact rather than a request. The escalation is
+# announced, because a process needing SIGKILL is worth knowing about even when
+# the outcome is correct.
+kill_pattern() {
+    local pat="$1" label="$2" i
+    pgrep -f "$pat" >/dev/null 2>&1 || { echo "  • $label not running"; return 0; }
+    pkill -f "$pat" 2>/dev/null
+    for i in 1 2 3 4 5; do
+        sleep 1
+        pgrep -f "$pat" >/dev/null 2>&1 || { echo "  • $label stopped"; return 0; }
+    done
+    echo "  ⚠ $label ignored SIGTERM after 5s — sending SIGKILL (pids: $(pgrep -f "$pat" | tr '\n' ' '))"
+    pkill -9 -f "$pat" 2>/dev/null
+    sleep 1
+    if pgrep -f "$pat" >/dev/null 2>&1; then
+        echo "  ✗ $label SURVIVED SIGKILL — pids: $(pgrep -f "$pat" | tr '\n' ' ')" >&2
+        return 1
+    fi
+    echo "  • $label killed"
+}
+
 stop_all() {
     echo "Stopping Wolf Scanner (web + bot + scanner)..."
-    pkill -f "[p]ython.*app.py"                2>/dev/null && echo "  • web app stopped"    || echo "  • web app not running"
-    pkill -f "[p]ython.*bot.py"                2>/dev/null && echo "  • S1 bot stopped"     || echo "  • S1 bot not running"
-    pkill -f "[p]ython.*strategy2_scanner.py"  2>/dev/null && echo "  • S2 scanner stopped" || echo "  • S2 scanner not running"
-    pkill -f "[p]ython.*strategy3_scanner.py"  2>/dev/null && echo "  • S3 flip stopped"    || echo "  • S3 flip not running"
+    kill_pattern "[p]ython.*app.py"               "web app"
+    kill_pattern "[p]ython.*bot.py"               "S1 bot"
+    kill_pattern "[p]ython.*strategy2_scanner.py" "S2 scanner"
+    kill_pattern "[p]ython.*strategy3_scanner.py" "S3 flip"
     pkill -f "[t]ail -n 5 -f .*logs/" 2>/dev/null   # kill any stray log tail from a prior run
     rm -f "$APP/bot.lock" 2>/dev/null
     # Tell the auto-heal launchd agent this stop is INTENTIONAL — without the
@@ -132,6 +166,39 @@ if [ ! -f "$APP/.env" ]; then
     echo "WARNING: no .env found — using defaults (dashboard on 127.0.0.1:4000, engine = S1 bot)."
 fi
 
+# --- ONE LAUNCH AT A TIME --------------------------------------------------
+# A launch is kill-then-start with a ~60s pre-flight in between, which makes it
+# a long non-atomic operation with THREE independent callers: restart.sh
+# (Telegram /restart), autoheal.sh (launchd, every 5 min) and a human typing it.
+#
+# restart.sh has its own lock, but that only serialises restart-vs-restart —
+# autoheal.sh calls this script directly and never sees it. Interleave two
+# launches as kill(A) · kill(B) · start(A) · start(B) and both survive: a full
+# duplicate stack, which is how two scanners end up long-polling getUpdates and
+# taking every Telegram command down with 409 Conflict.
+#
+# The lock belongs HERE, on the operation, not on one of its callers. mkdir is
+# atomic, so two simultaneous launches cannot both win.
+#
+# Stale-lock stealing is not optional: this script pkills a process tree and
+# could itself be killed mid-flight, and a lock that outlives its owner would
+# permanently disable both /restart and auto-heal — a far worse failure than the
+# race it prevents. Anything older than 15 minutes is wreckage, not an owner.
+LAUNCH_LOCK="$APP/.launch.lock"
+if [ -d "$LAUNCH_LOCK" ]; then
+    LOCK_AGE=$(( $(date +%s) - $(stat -f %m "$LAUNCH_LOCK" 2>/dev/null || echo 0) ))
+    if [ "$LOCK_AGE" -gt 900 ]; then
+        echo "  (clearing a stale launch lock — ${LOCK_AGE}s old, owner is gone)"
+        rmdir "$LAUNCH_LOCK" 2>/dev/null
+    fi
+fi
+if ! mkdir "$LAUNCH_LOCK" 2>/dev/null; then
+    echo "Another launch is already in progress (${LAUNCH_LOCK##*/}) — skipping this one."
+    echo "That is the safe outcome: the in-flight launch will finish the job."
+    exit 0
+fi
+trap 'rmdir "$LAUNCH_LOCK" 2>/dev/null' EXIT
+
 # --- pre-flight tests (safety gate) ---------------------------------------
 ./preflight.sh || { echo "Launch aborted — tests failed (bypass with SKIP_TESTS=1)."; exit 1; }
 
@@ -139,14 +206,27 @@ fi
 rm -f "$DIR/.stack_stopped"
 
 # --- clean slate -----------------------------------------------------------
+# ABORT rather than launch on top of a survivor. Starting a second copy of a
+# scanner is worse than not restarting at all: two engines double-alert, double
+# every LINE push against a 200/month quota, and — the one that actually bit —
+# fight over Telegram's getUpdates, which serves 409 Conflict to the loser and
+# takes the whole command bot down. A failed restart that leaves the old stack
+# running is recoverable and obvious; a silent duplicate is neither.
 echo "Clearing any previous instances..."
-pkill -f "[p]ython.*app.py" 2>/dev/null
-pkill -f "[p]ython.*bot.py" 2>/dev/null
-pkill -f "[p]ython.*strategy2_scanner.py" 2>/dev/null
-pkill -f "[p]ython.*strategy3_scanner.py" 2>/dev/null
+CLEAN=0
+kill_pattern "[p]ython.*app.py"               "web app"    || CLEAN=1
+kill_pattern "[p]ython.*bot.py"               "S1 bot"     || CLEAN=1
+kill_pattern "[p]ython.*strategy2_scanner.py" "S2 scanner" || CLEAN=1
+kill_pattern "[p]ython.*strategy3_scanner.py" "S3 flip"    || CLEAN=1
 pkill -f "[t]ail -n 5 -f .*logs/" 2>/dev/null  # kill any stray log tail from a prior run
 rm -f "$APP/bot.lock" 2>/dev/null
-sleep 1
+if [ "$CLEAN" != "0" ]; then
+    echo "" >&2
+    echo "✗ LAUNCH ABORTED — a previous process survived SIGKILL (see above)." >&2
+    echo "  The old stack is still running and untouched. Investigate that pid" >&2
+    echo "  before restarting; starting a duplicate would break Telegram." >&2
+    exit 1
+fi
 
 HOST="$(grep -E '^FLASK_HOST=' .env 2>/dev/null | cut -d= -f2)"; HOST="${HOST:-127.0.0.1}"
 PORT="$(grep -E '^FLASK_PORT=' .env 2>/dev/null | cut -d= -f2)"; PORT="${PORT:-4000}"
@@ -237,14 +317,22 @@ cleanup() {
     [ -n "$SCANONLY_PID" ] && kill "$SCANONLY_PID" 2>/dev/null
     # give the bot a moment to release its lock, then force if needed
     sleep 2
-    pkill -f "[p]ython.*app.py" 2>/dev/null
-    pkill -f "[p]ython.*bot.py" 2>/dev/null
-    pkill -f "[p]ython.*strategy2_scanner.py" 2>/dev/null
-    pkill -f "[p]ython.*strategy3_scanner.py" 2>/dev/null
+    # Verified, same as every other kill path here — "All stopped." was printed
+    # unconditionally before, which is the same unchecked claim that let a
+    # scanner survive a restart and break Telegram for half a day.
+    LEFT=0
+    kill_pattern "[p]ython.*app.py"               "web app"    || LEFT=1
+    kill_pattern "[p]ython.*bot.py"               "S1 bot"     || LEFT=1
+    kill_pattern "[p]ython.*strategy2_scanner.py" "S2 scanner" || LEFT=1
+    kill_pattern "[p]ython.*strategy3_scanner.py" "S3 flip"    || LEFT=1
     pkill -f "[t]ail -n 5 -f .*logs/" 2>/dev/null  # kill any stray log tail from a prior run
     rm -f "$APP/bot.lock" 2>/dev/null
-    echo "All stopped."
-    exit 0
+    if [ "$LEFT" = "0" ]; then
+        echo "All stopped."
+        exit 0
+    fi
+    echo "✗ Something survived SIGKILL (see above) — NOT all stopped." >&2
+    exit 1
 }
 trap cleanup INT TERM
 

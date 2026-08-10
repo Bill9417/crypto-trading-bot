@@ -2417,7 +2417,32 @@ def api_performance_bybit():
 # MAE/MFE excursions are immutable once a trade closes, so each record is
 # computed once and kept for the process lifetime. First load walks the klines
 # for every uncached trade (~0.3s each); later loads are instant.
+#
+# "Instant" was only ever true for trades that SUCCEEDED. A record that could
+# not be computed cached nothing, so every load re-walked the klines for it and
+# failed again the same way: 3 unusable trades cost 6.6s on every single load,
+# permanently, while the docstring promised a warm cache. A closed trade is
+# immutable — a verdict of "cannot compute this" is exactly as final as a
+# number, and must be remembered with the same confidence.
+#
+# Transient failures are the one thing that must NOT be remembered forever, so
+# only decisions taken from data we actually hold become permanent skips;
+# exceptions get a bounded number of retries instead of an infinite one.
 _excursion_cache: dict = {}
+_excursion_fail: dict = {}          # record id -> attempts (None = permanent)
+_EXCURSION_MAX_TRIES = 3
+
+
+def _permanent_symbol_errors():
+    """ccxt errors that mean 'this market does not exist', not 'try later'."""
+    try:
+        import ccxt
+        return (ccxt.BadSymbol,)
+    except Exception:  # noqa: BLE001 — degrade to the bounded-retry path
+        return ()
+
+
+_PERMANENT_SYMBOL_ERRORS = _permanent_symbol_errors()
 
 
 @app.route("/api/performance/excursions")
@@ -2440,17 +2465,25 @@ def api_performance_excursions():
         if cached is not None:
             points.append(cached)
             continue
+        if _excursion_fail.get(r.id, 0) is None or \
+                _excursion_fail.get(r.id, 0) >= _EXCURSION_MAX_TRIES:
+            skipped += 1                       # already settled — do not refetch
+            continue
         try:
             t0 = int(r.timestamp.replace(tzinfo=tz8).timestamp() * 1000)
             t1 = int(r.exit_timestamp.replace(tzinfo=tz8).timestamp() * 1000)
             entry = float(r.entry_price)
             if t1 <= t0 or entry <= 0:
+                _excursion_fail[r.id] = None   # a property of the row itself
                 skipped += 1
                 continue
             bars = min(int((t1 - t0) / 900_000) + 3, 500)
             ohlcv = rest_client.call("fetch_ohlcv", r.symbol, "15m", t0, bars)
             window = [c for c in (ohlcv or []) if t0 <= c[0] <= t1]
             if not window:
+                # The fetch worked; the exchange simply has no candles covering
+                # this closed trade. That will not change tomorrow.
+                _excursion_fail[r.id] = None
                 skipped += 1
                 continue
             hi = max(float(c[2]) for c in window)
@@ -2476,7 +2509,16 @@ def api_performance_excursions():
             # auto-refresh finishes the rest from cache.
             return jsonify(_json_safe({"ok": True, "partial": True,
                                        "points": points, "skipped": skipped}))
+        except _PERMANENT_SYMBOL_ERRORS:
+            # The symbol is gone from the exchange (AERGO was delisted, and its
+            # two closed trades are still in the DB forever). No amount of
+            # retrying brings a delisted market back.
+            _excursion_fail[r.id] = None
+            skipped += 1
         except Exception:  # noqa: BLE001 — one bad record must not kill the panel
+            # Might be a network blip, so this one gets retried — but a bounded
+            # number of times. An unbounded retry is what made the panel slow.
+            _excursion_fail[r.id] = _excursion_fail.get(r.id, 0) + 1
             skipped += 1
     return jsonify(_json_safe({"ok": True, "partial": False,
                                "points": points, "skipped": skipped}))

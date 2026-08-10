@@ -34,19 +34,48 @@ TRIVIAL = {
 MIN_LEN = 12
 
 
+# Answers already paid for, keyed by (username, hash) — see weak_reason.
+_WEAK_CACHE: dict = {}
+_WEAK_CACHE_MAX = 512
+
+
 def weak_reason(username: str, password_hash: str) -> str | None:
     """Why this account is weak, or None. Checks the hash against the trivial
-    list plus username-derived guesses — never needs the plaintext."""
+    list plus username-derived guesses — never needs the plaintext.
+
+    Memoised on (username, hash), because a password hash is deliberately
+    expensive to check and this runs ~44 candidates against EVERY user. On
+    /health that was 101 scrypt verifications and 7.3 seconds of CPU per page
+    load — on a box whose real job is running a live trading engine, and on a
+    page built to be refreshed. Membership grows with copy-trading, so the cost
+    was linear in users and rising.
+
+    Caching cannot weaken the audit: the hash IS the cache key, so changing a
+    password changes the key and the answer is recomputed from scratch. There is
+    no staleness window to reason about — a hash that has not changed cannot
+    have a different answer.
+    """
     from werkzeug.security import check_password_hash
+    key = (username or "", password_hash or "")
+    if key in _WEAK_CACHE:
+        return _WEAK_CACHE[key]
+
     u = (username or "").lower()
     candidates = TRIVIAL | {u, u + "1", u + "123", u + u, u + "2026", u + "!"}
+    result = None
     for c in candidates:
         try:
             if check_password_hash(password_hash, c):
-                return f"password is {c!r} — guessable in seconds"
+                result = f"password is {c!r} — guessable in seconds"
+                break
         except Exception:  # noqa: BLE001 — a malformed hash is its own problem
-            return "password hash is unreadable"
-    return None
+            result = "password hash is unreadable"
+            break
+
+    if len(_WEAK_CACHE) >= _WEAK_CACHE_MAX:      # bounded; old hashes are dead keys
+        _WEAK_CACHE.clear()
+    _WEAK_CACHE[key] = result
+    return result
 
 
 def audit(app, User) -> int:

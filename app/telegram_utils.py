@@ -334,7 +334,15 @@ def _post_one(url: str, payload: dict, retries: int):
             print(f"Telegram API Error response: {response.text}")
             return False, None
         except requests.RequestException as exc:
-            print(f"Telegram send failed (attempt {attempt + 1}/{retries + 1}): {exc}")
+            # redact(), not str(exc): a requests exception embeds the URL it
+            # failed on, and for Telegram the URL CONTAINS THE BOT TOKEN
+            # (api.telegram.org/bot<token>/sendMessage). This line is the one
+            # emitter in the file that still printed it raw, and it put the live
+            # token into logs/strategy2.log 12 times — every DNS failure and
+            # connect timeout wrote a working credential to disk in plaintext.
+            # Anyone handed a log file for debugging was handed the bot.
+            print(f"Telegram send failed (attempt {attempt + 1}/{retries + 1}): "
+                  f"{redact(exc)}")
             if attempt < retries:
                 time.sleep(2 * (attempt + 1))
     return False, None

@@ -25,8 +25,55 @@ cost 172 kline calls plus a handful of open-interest calls:
   4. SUPPORT     a confirmed swing low below price and within reach. This is
                  not decoration: it IS the stop. No support close enough, no
                  trade — because the alternative is an invented stop distance.
-  5. MOMENTUM +  a recent BULLISH divergence (MACD / KD / CVD) and an open
-     OI          interest read that is not fighting the entry.
+  5. MOMENTUM +  a recent BULLISH divergence (MACD / KD / FISHER / CVD) and an
+     OI          open interest read that is not fighting the entry.
+
+THE DIVERGENCE GATE WAS BARELY A GATE (fixed 2026-08-09)
+───────────────────────────────────────────────────────
+Measured on 1,064 bar-evaluations across 45 liquid Bybit symbols, 15m:
+
+    OLD rule — divergence present on   342 bars  (32.1% of all bars)
+    NEW rule — divergence present on   287 bars  (27.0%)
+      of the old hits: 267 still fire, 75 are now rejected, 20 are newly found
+
+A gate that passes a third of every bar is not selecting much. The old rule was
+the textbook definition and nothing else, which let four things through:
+
+  · NO PIVOT-AGE LIMIT. Each swing low was compared to the previous one however
+    old it was; two lows 300 bars apart are not one structure. Now 5…60 bars,
+    which is what TradingView's own built-in divergence indicator has always
+    used.
+  · RAW CUMULATIVE CVD. A running sum drifts, and while it drifts it prints a
+    higher low at every pivot for free — not because flow did anything but
+    because the series is cumulative. It was the single most-firing source
+    (231 hits) and carried the gate ALONE on 18.7% of old hits. Detrended
+    against its own EMA it halves, to 120.
+  · NO OSCILLATOR-GAP FLOOR. Higher by 1e-9 counted. MACD, whose raw units make
+    this worst, collapses from 152 hits to 50 once the gap must clear 5% of the
+    oscillator's own range.
+  · NO SWING PROMINENCE. Chop wiggles qualified as pivots; now a pivot must
+    stand 0.8 ATR clear of its own neighbourhood, measured at the pivot bar.
+
+FISHER was added as a fourth source and is genuinely new information rather
+than a relabelling: 207 hits, and the SOLE source on 35 of them. Its
+mathematics is not a variation on comparing two averages — it maps price onto a
+near-Gaussian distribution, where extremes are by construction rare.
+
+A/D WAS DELIBERATELY NOT ADDED. Its money-flow multiplier is the same algebra
+as the close-position estimate cvd_series() already uses, and with no intrabar
+data here they would be the identical series. See divergence_scan().
+
+The net count barely moved (−16%) because Fisher ADDS while the filters REMOVE.
+That headline understates the change: what is behind each signal is different,
+and 63% of surviving hits now have two or more sources agreeing versus a rule
+where any single one passed. If you want the gate genuinely tight, the knob is
+S4_MIN_DIV_SOURCES=2 — measured at 181 hits, 17.0% of bars, about half the old
+firing rate. It is left at 1 ON PURPOSE: changing the rule and the threshold in
+the same step would make the forward sample unattributable to either.
+
+NONE OF THIS IS EVIDENCE OF PROFIT. It is evidence the gate now measures what
+it claims to. The n=50 result below described the OLD engine and no longer
+applies to this one; the counter starts again.
 
 WHAT IT DOES, MEASURED (2026-08-06, 51 liquid symbols, 271 symbol-days of 15m)
 ─────────────────────────────────────────────────────────────────────────────
@@ -82,6 +129,7 @@ overnight gap behave differently on the short side — so rather than ship a
 symmetric rule nobody checked, this side is left out until someone measures it.
 """
 import json
+import math
 import os
 import time
 from datetime import datetime, timezone
@@ -106,6 +154,18 @@ SCAN_CRYPTO = os.getenv("S4_SCAN_CRYPTO", "true").strip().lower() in ("1", "true
 EMA_SLOPE_BARS = int(os.getenv("S4_EMA_SLOPE_BARS", "20"))
 DIV_LOOKBACK = int(os.getenv("S4_DIV_LOOKBACK", "20"))    # bars since a divergence
 DIV_PIVOT = int(os.getenv("S4_DIV_PIVOT", "5"))
+# ── divergence quality, ported from Divergence_Radar_PRO.pine ────────────────
+# Every one of these closes a hole the old rule left open. See the DIVERGENCE
+# note in the module docstring for what each was letting through.
+DIV_MIN_GAP = int(os.getenv("S4_DIV_MIN_GAP", "5"))       # bars between the two pivots
+DIV_MAX_GAP = int(os.getenv("S4_DIV_MAX_GAP", "60"))      # ...and the ceiling
+DIV_MIN_OSC_GAP = float(os.getenv("S4_DIV_MIN_OSC_GAP", "0.05"))   # × osc's own range
+DIV_MIN_LEG_ATR = float(os.getenv("S4_DIV_MIN_LEG_ATR", "0.8"))    # swing prominence
+DIV_NORM = int(os.getenv("S4_DIV_NORM", "200"))           # osc range window
+MIN_DIV_SOURCES = int(os.getenv("S4_MIN_DIV_SOURCES", "1"))
+FISHER_LEN = int(os.getenv("S4_FISHER_LEN", "9"))
+FLOW_DETREND = int(os.getenv("S4_FLOW_DETREND", "200"))   # CVD baseline EMA
+ATR_LEN = int(os.getenv("S4_ATR_LEN", "14"))
 MAX_STOP_PCT = float(os.getenv("S4_MAX_STOP_PCT", "4")) / 100
 MIN_STOP_PCT = float(os.getenv("S4_MIN_STOP_PCT", "0.4")) / 100
 STOP_BUFFER = float(os.getenv("S4_STOP_BUFFER_PCT", "0.15")) / 100
@@ -235,27 +295,167 @@ def cvd_series(ohlcv):
     return out
 
 
-def bullish_divergence(highs, lows, osc, pivot=DIV_PIVOT, lookback=DIV_LOOKBACK):
+def atr_series(highs, lows, closes, period=ATR_LEN):
+    """True-range EMA. Used to ask whether a pivot is a real swing or a wiggle,
+    measured AT THE PIVOT BAR — the volatility at the event, not at the moment
+    the scan happens to run."""
+    if not closes:
+        return []
+    trs = [highs[0] - lows[0]]
+    for i in range(1, len(closes)):
+        trs.append(max(highs[i] - lows[i],
+                       abs(highs[i] - closes[i - 1]),
+                       abs(lows[i] - closes[i - 1])))
+    return ema(trs, period)
+
+
+def fisher_series(highs, lows, length=FISHER_LEN):
+    """Ehlers' Fisher Transform of the normalised median price.
+
+    Normalise hl2 into −0.5…+0.5 over `length`, then push it through
+    0.5·ln((1+x)/(1−x)). That maps a roughly uniform input onto a roughly
+    Gaussian one, and the point of a Gaussian is that extremes are RARE — so a
+    Fisher extreme is a sharper statement than a KD extreme, which a ranging
+    market prints all day. It is the one source here whose mathematics is not a
+    variation on "compare two moving averages".
+
+    The 0.999 clamp is load-bearing, not cosmetic: at x = ±1 the log term is
+    infinite, and one bar of hl2 sitting exactly on the window extreme reaches
+    it. Both recursions start at 0 so the opening bars are neutral rather than
+    dragging a warm-up artefact into the divergence tracker.
+    """
+    n = min(len(highs), len(lows))
+    if n < length + 1:
+        return []
+    mp = [(highs[i] + lows[i]) / 2.0 for i in range(n)]
+    out, val, fish = [], 0.0, 0.0
+    for i in range(n):
+        w = mp[max(0, i - length + 1):i + 1]
+        hh, ll = max(w), min(w)
+        rng = hh - ll
+        if rng > 0:
+            val = 0.66 * ((mp[i] - ll) / rng - 0.5) + 0.67 * val
+        val = max(-0.999, min(0.999, val))
+        fish = 0.5 * math.log((1 + val) / (1 - val)) + 0.5 * fish
+        out.append(fish)
+    return out
+
+
+def detrend(series, period=FLOW_DETREND):
+    """Subtract a series' own EMA.
+
+    Only meaningful for the CUMULATIVE ones. A running sum's absolute level is
+    an artefact of where the candle history happens to start, and while it
+    drifts one way every price extreme on that side clears the divergence test
+    for free — the oscillator "made a higher low" because it makes a higher low
+    every bar, not because flow did anything. Subtracting the baseline leaves
+    only flow relative to the prevailing trend, and the arbitrary anchor
+    cancels out of the comparison.
+    """
+    if not series or len(series) < 2:
+        return list(series)
+    base = ema(series, period)
+    return [v - b for v, b in zip(series, base, strict=False)]
+
+
+def bullish_divergence(highs, lows, osc, pivot=DIV_PIVOT, lookback=DIV_LOOKBACK,
+                       min_gap=DIV_MIN_GAP, max_gap=DIV_MAX_GAP,
+                       min_osc_gap=DIV_MIN_OSC_GAP, atr=None,
+                       min_leg_atr=DIV_MIN_LEG_ATR, norm=DIV_NORM):
     """Regular bullish divergence: price prints a LOWER low while the
     oscillator prints a HIGHER low. Same rule and the same confirmation lag as
-    f_divTrack() in Divergence_Radar.pine — if these two ever disagree about a
-    bar, one of them is wrong, and this repo has already been bitten once by a
-    Python mirror drifting from the .pine it claimed to reproduce.
+    f_divTrackPro() in Divergence_Radar_PRO.pine — if these two ever disagree
+    about a bar, one of them is wrong, and this repo has already been bitten by
+    a Python mirror drifting from the .pine it claimed to reproduce.
 
-    Returns bars-ago of the most recent one inside `lookback`, else None.
+    The bare definition above is what the first version implemented, and it is
+    too permissive to be worth gating on. Three things are added here, each
+    closing a hole that was letting through signals about nothing:
+
+      min_gap / max_gap  The two pivots must be this far apart IN BARS. The old
+          rule compared each pivot to the previous one however old it was, so a
+          swing low from 300 bars ago could still "diverge" against today's.
+          Two lows that far apart are not one structure. 5…60 is what
+          TradingView's own built-in divergence indicator has always used.
+
+      min_osc_gap  The oscillator must have risen by a real amount, expressed
+          as a fraction of its OWN recent range. Normalising per-source is what
+          lets one number mean the same thing to MACD (price units), K (0-100)
+          and detrended CVD (volume units). Without it, higher by 1e-9 counted.
+
+      min_leg_atr  The pivot must be a real swing: its low must sit this many
+          ATR below the highest high in its own confirmation window. This is
+          what rejects chop, and it is measured with the ATR AT THE PIVOT, not
+          at scan time.
+
+    `atr=None` skips the prominence test — callers without an ATR series get
+    the other two rather than a fabricated one.
+
+    Returns bars-ago of the most recent qualifying divergence inside
+    `lookback`, else None.
     """
     n = min(len(lows), len(osc))
     if n < pivot * 2 + 2:
         return None
     _, plw = _pivots(highs[:n], lows[:n], pivot, pivot)
+
+    # The oscillator's own recent range, so `min_osc_gap` is scale-free.
+    win = osc[max(0, n - norm):n]
+    osc_rng = (max(win) - min(win)) if win else 0.0
+
     best = None
     for a, b in zip(plw, plw[1:], strict=False):
-        if lows[b] < lows[a] and osc[b] > osc[a]:
-            confirmed = b + pivot                  # when the chart would show it
-            ago = n - 1 - confirmed
-            if 0 <= ago <= lookback:
-                best = ago if best is None else min(best, ago)
+        if not (min_gap <= b - a <= max_gap):
+            continue
+        if lows[b] >= lows[a] or osc[b] <= osc[a]:
+            continue
+        if osc_rng > 0 and (osc[b] - osc[a]) / osc_rng < min_osc_gap:
+            continue
+        if atr and min_leg_atr > 0:
+            a_pv = atr[b] if b < len(atr) else atr[-1]
+            if a_pv and a_pv > 0:
+                w0, w1 = max(0, b - pivot), min(n, b + pivot + 1)
+                if (max(highs[w0:w1]) - lows[b]) / a_pv < min_leg_atr:
+                    continue
+        confirmed = b + pivot                  # when the chart would show it
+        ago = n - 1 - confirmed
+        if 0 <= ago <= lookback:
+            best = ago if best is None else min(best, ago)
     return best
+
+
+def divergence_scan(ohlcv, highs, lows, closes):
+    """Every source, measured. Returns {name: bars_ago} for those that fired.
+
+    FOUR sources, not five. Accumulation/Distribution is deliberately absent,
+    and that is a finding rather than an omission: A/D's money-flow multiplier
+    and the close-position estimate cvd_series() uses are the same algebra —
+
+        2·(c−l)/(h−l) − 1  =  (2c − 2l − h + l)/(h−l)  =  (2c − l − h)/(h−l)
+        ((c−l) − (h−c))/(h−l)                          =  (2c − l − h)/(h−l)
+
+    On the chart that collision only bites beyond TradingView's intrabar limit,
+    because CVD there is built from real 1-minute deltas and only falls back to
+    the estimate on older bars. Here there is no intrabar data at all — the
+    REST klines are all this scan gets — so CVD is the estimate on EVERY bar
+    and A/D would be the identical series under a second name. Adding it would
+    inflate the agreement count without adding a measurement, which is the one
+    thing a confluence count must never do.
+    """
+    atr = atr_series(highs, lows, closes)
+    macd_line, _ = macd_series(closes)
+    sources = (("MACD", macd_line),
+               ("KD", stoch_k(highs, lows, closes)),
+               ("FISH", fisher_series(highs, lows)),
+               ("CVD", detrend(cvd_series(ohlcv))))
+    hits = {}
+    for name, s in sources:
+        if not s:
+            continue
+        ago = bullish_divergence(highs, lows, s, atr=atr)
+        if ago is not None:
+            hits[name] = ago
+    return hits
 
 
 def oi_state(oi_values, closes, smooth=3):
@@ -295,13 +495,73 @@ def plan(entry, support_level):
             "rr": TP_R}
 
 
+QUALITY_WEIGHTS = {"div": 35, "meter": 25, "slope": 15, "oi": 15, "stop": 10}
+
+
+def quality(ev: dict) -> int:
+    """0-100 for a setup that has already passed every gate.
+
+    Passing is binary; this says by how much. Six symbols can all clear the
+    same five gates on the same bar and they are not the same trade.
+
+    THE ABSTAIN RULE, which this repo has now been bitten by twice: a component
+    with no reading is REMOVED FROM THE DENOMINATOR, never scored as a neutral
+    middle. Scoring an absent OI feed 50 would be indistinguishable from a
+    genuinely balanced one, and 0 would collapse the reading — neither is a
+    thing that was measured. The returned number is therefore a percentage of
+    whatever could actually be read, and `quality_basis` says how much that was.
+
+    None of these weights is fitted. They are priorities, stated openly, on a
+    strategy whose edge is unmeasured — see the header. A higher number means
+    more of the things this scan looks for lined up, not a better trade.
+    """
+    parts, live = 0.0, 0
+
+    srcs = len(ev.get("div_sources") or [])
+    if srcs or not REQUIRE_DIVERGENCE:
+        # 4 sources available; the jump from one to two is the meaningful one.
+        parts += {0: 0, 1: 10, 2: 21, 3: 30}.get(srcs, 35) / 35 * QUALITY_WEIGHTS["div"]
+        live += QUALITY_WEIGHTS["div"]
+
+    score = ev.get("score")
+    if score is not None:
+        # the meter only ever qualifies a long above ~50, so 50→100 is the
+        # range that carries information
+        parts += max(0.0, min(1.0, (score - 50) / 50.0)) * QUALITY_WEIGHTS["meter"]
+        live += QUALITY_WEIGHTS["meter"]
+
+    slope = ev.get("slope")
+    if slope is not None:
+        # 0…2% of EMA level over the slope window; beyond that it is already
+        # a trend and more does not add information
+        parts += max(0.0, min(1.0, slope / 2.0)) * QUALITY_WEIGHTS["slope"]
+        live += QUALITY_WEIGHTS["slope"]
+
+    st = ev.get("oi_state") or 0
+    if st:                                   # 0 is "no data" — abstain, not neutral
+        parts += (1.0 if st == OI_LONGS_OPENING else 0.6 if st == OI_SHORTS_CLOSING
+                  else 0.0) * QUALITY_WEIGHTS["oi"]
+        live += QUALITY_WEIGHTS["oi"]
+
+    p = ev.get("plan") or {}
+    sp = p.get("stop_pct")
+    if sp is not None and MAX_STOP_PCT > MIN_STOP_PCT:
+        # a tighter stop inside the allowed band is more R per unit of risk
+        frac = (sp / 100 - MIN_STOP_PCT) / (MAX_STOP_PCT - MIN_STOP_PCT)
+        parts += (1.0 - max(0.0, min(1.0, frac))) * QUALITY_WEIGHTS["stop"]
+        live += QUALITY_WEIGHTS["stop"]
+
+    ev["quality_basis"] = live
+    return int(round(parts / live * 100)) if live else 0
+
+
 def evaluate(ohlcv, oi_values=None) -> dict:
     """All gates on one symbol's candles. Pure — every failure is NAMED, so the
     scan can report what it rejected instead of only what it passed. A filter
     you cannot see the effect of is a filter you cannot tune."""
     out = {"pass": False, "reason": None, "score": None, "slope": None,
-           "support": None, "div_ago": None, "oi_state": 0, "oi_delta": None,
-           "plan": None}
+           "support": None, "div_ago": None, "div_sources": [], "oi_state": 0,
+           "oi_delta": None, "plan": None, "quality": None, "quality_basis": None}
     if not ohlcv or len(ohlcv) < 380:
         out["reason"] = "not enough history"
         return out
@@ -337,15 +597,12 @@ def evaluate(ohlcv, oi_values=None) -> dict:
         return out
 
     if REQUIRE_DIVERGENCE:
-        macd_line, _ = macd_series(closes)
-        kk = stoch_k(highs, lows, closes)
-        cvd = cvd_series(ohlcv)
-        agos = [bullish_divergence(highs, lows, s)
-                for s in (macd_line, kk, cvd) if s]
-        agos = [a for a in agos if a is not None]
-        out["div_ago"] = min(agos) if agos else None
-        if not agos:
-            out["reason"] = "no recent bullish divergence"
+        hits = divergence_scan(ohlcv, highs, lows, closes)
+        out["div_sources"] = sorted(hits)
+        out["div_ago"] = min(hits.values()) if hits else None
+        if len(hits) < MIN_DIV_SOURCES:
+            out["reason"] = ("no recent bullish divergence" if not hits
+                             else f"only {len(hits)} of {MIN_DIV_SOURCES} divergence sources")
             return out
 
     st, delta = oi_state(oi_values or [], closes)
@@ -354,6 +611,7 @@ def evaluate(ohlcv, oi_values=None) -> dict:
         out["reason"] = "OI not supportive" if st else "no OI data"
         return out
 
+    out["quality"] = quality(out)
     out["pass"] = True
     return out
 
@@ -508,11 +766,20 @@ def format_signal(sig: dict) -> str:
         rows += [("進場", F.fmt_price(p["entry"])),
                  ("停損", f"{F.fmt_price(p['sl'])}  −{p['stop_pct']:.2f}%"),
                  ("目標", f"{F.fmt_price(p['tp'])}  +{p['tp_pct']:.2f}%  {p['rr']:g}R")]
-    rows += [("信心", f"{sig['score']:.0f}/100" if sig.get("score") is not None else "—"),
+    # Quality is S4's OWN read; 信心 is the S2 meter's. They answer different
+    # questions and printing one as the other has bitten this repo before, so
+    # both are shown with the basis quality was computed on — a 100 built from
+    # 60 points of live input is a different claim from one built on all of it.
+    q, qb = sig.get("quality"), sig.get("quality_basis")
+    srcs = sig.get("div_sources") or []
+    rows += [("品質", f"{q}/100" + (f"（基準 {qb}/100）" if qb and qb < 100 else "")
+              if q is not None else "—"),
+             ("信心", f"{sig['score']:.0f}/100" if sig.get("score") is not None else "—"),
              ("EMA200", f"上升 +{sig['slope']:.2f}%" if sig.get("slope") is not None else "—"),
              ("支撐", F.fmt_price(sig["support"]["level"]) + f"（{sig['support']['bars_ago']} 根前）"
               if sig.get("support") else "—"),
-             ("背離", f"{sig['div_ago']} 根前" if sig.get("div_ago") is not None else "—"),
+             ("背離", (f"{sig['div_ago']} 根前 · " + "+".join(srcs)) if srcs
+              else (f"{sig['div_ago']} 根前" if sig.get("div_ago") is not None else "—")),
              ("未平倉", OI_TEXT.get(sig.get("oi_state"), "—"))]
     bits.append(F.pre_table(rows))
     bits.append(F.bybit_line(base, sig.get("price")))

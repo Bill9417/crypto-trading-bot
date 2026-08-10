@@ -18,6 +18,51 @@
 //    score is identical with it on or off (this is now true; see v2 note 2).
 //
 // ════════════════════════════════════════════════════════════════════════════
+//  WHAT CHANGED IN v3 — the abstain rule, finished
+//
+//  v2 introduced the right idea and applied it to 2 of the 7 score factors.
+//  v3 finishes it and fixes two unrelated defects found on the way.
+//
+//  1. FIVE OF THE SEVEN FACTORS COULD NOT ABSTAIN. A factor with no reading
+//     voted a confident "neutral 0" while keeping its full weight in the
+//     denominator. Two ways that bit:
+//       · SMC holds the LARGEST weight (25). fSMC reads internalTrend.bias,
+//         which is only written inside `if showSMC`. Switch the SMC module off
+//         and the bias holds its initial 0 for the entire run — a quarter of
+//         the meter reporting a neutral read on a module that never ran.
+//       · EMA stack, price-vs-200, Vegas and Tunnel are na until their longest
+//         average fills — 338 bars for the outer tunnel. `close > na` and
+//         `close < na` are BOTH false, so each scored 0. On a fresh chart or a
+//         new listing that is 60 of 100 points voting on data nobody had, and
+//         the score sat near 50 looking like a real balanced tape.
+//     All seven can now abstain, and the panel's new BASIS row prints the
+//     weight actually in play instead of implying 100.
+//
+//  2. THE MTF PANEL HAD THE SAME HOLE, WHERE IT MATTERS MORE. A 1H row needs
+//     204 hourly bars before Vegas exists; TradingView serves a limited number
+//     of higher-timeframe bars on a low chart timeframe. A row could print a
+//     confident "Neutral 50" assembled almost entirely from missing inputs.
+//     Unreadable rows now return na and the panel says "no data" — which also
+//     stops three blank rows from reading as a genuine mixed market in Align.
+//
+//  3. THE WRONG ORDER BLOCK WAS BEING DELETED. The legacy MSB zone sweep called
+//     array.shift(), which removes index 0 — the OLDEST box — regardless of
+//     which one price had actually mitigated. Break the newest of three zones
+//     and it deleted the oldest, leaving the mitigated zone on the chart still
+//     extending itself as if untouched. It also mutated the array while a
+//     `for … in` walked it, so one zone per deletion was skipped unchecked.
+//
+//  4. CLEAN CHART MODE SILENTLY KILLED THE ORDER-BLOCK ALERTS. deleteOrderBlocks()
+//     draws nothing — it retires mitigated blocks and raises the four OB
+//     breakout alerts — but it was gated on cleanMode, which is ON by default.
+//     Bookkeeping now follows the module input; only drawing follows cleanMode.
+//     (FVG is detected by the same call that draws it, so its two alerts still
+//     require Clean Mode off. That is now stated in the tooltip rather than
+//     left to be discovered.)
+//
+//  Unchanged: none of this is backtested. The meter is a confluence read, not
+//  an edge, and a higher number is not a better trade.
+// ════════════════════════════════════════════════════════════════════════════
 //  WHAT CHANGED IN v2 — measurement fixes, not cosmetics
 //  Every item below is a case where the indicator reported something that was
 //  not true. Behaviour changes are called out so nothing surprises you.
@@ -92,7 +137,7 @@ showSMC   = input.bool(true,  "Smart Money Concepts", group=gM, tooltip="LuxAlgo
 showSIG   = input.bool(false, "Signal Layer (Long/Short)", group=gM, tooltip="Confluence signal. OFF by default — not trading advice.")
 showPanel = input.bool(true,  "Confidence Panel",    group=gM, tooltip="Top-right live status table")
 hideText  = input.bool(true,  "Hide All Text Labels", group=gM, tooltip="Keep blocks and lines, but remove all words (MSB, EQH/EQL, Premium, etc.) from the chart. Info panels are unaffected.")
-cleanMode = input.bool(true,  "★ CLEAN CHART MODE", group=gM, tooltip="ONE switch that removes the visual noise so the S/R zones and trend are actually readable. This indicator can otherwise draw 9 moving averages, 14 trendlines, SMC structure lines, order blocks and ~50 volume-profile boxes at once.\n\nWhen ON it hides: EMA 50/100 (keeps 20 + 200), Tunnel 2 (288/338), SMC internal structure lines, SMC order blocks, FVG, and the volume-profile histogram bars (POC/VAH/VAL price lines stay).\nIt also caps trendlines to 2 active + 2 broken per side.\n\nNothing is switched off in the CALCULATIONS — the Confidence Meter score is identical either way. This only affects what gets drawn.\n\nTurn OFF to see every layer again.")
+cleanMode = input.bool(true,  "★ CLEAN CHART MODE", group=gM, tooltip="ONE switch that removes the visual noise so the S/R zones and trend are actually readable. This indicator can otherwise draw 9 moving averages, 14 trendlines, SMC structure lines, order blocks and ~50 volume-profile boxes at once.\n\nWhen ON it hides: EMA 50/100 (keeps 20 + 200), Tunnel 2 (288/338), SMC internal structure lines, SMC order blocks, FVG, and the volume-profile histogram bars (POC/VAH/VAL price lines stay).\nIt also caps trendlines to 2 active + 2 broken per side.\n\nThe Confidence Meter score is identical either way — every factor it reads is computed regardless of this switch.\n\nONE exception, stated plainly: Fair Value Gaps are DETECTED by the same code that draws them, so while Clean Mode is on the two FVG alerts cannot fire. FVG is off by default. Order-block alerts are NOT affected — that was a v3 fix; they used to go silent here too.\n\nTurn OFF to see every layer again.")
 
 // ╔═══════════════════════════════════════════════════════╗
 // ║  ② EMA SETTINGS                                        ║
@@ -325,6 +370,14 @@ showStructure_g            = showStructureInput and showSMC
 showHighLowSwings_g        = showHighLowSwingsInput and showSMC
 showInternalOrderBlocks_g  = showInternalOrderBlocksInput and showSMC and not cleanMode
 showSwingOrderBlocks_g     = showSwingOrderBlocksInput and showSMC and not cleanMode
+// v3 FIX: deleteOrderBlocks() and storeOrdeBlock() DRAW NOTHING. They retire
+// mitigated blocks from the tracking arrays and raise the four OB-breakout
+// alerts. Both were gated on cleanMode, so switching on a DISPLAY preference —
+// one that is ON by default — silently stopped those alerts from ever firing
+// and left mitigated blocks sitting in the arrays for the whole run.
+// Bookkeeping follows the module input; only drawing follows cleanMode.
+showInternalOrderBlocksCalc = showInternalOrderBlocksInput and showSMC
+showSwingOrderBlocksCalc    = showSwingOrderBlocksInput and showSMC
 showEqualHighsLows_g       = showEqualHighsLowsInput and showSMC
 showFairValueGaps_g        = showFairValueGapsInput and showSMC and not cleanMode
 showPremiumDiscountZones_g = showPremiumDiscountZonesInput and showSMC
@@ -821,11 +874,39 @@ f_get_high(ind) =>
     [array.get(high_points_arr, array.size(high_points_arr) - 1 - ind), array.get(high_index_arr, array.size(high_index_arr) - 1 - ind)]
 f_get_low(ind) =>
     [array.get(low_points_arr, array.size(low_points_arr) - 1 - ind), array.get(low_index_arr, array.size(low_index_arr) - 1 - ind)]
-f_delete_box(box_arr) =>
-    if delete_boxes
-        box.delete(array.shift(box_arr))
-    else
-        array.shift(box_arr)
+// v3 FIX: THE WRONG ZONE WAS BEING DELETED.
+// The old helper called array.shift(), which removes index 0 — the OLDEST box
+// — no matter which box the caller was actually looking at. With three live
+// zones and price breaking through the NEWEST one, this deleted the oldest and
+// left the mitigated zone on the chart, still extending itself every bar as
+// though it had never been touched. The two boxes swapped identities silently.
+//
+// It also mutated the array while a `for … in` loop was walking it: removing an
+// element shifts every later index down, so the loop's cursor skipped the next
+// zone entirely. One un-checked zone per deletion, every deletion.
+//
+// Both go away by walking BACKWARDS over indices and removing exactly the
+// element that was hit — descending order means a removal cannot disturb any
+// index the loop has yet to visit. The size guard is load-bearing: Pine's `for`
+// counts UP when the start is below the end, so an empty array would turn
+// `for i = -1 to 0` into a read at index −1 and a runtime error.
+//
+// `delete_boxes == false` keeps its original meaning: stop tracking the zone
+// but leave the drawing frozen on the chart.
+f_sweepBoxes(box_arr, bool bullish, string zoneMsg) =>
+    if array.size(box_arr) > 0
+        for i = array.size(box_arr) - 1 to 0
+            b = array.get(box_arr, i)
+            float bTop = box.get_top(b)
+            float bBot = box.get_bottom(b)
+            if bullish ? close < bBot : close > bTop
+                if delete_boxes
+                    box.delete(b)
+                array.remove(box_arr, i)
+            else if bullish ? close < bTop : close > bBot
+                alert(zoneMsg)
+            else
+                box.set_right(b, bar_index + 10)
     0
 
 [h0, h0i] = f_get_high(0)
@@ -895,42 +976,10 @@ if ta.change(market) != 0 and showMSB
         array.push(be_ob_boxes, be_ob)
         array.push(be_bb_boxes, be_bb)
 
-for bull_ob in bu_ob_boxes
-    bottom = box.get_bottom(bull_ob)
-    top = box.get_top(bull_ob)
-    if close < bottom
-        f_delete_box(bu_ob_boxes)
-    else if close < top
-        alert("Price in the BU-OB zone")
-    else
-        box.set_right(bull_ob, bar_index + 10)
-for bear_ob in be_ob_boxes
-    top = box.get_top(bear_ob)
-    bottom = box.get_bottom(bear_ob)
-    if close > top
-        f_delete_box(be_ob_boxes)
-    else if close > bottom            // FIX: was a bare `if`, which read a shifted box after deletion
-        alert("Price in the BE-OB zone")
-    else
-        box.set_right(bear_ob, bar_index + 10)
-for bear_bb in be_bb_boxes
-    top = box.get_top(bear_bb)
-    bottom = box.get_bottom(bear_bb)
-    if close > top
-        f_delete_box(be_bb_boxes)
-    else if close > bottom
-        alert("Price in the BE-BB zone")
-    else
-        box.set_right(bear_bb, bar_index + 10)
-for bull_bb in bu_bb_boxes
-    bottom = box.get_bottom(bull_bb)
-    top = box.get_top(bull_bb)
-    if close < bottom
-        f_delete_box(bu_bb_boxes)
-    else if close < top
-        alert("Price in the BU-BB zone")
-    else
-        box.set_right(bull_bb, bar_index + 10)
+f_sweepBoxes(bu_ob_boxes, true,  "Price in the BU-OB zone")
+f_sweepBoxes(be_ob_boxes, false, "Price in the BE-OB zone")
+f_sweepBoxes(be_bb_boxes, false, "Price in the BE-BB zone")
+f_sweepBoxes(bu_bb_boxes, true,  "Price in the BU-BB zone")
 
 alertcondition(ta.change(market) != 0, "MSB", "MSB")
 
@@ -1350,13 +1399,15 @@ if showEqualHighsLows_g
 if showSMC
     displayStructure(true)
 
-if showStructure_g or showSwingOrderBlocks_g or showHighLowSwings_g
+if showStructure_g or showSwingOrderBlocksCalc or showHighLowSwings_g
     displayStructure()
 
-if showInternalOrderBlocks_g
+// v3: bookkeeping + alerts, so these follow the module input, not the drawing
+// preference. drawOrderBlocks() below is the part cleanMode is entitled to skip.
+if showInternalOrderBlocksCalc
     deleteOrderBlocks(true)
 
-if showSwingOrderBlocks_g
+if showSwingOrderBlocksCalc
     deleteOrderBlocks()
 
 if showFairValueGaps_g
@@ -1474,20 +1525,41 @@ fVolume   = na(volMean) ? 0 : close > volMean ? 1 : close < volMean ? -1 : 0
 
 // weighted net, normalized to 0–100 (50 = neutral)
 //
-// v2 FIX (note 4): a factor that ABSTAINS has its weight removed from the
-// denominator; a factor that votes 0 because it is genuinely undecided keeps
-// its weight. The distinction matters — "no trendline has broken recently" is
-// silence, whereas "the EMAs are not stacked" is a real neutral reading.
-// Only two factors can abstain:
-//   · trendlines — nothing has broken inside the memory window
-//   · volume     — the rolling window has not filled yet, or the symbol
-//                  reports no volume at all (many indices and FX feeds)
-// When both are speaking, activeW is 100 and this is arithmetically identical
-// to the old `50 + netRaw / 2`. Nothing about your existing readings shifts
-// except that the ends of the scale are now reachable.
-volSpeaks = not na(volMean)
-activeW   = wEMAstack + wEMA200 + wSMC + wVegas + wTunnel + (tlFresh ? wTrendln : 0) + (volSpeaks ? wVolume : 0)
-netRaw    = fEMAstack*wEMAstack + fEMA200*wEMA200 + fSMC*wSMC + fVegas*wVegas + fTunnel*wTunnel + fTrendln*wTrendln + fVolume*wVolume
+// v2 FIX (note 4) established the rule: a factor that ABSTAINS has its weight
+// removed from the denominator, while a factor that votes 0 because it is
+// genuinely undecided keeps it. "No trendline has broken recently" is silence;
+// "the EMAs are not stacked" is a real neutral reading. They look identical in
+// the output and mean opposite things.
+//
+// ── v3 FIX: THE RULE WAS ONLY APPLIED TO TWO OF THE SEVEN ─────────────────
+// The other five could each fall silent for reasons that had nothing to do
+// with the market, and every one of them voted a confident 0 anyway:
+//
+//  · SMC — 25 points, the LARGEST single weight. fSMC reads
+//    internalTrend.bias, which is only ever written inside `if showSMC`. Turn
+//    the SMC module off in group ① and the bias holds its initial 0 for the
+//    whole run: a quarter of the meter reporting a neutral reading about a
+//    module that was never run. bias == 0 also means "no structure break has
+//    happened yet", which is silence too, not a balanced tape.
+//
+//  · EMA stack (20), price vs EMA200 (15), Vegas (15), Tunnel (10) — all na
+//    until their longest average fills, which for the outer tunnel is 338
+//    bars. `close > na` and `close < na` are BOTH false, so each scored 0
+//    rather than abstaining. On a fresh chart or a newly listed coin that is
+//    60 of the 100 points voting neutral on data nobody had — and the score
+//    sat near 50 looking like a genuine balanced read.
+//
+// The meter can now also report on a partial basis, so the panel prints the
+// weight actually in play (see the Basis row) rather than implying 100.
+smcSpeaks    = showSMC and internalTrend.bias != 0
+stackSpeaks  = not na(emaFast) and not na(emaMed) and not na(emaSlow) and not na(emaTrend)
+ema200Speaks = not na(emaTrend)
+vegasSpeaks  = not na(vegasEMA200) and not na(vegasEMA200[1])
+tunnelSpeaks = not na(t1Top) and not na(t1Bot) and not na(t2Top) and not na(t2Bot)
+volSpeaks    = not na(volMean)
+
+activeW = (stackSpeaks ? wEMAstack : 0) + (ema200Speaks ? wEMA200 : 0) + (smcSpeaks ? wSMC : 0) + (vegasSpeaks ? wVegas : 0) + (tunnelSpeaks ? wTunnel : 0) + (tlFresh ? wTrendln : 0) + (volSpeaks ? wVolume : 0)
+netRaw  = (stackSpeaks ? fEMAstack * wEMAstack : 0) + (ema200Speaks ? fEMA200 * wEMA200 : 0) + (smcSpeaks ? fSMC * wSMC : 0) + (vegasSpeaks ? fVegas * wVegas : 0) + (tunnelSpeaks ? fTunnel * wTunnel : 0) + (tlFresh ? fTrendln * wTrendln : 0) + (volSpeaks ? fVolume * wVolume : 0)
 confScore = activeW > 0 ? 50 + 50.0 * netRaw / activeW : 50.0
 confScore := math.max(0, math.min(100, confScore))
 
@@ -1563,8 +1635,14 @@ panelSize = input.string(size.normal, "Text Size", [size.tiny, size.small, size.
 f_panelpos(p) =>
     p == "Top Right" ? position.top_right : p == "Top Left" ? position.top_left : p == "Bottom Right" ? position.bottom_right : p == "Bottom Left" ? position.bottom_left : position.middle_right
 
+// v3: a factor row now takes its "is it speaking" flag, so an abstaining factor
+// says so instead of printing "—". "—" is a neutral READING; abstain means the
+// factor is not in the denominator at all. Showing both as "—" is exactly the
+// confusion the abstain rule exists to remove.
 f_facCol(int f) => f == 1 ? #26a69a : f == -1 ? #ef5350 : color.gray
 f_facTxt(int f) => f == 1 ? "Bull" : f == -1 ? "Bear" : "—"
+f_rowTxt(bool speaks, int f) => speaks ? f_facTxt(f) : "abstain"
+f_rowCol(bool speaks, int f) => speaks ? f_facCol(f) : color.new(color.gray, 30)
 
 // 10-segment score bar: ██████░░░░
 f_scoreBar(float sc) =>
@@ -1574,7 +1652,10 @@ f_scoreBar(float sc) =>
         s += i <= filled ? "█" : "░"
     s
 
-var table infoPanel = table.new(f_panelpos(panelPos), 2, 12, bgcolor=color.new(#0d0d12, 15), border_color=color.new(color.gray, 65), border_width=1, frame_color=color.new(color.gray, 45), frame_width=1)
+// 13 rows in use (0-12): header, bar+bias, trend, regime, basis, active TL,
+// then 7 factor rows. Declared at 14 — table.cell() past the declared row count
+// is a runtime error, not a clipped table, so the count must lead the layout.
+var table infoPanel = table.new(f_panelpos(panelPos), 2, 14, bgcolor=color.new(#0d0d12, 15), border_color=color.new(color.gray, 65), border_width=1, frame_color=color.new(color.gray, 45), frame_width=1)
 
 if barstate.islast and showPanel
     // score → accent color + bias text
@@ -1608,29 +1689,37 @@ if barstate.islast and showPanel
     table.cell(infoPanel, 0, 3, " Regime", text_color=color.silver, text_size=panelSize, text_halign=text.align_left)
     table.cell(infoPanel, 1, 3, regTxt + " ", text_color=regCol, text_size=panelSize, text_halign=text.align_right)
 
-    // Active trendlines
-    table.cell(infoPanel, 0, 4, " Active TL", text_color=color.silver, text_size=panelSize, text_halign=text.align_left)
-    table.cell(infoPanel, 1, 4, str.tostring(activeTL) + " ", text_color=color.white, text_size=panelSize, text_halign=text.align_right)
+    // v3: BASIS — the weight the score is actually computed on. A meter built
+    // from 40 of its 100 points is a different claim from one built on all of
+    // them, and the number was previously invisible unless you opened the
+    // factor breakdown and did the arithmetic yourself. Amber when partial.
+    basisTxt = str.tostring(activeW) + " / 100"
+    basisCol = activeW >= 100 ? color.silver : activeW >= 60 ? #ffb300 : #ef5350
+    table.cell(infoPanel, 0, 4, " Basis", text_color=color.silver, text_size=panelSize, text_halign=text.align_left)
+    table.cell(infoPanel, 1, 4, basisTxt + " ", text_color=basisCol, text_size=panelSize, text_halign=text.align_right)
 
-    // Optional factor breakdown
+    // Active trendlines
+    table.cell(infoPanel, 0, 5, " Active TL", text_color=color.silver, text_size=panelSize, text_halign=text.align_left)
+    table.cell(infoPanel, 1, 5, str.tostring(activeTL) + " ", text_color=color.white, text_size=panelSize, text_halign=text.align_right)
+
+    // Optional factor breakdown. Every row now reports abstain vs a neutral
+    // reading — previously only the last two could, so an EMA stack that had no
+    // data yet and one that was genuinely flat printed the same "—".
     if showFactors
-        table.cell(infoPanel, 0, 5, " EMA Stack",   text_color=color.silver, text_size=panelSize, text_halign=text.align_left)
-        table.cell(infoPanel, 1, 5, f_facTxt(fEMAstack) + " ", text_color=f_facCol(fEMAstack), text_size=panelSize, text_halign=text.align_right)
-        table.cell(infoPanel, 0, 6, " Px vs 200",    text_color=color.silver, text_size=panelSize, text_halign=text.align_left)
-        table.cell(infoPanel, 1, 6, f_facTxt(fEMA200) + " ", text_color=f_facCol(fEMA200), text_size=panelSize, text_halign=text.align_right)
-        table.cell(infoPanel, 0, 7, " SMC",          text_color=color.silver, text_size=panelSize, text_halign=text.align_left)
-        table.cell(infoPanel, 1, 7, f_facTxt(fSMC) + " ", text_color=f_facCol(fSMC), text_size=panelSize, text_halign=text.align_right)
-        table.cell(infoPanel, 0, 8, " Vegas",        text_color=color.silver, text_size=panelSize, text_halign=text.align_left)
-        table.cell(infoPanel, 1, 8, f_facTxt(fVegas) + " ", text_color=f_facCol(fVegas), text_size=panelSize, text_halign=text.align_right)
-        table.cell(infoPanel, 0, 9, " Tunnel",       text_color=color.silver, text_size=panelSize, text_halign=text.align_left)
-        table.cell(infoPanel, 1, 9, f_facTxt(fTunnel) + " ", text_color=f_facCol(fTunnel), text_size=panelSize, text_halign=text.align_right)
-        // abstaining factors say so, and show the weight the score is actually
-        // being computed on — "—" would hide the difference between a neutral
-        // vote and no vote at all (v2 note 4)
-        table.cell(infoPanel, 0, 10, " TL Break",    text_color=color.silver, text_size=panelSize, text_halign=text.align_left)
-        table.cell(infoPanel, 1, 10, (tlFresh ? f_facTxt(fTrendln) : "abstain") + " ", text_color=tlFresh ? f_facCol(fTrendln) : color.new(color.gray, 30), text_size=panelSize, text_halign=text.align_right)
-        table.cell(infoPanel, 0, 11, activeW < 100 ? " Volume  ·  of " + str.tostring(activeW) : " Volume", text_color=color.silver, text_size=panelSize, text_halign=text.align_left)
-        table.cell(infoPanel, 1, 11, (volSpeaks ? f_facTxt(fVolume) : "abstain") + " ", text_color=volSpeaks ? f_facCol(fVolume) : color.new(color.gray, 30), text_size=panelSize, text_halign=text.align_right)
+        table.cell(infoPanel, 0, 6, " EMA Stack",   text_color=color.silver, text_size=panelSize, text_halign=text.align_left)
+        table.cell(infoPanel, 1, 6, f_rowTxt(stackSpeaks, fEMAstack) + " ", text_color=f_rowCol(stackSpeaks, fEMAstack), text_size=panelSize, text_halign=text.align_right)
+        table.cell(infoPanel, 0, 7, " Px vs 200",    text_color=color.silver, text_size=panelSize, text_halign=text.align_left)
+        table.cell(infoPanel, 1, 7, f_rowTxt(ema200Speaks, fEMA200) + " ", text_color=f_rowCol(ema200Speaks, fEMA200), text_size=panelSize, text_halign=text.align_right)
+        table.cell(infoPanel, 0, 8, " SMC",          text_color=color.silver, text_size=panelSize, text_halign=text.align_left)
+        table.cell(infoPanel, 1, 8, f_rowTxt(smcSpeaks, fSMC) + " ", text_color=f_rowCol(smcSpeaks, fSMC), text_size=panelSize, text_halign=text.align_right)
+        table.cell(infoPanel, 0, 9, " Vegas",        text_color=color.silver, text_size=panelSize, text_halign=text.align_left)
+        table.cell(infoPanel, 1, 9, f_rowTxt(vegasSpeaks, fVegas) + " ", text_color=f_rowCol(vegasSpeaks, fVegas), text_size=panelSize, text_halign=text.align_right)
+        table.cell(infoPanel, 0, 10, " Tunnel",      text_color=color.silver, text_size=panelSize, text_halign=text.align_left)
+        table.cell(infoPanel, 1, 10, f_rowTxt(tunnelSpeaks, fTunnel) + " ", text_color=f_rowCol(tunnelSpeaks, fTunnel), text_size=panelSize, text_halign=text.align_right)
+        table.cell(infoPanel, 0, 11, " TL Break",    text_color=color.silver, text_size=panelSize, text_halign=text.align_left)
+        table.cell(infoPanel, 1, 11, f_rowTxt(tlFresh, fTrendln) + " ", text_color=f_rowCol(tlFresh, fTrendln), text_size=panelSize, text_halign=text.align_right)
+        table.cell(infoPanel, 0, 12, " Volume",      text_color=color.silver, text_size=panelSize, text_halign=text.align_left)
+        table.cell(infoPanel, 1, 12, f_rowTxt(volSpeaks, fVolume) + " ", text_color=f_rowCol(volSpeaks, fVolume), text_size=panelSize, text_halign=text.align_right)
 
 // ── inputs first: Pine resolves identifiers top-down, so a function
 // ── may only read what is already declared above it. f_tfLevels()
@@ -1677,9 +1766,22 @@ f_tfScore() =>
     // same max/min symmetry fix as the chart-TF tunnel factor (v2 note 3)
     s4 = close > math.max(m1, m2) and close > math.max(m3, m4) ? 1 : close < math.min(m1, m2) and close < math.min(m3, m4) ? -1 : 0   // tunnel (15)
     s5 = na(vMean) ? 0 : close > vMean ? 1 : close < vMean ? -1 : 0                        // volume bias (10)
-    aw  = 30 + 25 + 20 + 15 + (na(vMean) ? 0 : 10)   // volume abstains, it does not vote neutral
-    net = s1*30 + s2*25 + s3*20 + s4*15 + s5*10
-    math.max(0, math.min(100, 50 + 50.0 * net / aw))
+    // v3: the same abstain rule as the chart-timeframe meter. This matters MORE
+    // here, not less: a 1H row needs 204 hourly bars before Vegas exists and 338
+    // before the outer tunnel does, and TradingView serves a limited number of
+    // higher-timeframe bars on a low chart timeframe. The old version filled
+    // every one of those gaps with a neutral vote, so a row could read a
+    // confident "Neutral 50" built almost entirely out of missing data.
+    sp1 = not na(eF) and not na(eM) and not na(eS) and not na(eT)
+    sp2 = not na(eT)
+    sp3 = not na(veg) and not na(veg[1])
+    sp4 = not na(m1) and not na(m2) and not na(m3) and not na(m4)
+    sp5 = not na(vMean)
+    aw  = (sp1 ? 30 : 0) + (sp2 ? 25 : 0) + (sp3 ? 20 : 0) + (sp4 ? 15 : 0) + (sp5 ? 10 : 0)
+    net = (sp1 ? s1 * 30 : 0) + (sp2 ? s2 * 25 : 0) + (sp3 ? s3 * 20 : 0) + (sp4 ? s4 * 15 : 0) + (sp5 ? s5 * 10 : 0)
+    // nothing readable → na, which the panel already renders as "…". A fabricated
+    // 50 would be indistinguishable from a genuinely balanced higher timeframe.
+    aw > 0 ? math.max(0, math.min(100, 50 + 50.0 * net / aw)) : float(na)
 
 // ── nearest untouched swing levels ON that timeframe ────────────────────────
 // The score says which way; this says where. Both are computed from the SAME
@@ -1776,8 +1878,12 @@ f_srCell(float sup, float res) =>
 
 f_mtfRow(int rowN, string tfName, float sc, float sup, float res) =>
     dir = f_mtfDir(sc)
-    txt = dir == 1 ? "LONG" : dir == -1 ? "SHORT" : "Neutral"
-    col = dir == 1 ? #26a69a : dir == -1 ? #ef5350 : #ffb300
+    // v3: an unreadable timeframe says "no data". It used to fall through to
+    // "Neutral", which is a claim about the market rather than about the feed —
+    // and it fed the Align row, so three unreadable rows could read as a
+    // genuine mixed market.
+    txt = na(sc) ? "no data" : dir == 1 ? "LONG" : dir == -1 ? "SHORT" : "Neutral"
+    col = na(sc) ? color.new(color.gray, 30) : dir == 1 ? #26a69a : dir == -1 ? #ef5350 : #ffb300
     below = f_tfBelowChart(tfName)
     table.cell(mtfPanel, 0, rowN, " " + f_tfLabel(tfName) + (below ? " ↓" : ""), text_color=below ? color.new(color.silver, 45) : color.silver, text_size=mtfSize, text_halign=text.align_left)
     table.cell(mtfPanel, 1, rowN, na(sc) ? "…" : str.tostring(math.round(sc)), text_color=color.white, text_size=mtfSize, text_halign=text.align_center)

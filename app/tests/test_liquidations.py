@@ -23,6 +23,33 @@ def test_import_does_not_start_collector():
         assert not [t for t in threading.enumerate() if t.name.startswith("liq-")]
 
 
+# ── the isolation guard these parser tests depend on ────────────────────────
+# 2026-08-09: the suite went red with "expected BTC, got LIT". Three web routes
+# call liquidations.start() lazily, so any test rendering /market opened real
+# Binance/Bybit/OKX WebSockets inside pytest, and live events streamed into the
+# shared _events deque that the parser tests below read from. It failed only
+# when a real liquidation landed in the microseconds between _clear() and the
+# assertion — and this suite is the pre-flight gate for every restart, so a
+# random red is a stack that randomly stays down.
+def test_no_test_can_open_a_live_liquidation_socket():
+    """conftest's autouse guard must neutralise start(). Without it these
+    parser tests are racing the actual market."""
+    assert L.start() is None
+    import threading
+    assert not [t for t in threading.enumerate() if t.name.startswith("liq-")], \
+        "a live collector thread is running inside the test process"
+
+
+def test_the_production_buffer_is_never_written_by_a_test():
+    """start() loads liquidations_buffer.json and _push saves it back, so an
+    unguarded run could overwrite real collected data with test fixtures."""
+    import os
+    real = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                        "liquidations_buffer.json")
+    assert os.path.abspath(L.BUFFER_FILE) != os.path.abspath(real), \
+        "BUFFER_FILE still points at the production file during tests"
+
+
 def test_binance_parser_sell_order_is_long_liquidation():
     _clear()
     msg = json.dumps({"e": "forceOrder", "o": {
