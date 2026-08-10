@@ -49,6 +49,7 @@ app/cache/
 cache/
 strategy4_state.json
 strategy4_signals.json
+strategy4_outcomes.json
 line_ids.json
 site_link_state.json
 line_quota_state.json
