@@ -12,6 +12,10 @@
 !.env.example
 !app/.env.example
 
+# TLS private keys (e.g. Tailscale Funnel cert key) — the .crt is public and
+# fine to commit, the .key is not. One leaked into history once; don't repeat it.
+*.key
+
 # ── Flask instance: user logins (users.db) + signal DBs + session secrets ──
 instance/
 *.db
