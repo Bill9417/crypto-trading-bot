@@ -49,35 +49,67 @@ read_env_bool() {
     [ "$val" = "1" ] || [ "$val" = "true" ] || [ "$val" = "yes" ] || [ "$val" = "on" ]
 }
 
-# kill_pattern PATTERN LABEL — SIGTERM, VERIFY, then SIGKILL what refused.
+# _pids PATTERN — PIDs whose full command matches, read from ps, not pgrep.
+#
+# `pgrep -f` LIES on this machine. 2026-08-10, verbatim from restart.log while
+# the process was demonstrably alive with 12h56m of uptime:
+#
+#     Clearing any previous instances...
+#       • S2 scanner not running
+#
+# It had already done the same thing on 2026-08-09, when status_all printed one
+# S2 pid at the exact moment two existed — the detail that made that incident
+# look impossible to explain. Intermittent, and always in the same direction:
+# it reports absence, never a phantom.
+#
+# ps walks the process table directly and has not been caught doing this, so it
+# is the source of truth here. The [p]ython bracket trick still keeps the grep
+# from matching itself.
+_pids() {
+    ps -Ao pid=,command= | grep -E "$1" | awk '{print $1}'
+}
+
+# kill_pattern PATTERN LABEL — SIGNAL FIRST, verify, then SIGKILL by PID.
 #
 # `pkill` reports that a signal was SENT, never that the target acted on it, and
-# the old code took that exit status as proof of death. On 2026-08-09 a scanner
-# outlived its own replacement by ~11h: two processes then long-polled
+# the original code took that exit status as proof of death. On 2026-08-09 a
+# scanner outlived its own replacement by ~11h: two processes then long-polled
 # getUpdates, Telegram answered the second with 409 Conflict, and every bot
-# command (/winrate /positions /restart …) was dead for half a day while `ps`
-# showed a healthy stack, because the replacement had started perfectly.
+# command was dead for half a day while `ps` showed a healthy stack.
 #
-# The mechanism that let it survive was never identified — it died on a plain
-# SIGTERM when tested afterwards. That is precisely why this verifies instead of
-# reasoning about which processes "should" die: send TERM, confirm it is
-# actually gone, then KILL. SIGKILL cannot be trapped, blocked or deferred, so
-# it is the only kill that is a fact rather than a request. The escalation is
-# announced, because a process needing SIGKILL is worth knowing about even when
-# the outcome is correct.
+# The first fix added a guard that asked "is it running?" and returned early
+# when the answer was no. That made things WORSE — strictly worse than the code
+# it replaced, which at least always attempted the kill. On 2026-08-10 pgrep
+# answered "not running" for a live scanner, kill_pattern returned without
+# sending a single signal, the launch proceeded, and a second scanner started
+# beside the first: the exact failure the function exists to prevent, now caused
+# by it.
+#
+# So: never ask permission to kill. Signal unconditionally — pkill against a
+# pattern matching nothing is free — then verify with ps, and escalate to
+# SIGKILL BY PID rather than by pattern, because pattern matching is the part
+# that proved unreliable. A negative answer may not short-circuit anything.
 kill_pattern() {
-    local pat="$1" label="$2" i
-    pgrep -f "$pat" >/dev/null 2>&1 || { echo "  • $label not running"; return 0; }
-    pkill -f "$pat" 2>/dev/null
+    local pat="$1" label="$2" i left
+    pkill -f "$pat" 2>/dev/null              # unconditional; costs nothing
     for i in 1 2 3 4 5; do
+        left="$(_pids "$pat")"
+        [ -z "$left" ] && break
         sleep 1
-        pgrep -f "$pat" >/dev/null 2>&1 || { echo "  • $label stopped"; return 0; }
     done
-    echo "  ⚠ $label ignored SIGTERM after 5s — sending SIGKILL (pids: $(pgrep -f "$pat" | tr '\n' ' '))"
-    pkill -9 -f "$pat" 2>/dev/null
+    left="$(_pids "$pat")"
+    if [ -z "$left" ]; then
+        echo "  • $label stopped"
+        return 0
+    fi
+    echo "  ⚠ $label ignored SIGTERM after 5s — sending SIGKILL (pids: $(echo "$left" | tr '\n' ' '))"
+    # shellcheck disable=SC2086 — deliberate word splitting: one kill, many pids
+    kill -9 $left 2>/dev/null
+    pkill -9 -f "$pat" 2>/dev/null           # belt and braces
     sleep 1
-    if pgrep -f "$pat" >/dev/null 2>&1; then
-        echo "  ✗ $label SURVIVED SIGKILL — pids: $(pgrep -f "$pat" | tr '\n' ' ')" >&2
+    left="$(_pids "$pat")"
+    if [ -n "$left" ]; then
+        echo "  ✗ $label SURVIVED SIGKILL — pids: $(echo "$left" | tr '\n' ' ')" >&2
         return 1
     fi
     echo "  • $label killed"
@@ -97,11 +129,29 @@ stop_all() {
     echo "  • auto-heal paused (.stack_stopped) — next './run_all.sh bg' resumes it"
 }
 
+# status_all — also on ps, and it COUNTS. During the 2026-08-09 incident this
+# printed "S2 scanner : RUNNING (pid 41184)" while two scanners were alive, so
+# the duplicate was invisible in the one command you would run to look for it.
+# A second pid is not a cosmetic detail here; it is the whole failure.
+_status_line() {
+    local label="$1" pat="$2" pids n
+    pids="$(_pids "$pat" | tr '\n' ' ')"
+    n="$(_pids "$pat" | grep -c .)"
+    if [ "$n" -eq 0 ]; then
+        printf "  %-11s: stopped\n" "$label"
+    elif [ "$n" -eq 1 ]; then
+        printf "  %-11s: RUNNING (pid %s)\n" "$label" "${pids% }"
+    else
+        printf "  %-11s: ⚠ %s COPIES RUNNING (pids %s) — duplicates double-alert and break Telegram\n" \
+               "$label" "$n" "${pids% }"
+    fi
+}
+
 status_all() {
-    if pgrep -f "[p]ython.*app.py"               >/dev/null; then echo "  web app    : RUNNING (pid $(pgrep -f '[p]ython.*app.py' | tr '\n' ' '))";              else echo "  web app    : stopped"; fi
-    if pgrep -f "[p]ython.*bot.py"               >/dev/null; then echo "  S1 bot     : RUNNING (pid $(pgrep -f '[p]ython.*bot.py' | tr '\n' ' '))";              else echo "  S1 bot     : stopped"; fi
-    if pgrep -f "[p]ython.*strategy2_scanner.py" >/dev/null; then echo "  S2 scanner : RUNNING (pid $(pgrep -f '[p]ython.*strategy2_scanner.py' | tr '\n' ' '))"; else echo "  S2 scanner : stopped"; fi
-    if pgrep -f "[p]ython.*strategy3_scanner.py" >/dev/null; then echo "  S3 flip    : RUNNING (pid $(pgrep -f '[p]ython.*strategy3_scanner.py' | tr '\n' ' '))"; else echo "  S3 flip    : stopped"; fi
+    _status_line "web app"    "[p]ython.*app.py"
+    _status_line "S1 bot"     "[p]ython.*bot.py"
+    _status_line "S2 scanner" "[p]ython.*strategy2_scanner.py"
+    _status_line "S3 flip"    "[p]ython.*strategy3_scanner.py"
 }
 
 # --- choose the live engine from app/.env ----------------------------------

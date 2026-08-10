@@ -49,8 +49,58 @@ def test_run_all_verifies_kills_instead_of_trusting_pkill():
     sh = _read("run_all.sh")
     assert "kill_pattern" in sh, "the verified-kill helper is gone"
     assert "pkill -9" in sh, "nothing escalates to SIGKILL — a trapped or blocked SIGTERM would survive"
-    assert re.search(r"pgrep -f .*\|\|.*return 0", sh), \
-        "kill_pattern must re-check with pgrep; without it it is just pkill again"
+    assert "_pids" in sh, "no independent verification of what is actually running"
+
+
+def test_the_kill_is_never_skipped_because_something_said_not_running():
+    """The 2026-08-10 regression, and the sharpest lesson here.
+
+    The first version of kill_pattern opened with
+        pgrep -f "$pat" >/dev/null || { echo "not running"; return 0; }
+    which made it STRICTLY WORSE than the code it replaced: that at least
+    always ran pkill. pgrep answered "not running" for a scanner with 12h56m
+    of uptime, kill_pattern returned without sending a single signal, the
+    launch continued, and a second scanner started beside the first — the
+    exact failure the function exists to prevent, caused by the guard.
+
+    pkill against a pattern that matches nothing is free. Asking permission
+    first buys nothing and can cost everything.
+    """
+    sh = _read("run_all.sh")
+    body = sh.split("kill_pattern() {", 1)[-1].split("\n}", 1)[0]
+    lines = [ln.strip() for ln in body.splitlines() if ln.strip()
+             and not ln.strip().startswith("#")]
+    first_kill = next((i for i, ln in enumerate(lines) if ln.startswith("pkill")), None)
+    assert first_kill is not None, "kill_pattern never sends a signal"
+    early_return = [i for i, ln in enumerate(lines[:first_kill]) if "return 0" in ln]
+    assert not early_return, (
+        "kill_pattern can return before signalling — that is the 2026-08-10 bug: "
+        f"{[lines[i] for i in early_return]}")
+
+
+def test_liveness_is_not_decided_by_pgrep():
+    """pgrep -f intermittently reports a live process as absent on this
+    machine — caught twice, once in restart.log with the process at 12h56m
+    uptime. ps walks the process table directly and has not been caught doing
+    it, so it is the source of truth."""
+    sh = _read("run_all.sh")
+    helper = sh.split("_pids() {", 1)[-1].split("}", 1)[0]
+    assert "ps -Ao" in helper, "_pids must read ps, not pgrep"
+    # the decision points must use the helper
+    body = sh.split("kill_pattern() {", 1)[-1].split("\n}", 1)[0]
+    assert "_pids" in body, "kill_pattern still decides on pgrep"
+    assert "pgrep" not in body, "kill_pattern still trusts pgrep somewhere"
+
+
+def test_status_counts_copies_instead_of_answering_yes_or_no():
+    """During the 11h incident `./run_all.sh status` printed one pid while two
+    scanners were alive, so the duplicate was invisible in the exact command
+    you would run to look for it."""
+    sh = _read("run_all.sh")
+    assert "_status_line" in sh
+    line = sh.split("_status_line() {", 1)[-1].split("\n}", 1)[0]
+    assert "COPIES" in line, "status cannot report a duplicate"
+    assert "-gt 1" in line or "-eq 1" in line, "status is not counting"
 
 
 def test_no_stack_process_is_killed_without_verification():
