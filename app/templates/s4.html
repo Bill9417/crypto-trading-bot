@@ -65,6 +65,37 @@
                   border-radius:10px; color:#04121a;
                   background:linear-gradient(180deg,#ffc94b,#f7a600); }
         .s4-buy:hover { filter:brightness(1.07); color:#04121a; }
+
+        /* ── 戰績 track record (2026-08-10) ─────────────────────────────────
+           S4 places no orders, so nothing reconciles against an exchange
+           later — if the result is not written down when it happens, it is
+           gone. Colour always pairs with a word (停利/停損), never alone. */
+        .s4-rec { margin-top:22px; }
+        .s4-rechd { font-size:.92rem; font-weight:800; margin-bottom:4px; }
+        .s4-recsub { font-size:.73rem; color:var(--muted,#8a93a6); line-height:1.65; margin-bottom:12px; }
+        .s4-kpi { display:flex; flex-wrap:wrap; gap:18px; margin:12px 0 6px; }
+        .s4-kpi div { font-size:.63rem; color:var(--muted,#8a93a6); text-transform:uppercase;
+                      letter-spacing:.05em; font-weight:700; }
+        .s4-kpi b { display:block; font-size:1.1rem; margin-top:2px; color:var(--text,#f2f6fb);
+                    font-variant-numeric:tabular-nums; }
+        .s4-seg { display:flex; gap:6px; flex-wrap:wrap; margin-bottom:10px; }
+        .s4-seg span { font-size:.68rem; padding:4px 10px; border-radius:999px;
+                       border:1px solid var(--border,rgba(255,255,255,.09)); color:var(--muted,#8a93a6); }
+        .s4-verd { font-size:.75rem; line-height:1.6; margin-top:8px; padding-top:10px;
+                   border-top:1px solid rgba(255,255,255,.06); color:var(--muted,#8a93a6); }
+        table.s4-t { width:100%; border-collapse:collapse; font-size:.76rem; }
+        table.s4-t th { text-align:right; font-size:.6rem; text-transform:uppercase; letter-spacing:.05em;
+                        color:var(--muted,#8a93a6); font-weight:700; padding:6px 7px;
+                        border-bottom:1px solid var(--border,rgba(255,255,255,.09)); white-space:nowrap; }
+        table.s4-t th.l, table.s4-t td.l { text-align:left; }
+        table.s4-t td { padding:9px 7px; text-align:right; font-variant-numeric:tabular-nums;
+                        border-bottom:1px solid rgba(255,255,255,.045); }
+        table.s4-t tr:last-child td { border-bottom:none; }
+        .s4-oc { font-size:.66rem; font-weight:800; padding:3px 8px; border-radius:999px; white-space:nowrap; }
+        .s4-oc.tp  { background:rgba(74,222,128,.14); color:#86efac; }
+        .s4-oc.sl  { background:rgba(248,113,113,.14); color:#fca5a5; }
+        .s4-oc.exp { background:rgba(148,163,184,.14); color:#cbd5e1; }
+        @media (max-width:600px) { table.s4-t .hs { display:none; } }
     </style>
 </head>
 <body>
@@ -134,6 +165,101 @@
             {% endif %}
         </div>
     {% endif %}
+
+    {# ── 戰績 ───────────────────────────────────────────────────────────────
+       S4 never places an order, so there are no fills to reconcile against
+       later. Every alerted setup is replayed against the candles that followed
+       it and closed at 停利 / 停損 / 到期. #}
+    {% set rec = s4.record or {} %}
+    {% set st = (rec.stats or {}).get('all') %}
+    <div class="s4-rec">
+        <div class="s4-rechd">📓 戰績 · 每一筆訊號的結果</div>
+        <div class="s4-recsub">
+            每一筆「通知過」的訊號都會被追蹤到停利或停損（{{ rec.track_hours or 48 }} 小時內未觸發就以最後收盤價結算）。
+            同一根 K 棒同時碰到停損和停利時，一律算<b>停損</b> —— K 棒看不出誰先到，
+            往好的方向猜只會讓成績看起來比實際好。
+        </div>
+
+        {% if st and st.n %}
+        <div class="s4-card">
+            <div class="s4-kpi">
+                <div>樣本<b>{{ st.n }}</b></div>
+                <div>停利<b style="color:#86efac">{{ st.tp }}</b></div>
+                <div>停損<b style="color:#fca5a5">{{ st.sl }}</b></div>
+                <div>到期<b style="color:#cbd5e1">{{ st.expired }}</b></div>
+                <div>命中率<b>{% if st.hit_rate is not none %}{{ '%.0f'|format(st.hit_rate) }}%{% else %}—{% endif %}</b></div>
+                <div>期望值 / 筆<b style="color:{{ '#86efac' if (st.exp or 0) > 0 else '#fca5a5' }}">
+                    {{ '%+.3f'|format(st.exp or 0) }}R</b></div>
+                <div>累計<b style="color:{{ '#86efac' if (st.net or 0) > 0 else '#fca5a5' }}">
+                    {{ '%+.1f'|format(st.net or 0) }}R</b></div>
+            </div>
+            {% if rec.stats and rec.stats|length > 1 %}
+            <div class="s4-seg">
+                {% for k, v in rec.stats.items() %}{% if k != 'all' %}
+                <span>{{ '美股' if k == 'tradfi' else '加密' }} · {{ v.n }} 筆 ·
+                      {{ '%+.3f'|format(v.exp or 0) }}R</span>
+                {% endif %}{% endfor %}
+            </div>
+            {% endif %}
+            <div class="s4-verd">{{ st.verdict_zh or st.verdict }}{% if st.need %} · 大約還要 {{ '{:,}'.format(st.need) }} 筆才能確定{% endif %}</div>
+        </div>
+        {% else %}
+        <div class="s4-card"><div class="s4-empty">
+            還沒有結算完成的訊號。<br>
+            <span style="opacity:.75">通知過的設定會在這裡累積成績 —— 空的代表還沒開始，不是壞掉。</span>
+        </div></div>
+        {% endif %}
+
+        {% if rec.open %}
+        <div class="s4-card">
+            <div class="s4-rechd" style="font-size:.8rem">追蹤中 · {{ rec.open|length }} 筆</div>
+            <div class="s4-tbl"><table class="s4-t">
+                <thead><tr><th class="l">標的</th><th>進場</th><th class="hs">停損</th>
+                    <th class="hs">停利</th><th>通知時間</th></tr></thead>
+                <tbody>
+                {% for t in rec.open %}
+                <tr>
+                    <td class="l"><b>{{ t.base }}</b>
+                        <span style="opacity:.55;font-size:.68rem">{{ '美股' if t.segment == 'tradfi' else '加密' }}</span></td>
+                    <td>{{ '%.4f'|format(t.entry) }}</td>
+                    <td class="hs" style="color:#fca5a5">{{ '%.4f'|format(t.sl) }}</td>
+                    <td class="hs" style="color:#86efac">{{ '%.4f'|format(t.tp) }}</td>
+                    <td class="s4-ago" data-ts="{{ t.fired_ts or 0 }}">—</td>
+                </tr>
+                {% endfor %}
+                </tbody>
+            </table></div>
+        </div>
+        {% endif %}
+
+        {% if rec.closed %}
+        <div class="s4-card">
+            <div class="s4-rechd" style="font-size:.8rem">已結算 · 最近 {{ rec.closed|length }} 筆</div>
+            <div class="s4-tbl"><table class="s4-t">
+                <thead><tr><th class="l">標的</th><th class="l">結果</th><th>R</th>
+                    <th class="hs">最大逆勢</th><th class="hs">最大順勢</th>
+                    <th class="hs">持有</th><th>結算</th></tr></thead>
+                <tbody>
+                {% for c in rec.closed %}
+                <tr>
+                    <td class="l"><b>{{ c.base }}</b>
+                        <span style="opacity:.55;font-size:.68rem">{{ '美股' if c.segment == 'tradfi' else '加密' }}</span></td>
+                    <td class="l"><span class="s4-oc {{ 'tp' if c.outcome == 'tp' else 'sl' if c.outcome == 'sl' else 'exp' }}">{{
+                        '停利' if c.outcome == 'tp' else '停損' if c.outcome == 'sl' else '到期' }}</span></td>
+                    <td style="color:{{ '#86efac' if (c.r or 0) > 0 else '#fca5a5' }}"><b>{{ '%+.2f'|format(c.r or 0) }}</b></td>
+                    <td class="hs" style="opacity:.7">{{ '%.2f'|format(c.mae or 0) }}</td>
+                    <td class="hs" style="opacity:.7">{{ '%+.2f'|format(c.mfe or 0) }}</td>
+                    <td class="hs" style="opacity:.7">{{ c.bars or 0 }} 根</td>
+                    <td class="s4-ago" data-ts="{{ c.exit_ts or 0 }}">—</td>
+                </tr>
+                {% endfor %}
+                </tbody>
+            </table></div>
+            <div class="s4-verd">最大逆勢 = 進場後最深的帳面虧損（R）；最大順勢 = 最好的帳面獲利。
+                停損那筆如果最大順勢很高，代表出場點可能太晚，不是進場錯。</div>
+        </div>
+        {% endif %}
+    </div>
 </div>
 <script>
 // The scan timestamp is the only live thing on this page; everything else is a
@@ -149,6 +275,25 @@
                        : Math.floor(m / 60) + ' 小時前';
     }
     tick(); setInterval(tick, 30000);
+})();
+
+// Relative times on the record tables, rendered client-side for the same
+// reason as the scan clock above: a cached page must not state a stale age.
+(function () {
+    function rel(sec) {
+        var m = Math.floor((Date.now() / 1000 - sec) / 60);
+        if (m < 1) return '剛剛';
+        if (m < 60) return m + ' 分鐘前';
+        var h = Math.floor(m / 60);
+        return h < 24 ? h + ' 小時前' : Math.floor(h / 24) + ' 天前';
+    }
+    function paint() {
+        document.querySelectorAll('.s4-ago').forEach(function (el) {
+            var ts = parseFloat(el.dataset.ts || '0');
+            el.textContent = ts ? rel(ts) : '—';
+        });
+    }
+    paint(); setInterval(paint, 60000);
 })();
 </script>
 </body>

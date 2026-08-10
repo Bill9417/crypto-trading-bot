@@ -822,6 +822,12 @@ def web_view() -> dict:
     """Last scan, for the /s4 page. Reads state only — never scans on a page
     load, or every visitor would fire 60 exchange calls."""
     payload = _load(SIGNALS_FILE)
+    try:
+        import strategy4_outcomes
+        record = strategy4_outcomes.web_view()
+    except Exception as exc:  # noqa: BLE001 — the page must render regardless
+        print(f"[s4] outcome view failed: {exc}")
+        record = {}
     return {"signals": payload.get("signals") or [],
             "checked": payload.get("checked"),
             "rejected": payload.get("rejected") or {},
@@ -832,7 +838,8 @@ def web_view() -> dict:
             "tf": TIMEFRAME, "tp_r": TP_R,
             "min_turnover": MIN_TURNOVER,
             "checked_by": payload.get("checked_by") or {},
-            "max_tradfi": MAX_TRADFI, "max_crypto": MAX_CRYPTO}
+            "max_tradfi": MAX_TRADFI, "max_crypto": MAX_CRYPTO,
+            "record": record}
 
 
 # ── orchestration ────────────────────────────────────────────────────────────
@@ -878,8 +885,27 @@ def tick(client=None) -> bool:
     state["last_run"] = now_ts
     state["last_count"] = len(result.get("signals") or [])
     _save(state)
+
+    # 📓 Outcome tracking. `fresh`, not result["signals"]: a setup that stays
+    # valid for two hours reappears in eight consecutive scans, and counting it
+    # eight times would inflate n eightfold. The alerted set is the honest unit
+    # — one record per thing you were actually told about.
+    #
+    # This is also the promise the module docstring above already makes ("the
+    # scan records every signal it fires so that test has data to work with"),
+    # which was not true until now: SIGNALS_FILE is overwritten every scan, so
+    # a setup that stopped qualifying left no trace that it had ever fired.
+    tracked = {}
+    try:
+        import strategy4_outcomes
+        tracked = strategy4_outcomes.tick(client, fresh, now_ts)
+    except Exception as exc:  # noqa: BLE001 — bookkeeping never breaks the scan
+        print(f"[s4] outcome tracking failed: {exc}")
+
     print(f"[s4] scanned {result.get('checked')} · {len(result.get('signals') or [])} setups"
-          f" · {len(fresh)} alerted")
+          f" · {len(fresh)} alerted"
+          + (f" · tracking {tracked.get('open', 0)} open,"
+             f" settled {tracked.get('settled', 0)}" if tracked else ""))
     return True
 
 
