@@ -404,6 +404,15 @@ def _accumulate(state: dict, res: dict) -> None:
                                          "gain": 0.0, "loss": 0.0})
             t["n"] += 1
             t["sum"] = round(t["sum"] + r, 4)
+            # Sum of squares — the one figure that makes a real confidence
+            # interval possible later. Without it the lifetime tally can say
+            # what the average was but never how sure it is, and the per-trade
+            # R values are gone the moment RETAIN_D prunes the record. Added
+            # 2026-08-10 for /reality; buckets that predate it simply carry a
+            # smaller sumsq than n implies, so reality.ci() falls back to its
+            # lower-bound basis until a bucket is majority-covered.
+            t["sumsq"] = round(t.get("sumsq", 0.0) + r * r, 4)
+            t["sumsq_n"] = t.get("sumsq_n", 0) + 1
             if r > 0:
                 t["wins"] += 1
                 t["gain"] = round(t["gain"] + r, 4)

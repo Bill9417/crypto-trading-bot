@@ -179,11 +179,38 @@ def test_totals_survive_the_thirty_day_prune():
     SO._accumulate(state, {"exits": {"hold": 2.0}, "eval_ts": TS})
     SO._accumulate(state, {"exits": {"hold": -1.0}, "eval_ts": TS})
     SO._accumulate(state, {"outcome": "sl"})              # no exits → ignored
-    assert state["totals"]["all"]["hold"] == {"n": 2, "sum": 1.0, "wins": 1,
-                                              "gain": 2.0, "loss": 1.0}
+    # Subset, not equality: the accounting fields are what this test is about,
+    # and pinning the exact key set made adding sumsq (2026-08-10, for the
+    # confidence intervals on /reality) look like a regression in the prune.
+    bucket = state["totals"]["all"]["hold"]
+    for k, v in {"n": 2, "sum": 1.0, "wins": 1, "gain": 2.0, "loss": 1.0}.items():
+        assert bucket[k] == v, f"{k} drifted"
     st = SO.totals_stats(state["totals"]["all"])
     assert st["hold"]["exp"] == 0.5 and st["hold"]["pf"] == 2.0
     assert state["totals_since"] == TS
+
+
+def test_totals_record_a_sum_of_squares_for_later_confidence_intervals():
+    """The per-trade R values are gone once RETAIN_D prunes the records, so if
+    the running tally does not keep a sum of squares the variance is lost
+    forever and no honest error bar can ever be computed — which is exactly the
+    hole /reality had to work around for its historical data.
+
+    sumsq_n tracks COVERAGE separately: buckets that predate this carry a
+    sumsq describing only part of their n, and reality.ci() must be able to
+    tell that apart from a fully covered bucket.
+    """
+    state: dict = {}
+    SO._accumulate(state, {"exits": {"hold": 2.0}, "eval_ts": TS})
+    SO._accumulate(state, {"exits": {"hold": -1.0}, "eval_ts": TS})
+    bucket = state["totals"]["all"]["hold"]
+    assert bucket["sumsq"] == 5.0                 # 2² + (−1)²
+    assert bucket["sumsq_n"] == bucket["n"] == 2  # fully covered
+
+    import reality
+    lo, hi, basis = reality.ci(bucket)
+    assert basis == "exact"
+    assert lo < 0.5 < hi                          # centred on the mean
 
 
 def test_accumulate_splits_by_cohort():

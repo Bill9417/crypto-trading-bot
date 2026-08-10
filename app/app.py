@@ -732,7 +732,7 @@ def sync_record_states_in_scan_data() -> None:
 # this ONE value whenever app.css / i18n.js change and every template busts its
 # cache — no more hunting down 10 hardcoded copies (which once shipped an
 # unstyled page to users). Templates reference it as ?v={{ asset_ver }}.
-ASSET_VER = "20260809"
+ASSET_VER = "20260810"
 
 
 @app.context_processor
@@ -4264,13 +4264,49 @@ def api_risk_bodies():
     return jsonify({"ok": True, "bodies": bodies})
 
 
+@app.route("/reality")
+@login_required
+def reality_page():
+    """What the measured record says — the page that is allowed to say "no".
+
+    Replaced the seven-calculator Toolkit on 2026-08-10. Those calculators were
+    generic (expectancy, DCA, drawdown, risk-of-ruin exist on any site) and none
+    of them knew a single thing about this account. Meanwhile signal_outcomes
+    had quietly scored ~19,000 real outcomes against six exit rules and the only
+    way to read them was a Telegram text table.
+
+    Price Alerts moved here intact — it was the one widget on the old page doing
+    something an exchange does not.
+    """
+    return render_template("reality.html", user=current_user)
+
+
 @app.route("/tools")
 @login_required
 def tools_page():
-    """Quick utilities — price alerts and the position-size calculator.
-    Split off the dashboard (2026-08) so the live signal feed isn't sharing
-    space with input forms; both widgets are unchanged, just relocated."""
-    return render_template("tools.html", user=current_user)
+    """Permanent redirect — /tools is bookmarked, is in old Telegram messages,
+    and was the nav target for a week. Kept as a redirect rather than deleted so
+    none of those turn into a 404."""
+    return redirect(url_for("reality_page"), code=301)
+
+
+@app.route("/api/reality")
+@login_required
+def api_reality():
+    """The scoreboard behind /reality. Reads the tally off disk — no exchange
+    calls, no evaluation — so it is cheap enough to poll."""
+    import reality
+    cohort = (request.args.get("cohort") or "all").strip()
+    rule = (request.args.get("rule") or "hold").strip()
+    if cohort not in reality.COHORT_LABEL:
+        cohort = "all"
+    if rule not in reality.RULE_LABEL:
+        rule = "hold"
+    try:
+        return jsonify(_json_safe(reality.board(cohort=cohort, rule=rule)))
+    except Exception as exc:  # noqa: BLE001 — the page degrades, never 500s
+        print(f"[reality] board failed: {exc}")
+        return jsonify({"ok": False, "error": str(exc)[:150]}), 200
 
 
 @app.route("/tw")
