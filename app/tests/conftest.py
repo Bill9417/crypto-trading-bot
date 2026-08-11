@@ -240,3 +240,14 @@ def _no_live_side_effects(request, monkeypatch, tmp_path):
         monkeypatch.setattr(tw_financials, "summary", lambda code: {
             "rev_yoy": None, "rev_month": None, "eps_cur": None,
             "eps_yoy": None, "eps_season": None, "next_deadline": ""})
+    # tw_stocks' 台股 state AND its permanent outcome ledger. The ledger needs
+    # the guard more than the state file does: state is rebuilt by the next
+    # scan, but the ledger is the track record and is append-only BY DESIGN, so
+    # anything a test writes there is indistinguishable from a real result and
+    # stays forever. That is not hypothetical — mark_hit() started recording
+    # outcomes on 2026-08-11 and a fixture's fake 台積電 +1.57R immediately
+    # landed in the live file, where it read as a 100%-win-rate track record on
+    # a page whose entire purpose is being honest about results.
+    import tw_stocks
+    monkeypatch.setattr(tw_stocks, "STATE_FILE", str(tmp_path / "tw_stocks_state.json"))
+    monkeypatch.setattr(tw_stocks, "OUTCOMES_FILE", str(tmp_path / "tw_outcomes.json"))

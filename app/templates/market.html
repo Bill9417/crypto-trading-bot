@@ -255,7 +255,7 @@
         <!-- Daily Circuit-Breaker Banner — halted only (the all-clear strip was
              removed 2026-07-05, user request: green every day is noise) -->
         {% if circuit and circuit.halted %}
-        <a href="{{ url_for('performance') }}" class="cb-banner cb-halted" title="Daily risk guardrail — click for full performance">
+        <a {% if current_user.is_admin %}href="{{ url_for('performance') }}"{% endif %} class="cb-banner cb-halted" title="Daily risk guardrail">
             <span class="cb-ico">🛑</span>
             <span class="cb-main">TRADING HALTED TODAY</span>
             <span class="cb-reason">{{ circuit.halt_reason }}</span>

@@ -45,6 +45,10 @@ morning_brief_state.json
 price_alerts.json
 tg_commands_state.json
 tw_stocks_state.json
+# The 台股 track record — runtime state, same as strategy4_outcomes.json. It
+# accumulates on the machine that actually runs the scans; committing it would
+# mean merge conflicts on a file whose whole value is being an unedited record.
+tw_outcomes.json
 us_stocks_state.json
 us_market_state.json
 tw_intraday_state.json

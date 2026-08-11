@@ -151,7 +151,10 @@ def test_signature_check(monkeypatch):
     import hmac as hmac_mod
     body = b'{"events":[]}'
     monkeypatch.setattr(config, "LINE_CHANNEL_SECRET", "")
-    assert line_push.sig_ok(body, "") is True              # capture mode
+    monkeypatch.delenv("LINE_WEBHOOK_ALLOW_UNSIGNED", raising=False)
+    # No secret now FAILS CLOSED. Capture mode is an explicit opt-in — see
+    # test_capture_mode_is_an_explicit_opt_in below.
+    assert line_push.sig_ok(body, "") is False
     monkeypatch.setattr(config, "LINE_CHANNEL_SECRET", "secret")
     good = base64.b64encode(
         hmac_mod.new(b"secret", body, hashlib.sha256).digest()).decode()
@@ -364,7 +367,7 @@ def test_plain_digest_bull_lists_levels():
     assert "進場參考 1,050" in msg
     assert "停損 990" in msg and "−5.7%" in msg
     assert "目標 1,150" in msg and "+9.5%" in msg
-    assert "40 個交易日" in msg
+    assert f"{tw_stocks.MAX_HOLD} 個交易日" in msg      # tracks the constant, not a literal
     assert "<" not in msg                        # plain text — no HTML/<pre>
 
 
@@ -625,3 +628,33 @@ def test_every_quick_reply_button_maps_to_a_real_command():
 
 def test_quick_reply_fits_lines_item_limit():
     assert len(line_push.QUICK_REPLY["items"]) <= 13
+
+
+# ── webhook signature: fails CLOSED (2026-08-11 security review) ────────────
+# /line/webhook has no session and no CSRF by necessity — LINE's servers call
+# it. The signature IS the auth. It used to `return True` when the secret was
+# unset, so an unconfigured deploy accepted unsigned POSTs from anyone.
+def test_unsigned_webhook_is_rejected_when_no_secret(monkeypatch):
+    monkeypatch.setattr(config, "LINE_CHANNEL_SECRET", "", raising=False)
+    monkeypatch.delenv("LINE_WEBHOOK_ALLOW_UNSIGNED", raising=False)
+    assert line_push.sig_ok(b'{"events":[]}', "") is False
+    assert line_push.sig_ok(b'{"events":[]}', "anything") is False
+
+
+def test_capture_mode_is_an_explicit_opt_in(monkeypatch):
+    """Still possible for first-time setup — but you have to ask for it."""
+    monkeypatch.setattr(config, "LINE_CHANNEL_SECRET", "", raising=False)
+    monkeypatch.setenv("LINE_WEBHOOK_ALLOW_UNSIGNED", "true")
+    assert line_push.sig_ok(b'{"events":[]}', "") is True
+
+
+def test_a_correct_signature_still_passes(monkeypatch):
+    import base64 as _b64
+    import hashlib as _h
+    import hmac as _hm
+    secret, body = "s3cr3t", b'{"events":[]}'
+    monkeypatch.setattr(config, "LINE_CHANNEL_SECRET", secret, raising=False)
+    good = _b64.b64encode(_hm.new(secret.encode(), body, _h.sha256).digest()).decode()
+    assert line_push.sig_ok(body, good) is True
+    assert line_push.sig_ok(body, "wrong") is False
+    assert line_push.sig_ok(b'{"events":[1]}', good) is False      # body tampered

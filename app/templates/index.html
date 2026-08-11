@@ -1516,7 +1516,7 @@
              request: a green banner every day is noise; a red one is an alarm) -->
         <div class="status-row">
             {% if circuit and circuit.halted %}
-            <a href="{{ url_for('performance') }}" class="cb-banner cb-halted" title="Daily risk guardrail — click for full performance">
+            <a {% if current_user.is_admin %}href="{{ url_for('performance') }}"{% endif %} class="cb-banner cb-halted" title="Daily risk guardrail">
                 <span class="cb-ico">🛑</span>
                 <span class="cb-main">TRADING HALTED TODAY</span>
                 <span class="cb-reason">{{ circuit.halt_reason }}</span>
@@ -2273,7 +2273,7 @@
                         <div class="analytics-title">Signal Pulse</div>
                         <div class="analytics-subtitle">Live scan health, queue pressure, and RSI extremes</div>
                     </div>
-                    <a href="{{ url_for('performance') }}" class="analytics-link">Open Performance</a>
+                    {% if current_user.is_admin %}<a href="{{ url_for('performance') }}" class="analytics-link">Open Performance</a>{% endif %}
                 </div>
                 <div class="flow-grid">
                     <div class="flow-card queued">
@@ -2326,7 +2326,7 @@
                         <div class="analytics-title">Trade Edge</div>
                         <div class="analytics-subtitle">Compact analysis from your qualified trading history</div>
                     </div>
-                    <a href="{{ url_for('performance') }}" class="analytics-link">Deep Dive</a>
+                    {% if current_user.is_admin %}<a href="{{ url_for('performance') }}" class="analytics-link">Deep Dive</a>{% endif %}
                 </div>
                 <div class="insight-grid">
                     <div class="insight-card">

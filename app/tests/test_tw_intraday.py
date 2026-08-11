@@ -100,10 +100,12 @@ def test_level_hit_includes_touch_time():
 def test_mark_hit_persists_and_tags(monkeypatch, tmp_path):
     import tw_stocks
     monkeypatch.setattr(tw_stocks, "STATE_FILE", str(tmp_path / "tw.json"))
+    monkeypatch.setattr(tw_stocks, "OUTCOMES_FILE", str(tmp_path / "out.json"))
     tw_stocks._save_state({"active_setups": [dict(SETUP)]})
     tw_stocks.mark_hit("2330", "2026-07-11", "tp", "2026-07-13", "10:23")
     s = tw_stocks._load_state()["active_setups"][0]
-    assert s["hit"] == {"kind": "tp", "date": "2026-07-13", "time": "10:23"}
+    assert s["hit"] == {"kind": "tp", "date": "2026-07-13", "time": "10:23",
+                        "price": SETUP["tp"]}
     assert tw_intraday._hit_tag(s) == "🎯達標 07-13 10:23"
     assert tw_intraday._hit_tag(SETUP) == ""            # live setup → no tag
     # a later opposite touch never overwrites the first outcome

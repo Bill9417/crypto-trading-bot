@@ -20,6 +20,13 @@ def _isolate(monkeypatch, tmp_path):
                         lambda *a, **k: pytest.fail("test hit the network (post)"))
     monkeypatch.setattr(T.requests, "get",
                         lambda *a, **k: pytest.fail("test hit the network (get)"))
+    # post_link() now asks Telegram for the group's LIVE invite link, so without
+    # this every test that builds a post would reach for the network — and the
+    # guard's failure output would print the bot token, which lives in the
+    # getChat URL. Default to "" so the env-var fallback is what gets exercised;
+    # tests that care about the live path override it explicitly.
+    import telegram_utils
+    monkeypatch.setattr(telegram_utils, "group_invite_link", lambda *a, **k: "")
 
 
 class _Resp:
@@ -377,8 +384,30 @@ def test_tick_attaches_the_funnel_link(monkeypatch):
         return _Resp({"id": "c1"})
 
     monkeypatch.setattr(T.requests, "post", fake_post)
+    monkeypatch.setattr(T, "LINK_IN_COMMENT", False)   # inline mode owns the card
     T.tick(None)
     assert seen["link_attachment"] == "https://t.me/+wolf"
+
+
+def test_no_preview_card_when_the_link_lives_in_the_comment(monkeypatch):
+    """With the URLs moved to the reply the post carries no link_attachment
+    either — passing one would re-add the off-platform signal the whole change
+    exists to remove."""
+    _connect()
+    _gather_stub(monkeypatch)
+    monkeypatch.setattr(T, "POST_HOUR", 0)
+    monkeypatch.setattr(T, "LINK_IN_COMMENT", True)
+    monkeypatch.setenv("THREADS_LINK", "https://t.me/+wolf")
+    seen = {}
+
+    def fake_post(url, data=None, timeout=None):
+        seen.update(data or {})
+        return _Resp({"id": "c1"})
+
+    monkeypatch.setattr(T.requests, "post", fake_post)
+    T.tick(None)
+    assert not seen.get("link_attachment")
+    assert "http" not in seen.get("text", "")
 
 
 # ── draft mode: the Meta app is optional, not required ───────────────────────
@@ -394,14 +423,19 @@ def test_draft_is_used_when_no_meta_app(monkeypatch):
                         lambda msg, **k: sent.append((msg, k.get("channel"))) or True)
     assert T.tick(None) is True
     assert all(ch == "private" for _, ch in sent)   # owner's DM, never the group
-    # TWO messages, and the post owns the second one entirely — a <pre> block
-    # is only tap-to-copy on some clients, and long-press → Copy takes the
-    # WHOLE message, so a header used to ride into the Threads post.
-    assert len(sent) == 2
+    # FOUR messages with LINK_IN_COMMENT on: instructions, the post, a label,
+    # the comment. The post and the comment each own a message ENTIRELY — a
+    # <pre> block is only tap-to-copy on some clients, and long-press → Copy
+    # takes the WHOLE message, so any header would ride into what gets pasted.
+    assert len(sent) == 4 if T.LINK_IN_COMMENT else len(sent) == 2
     assert "Threads 貼文" in sent[0][0]              # the instruction
     body = T.build_post(DATA, T.datetime.now(T.TZ),
-                        inline_link=T.post_link(), ref_link=T.REF_URL)
+                        inline_link=T.post_link(), ref_link=T.REF_URL,
+                        link_in_comment=T.LINK_IN_COMMENT)
     assert sent[1][0] == body                       # byte-identical, nothing else
+    if T.LINK_IN_COMMENT:
+        assert "http" not in sent[1][0], "the post itself must carry no URL"
+        assert sent[3][0] == T.build_comment(T.post_link(), T.REF_URL)
     st = T._load_state()
     assert st["last_mode"] == "draft" and st.get("last_post")
 
@@ -588,3 +622,76 @@ def test_the_instruction_message_carries_the_length():
     finally:
         telegram_utils.send_message = orig
     assert "42/500" in sent[0]
+
+
+# ── links live in the first comment, not the post (2026-08-11) ──────────────
+# Two problems fixed together: the advertised invite was a REVOKED link nobody
+# could join through, and every feed down-ranks posts that send readers
+# off-platform. The link is now read live from Telegram AND moved to the reply.
+INVITE = "https://t.me/+liveInviteLink"
+REF = "https://www.bybit.com/sign-up?ref=X"
+
+
+def test_link_in_comment_leaves_no_url_in_the_post():
+    post = T.build_post(DATA, NOW, inline_link=INVITE, ref_link=REF,
+                        link_in_comment=True)
+    assert "http" not in post, "a URL survived in the body — the post is still a link post"
+    assert T.COMMENT_POINTER in post, "reader is not told where the link went"
+
+
+def test_the_comment_carries_both_links_group_first():
+    c = T.build_comment(INVITE, REF)
+    assert INVITE in c and REF in c
+    # cold readers convert on "join the group", not "open a trading account"
+    assert c.index(INVITE) < c.index(REF)
+    # the affiliate link keeps its disclosure — undisclosed branded content
+    # gets the whole post pulled
+    assert T.REF_TEXT in c
+
+
+def test_the_comment_is_empty_when_there_is_nothing_to_link():
+    """Callers skip the reply entirely rather than posting a blank comment."""
+    assert T.build_comment("", "") == ""
+
+
+def test_inline_mode_still_works_when_the_flag_is_off():
+    """The old behaviour must remain reachable — this is a preference, not a
+    one-way door."""
+    post = T.build_post(DATA, NOW, inline_link=INVITE, ref_link=REF,
+                        link_in_comment=False)
+    assert INVITE in post
+
+
+def test_moving_links_out_never_makes_the_post_longer():
+    with_c = T.build_post(DATA, NOW, inline_link=INVITE, ref_link=REF,
+                          link_in_comment=True)
+    without = T.build_post(DATA, NOW, inline_link=INVITE, ref_link=REF,
+                           link_in_comment=False)
+    assert T.threads_len(with_c) <= T.threads_len(without)
+    assert T.threads_len(with_c) <= T.MAX_LEN
+
+
+def test_the_comment_is_still_account_free():
+    """Same discipline as the post: this is public marketing."""
+    c = T.build_comment(INVITE, REF)
+    for banned in ("餘額", "淨值", "USDT 餘額", "equity", "balance", "margin"):
+        assert banned not in c
+
+
+def test_post_link_prefers_the_live_invite_over_a_stale_env(monkeypatch):
+    """The actual bug: .env held a revoked link while the group had a new one."""
+    import telegram_utils
+    monkeypatch.setenv("TELEGRAM_INVITE_URL", "https://t.me/+REVOKED")
+    monkeypatch.delenv("THREADS_LINK", raising=False)
+    monkeypatch.setattr(telegram_utils, "group_invite_link", lambda *a, **k: INVITE)
+    assert T.post_link() == INVITE
+
+
+def test_post_link_falls_back_to_env_when_telegram_is_unreachable(monkeypatch):
+    import telegram_utils
+    monkeypatch.setenv("TELEGRAM_INVITE_URL", "https://t.me/+FALLBACK")
+    monkeypatch.delenv("THREADS_LINK", raising=False)
+    def _boom(*a, **k):
+        raise RuntimeError("network down")
+    monkeypatch.setattr(telegram_utils, "group_invite_link", _boom)
+    assert T.post_link() == "https://t.me/+FALLBACK"

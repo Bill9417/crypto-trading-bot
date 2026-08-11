@@ -68,3 +68,42 @@ def test_equity_panel_hidden_from_members():
     end = src.index("{% endif %}", start)
     block = src[guard:end]
     assert "equityChart" in block and "/api/balance_history" in block
+
+
+# ── the owner's trade history is owner-only (2026-08-11 security review) ────
+# /performance and its two APIs were @login_required, not @admin_required: any
+# member account — and copy-trading gives real people accounts here — could
+# read the owner's full trade history and per-trade P&L. Not balances, but more
+# than a follower needs. Pinned by reading the decorators actually applied, so
+# a future edit that relaxes one of them fails here instead of in production.
+def _decorators_for(route: str) -> str:
+    import os
+    import re
+    src = open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                            "app.py"), encoding="utf-8").read().split("\n")
+    for i, line in enumerate(src):
+        if re.match(rf'@app\.route\("{re.escape(route)}"\)?', line.strip()):
+            return "\n".join(src[i:i + 5])
+    raise AssertionError(f"route not found: {route}")
+
+
+def test_performance_pages_are_admin_only():
+    for route in ("/performance", "/api/performance_stats", "/api/performance_live"):
+        block = _decorators_for(route)
+        assert "@admin_required" in block, f"{route} is not admin-gated"
+
+
+def test_performance_nav_link_is_hidden_from_members():
+    """A nav item that always 403s is worse than one that isn't rendered."""
+    import os
+    nav = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                       "templates", "_nav.html")
+    with open(nav, encoding="utf-8") as fh:
+        lines = fh.read().split("\n")
+    for i, l in enumerate(lines):
+        if "url_for('performance')" in l:
+            preceding = "\n".join(lines[max(0, i - 6):i])
+            assert "is_admin" in preceding, "Performance nav link is not admin-gated"
+            break
+    else:
+        raise AssertionError("Performance nav link not found")

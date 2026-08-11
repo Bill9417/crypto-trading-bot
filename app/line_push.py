@@ -140,10 +140,29 @@ def targets() -> list:
 
 # ── webhook (app.py /line/webhook) ───────────────────────────────────────────
 def sig_ok(body: bytes, signature: str) -> bool:
-    """X-Line-Signature check — HMAC-SHA256 of the raw body, base64."""
+    """X-Line-Signature check — HMAC-SHA256 of the raw body, base64.
+
+    FAILS CLOSED when the secret is missing. This used to `return True` in that
+    case ("capture mode"), which meant a deployment that had not configured
+    LINE_CHANNEL_SECRET yet would accept an unsigned POST from ANYONE — and
+    /line/webhook is one of the few routes with no session and no CSRF, by
+    necessity, because LINE's servers call it. An unauthenticated writer there
+    can subscribe/unsubscribe groups and drive the reply path.
+
+    Capture mode still exists for first-time setup, but it is now an explicit
+    opt-in (LINE_WEBHOOK_ALLOW_UNSIGNED=true) rather than the silent
+    consequence of an unset variable, and it says so in the log every time.
+    """
     secret = config.LINE_CHANNEL_SECRET
     if not secret:
-        return True         # secret not configured yet — capture mode
+        if os.getenv("LINE_WEBHOOK_ALLOW_UNSIGNED", "").strip().lower() in ("1", "true", "yes", "on"):
+            print("[line] ⚠️ UNSIGNED webhook accepted — LINE_CHANNEL_SECRET is "
+                  "unset and LINE_WEBHOOK_ALLOW_UNSIGNED is on. Setup only; "
+                  "turn this off once the secret is configured.")
+            return True
+        print("[line] webhook REJECTED: LINE_CHANNEL_SECRET is not set. Set it, "
+              "or set LINE_WEBHOOK_ALLOW_UNSIGNED=true for first-time capture.")
+        return False
     digest = hmac.new(secret.encode(), body, hashlib.sha256).digest()
     return hmac.compare_digest(base64.b64encode(digest).decode(), signature or "")
 

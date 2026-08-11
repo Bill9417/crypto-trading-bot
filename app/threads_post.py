@@ -95,6 +95,19 @@ SHOW_OUTCOMES = os.getenv("THREADS_SHOW_OUTCOMES", "false").strip().lower() \
 # characters. THREADS_REF_LABEL="" removes it if you disclose another way.
 REF_URL = (os.getenv("BYBIT_REF_URL") or "").strip()
 REF_TEXT = os.getenv("THREADS_REF_TEXT", "開 Bybit 帳戶（推薦連結）👇")
+
+# ── LINKS IN THE FIRST COMMENT, NOT THE POST (2026-08-11, owner's call) ──────
+# Every major feed down-ranks posts that send people off-platform, Threads
+# included. Moving the URLs into the first reply keeps the post itself
+# link-free — it competes for reach on its own content — while the link is
+# still one tap away for anyone who read to the end. It is also the pattern
+# every creator on the platform already uses, so readers know to look there.
+#
+# Costs nothing in characters either: the post drops two URLs and gains one
+# short pointer line.
+LINK_IN_COMMENT = os.getenv("THREADS_LINK_IN_COMMENT", "true").strip().lower() \
+    in ("1", "true", "yes", "on")
+COMMENT_POINTER = os.getenv("THREADS_COMMENT_POINTER", "🔗 連結在留言區 👇")
 TZ = getattr(config, "TZ", None)
 _WD = "一二三四五六日"
 
@@ -148,16 +161,41 @@ def redirect_uri() -> str:
 
 def post_link() -> str:
     """The preview card's target: the Telegram group by default (that is the
-    funnel being grown), the public /welcome page if there is no invite."""
+    funnel being grown), the public /welcome page if there is no invite.
+
+    The invite is resolved LIVE rather than read from .env, and it is published
+    through our own /join redirect rather than as a raw t.me link.
+
+    WHY /join. 2026-08-11, measured: Threads' in-app browser strips the `+`
+    from a private invite, and `t.me/HASH` without the plus is not an invite —
+    t.me reads it as a username, finds none, and bounces to telegram.org's
+    homepage. The reader gets "a new era of messaging" instead of a Join
+    button. Both of our invite links were valid the whole time; the `+` was the
+    bug. A plain `/join` path has nothing a webview can eat, and it resolves
+    the invite server-side, so rotating the invite fixes every post ALREADY
+    published without editing any of them.
+    """
     explicit = (os.getenv("THREADS_LINK") or "").strip()
     if explicit:
         return explicit
-    invite = (os.getenv("TELEGRAM_INVITE_URL")
-              or getattr(config, "TELEGRAM_INVITE_URL", "") or "").strip()
-    if invite:
-        return invite
+
     base = (os.getenv("PUBLIC_BASE_URL")
             or getattr(config, "PUBLIC_BASE_URL", "") or "").rstrip("/")
+    try:
+        import telegram_utils
+        live = telegram_utils.group_invite_link()
+    except Exception:  # noqa: BLE001 — never let the link lookup kill the post
+        live = ""
+    invite = (live or os.getenv("TELEGRAM_INVITE_URL")
+              or getattr(config, "TELEGRAM_INVITE_URL", "") or "").strip()
+
+    # /join only when there is actually a group to join. With no invite it
+    # would redirect to /welcome anyway, and publishing a "join" URL that
+    # cannot join anything is a promise the page then has to break.
+    if invite and base:
+        return f"{base}/join"
+    if invite:
+        return invite                       # no site to redirect through
     return f"{base}/welcome" if base else ""
 
 
@@ -262,8 +300,11 @@ def _username(st: dict) -> str:
 
 
 # ── publishing (two calls, two ticks) ────────────────────────────────────────
-def create_container(text: str, link: str = "") -> dict:
-    """Step 1 — returns {ok, creation_id, error}. Nothing is public yet."""
+def create_container(text: str, link: str = "", reply_to_id: str = "") -> dict:
+    """Step 1 — returns {ok, creation_id, error}. Nothing is public yet.
+
+    reply_to_id makes the container a REPLY to that post rather than a new
+    top-level one — how the link comment is published."""
     st = _load_state()
     if not st.get("access_token") or not st.get("user_id"):
         return {"ok": False, "error": "not connected — visit /threads/connect"}
@@ -274,6 +315,10 @@ def create_container(text: str, link: str = "") -> dict:
             "access_token": st["access_token"]}
     if link:
         data["link_attachment"] = link
+    if reply_to_id:
+        # Threads threads a reply by id. This is what puts the links UNDER the
+        # post instead of inside it.
+        data["reply_to_id"] = str(reply_to_id)
     try:
         r = requests.post(f"{GRAPH}/{st['user_id']}/threads", data=data,
                           timeout=HTTP_TIMEOUT)
@@ -303,9 +348,15 @@ def publish_container(creation_id: str) -> dict:
 
 # ── the daily post (pure given `data` — unit-testable, no network) ───────────
 def build_post(data: dict, now: datetime, inline_link: str = "",
-               ref_link: str = "") -> str:
+               ref_link: str = "", link_in_comment: bool = False) -> str:
     """≤500 by Meta's rule, and ACCOUNT-FREE: prices, sentiment, calendar and
-    the scanner's own measured results only. Never a balance or a position."""
+    the scanner's own measured results only. Never a balance or a position.
+
+    With link_in_comment the body carries NO URLs — they move to the first
+    reply (see build_comment) so the post is not down-ranked for pointing off
+    -platform. The overflow guard below then has less to trim, because the two
+    longest lines in the tail were always the URLs.
+    """
     import tg_format
     lines = [f"☀️ {now.strftime('%m/%d')} 加密市場早報（週{_WD[now.weekday()]}）"]
 
@@ -368,12 +419,18 @@ def build_post(data: dict, now: datetime, inline_link: str = "",
     # which costs no characters.
     # Tail is built in BLOCKS, not lines, so the overflow guard below can never
     # strand a call-to-action whose link it just removed.
-    blocks = [[CTA_TEXT] + ([inline_link] if inline_link else [])]
-    # The referral goes SECOND on purpose. Threads previews only the FIRST URL
-    # in the body, and a cold reader who has seen nothing yet converts far
-    # better on "join the group" than on "open a trading account".
-    if ref_link:
-        blocks.append(["", REF_TEXT, ref_link])
+    if link_in_comment:
+        # No URLs in the body at all — that is the whole point. The pointer
+        # tells the reader where they went, so the post does not just look
+        # like it forgot to include one.
+        blocks = [[COMMENT_POINTER]]
+    else:
+        blocks = [[CTA_TEXT] + ([inline_link] if inline_link else [])]
+        # The referral goes SECOND on purpose. Threads previews only the FIRST
+        # URL in the body, and a cold reader who has seen nothing yet converts
+        # far better on "join the group" than on "open a trading account".
+        if ref_link:
+            blocks.append(["", REF_TEXT, ref_link])
     blocks.append(["#加密貨幣 #比特幣 #以太幣 #量化交易"])
 
     def _render(bs):
@@ -389,12 +446,33 @@ def build_post(data: dict, now: datetime, inline_link: str = "",
     return text
 
 
+def build_comment(invite_link: str = "", ref_link: str = "") -> str:
+    """The FIRST REPLY under the post — where every URL now lives.
+
+    Same ordering logic as the old inline tail: the group invite first, because
+    a cold reader converts far better on "join the group" than on "open a
+    trading account", and the referral second WITH its disclosure label (an
+    undisclosed affiliate link is branded content under Meta's policy and gets
+    the whole post pulled, which costs more reach than the label costs
+    characters).
+
+    Returns "" when there is nothing to link, so callers can skip the reply
+    entirely rather than posting an empty comment.
+    """
+    blocks = []
+    if invite_link:
+        blocks.append(f"{CTA_TEXT}\n{invite_link}")
+    if ref_link:
+        blocks.append(f"{REF_TEXT}\n{ref_link}")
+    return "\n\n".join(blocks)
+
+
 # ── scheduling ───────────────────────────────────────────────────────────────
 def _due(state: dict, now: datetime) -> bool:
     return now.hour >= POST_HOUR and state.get("last_post") != now.strftime("%Y-%m-%d")
 
 
-def send_draft(text: str, now: datetime) -> bool:
+def send_draft(text: str, now: datetime, comment: str = "") -> bool:
     """DRAFT MODE — no Meta app, no OAuth, no review. The post is written for
     you and delivered to your own Telegram DM in a tap-to-copy block; you paste
     it into Threads. Registering a Meta app is the only hard part of this
@@ -410,13 +488,25 @@ def send_draft(text: str, now: datetime) -> bool:
     # shares the second message, so every way of copying yields exactly the
     # post. It is sent as plain text for the same reason: no parse mode means
     # no escaping, so what is stored is byte-for-byte what gets pasted.
+    steps = ("👇 下一則<b>整則複製</b>，貼到 Threads 發文。\n"
+             "接著<b>在自己的貼文下面留言</b>，把再下一則整則貼上去，然後<b>把那則留言置頂</b>。"
+             if comment else
+             "👇 下一則<b>整則複製</b>，貼到 Threads 就好（那則只有貼文，沒有別的字）。")
     header = (f"🧵 <b>今天的 Threads 貼文</b>（{now.strftime('%m/%d')}）· "
               f"{threads_len(text)}/{MAX_LEN} 字\n"
-              f"👇 下一則<b>整則複製</b>，貼到 Threads 就好（那則只有貼文，沒有別的字）。\n"
+              f"{steps}\n"
               f"<i>想改成全自動發文：/threads/connect</i>")
     telegram_utils.send_message(header, parse_mode="HTML", force=True,
                                 channel="private")
-    return bool(telegram_utils.send_message(text, force=True, channel="private"))
+    ok = bool(telegram_utils.send_message(text, force=True, channel="private"))
+    if not ok or not comment:
+        return ok
+    # The links ride in their own message for the same reason the post does:
+    # whatever the client copies, it must be exactly what gets pasted. A label
+    # travelling into the comment would put stray text under the post.
+    telegram_utils.send_message("💬 <b>第 1 則留言</b>（貼完記得置頂）",
+                                parse_mode="HTML", force=True, channel="private")
+    return bool(telegram_utils.send_message(comment, force=True, channel="private"))
 
 
 def tick(client=None) -> bool:
@@ -436,9 +526,12 @@ def tick(client=None) -> bool:
             if not _due(st, now):
                 return False
             import morning_brief
+            link = post_link()
             text = build_post(morning_brief._gather(client, now), now,
-                              inline_link=post_link(), ref_link=REF_URL)
-            if not send_draft(text, now):
+                              inline_link=link, ref_link=REF_URL,
+                              link_in_comment=LINK_IN_COMMENT)
+            comment = build_comment(link, REF_URL) if LINK_IN_COMMENT else ""
+            if not send_draft(text, now, comment=comment):
                 return False                  # Telegram blip → retry next sweep
             st["last_post"] = now.strftime("%Y-%m-%d")
             st["last_mode"] = "draft"
@@ -453,6 +546,15 @@ def tick(client=None) -> bool:
             if res.get("ok"):
                 st["last_post"] = pend.get("date")
                 st["last_post_id"] = res["id"]
+                # Queue the link comment as a REPLY to the post just made. It
+                # goes through the same create→wait→publish cycle on following
+                # ticks, so Meta's ~30s recommendation still costs this loop
+                # nothing. If it never lands the post simply has no comment —
+                # strictly better than the post never going out.
+                if pend.get("comment"):
+                    st["pending_comment"] = {"text": pend["comment"],
+                                             "reply_to": res["id"],
+                                             "date": pend.get("date")}
                 _save_state(st)
                 print(f"[threads] posted {res['id']} for {pend.get('date')}")
                 return True
@@ -464,19 +566,47 @@ def tick(client=None) -> bool:
         if pend:
             return False
 
+        # ── the link comment, created then published on later ticks ──────────
+        pc = st.get("pending_comment")
+        if pc and not pc.get("creation_id"):
+            res = create_container(pc["text"], reply_to_id=pc["reply_to"])
+            if res.get("ok"):
+                pc["creation_id"] = res["creation_id"]
+                pc["ts"] = time.time()
+                st["pending_comment"] = pc
+            else:
+                st.pop("pending_comment", None)   # never retry a bad container
+                print(f"[threads] comment container failed: {res.get('error')}")
+            _save_state(st)
+            return False
+        if pc and time.time() - float(pc.get("ts") or 0) >= PUBLISH_DELAY_SEC:
+            res = publish_container(pc["creation_id"])
+            st.pop("pending_comment", None)
+            _save_state(st)
+            print(f"[threads] link comment {'posted' if res.get('ok') else 'FAILED: ' + str(res.get('error'))}")
+            return False
+        if pc:
+            return False
+
         refresh_if_due()
         if not connected() or not _due(st, now):
             return False
         import morning_brief
+        link = post_link()
         text = build_post(morning_brief._gather(client, now), now,
-                          ref_link=REF_URL)
-        res = create_container(text, post_link())
+                          ref_link=REF_URL, link_in_comment=LINK_IN_COMMENT)
+        comment = build_comment(link, REF_URL) if LINK_IN_COMMENT else ""
+        # link_attachment builds the preview card. With the links in the
+        # comment the post carries no card either — that is the trade being
+        # made, and passing one anyway would re-add the off-platform signal
+        # this whole change exists to remove.
+        res = create_container(text, "" if LINK_IN_COMMENT else link)
         if not res.get("ok"):
             print(f"[threads] container failed: {res.get('error')}")
             return False
         st = _load_state()
         st["pending"] = {"creation_id": res["creation_id"], "ts": time.time(),
-                         "date": now.strftime("%Y-%m-%d")}
+                         "date": now.strftime("%Y-%m-%d"), "comment": comment}
         _save_state(st)
         print(f"[threads] container {res['creation_id']} ready — publishing next sweep")
         return False
@@ -496,27 +626,44 @@ if __name__ == "__main__":  # pragma: no cover — operator tool
         import morning_brief
         now = datetime.now(TZ) if TZ else datetime.now()
         auto = configured() and connected()
+        link = post_link()
         body = build_post(morning_brief._gather(None, now), now,
-                          inline_link="" if auto else post_link(),
-                          ref_link=REF_URL)
+                          inline_link="" if auto else link,
+                          ref_link=REF_URL, link_in_comment=LINK_IN_COMMENT)
         print(body)
+        if LINK_IN_COMMENT:
+            print("\n──── 第一則留言（貼完主貼文後留言並置頂）────")
+            print(build_comment(link, REF_URL))
         print(f"\n— {threads_len(body)}/{MAX_LEN} (Meta 規則) · "
               f"模式：{'API 自動發文' if auto else '草稿（發到你的 Telegram 私訊）'}")
     elif "--draft" in sys.argv:
         import morning_brief
         now = datetime.now(TZ) if TZ else datetime.now()
+        link = post_link()
         text = build_post(morning_brief._gather(None, now), now,
-                          inline_link=post_link(), ref_link=REF_URL)
-        print("sent:", send_draft(text, now))
+                          inline_link=link, ref_link=REF_URL,
+                          link_in_comment=LINK_IN_COMMENT)
+        comment = build_comment(link, REF_URL) if LINK_IN_COMMENT else ""
+        print("sent:", send_draft(text, now, comment=comment))
     elif "--post" in sys.argv:
         import morning_brief
         now = datetime.now(TZ) if TZ else datetime.now()
-        c = create_container(build_post(morning_brief._gather(None, now), now,
-                                        ref_link=REF_URL))
+        link = post_link()
+        body = build_post(morning_brief._gather(None, now), now,
+                          ref_link=REF_URL, link_in_comment=LINK_IN_COMMENT)
+        c = create_container(body, "" if LINK_IN_COMMENT else link)
         print("container:", c)
         if c.get("ok"):
             time.sleep(PUBLISH_DELAY_SEC)
-            print("publish:", publish_container(c["creation_id"]))
+            pub = publish_container(c["creation_id"])
+            print("publish:", pub)
+            comment = build_comment(link, REF_URL) if LINK_IN_COMMENT else ""
+            if pub.get("ok") and comment:
+                rc = create_container(comment, reply_to_id=pub["id"])
+                print("comment container:", rc)
+                if rc.get("ok"):
+                    time.sleep(PUBLISH_DELAY_SEC)
+                    print("comment publish:", publish_container(rc["creation_id"]))
     else:
         print(f"configured={configured()} connected={connected()} enabled={ENABLED}")
         print(f"mode: {'API' if configured() and connected() else 'draft → Telegram DM'}")

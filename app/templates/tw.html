@@ -76,7 +76,10 @@
     </div>
 
     {% set open_setups = tw.setups | selectattr('status', 'in', ['new', 'tracking']) | list %}
-    {% set done_setups = tw.setups | selectattr('status', 'in', ['tp', 'sl']) | list %}
+    {# 'timeout' belongs here too — a setup that ran out of holding time is
+       finished, and leaving it out of this list silently rendered it as a
+       stop-out in the card below. #}
+    {% set done_setups = tw.setups | selectattr('status', 'in', ['tp', 'sl', 'timeout']) | list %}
 
     {% set ready = open_setups | selectattr('buy_zone') | list %}
 
@@ -143,6 +146,17 @@
                 </div>
             </div>
 
+            {% if s.size %}
+            {# Sizing off a fixed LOSS, not a fixed spend. Stops here range from
+               about −4% to −24%, so "buy the same amount of each" would risk six
+               times as much on the widest one. #}
+            <div class="size">
+                💰 想讓「賠的時候只賠 {{ '{:,}'.format(tw.risk_budget) }} 元」 →
+                買 <b class="num">{{ '{:,}'.format(s.size.shares) }}</b> 股
+                （約 {{ s.size.lots }} 張，成本約 <span class="num">{{ '{:,}'.format(s.size.cost) }}</span> 元）
+            </div>
+            {% endif %}
+
             {% if s.trail %}
             <div class="trail {{ 'locked' if s.trail_locked }}">
                 🏃 移動停損已升至 <b class="num">{{ s.trail_s }}</b>
@@ -182,19 +196,59 @@
             <div class="crow">
                 <div class="name">{{ s.name }}<span class="code">{{ s.code }}</span></div>
                 {% if s.status == 'tp' %}<span class="pill tp">✅ 已達標</span>
+                {% elif s.status == 'timeout' %}<span class="pill">⌛ 到期出場</span>
                 {% else %}<span class="pill sl">已停損</span>{% endif %}
             </div>
             <div class="meta">
                 <span>設定於 {{ s.date }}</span>
-                <span>進場 {{ s.ref_s }} · {{ '目標 ' ~ s.tp_s if s.status == 'tp' else '停損 ' ~ s.sl_s }}</span>
+                <span>進場 {{ s.ref_s }} ·
+                    {%- if s.status == 'tp' %} 目標 {{ s.tp_s }}
+                    {%- elif s.status == 'timeout' %} 到期 {{ tw.max_hold or 60 }} 天
+                    {%- else %} 停損 {{ s.sl_s }}{% endif %}</span>
             </div>
             {% if s.hit and s.hit.date %}
             <div class="hit {{ s.status }}">
-                {{ '到達目標' if s.status == 'tp' else '觸及停損' }}於 {{ s.hit.date }} {{ s.hit.time or '' }}
+                {%- if s.status == 'tp' %}到達目標
+                {%- elif s.status == 'timeout' %}持有到期出場
+                {%- else %}觸及停損{% endif %}於 {{ s.hit.date }} {{ s.hit.time or '' }}
             </div>
             {% endif %}
         </div>
         {% endfor %}
+    {% endif %}
+
+    {# ── 累計成績 ──
+       Every setup that reaches its stop, its target, or its holding limit is
+       written to a permanent ledger and counted here. Before 2026-08-11 there
+       was no ledger: settled setups were deleted a day after they settled, so
+       this page could show what was OPEN but never what had actually HAPPENED. #}
+    {% if tw.record and tw.record.total %}
+    <div class="record">
+        <div class="rtitle">📊 累計成績（已結算 {{ tw.record.total }} 檔）</div>
+        <div class="rgrid">
+            <div class="rc"><div class="rk">達標</div>
+                <div class="rv up">{{ tw.record.wins }}</div></div>
+            <div class="rc"><div class="rk">停損</div>
+                <div class="rv dn">{{ tw.record.losses }}</div></div>
+            <div class="rc"><div class="rk">到期</div>
+                <div class="rv">{{ tw.record.timeouts }}</div></div>
+            <div class="rc"><div class="rk">合計 R</div>
+                <div class="rv {{ 'up' if tw.record.total_r >= 0 else 'dn' }}">
+                    {{ '%+.1f' % tw.record.total_r }}</div></div>
+        </div>
+        <div class="rnote">
+            <b>R</b> ＝ 每筆的風險單位（賠到停損算 −1R）。看合計 R，不要只看勝率 —
+            勝率高但每次只賺一點、賠一次賠很多，一樣是虧錢。
+            {% if tw.record.avg_r is not none %}目前平均每筆
+            <b>{{ '%+.2f' % tw.record.avg_r }}R</b>。{% endif %}
+        </div>
+        {% if tw.record.total < 30 %}
+        <div class="rwarn">
+            ⚠️ 只有 {{ tw.record.total }} 筆，樣本太少。這個數字現在只能參考，
+            還不能用來判斷這套方法到底行不行 — 至少要累積 30 筆以上才有意義。
+        </div>
+        {% endif %}
+    </div>
     {% endif %}
 
     {# ── 怎麼看 ── #}
@@ -203,7 +257,7 @@
         1. 先看最上面大盤紅綠燈 — <b>綠燈</b>才進場，<b>紅燈</b>就休息。<br>
         2. <b>進場參考</b>＝訊號當天收盤價（隔日開盤附近可買）；金色「接近進場價」表示現價仍在這個價位附近。<br>
         3. 買進後 <b>跌破停損就賣</b>、<b>到目標就獲利了結</b>。<br>
-        4. 最多抱 {{ tw.max_hold or 40 }} 個交易日，沒到目標也先出場。<br>
+        4. 最多抱 {{ tw.max_hold or 60 }} 個交易日，沒到目標也先出場。<br>
         5. 停損 {{ tw.sl_atr or 3 }}×ATR、目標 {{ tw.tp_atr or 5 }}×ATR（ATR＝股價近期平均波動幅度）。
     </div>
 

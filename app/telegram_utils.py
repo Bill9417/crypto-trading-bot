@@ -412,6 +412,55 @@ def _route(channel: str, force: bool):
 _TOKEN_RE = re.compile(r"(bot)\d{6,}:[A-Za-z0-9_\-]{20,}")
 
 
+# ── the group's CURRENT invite link ──────────────────────────────────────────
+# 2026-08-11: the invite advertised in the public Threads post had stopped
+# working and nobody could join. Cause: TELEGRAM_INVITE_URL in .env was a link
+# that had since been REVOKED, while the group had moved on to a new primary
+# link. A hardcoded invite goes stale silently — revoking a link is a normal
+# thing to do in Telegram's UI, and nothing here noticed.
+#
+# So the link is now ASKED FOR rather than remembered. getChat returns the
+# group's live primary invite; the env var survives only as a fallback for when
+# the API is unreachable or the bot lacks the rights to see it.
+_INVITE_TTL_SEC = 900                       # 15 min — links change rarely
+_invite_cache = {"url": "", "ts": 0.0}
+_invite_lock = threading.Lock()
+
+
+def group_invite_link(force_refresh: bool = False) -> str:
+    """The group's CURRENT primary invite link, cached; env var as fallback.
+
+    Never raises and never blocks a caller for long: any failure falls back to
+    the configured value, which is at worst what we would have used anyway.
+    """
+    env_url = (os.getenv("TELEGRAM_INVITE_URL") or "").strip()
+    if not (BOT_TOKEN and TELEGRAM_GROUP_CHAT_ID):
+        return env_url
+    with _invite_lock:
+        fresh = time.time() - _invite_cache["ts"] < _INVITE_TTL_SEC
+        if _invite_cache["url"] and fresh and not force_refresh:
+            return _invite_cache["url"]
+    try:
+        r = requests.get(f"https://api.telegram.org/bot{BOT_TOKEN}/getChat",
+                         params={"chat_id": TELEGRAM_GROUP_CHAT_ID}, timeout=10)
+        link = ((r.json() or {}).get("result") or {}).get("invite_link") or ""
+        link = link.strip()
+        if link:
+            with _invite_lock:
+                _invite_cache.update(url=link, ts=time.time())
+            if env_url and link != env_url:
+                # Loud on purpose: the .env value is now known to be wrong, and
+                # anything reading it directly (a template, a script) is still
+                # handing people a dead link.
+                print("[telegram] NOTE: TELEGRAM_INVITE_URL in .env does not match "
+                      "the group's current primary invite link. Using the live one. "
+                      "Update .env to stop other callers serving the stale link.")
+            return link
+    except Exception as exc:  # noqa: BLE001 — a dead link beats a crashed post
+        print(f"[telegram] could not read the live invite link: {redact(exc)}")
+    return env_url
+
+
 def redact(text) -> str:
     """Strip Telegram bot tokens out of text about to be logged or displayed."""
     return _TOKEN_RE.sub(r"\1***", str(text))

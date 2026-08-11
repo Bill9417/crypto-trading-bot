@@ -1,4 +1,5 @@
 """tw_stocks — pure signal/regime/digest/scheduling logic."""
+import os
 from datetime import datetime
 
 import tw_stocks
@@ -285,44 +286,200 @@ def test_scorecard_due_once_per_iso_week():
     assert tw_stocks._scorecard_due({}, SUNDAY)
 
 
-def test_weekly_scorecard_tallies_wins_losses_and_open():
-    state = {"active_setups": [
-        _week_setup("2330", "2026-07-14", {"kind": "tp", "date": "2026-07-16", "time": "10:00"}),
-        _week_setup("2317", "2026-07-15", {"kind": "sl", "date": "2026-07-17", "time": "11:00"}),
-        _week_setup("2454", "2026-07-16"),                     # still open
-        _week_setup("2882", "2026-07-06"),                     # last week — excluded
-    ]}
-    card = tw_stocks.weekly_scorecard(state, SUNDAY)
-    assert card["total"] == 3 and card["wins"] == 1 and card["losses"] == 1
+def _outcome(code, exit_date, kind, r, source="live"):
+    return {"code": code, "name": f"股{code}", "date": "2026-06-01",
+            "kind": kind, "exit_date": exit_date, "r": r, "source": source}
+
+
+def test_weekly_scorecard_tallies_what_resolved_this_week():
+    outcomes = [
+        _outcome("2330", "2026-07-16", "tp", 1.667),
+        _outcome("2317", "2026-07-17", "sl", -1.0),
+        _outcome("2454", "2026-07-15", "timeout", 0.4),
+        _outcome("2882", "2026-07-06", "tp", 1.667),           # last week — excluded
+    ]
+    state = {"active_setups": [_week_setup("6505", "2026-07-16")]}
+    card = tw_stocks.weekly_scorecard(state, SUNDAY, outcomes=outcomes)
+    assert card["closed"] == 3
+    assert card["wins"] == 1 and card["losses"] == 1 and card["timeouts"] == 1
+    assert abs(card["total_r"] - (1.667 - 1.0 + 0.4)) < 1e-2   # stored to 2dp
     assert card["still_open"] == 1
-    assert abs(card["total_r"] - (5.0 / 3.0 - 1.0)) < 1e-9
+
+
+def test_weekly_scorecard_counts_by_exit_date_not_signal_date():
+    """The bug this replaced: the card tallied by SIGNAL date, so a setup that
+    fired weeks ago and resolved THIS week was invisible in every scorecard —
+    its own signal week had already passed, and by then the row had been pruned
+    from active_setups. Trades hold up to MAX_HOLD sessions, so that describes
+    almost every trade: the card reported 0/0 forever."""
+    old_signal = _outcome("2330", "2026-07-16", "tp", 1.667)
+    old_signal["date"] = "2026-05-02"                          # signalled long before
+    card = tw_stocks.weekly_scorecard({}, SUNDAY, outcomes=[old_signal])
+    assert card["closed"] == 1 and card["wins"] == 1
+
+
+def test_weekly_scorecard_ignores_replayed_rows():
+    """A reconstructed backtest row must never be counted as a signal that was
+    actually sent to anyone."""
+    rows = [_outcome("2330", "2026-07-16", "tp", 1.667, source="replay")]
+    assert tw_stocks.weekly_scorecard({}, SUNDAY, outcomes=rows)["closed"] == 0
 
 
 def test_weekly_scorecard_empty_week():
-    card = tw_stocks.weekly_scorecard({}, SUNDAY)
-    assert card == {"iso_year": 2026, "iso_week": 29, "total": 0, "wins": 0,
-                    "losses": 0, "still_open": 0, "total_r": 0.0}
+    card = tw_stocks.weekly_scorecard({}, SUNDAY, outcomes=[])
+    assert card["closed"] == 0 and card["still_open"] == 0
+    assert card["iso_week"] == 29
 
 
 def test_scorecard_plain_empty_week_message():
-    card = tw_stocks.weekly_scorecard({}, SUNDAY)
+    card = tw_stocks.weekly_scorecard({}, SUNDAY, outcomes=[])
     msg = tw_stocks.build_scorecard_plain(SUNDAY, card)
-    assert "本週沒有新增訊號" in msg
+    assert "本週沒有訊號結算" in msg
 
 
 def test_scorecard_plain_shows_tally_and_r():
-    card = {"iso_year": 2026, "iso_week": 29, "total": 3, "wins": 2, "losses": 1,
-            "still_open": 0, "total_r": 2.33}
+    card = {"iso_year": 2026, "iso_week": 29, "closed": 3, "wins": 2, "losses": 1,
+            "timeouts": 0, "still_open": 0, "total_r": 2.33, "new_signals": 0}
     msg = tw_stocks.build_scorecard_plain(SUNDAY, card)
     assert "達標 2 檔" in msg and "停損 1 檔" in msg and "+2.3R" in msg
     assert "⚠️" in msg
 
 
 def test_scorecard_plain_negative_r_keeps_minus_sign():
-    card = {"iso_year": 2026, "iso_week": 29, "total": 2, "wins": 0, "losses": 2,
-            "still_open": 0, "total_r": -2.0}
+    card = {"iso_year": 2026, "iso_week": 29, "closed": 2, "wins": 0, "losses": 2,
+            "timeouts": 0, "still_open": 0, "total_r": -2.0, "new_signals": 0}
     msg = tw_stocks.build_scorecard_plain(SUNDAY, card)
     assert "-2.0R" in msg and "+-2.0R" not in msg
+
+
+def test_scorecard_plain_appends_running_record_with_small_sample_warning():
+    card = {"iso_year": 2026, "iso_week": 29, "closed": 1, "wins": 1, "losses": 0,
+            "timeouts": 0, "still_open": 2, "total_r": 1.7, "new_signals": 1}
+    rec = {"total": 7, "wins": 4, "losses": 2, "timeouts": 1, "scored": 7,
+           "win_pct": 66.7, "total_r": 3.4, "avg_r": 0.486}
+    msg = tw_stocks.build_scorecard_plain(SUNDAY, card, rec)
+    assert "累計成績" in msg and "共 7 檔" in msg and "+3.4R" in msg
+    assert "樣本還太少" in msg                        # n<30 must be caveated
+    rec_big = dict(rec, total=44)
+    assert "樣本還太少" not in tw_stocks.build_scorecard_plain(SUNDAY, card, rec_big)
+
+
+# ── outcome ledger ───────────────────────────────────────────────────────────
+def _settled(code="2330", kind="tp", **kw):
+    rec = {"code": code, "name": "台積電", "date": "2026-07-14", "strategy": "pullback",
+           "ref": 1000.0, "sl": 940.0, "tp": 1100.0, "held": 12}
+    rec["hit"] = {"kind": kind, "date": "2026-07-20", "time": "—",
+                  "price": kw.get("price", rec["tp"] if kind == "tp" else rec["sl"])}
+    rec.update({k: v for k, v in kw.items() if k != "price"})
+    return rec
+
+
+def test_outcome_row_scores_r_against_the_setups_own_risk():
+    row = tw_stocks.outcome_row(_settled(kind="tp"))
+    assert row["kind"] == "tp"
+    assert abs(row["r"] - (1100.0 - 1000.0) / (1000.0 - 940.0)) < 1e-3   # stored to 3dp
+    assert tw_stocks.outcome_row(_settled(kind="sl"))["r"] == -1.0
+
+
+def test_outcome_row_scores_a_timeout_at_its_exit_price():
+    """A time-out is a real exit at a real price, not a zero. Scoring it as
+    'flat' would understate both good and bad time-outs."""
+    row = tw_stocks.outcome_row(_settled(kind="timeout", price=1030.0))
+    assert abs(row["r"] - 0.5) < 1e-6
+
+
+def test_outcome_row_leaves_an_unpriced_timeout_unscored():
+    """No exit price means we do not know the result. Recording 0.0 would
+    assert 'it went nowhere', which is a different and unearned claim."""
+    rec = _settled(kind="timeout")
+    rec["hit"].pop("price")
+    assert tw_stocks.outcome_row(rec)["r"] is None
+
+
+def test_append_outcome_is_idempotent_per_setup(monkeypatch, tmp_path):
+    """The intraday watcher and the daily reconcile can both settle the same
+    setup; it must be recorded once."""
+    monkeypatch.setattr(tw_stocks, "OUTCOMES_FILE", str(tmp_path / "out.json"))
+    assert tw_stocks._append_outcome(_settled()) is True
+    assert tw_stocks._append_outcome(_settled()) is False
+    assert len(tw_stocks._load_outcomes()) == 1
+
+
+def test_append_outcome_ignores_unresolved_setups(monkeypatch, tmp_path):
+    monkeypatch.setattr(tw_stocks, "OUTCOMES_FILE", str(tmp_path / "out.json"))
+    rec = _settled()
+    rec.pop("hit")
+    assert tw_stocks._append_outcome(rec) is False
+    assert tw_stocks._load_outcomes() == []
+
+
+def test_record_stats_excludes_unscored_rows_from_the_average():
+    rows = [{"kind": "tp", "r": 1.667}, {"kind": "sl", "r": -1.0},
+            {"kind": "timeout", "r": None}]
+    st = tw_stocks.record_stats(rows)
+    assert st["total"] == 3 and st["scored"] == 2
+    assert st["wins"] == 1 and st["losses"] == 1 and st["timeouts"] == 1
+    assert abs(st["total_r"] - 0.667) < 1e-2        # stored to 2dp
+    assert abs(st["avg_r"] - 0.334) < 1e-3          # /2 scored, not /3 rows
+    assert st["win_pct"] == 50.0                    # tp vs sl only
+
+
+def test_record_stats_win_pct_is_none_without_decided_trades():
+    assert tw_stocks.record_stats([{"kind": "timeout", "r": 0.1}])["win_pct"] is None
+
+
+def test_all_time_record_separates_live_from_replay(monkeypatch, tmp_path):
+    monkeypatch.setattr(tw_stocks, "OUTCOMES_FILE", str(tmp_path / "out.json"))
+    tw_stocks._save_outcomes([
+        _outcome("2330", "2026-07-16", "tp", 1.667, source="live"),
+        _outcome("2317", "2026-07-17", "sl", -1.0, source="replay"),
+    ])
+    assert tw_stocks.all_time_record(source="live")["total"] == 1
+    assert tw_stocks.all_time_record(source="replay")["total"] == 1
+    assert tw_stocks.all_time_record()["total"] == 2
+
+
+def test_ledger_and_state_are_isolated_from_the_real_files():
+    """Guard for the guard. The ledger is append-only and permanent, so a test
+    row written to the real file is a fake result that lives forever in a track
+    record — which is exactly what happened the day mark_hit() learned to
+    record outcomes. conftest redirects both paths; if that redirect is ever
+    dropped, fail here rather than in production data."""
+    import tempfile
+    tmp = os.path.realpath(tempfile.gettempdir())
+    for path in (tw_stocks.OUTCOMES_FILE, tw_stocks.STATE_FILE):
+        assert os.path.realpath(path).startswith(tmp), f"{path} escapes tmp"
+
+
+def test_ledger_survives_a_corrupt_file(monkeypatch, tmp_path):
+    p = tmp_path / "out.json"
+    p.write_text("{not json", encoding="utf-8")
+    monkeypatch.setattr(tw_stocks, "OUTCOMES_FILE", str(p))
+    assert tw_stocks._load_outcomes() == []
+    assert tw_stocks.all_time_record()["total"] == 0
+
+
+# ── position sizing ──────────────────────────────────────────────────────────
+def test_position_size_risks_the_budget_not_the_spend():
+    """The point of the helper: a −24% stop and a −4% stop must risk the same
+    money, so the wide one simply buys fewer shares."""
+    wide = tw_stocks.position_size(190.0, 144.25, budget=10000)
+    tight = tw_stocks.position_size(190.0, 182.0, budget=10000)
+    assert wide["shares"] < tight["shares"]
+    assert wide["risk"] <= 10000 and tight["risk"] <= 10000
+    assert abs(wide["risk"] - 10000) < 190          # within one share of budget
+    assert wide["cost"] < tight["cost"]             # and ties up less capital
+
+
+def test_position_size_rejects_unusable_geometry():
+    assert tw_stocks.position_size(100.0, 100.0) == {}      # zero risk
+    assert tw_stocks.position_size(100.0, 120.0) == {}      # stop above entry
+    assert tw_stocks.position_size(None, 90.0) == {}
+    assert tw_stocks.position_size(100.0, 90.0, budget=0) == {}
+
+
+def test_position_size_returns_nothing_when_one_share_busts_the_budget():
+    assert tw_stocks.position_size(2000.0, 1500.0, budget=100) == {}
 
 
 def test_scorecard_tick_sends_once_and_marks_state(monkeypatch, tmp_path):

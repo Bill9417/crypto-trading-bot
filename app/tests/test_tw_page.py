@@ -76,3 +76,55 @@ def test_api_tw_returns_json(monkeypatch):
     r = _get("/api/tw")
     assert r.status_code == 200
     assert r.json["setups"][0]["code"] == "2330"
+
+
+# ── track record + sizing (2026-08-11) ──────────────────────────────────────
+def test_tw_shows_the_running_track_record(monkeypatch):
+    view = dict(_VIEW, record={"total": 12, "wins": 5, "losses": 6, "timeouts": 1,
+                               "scored": 12, "win_pct": 45.5, "total_r": 2.4,
+                               "avg_r": 0.2})
+    _stub(monkeypatch, view)
+    html = _get().get_data(as_text=True)
+    assert '<div class="record">' in html and "已結算 12 檔" in html
+    assert "+2.4" in html and "+0.20R" in html
+    assert "樣本太少" in html                        # n<30 must be caveated
+
+
+def test_track_record_hidden_until_something_has_settled(monkeypatch):
+    """An empty ledger shows nothing, rather than a 0-0 card that reads as
+    'no losses yet'. Keyed on the element, not the words — the stylesheet
+    comment mentions 累計成績 too."""
+    _stub(monkeypatch, dict(_VIEW, record={"total": 0, "wins": 0, "losses": 0,
+                                           "timeouts": 0, "total_r": 0.0}))
+    assert '<div class="record">' not in _get().get_data(as_text=True)
+
+
+def test_small_sample_warning_drops_once_the_record_is_meaningful(monkeypatch):
+    _stub(monkeypatch, dict(_VIEW, record={"total": 40, "wins": 18, "losses": 20,
+                                           "timeouts": 2, "scored": 40,
+                                           "win_pct": 47.4, "total_r": 6.1,
+                                           "avg_r": 0.15}))
+    assert "樣本太少" not in _get().get_data(as_text=True)
+
+
+def test_tw_shows_share_count_for_a_fixed_risk(monkeypatch):
+    """The 南亞 problem: a −24% stop is unusable as 'just buy some', but fine
+    as a share count sized so the stop costs a fixed amount."""
+    view = dict(_VIEW, risk_budget=10000,
+                setups=[dict(_VIEW["setups"][0],
+                             size={"shares": 218, "lots": 0.22,
+                                   "cost": 41420, "risk": 9974})])
+    _stub(monkeypatch, view)
+    html = _get().get_data(as_text=True)
+    assert "10,000" in html and "218" in html and "41,420" in html
+
+
+def test_timeout_setup_is_not_rendered_as_a_stop_out(monkeypatch):
+    """'timeout' used to fall through the tp/sl branches and print 已停損,
+    reporting a trade that ran out of clock as a loss."""
+    view = dict(_VIEW, setups=[dict(_VIEW["setups"][0], status="timeout",
+                                    hit={"kind": "timeout", "date": "2026-08-01",
+                                         "time": "—"})])
+    _stub(monkeypatch, view)
+    html = _get().get_data(as_text=True)
+    assert "到期出場" in html and "已停損" not in html

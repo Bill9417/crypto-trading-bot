@@ -111,6 +111,27 @@ class User(UserMixin, db.Model):
     username = db.Column(db.String(150), unique=True, nullable=False)
     password = db.Column(db.String(150), nullable=False)
     is_admin = db.Column(db.Boolean, default=False)
+    # ── ONE ACCOUNT, ONE ACTIVE LOGIN (2026-08-11) ──────────────────────────
+    # Rotated on every successful login. The value is baked into the session
+    # cookie by get_id(), so the moment it changes every OTHER device holding
+    # a cookie for this account is carrying a stale token and is signed out on
+    # its next request. That is what stops one login being passed around.
+    session_token = db.Column(db.String(64))
+    # Purely so the owner can see a takeover happened and from where. Never
+    # used to ALLOW or DENY — see the note in load_user about why IP is the
+    # wrong lever.
+    last_login_at = db.Column(db.DateTime)
+    last_login_ip = db.Column(db.String(64))
+
+    def get_id(self):
+        """flask-login stores this string in the cookie and hands it back to
+        load_user(). Embedding the token is what makes the cookie *versioned*
+        rather than a permanent bearer of the account."""
+        return f"{self.id}|{self.session_token or ''}"
+
+    def new_session_token(self) -> str:
+        self.session_token = secrets.token_urlsafe(32)
+        return self.session_token
 
 # Signal Record Model for Performance Tracking
 class SignalRecord(db.Model):
@@ -1208,7 +1229,40 @@ def clean_signals(signals, records):
 
 @login_manager.user_loader
 def load_user(user_id):
-    return db.session.get(User, int(user_id))
+    """Resolve the cookie to a user — and reject it if the login was superseded.
+
+    ONE ACCOUNT, ONE ACTIVE LOGIN. The cookie carries "<id>|<session_token>".
+    A fresh login rotates the token on the row, so every cookie minted earlier
+    now disagrees and resolves to None: those devices are signed out on their
+    very next request. Sharing one account across people stops working, which
+    is the whole point.
+
+    NOT DONE BY IP, deliberately. "One address" is the obvious reading, but IP
+    is both too strict and too loose here: a phone on mobile data changes IP
+    constantly (the real owner would be logged out at random), while two people
+    sharing a home or behind the same CGNAT would both pass. Binding to the
+    LOGIN EVENT instead targets exactly the thing being prevented — the same
+    credentials in use in two places at once — and never punishes one person
+    moving between networks. last_login_ip is recorded for visibility only.
+
+    Legacy cookies (issued before this column existed) have no "|" and are
+    accepted once, so nobody is force-logged-out by the upgrade itself; the
+    next login gives them a versioned one.
+    """
+    raw = str(user_id or "")
+    uid, sep, token = raw.partition("|")
+    try:
+        user = db.session.get(User, int(uid))
+    except (TypeError, ValueError):
+        return None
+    if user is None:
+        return None
+    if not sep:
+        return user                      # pre-upgrade cookie — honoured once
+    if not user.session_token:
+        return user                      # never logged in since the upgrade
+    # constant-time: this token is a credential like any other
+    return user if secrets.compare_digest(token, user.session_token) else None
 
 @app.route("/register", methods=['GET', 'POST'])
 def register():
@@ -1321,7 +1375,7 @@ def _perf_strategy_context(selected):
 
 
 @app.route("/performance")
-@login_required
+@admin_required
 def performance():
     try:
         strategy = _perf_selected_strategy()
@@ -1655,7 +1709,7 @@ def remove_queued_signal():
     return redirect(url_for('performance'))
 
 @app.route("/api/performance_stats")
-@login_required
+@admin_required
 def get_performance_stats():
     """Return aggregate analytics data for charts (scoped to the selected strategy)."""
     records = _filter_records_by_strategy(
@@ -1736,7 +1790,7 @@ def get_performance_stats():
     })
 
 @app.route("/api/performance_live")
-@login_required
+@admin_required
 def get_performance_live():
     scoped = _filter_records_by_strategy(
         SignalRecord.query.order_by(SignalRecord.timestamp.desc()).all(),
@@ -1840,6 +1894,50 @@ _public_stats_cache = {"ts": 0.0, "data": None}
 PUBLIC_STATS_TTL = 300
 
 
+def _invite_url() -> str:
+    """The group's CURRENT invite link for every public join button.
+
+    Was `config.TELEGRAM_INVITE_URL` read straight from .env. On 2026-08-11
+    that value turned out to be a REVOKED link — the group's invite had been
+    regenerated and .env never caught up, so every join button on /welcome,
+    /tw and /us pointed at a dead invite. telegram_utils.group_invite_link()
+    asks Telegram for the live one (cached 15 min) and falls back to the env
+    value only when the API cannot answer.
+    """
+    try:
+        import telegram_utils
+        return telegram_utils.group_invite_link()
+    except Exception:  # noqa: BLE001 — a join button must never 500 a page
+        import config as _c
+        return getattr(_c, "TELEGRAM_INVITE_URL", "") or ""
+
+
+@app.route("/join")
+def join_group():
+    """Public 302 → the group's live Telegram invite.
+
+    WHY THIS EXISTS. A private-group invite is `t.me/+HASH`, and the `+` does
+    not survive being passed around. Threads' in-app browser strips it, and
+    `t.me/HASH` without the plus is not an invite at all — t.me treats it as a
+    username, finds nothing, and redirects to telegram.org's homepage. The
+    reader gets "a new era of messaging" instead of a Join button and assumes
+    the group is dead. Measured 2026-08-11:
+
+        t.me/+__YKMoQF32czNDE1  → 200, Join Group Chat     ✅
+        t.me/__YKMoQF32czNDE1   → 302 telegram.org         ❌  (same link, no +)
+
+    A plain path with no reserved characters cannot be mangled by anything, so
+    this is what gets published. It also means the invite can be rotated
+    without touching a single post that is already live.
+    """
+    target = _invite_url()
+    if not target:
+        return redirect(url_for("welcome"))
+    # 302, not 301: browsers cache a 301 forever, which would pin the redirect
+    # to whichever invite happened to be live the first time someone tapped it.
+    return redirect(target, code=302)
+
+
 def _public_stats() -> dict:
     """Aggregated, account-free stats for the landing page. Cached; every
     branch fail-safe — a missing state file renders as absence, never a 500."""
@@ -1863,21 +1961,19 @@ def _public_stats() -> dict:
 
 @app.route("/welcome")
 def welcome():
-    import config as _config
     return render_template("welcome.html", stats=_public_stats(),
-                           invite_url=_config.TELEGRAM_INVITE_URL,
+                           invite_url=_invite_url(),
                            registration_enabled=ALLOW_PUBLIC_REGISTRATION)
 
 
 @app.route("/login", methods=['GET', 'POST'])
 def login():
-    import config as _config
     if request.method == 'POST':
         ip = request.remote_addr or "unknown"
         if _login_blocked(ip):
             flash('Too many failed attempts. Try again in a few minutes.', 'danger')
             return render_template("login.html", registration_enabled=ALLOW_PUBLIC_REGISTRATION,
-                                   invite_url=_config.TELEGRAM_INVITE_URL), 429
+                                   invite_url=_invite_url()), 429
         username = request.form.get('username')
         password = request.form.get('password')
         user = User.query.filter_by(username=username).first()
@@ -1885,6 +1981,16 @@ def login():
         if user and check_password_hash(user.password, password):
             _login_fails.pop(ip, None)          # clear the counter on success
             session.permanent = True            # enrolls the idle-timeout above
+            # ONE ACCOUNT, ONE ACTIVE LOGIN: rotating the token here is what
+            # signs out every other device holding this account's cookie. It
+            # must happen BEFORE login_user(), because login_user() reads
+            # get_id() to build the new cookie — rotate afterwards and the
+            # fresh cookie would carry the OLD token and lock the new session
+            # out instead of the old one.
+            user.new_session_token()
+            user.last_login_at = datetime.now(timezone(timedelta(hours=8))).replace(tzinfo=None)
+            user.last_login_ip = ip
+            db.session.commit()
             login_user(user)
             return redirect(url_for('index'))
         else:
@@ -1892,7 +1998,7 @@ def login():
             flash('Login failed. Check your username and password.', 'danger')
 
     return render_template("login.html", registration_enabled=ALLOW_PUBLIC_REGISTRATION,
-                           invite_url=_config.TELEGRAM_INVITE_URL)
+                           invite_url=_invite_url())
 
 @app.route("/logout")
 @login_required
@@ -4315,7 +4421,6 @@ def tw_page():
     PUBLIC (no login) so it opens straight from the LINE link; shows only the
     same setups already broadcast to the family LINE group, nothing account-
     related. Read-only and fully fail-soft — never 500s."""
-    import config as _config
     import tw_stocks
     try:
         data = tw_stocks.web_view()
@@ -4323,7 +4428,7 @@ def tw_page():
         print(f"TW page error: {e}")
         data = {"setups": [], "regime": {}, "regime_ok": False,
                 "as_of": None, "error": str(e)}
-    return render_template("tw.html", tw=data, invite_url=_config.TELEGRAM_INVITE_URL)
+    return render_template("tw.html", tw=data, invite_url=_invite_url())
 
 
 @app.route("/markets")
@@ -4337,7 +4442,6 @@ def markets_page():
     only, nothing account-related. Fail-soft on each side independently, so a
     broken TW scan still leaves the US half readable.
     """
-    import config as _config
     import tw_stocks
     import us_market
     try:
@@ -4352,7 +4456,7 @@ def markets_page():
         us = {"indices": [], "vix": {}, "tnx": {}, "adr": {}, "breadth": {},
               "read": "", "session_label": None, "live": False}
     return render_template("markets.html", tw=tw, us=us,
-                           invite_url=_config.TELEGRAM_INVITE_URL)
+                           invite_url=_invite_url())
 
 
 @app.route("/s4")
@@ -4395,7 +4499,6 @@ def us_page():
     PUBLIC for the same reason /tw is: it opens straight from a LINE link and
     carries only public market data, nothing account-related. Read-only and
     fail-soft — web_view() serves its last good snapshot rather than raising."""
-    import config as _config
     import us_market
     import us_stocks
     try:
@@ -4404,7 +4507,7 @@ def us_page():
         print(f"[us] setup view failed: {e}")
         setups = None
     return render_template("us.html", us=us_market.web_view(), setups=setups,
-                           invite_url=_config.TELEGRAM_INVITE_URL)
+                           invite_url=_invite_url())
 
 
 @app.route("/api/us")
@@ -4741,6 +4844,19 @@ if __name__ == "__main__":
                 conn.execute(text("ALTER TABLE user ADD COLUMN is_admin BOOLEAN DEFAULT 0"))
                 conn.commit()
                 print("Added is_admin to user table")
+
+        # One account, one active login. Left NULL on existing rows on purpose:
+        # load_user() treats "no token yet" as still-valid, so nobody is kicked
+        # out merely by deploying this. The first login after the upgrade mints
+        # a token and enforcement begins for that account.
+        for col, ddl in (("session_token", "VARCHAR(64)"),
+                         ("last_login_at", "DATETIME"),
+                         ("last_login_ip", "VARCHAR(64)")):
+            if col not in user_columns:
+                with db.engine.connect() as conn:
+                    conn.execute(text(f"ALTER TABLE user ADD COLUMN {col} {ddl}"))
+                    conn.commit()
+                    print(f"Added {col} to user table")
 
         # 3. Check SignalRecord table columns (signals bind)
         signals_engine = db.engines['signals']

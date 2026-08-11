@@ -53,7 +53,12 @@
     <div class="wsb-group">Strategy</div>
     <a href="/strategies" class="wsb-item{% if request.endpoint in ('strategies', 'strategy2') %} on{% endif %}"><svg class="wsb-ico" viewBox="0 0 24 24"><use href="#wi-layers"/></svg><span>Strategies</span></a>
     <a href="{{ url_for('funnel') }}" class="wsb-item{% if request.endpoint == 'funnel' %} on{% endif %}"><svg class="wsb-ico" viewBox="0 0 24 24"><use href="#wi-filter"/></svg><span>Signal Funnel</span></a>
+    {# Performance carries the owner's own trade history and per-trade P&L, so
+       it is admin-only. Hidden here rather than left to 403 — a nav item that
+       always fails is worse than one that isn't there. #}
+    {% if current_user.is_admin %}
     <a href="{{ url_for('performance') }}" class="wsb-item{% if request.endpoint == 'performance' %} on{% endif %}"><svg class="wsb-ico" viewBox="0 0 24 24"><use href="#wi-bars"/></svg><span>Performance</span></a>
+    {% endif %}
     <a href="/s4" class="wsb-item{% if request.endpoint == 's4_page' %} on{% endif %}"><svg class="wsb-ico" viewBox="0 0 24 24"><use href="#wi-target"/></svg><span>S4 Radar</span></a>
     <a href="/reality" class="wsb-item{% if request.endpoint == 'reality_page' %} on{% endif %}"><svg class="wsb-ico" viewBox="0 0 24 24"><use href="#wi-sliders"/></svg><span>Reality Check</span></a>
 
