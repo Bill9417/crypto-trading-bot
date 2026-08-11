@@ -38,7 +38,9 @@ Wolf Scanner watches the whole Binance perpetuals market on a schedule, scores e
 - 🛡️ **Risk guards** — fixed/max margin caps, max concurrent positions, daily circuit breaker, isolated leverage.
 - 📊 **Live web dashboard** — scan funnel, market regime, both accounts, performance, stocks watch, liquidations, health.
 - 🥇 **Second live engine (S3)** — Vegas flag-flip on XAUT (gold), signals *and* orders on Bybit.
-- 📱 **Telegram topics group** — 📊 signals with Entry/SL/TP plans, 🔔 price alerts, 🌍 event radar, 💻 tech digest, 📈 daily report, 🇹🇼 台股 daily scan, 💥 BTC/ETH liquidation-cascade alerts, plus a command bot (`/winrate /positions /tw /liq …`).
+- 📈 **S4 perp radar** — Bybit's stock/commodity perps (AAPL, NVDA, gold…) alongside crypto, five gates, **long and short**. Alert-only by design: it never places an order.
+- 🔬 **Measurement tooling** — walk-forward, a rotation-null factor lab, and a `/reality` scoreboard built to *disprove* edges rather than advertise them.
+- 📱 **Telegram topics group** — 📊 signals with Entry/SL/TP plans, 🔔 price alerts, 🌍 event radar, 💻 tech digest, 📈 daily report, 🇹🇼 台股 daily scan, 💥 BTC/ETH liquidation-cascade alerts, plus a command bot (`/winrate /positions /s4 /tw /liq /whales …`).
 
 ---
 
@@ -58,22 +60,22 @@ flowchart LR
     SCAN --> DB
     subgraph Web["🌐 app.py — Flask"]
         DASH[Dashboard / funnel / performance]
-        PAPER[Paper trading]
-        BT[Backtester]
+        RAD[S4 radar · reality · universe]
+        PAPER[Paper tracker]
     end
     DB --> Web
     Bot -->|alerts| TG[📱 Telegram]
 ```
 
-`./run_all.sh bg` launches **four processes**:
+`./run_all.sh bg` launches **up to four processes** (the two scanners are individually switchable):
 
 | Process | File | Role |
 |---|---|---|
-| **S1 bot** | `app/bot.py` | Cron loop: scan → qualify → place/manage live Binance orders |
-| **S2 scanner** | `app/strategy2_scanner.py` | 15m TV.pine-confluence sweep + all Telegram topic services (event radar, tech digest, daily report, price alerts, 台股 scan, liquidation alerts, command bot) |
+| **S1 bot** | `app/bot.py` | Cron loop: scan → qualify → place/manage live orders. Executes on **Bybit** when `S1_EXEC=bybit`, via the 🪞 mirror. |
+| **S2 scanner** | `app/strategy2_scanner.py` | 15m confluence sweep, the **S4 radar tick**, and all Telegram topic services (event radar, tech digest, daily report, price alerts, 台股 scan, liquidation alerts, command bot) |
 | **S3 scanner** | `app/strategy3_scanner.py` | Vegas flag-flip signals from Bybit candles → Bybit orders (XAUT) |
 | **Web dashboard** | `app/app.py` | Flask UI + auth |
-| Order layers | `app/executor.py` (Binance), `app/strategy3_exec.py` (Bybit) | ccxt calls, brackets, SL/TP, position tracking |
+| Order layers | `app/executor.py` (Binance), `app/strategy3_exec.py` (Bybit), `app/s1_bybit_mirror.py` | ccxt calls, brackets, SL/TP, position tracking |
 | Signals | `app/indicators.py`, `app/smc.py`, `app/market_intel.py` | Indicators, Smart Money Concepts, market regime |
 | Telegram | `app/telegram_utils.py`, `app/tg_commands.py`, `app/event_radar.py`, `app/tech_news.py`, `app/daily_report.py`, `app/price_alerts.py`, `app/tw_stocks.py`, `app/liq_alerts.py` | Topics-group routing, command bot, and every topic's content |
 | Config | `app/config.py` | All thresholds & flags (loaded from `app/.env` at startup) |
@@ -86,14 +88,20 @@ The Flask app (default `http://127.0.0.1:4000`) serves a mobile-friendly PWA wit
 
 | Page | What it shows |
 |---|---|
-| **Dashboard** | Live scan results, both account strips, price alerts, position-size calculator, 🚀 pump radar |
+| **Dashboard** | Live scan results, both account strips, price alerts, 🚀 pump radar |
 | **Funnel** | Why each coin passed or was rejected, gate by gate + best-trade hero |
-| **Strategy 2** | TV.pine confluence meter, EMA chart (Lightweight Charts), score heatmap |
+| **Strategies** | S1 / S2 / S3 rules and their live situation, one tab each |
+| **Strategy 2** | Confluence meter (mirrors All-in-One ULTIMATE Pro), EMA chart, score heatmap |
+| **S4** | The perp radar: qualifying setups, the gate that rejected the rest, and the recorded outcome of every alert it has fired |
+| **Reality** | The measured scoreboard — ~19k scored outcomes, and which exit rules actually cleared zero |
+| **Universe** | 246 coins plotted in 3D by percentile |
 | **Market** | Market regime, breadth, liquidations, news sentiment, recent big events |
 | **Performance** | Trade history, win rate, P&L (tabbed, real exchange records) |
 | **Bybit** | The S3 sub-account: balance, positions, closed P&L |
+| **Copy** | Self-hosted copy trading: follower keys (encrypted vault), approval, mirror status |
 | **Stocks** | TW50 + US100 watchlists with perp-vs-stock gap |
-| **Health** | Process/freshness/log monitor for all four processes |
+| **台股 / 美股** | The two public, no-login pages (`/tw`, `/us`) — 好進場點 and the US close in 中文 |
+| **Health** | Process/freshness/log monitor, restart-pending state, pipeline pane |
 | **Account** | Admin: live balance, strategy selection, settings |
 
 ---
@@ -163,12 +171,17 @@ Only then does the executor place a resting maker-limit entry with its SL/TP bra
 ## 🧪 Testing
 
 ```bash
-cd app
-pytest                      # full suite
-./run_tests.sh              # convenience wrapper
+pytest                      # full suite — 1,371 tests across 79 files
+pytest app/tests/test_strategy4.py -q       # one module
+cd app && ./run_tests.sh    # convenience wrapper
 ```
 
-Covers cost modelling, executor gates, regime detection, live-strategy selection, simulators and the paper engine.
+Covers cost modelling, executor gates, regime detection, live-strategy selection, the paper tracker, S4's gates and outcome settlement, Telegram routing and secret redaction.
+
+Two of these tests exist because the thing they guard has already gone wrong once:
+
+- **Pine↔Python parity** — `test_strategy2_meter.py` reads the factor weights *and* the tunnel periods straight out of the `.pine` file. The mirror silently drifted once (wrong EMA weights, no Volume factor) and the page and the chart disagreed on the verdict 11% of the time.
+- **Channel routing** — a repo-wide test asserts no private P&L can reach the joinable Telegram topic, because `send_message()` defaults to the public channel.
 
 ---
 
@@ -178,25 +191,35 @@ Covers cost modelling, executor gates, regime detection, live-strategy selection
 crypto/
 ├── app/                        # ALL Python — flat by design (live imports)
 │   ├── app.py                  #   Flask web dashboard + auth
-│   ├── bot.py                  #   S1: APScheduler scan/execute loop (Binance)
-│   ├── strategy2_scanner.py    #   S2: confluence sweep + Telegram topic services
+│   ├── bot.py                  #   S1: APScheduler scan/execute loop
+│   ├── strategy2_scanner.py    #   S2: confluence sweep + S4 tick + Telegram services
 │   ├── strategy3_scanner.py    #   S3: Vegas flag-flip loop (Bybit)
+│   ├── strategy4.py            #   S4: Bybit perp radar, 5 gates, long+short, alert-only
+│   ├── strategy4_outcomes.py   #   S4: what happened to every alert it fired
 │   ├── executor.py             #   Binance order layer (brackets, SL/TP)
 │   ├── strategy3_exec.py       #   Bybit order layer
+│   ├── s1_bybit_mirror.py      #   S1 → Bybit at fixed notional (S1_EXEC=bybit)
 │   ├── strategy3_signal.py     #   flag-flip rules (port of the XAUT pine)
 │   ├── config.py               #   all thresholds & flags (from app/.env)
 │   ├── indicators.py / smc.py / market_intel.py    # signal stack
-│   ├── strategy2_meter.py      #   TV.pine confluence meter (/strategy2)
-│   ├── telegram_utils.py       #   topics-group routing (one bot, 8 topics)
-│   ├── tg_commands.py          #   /winrate /positions /signals /tw /liq …
-│   ├── event_radar.py / tech_news.py / daily_report.py
+│   ├── strategy2_meter.py      #   confluence meter — mirrors All-in-One_ULTIMATE_Pro.pine
+│   ├── copy_engine.py / copy_store.py / copy_vault.py   # self-hosted copy trading
+│   ├── walk_forward.py / factor_lab.py            # measurement, not marketing
+│   ├── paper_tracker.py        #   forward-tests variants with no money
+│   ├── whale_tracker.py        #   curated Hyperliquid addresses → alerts
+│   ├── telegram_utils.py       #   topics-group routing (one bot, 7 named topics)
+│   ├── tg_format.py            #   ONE shared message house style
+│   ├── tg_commands.py          #   /winrate /positions /s4 /tw /liq /whales /restart …
+│   ├── event_radar.py / tech_news.py / daily_report.py / morning_brief.py
 │   ├── price_alerts.py / tw_stocks.py / liq_alerts.py / liquidations.py
-│   ├── stocks_data.py          #   TW50 + US100 watchlist fetchers
+│   ├── stocks_data.py / us_market.py    # TW50 + US100 + US close digest
+│   ├── line_push.py            #   LINE OA broadcast (family-facing)
 │   ├── templates/ + static/    #   dashboard pages, CSS, PWA assets
-│   └── tests/                  #   pytest suite (240 tests)
+│   └── tests/                  #   pytest suite (1,371 tests / 79 files)
 ├── pine/
 │   ├── strategies/             # backtestable strategy() scripts (live + research)
-│   └── indicators/             # chart indicator() scripts (incl. TV.pine)
+│   ├── indicators/             # chart indicator() scripts (All-in-One ULTIMATE Pro, Sykes…)
+│   └── check_pine.py           # forward-reference linter (the error you can't see locally)
 ├── docs/                       # USAGE.md, PROJECT_MEMORY.md (historical)
 ├── run_all.sh                  # start/stop the whole stack (./run_all.sh bg)
 ├── run_web.sh / run_bot.sh / run_strategy2.sh / dev.sh
