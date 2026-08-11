@@ -16,7 +16,14 @@ import re
 import strategy2_meter as M
 
 PINE = os.path.join(os.path.dirname(__file__), "..", "..",
-                    "pine", "indicators", "All-in-One_ULTIMATE.pine")
+                    "pine", "indicators", "All-in-One_ULTIMATE_Pro.pine")
+
+# Fixture length, DERIVED — not a literal. When the outer tunnel moved to
+# EMA676 every fixture here was 400 bars and silently became an "insufficient"
+# read: four tests failed and the reason (a period change three files away) was
+# nowhere in the failure. Deriving it means the next period change adjusts the
+# fixtures instead of breaking them.
+N = M.MIN_CANDLES + 60
 
 
 def _series(n, start, step, wiggle=0.4):
@@ -42,7 +49,7 @@ def _zigzag(n, start, drift):
 
 # ── confidence meter ─────────────────────────────────────────────────────────
 def test_full_bull_series_scores_long():
-    r = M.compute_meter(_series(400, 100.0, 0.6))
+    r = M.compute_meter(_series(N, 100.0, 0.6))
     assert r["insufficient"] is False
     assert r["bias"] == "long"
     assert r["score"] >= M.LONG_THRESHOLD
@@ -51,7 +58,7 @@ def test_full_bull_series_scores_long():
 
 
 def test_full_bear_series_scores_short():
-    r = M.compute_meter(_series(400, 400.0, -0.6))
+    r = M.compute_meter(_series(N, 400.0, -0.6))
     assert r["bias"] == "short"
     assert r["score"] <= M.SHORT_THRESHOLD
 
@@ -86,7 +93,7 @@ def test_market_state_thin_is_none():
 
 # ── signal engine (green/red-triangle arm-and-fire) ──────────────────────────
 def test_compute_signal_contract():
-    r = M.compute_signal(_series(400, 100.0, 0.6))
+    r = M.compute_signal(_series(N, 100.0, 0.6))
     for k in ("signal", "score", "bias", "price", "msb", "msb_age", "insufficient", "factors"):
         assert k in r
     assert r["signal"] in (None, "long", "short")
@@ -110,12 +117,13 @@ def test_compute_signal_fires_long_on_breakout_edge():
     """A long base (price below a flat EMA200, no bull alignment) followed by a
     breakout bar that flips structure bull, reclaims EMA200 and aligns the stack
     should fire a LONG on the last bar (rising edge)."""
-    base = _series(360, 100.0, 0.0, wiggle=0.6)          # flat, choppy base
+    _base_n = N - 40                                     # base + ramp == N
+    base = _series(_base_n, 100.0, 0.0, wiggle=0.6)      # flat, choppy base
     # strong, accelerating ramp that stacks EMAs + breaks structure on the last bars
     ramp, v = [], 100.0
     for i in range(40):
         v += 1.2 + i * 0.15
-        ramp.append([360 + i, v - 0.2, v + 0.6, v - 0.3, v, 1500.0])
+        ramp.append([_base_n + i, v - 0.2, v + 0.6, v - 0.3, v, 1500.0])
     r = M.compute_signal(base + ramp)
     # at minimum the engine must classify the move bullish and not error
     assert r["msb"] == "bull"
@@ -145,6 +153,29 @@ def test_factor_weights_match_the_pine_indicator():
                     "volume": pine_w["Volume"]}
 
 
+def test_tunnel_periods_match_the_pine_indicator():
+    """The weights were mirrored; the PERIODS were not, and they are just as
+    much part of the factor. All-in-One_ULTIMATE_Pro moved the outer tunnel
+    288/338 → 576/676 (Sykes' 4x periods). Nothing would have caught the mirror
+    staying on 288/338 — the score would simply have been answering a faster
+    question than the chart, which is the same class of silent drift as the
+    2026-07-25 weight bug."""
+    with open(PINE, encoding="utf-8") as fh:
+        src = fh.read()
+    pine_p = {k: int(v) for k, v in
+              re.findall(r"^dt_ma(\d)Period\s*=\s*input\.int\((\d+)", src, re.M)}
+    assert len(pine_p) == 4, f"could not parse Pine tunnel periods, got {pine_p}"
+    assert [pine_p["1"], pine_p["2"], pine_p["3"], pine_p["4"]] == \
+           [M.TUNNEL_INNER_A, M.TUNNEL_INNER_B, M.TUNNEL_OUTER_A, M.TUNNEL_OUTER_B]
+
+
+def test_min_candles_covers_the_longest_input():
+    """MIN_CANDLES must clear the slowest series the meter reads, or the tunnel
+    factor abstains on every bar and the meter silently runs on 90 points."""
+    assert M.MIN_CANDLES > M.TUNNEL_OUTER_B
+    assert M.MIN_CANDLES > M.VOL_BIAS_LEN
+
+
 def test_score_can_reach_both_ends_of_the_scale():
     """The trendline factor cannot be computed server-side, so it abstains out
     of the denominator. Previously its 5 weight stayed in, capping the meter at
@@ -153,8 +184,8 @@ def test_score_can_reach_both_ends_of_the_scale():
     Uses _zigzag, not _series: _series has too small a wiggle to form swing
     pivots, so SMC casts a genuine neutral vote there and the score cannot
     reach the end for an unrelated reason."""
-    bull = M.compute_meter(_zigzag(400, 100.0, 1.0))
-    bear = M.compute_meter(_zigzag(400, 600.0, -1.0))
+    bull = M.compute_meter(_zigzag(N, 100.0, 1.0))
+    bear = M.compute_meter(_zigzag(N, 600.0, -1.0))
     assert all(f["state"] == 1 for f in bull["factors"] if not f["abstain"])
     assert bull["score"] == 100
     assert all(f["state"] == -1 for f in bear["factors"] if not f["abstain"])
@@ -163,7 +194,7 @@ def test_score_can_reach_both_ends_of_the_scale():
 
 
 def test_trendline_abstains_and_says_so():
-    r = M.compute_meter(_series(400, 100.0, 0.6))
+    r = M.compute_meter(_series(N, 100.0, 0.6))
     tl = next(f for f in r["factors"] if f["key"] == "trendline")
     assert tl["abstain"] is True
     assert tl["state"] == 0
@@ -171,8 +202,8 @@ def test_trendline_abstains_and_says_so():
 
 
 def test_volume_factor_votes_with_the_trend():
-    up = M.compute_meter(_series(400, 100.0, 0.6))
-    dn = M.compute_meter(_series(400, 400.0, -0.6))
+    up = M.compute_meter(_series(N, 100.0, 0.6))
+    dn = M.compute_meter(_series(N, 400.0, -0.6))
     assert next(f for f in up["factors"] if f["key"] == "volume")["state"] == 1
     assert next(f for f in dn["factors"] if f["key"] == "volume")["state"] == -1
 
@@ -187,7 +218,7 @@ def test_volume_abstains_until_its_window_fills():
 
 
 def test_zero_volume_series_abstains_rather_than_dividing_by_zero():
-    rows = [[i, 100.0, 100.5, 99.5, 100.0, 0.0] for i in range(400)]
+    rows = [[i, 100.0, 100.5, 99.5, 100.0, 0.0] for i in range(N)]
     r = M.compute_meter(rows)
     assert next(f for f in r["factors"] if f["key"] == "volume")["abstain"] is True
     assert 0 <= r["score"] <= 100
@@ -198,14 +229,14 @@ def test_price_inside_the_tunnel_is_not_scored_bearish():
     t169 is the tunnel's UPPER line — so price sitting INSIDE the tunnel scored
     a full -1 while the mirror-image bull case scored 0."""
     import strategy2_meter
-    closes = [float(c[4]) for c in _series(400, 400.0, -0.6)]
+    closes = [float(c[4]) for c in _series(N, 400.0, -0.6)]
     from indicators import calculate_ema
     t144, t169 = calculate_ema(closes, 144), calculate_ema(closes, 169)
     t338 = calculate_ema(closes, 338)
     assert t144 < t169, "downtrend precondition: the faster EMA sits lower"
 
     # park the last close between the inner tunnel's two lines
-    rows = _series(400, 400.0, -0.6)
+    rows = _series(N, 400.0, -0.6)
     inside = (t144 + t169) / 2.0
     # the old test was `price < t169 and price < t338`; both hold here, so the
     # old code scored this a full -1. That is the regression being pinned.

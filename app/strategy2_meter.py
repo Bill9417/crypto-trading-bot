@@ -2,14 +2,14 @@
 Strategy 2 — live confidence meter.
 
 A Python re-implementation of the "Confidence Meter" from the TradingView
-indicator (pine/indicators/All-in-One_ULTIMATE.pine). It scores 0–100
+indicator (pine/indicators/All-in-One_ULTIMATE_Pro.pine). It scores 0–100
 directional agreement across seven factors, weighted as the Pine script does:
 
     EMA Stack ........ 20   fast>med>slow>trend stacked (or all reversed)
     Price vs EMA200 .. 15   close above / below the 200 EMA
     SMC Structure .... 25   LuxAlgo internal swing-structure bias (length 5)
     Vegas Slope ...... 15   slope of the Vegas EMA200 (SMA5 of EMA200)
-    Tunnel Position .. 10   close vs the Double-Tunnel EMAs (144/169 · 288/338)
+    Tunnel Position .. 10   close vs the Double-Tunnel EMAs (144/169 · 576/676)
     Trendline Break ..  5   NOT reproducible server-side → abstains (see note)
     Volume Bias ...... 10   close vs the volume-weighted mean price (360 bars)
 
@@ -29,10 +29,10 @@ This is a CONFLUENCE METER, not a prediction or a trade command — it mirrors t
 on-chart indicator so the same read is available on the dashboard.
 
 Pure-compute: callers pass OHLCV (list of [ts,o,h,l,c,v], oldest→newest); there
-is no network here. A full read needs ≈365 candles (the 360-bar volume window,
-which is longer than the outer tunnel EMA338 + Vegas SMA5). With fewer, the
+is no network here. A full read needs ≈690 candles (the outer tunnel
+EMA676, which is longer than the 360-bar volume window). With fewer, the
 volume factor abstains, the rest degrade to neutral, and the result is flagged
-`insufficient`. The web callers fetch 450, so this is not a practical limit.
+`insufficient`. The web callers fetch 750, so this is not a practical limit.
 
 ──────────────────────────────────────────────────────────────────────────────
 2026-07-25 — THIS FILE HAD DRIFTED OUT OF SYNC WITH THE CHART IT MIRRORS.
@@ -77,9 +77,24 @@ SHORT_THRESHOLD = 30
 # Pine's volBiasLen: window for the volume-weighted mean price.
 VOL_BIAS_LEN = 360
 
-# Candles needed for a full read. The volume window (360) is now the binding
-# constraint, not the outer tunnel EMA338 — hence 365, not the old 345.
-MIN_CANDLES = VOL_BIAS_LEN + 5
+# Double-Tunnel periods, named rather than inlined so the parity test can read
+# them straight out of the .pine and so a change there is a one-line change
+# here. 2026-08-11: the OUTER pair moved 288/338 → 576/676 to follow
+# All-in-One_ULTIMATE_Pro.pine, which adopted Sykes' own 4× big-tunnel periods
+# instead of Gilbert0967's generic 2× default. This is a SCORING change, not a
+# cosmetic one — the tunnel factor holds 10 weight and now asks a slower
+# question, so a symbol can sit outside the old tunnel and inside the new one.
+TUNNEL_INNER_A = 144
+TUNNEL_INNER_B = 169
+TUNNEL_OUTER_A = 576
+TUNNEL_OUTER_B = 676
+
+# Candles needed for a full read. With the outer tunnel at 676 that EMA is once
+# again the binding constraint, not the 360-bar volume window — so this rose
+# from 365 to ~690. Callers that used to fetch 450 must fetch more or the
+# tunnel factor abstains on every bar and the meter silently runs on 90 of its
+# 100 points. Every in-repo caller was raised to 750 in the same commit.
+MIN_CANDLES = max(VOL_BIAS_LEN, TUNNEL_OUTER_B) + 10
 
 # (key, label, weight) — weights sum to 100, matching the Pine info panel.
 _FACTORS = [
@@ -152,19 +167,20 @@ def compute_meter(ohlcv) -> dict:
             diff = float(vegas.iloc[-1] - vegas.iloc[-2])
             states["vegas"] = 1 if diff > 0 else -1 if diff < 0 else 0
 
-        # Double Tunnel position: inner 144/169, outer 288/338.
+        # Double Tunnel position: inner 144/169, outer 576/676 (see the period
+        # constants above — the outer pair follows All-in-One_ULTIMATE_Pro).
         # Both sides require price fully OUTSIDE both tunnels. The old test
         # (`price > t144` for bull, `price < t169` for bear) was asymmetric:
         # in a downtrend t169 is the tunnel's UPPER line, so price inside the
         # tunnel scored a full -1 while the mirror bull case scored 0.
-        t144 = calculate_ema(closes, 144)
-        t169 = calculate_ema(closes, 169)
-        t288 = calculate_ema(closes, 288)
-        t338 = calculate_ema(closes, 338)
-        if None not in (t144, t169, t288, t338):
-            if price > max(t144, t169) and price > max(t288, t338):
+        t_in_a = calculate_ema(closes, TUNNEL_INNER_A)
+        t_in_b = calculate_ema(closes, TUNNEL_INNER_B)
+        t_out_a = calculate_ema(closes, TUNNEL_OUTER_A)
+        t_out_b = calculate_ema(closes, TUNNEL_OUTER_B)
+        if None not in (t_in_a, t_in_b, t_out_a, t_out_b):
+            if price > max(t_in_a, t_in_b) and price > max(t_out_a, t_out_b):
                 states["tunnel"] = 1
-            elif price < min(t144, t169) and price < min(t288, t338):
+            elif price < min(t_in_a, t_in_b) and price < min(t_out_a, t_out_b):
                 states["tunnel"] = -1
 
         # Volume Bias: price vs the volume-weighted mean price of the last

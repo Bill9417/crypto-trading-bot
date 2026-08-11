@@ -1,0 +1,463 @@
+// ════════════════════════════════════════════════════════════════════════════
+//  ALL-IN-ONE PRO CORE — Sykes Double Tunnel + EMAs + Vegas
+//                        + Confidence Meter + MTF Bias + MACD/Volume pane
+//
+//  WHY THIS FILE EXISTS
+//  All-in-One_ULTIMATE_Pro.pine kept dying with RE10140 — Pine's per-bar
+//  calculation timeout. It compiles and loads fine; it is simply too expensive
+//  to run. The cost lives in four inherited third-party engines, none of which
+//  were ever part of what was asked for:
+//
+//     · Trend Lines (LonesomeTheBlue)  — validation walk nested three deep
+//     · MSB + Order Blocks (EmreKb)    — four bar-spanning zigzag scans/bar
+//     · Smart Money Concepts (LuxAlgo) — large structure/OB/FVG engine
+//     · Reactive S/R Zones             — pivot clustering + decay bookkeeping
+//
+//  Rather than keep shaving those blind, this file drops all four and keeps
+//  every part that was actually requested. What remains is cheap by
+//  construction: no unbounded loops, no per-bar array bookkeeping, three
+//  request.security() calls, and a fixed number of drawings.
+//
+//  WHAT YOU KEEP
+//     ① Both Vegas tunnels — Sykes' 144/169 (inner) + 576/676 (outer)
+//     ② EMA stack 20/50/100/200 + Vegas EMA200 trend line
+//     ③ Confidence Meter, redesigned panel (row backgrounds carry the read)
+//     ④ MTF Bias panel with per-timeframe S/R, R and S coloured apart
+//     ⑤ MACD + relative-volume pane BELOW the chart (the real ask)
+//     ⑥ Long/Short markers + alerts, gated by score and ADX regime
+//
+//  The Confidence Meter here scores the five PRICE factors. The SMC and
+//  trendline factors are gone because the engines behind them are gone —
+//  their weight is not silently redistributed, it is removed from the
+//  denominator, which is the same abstain rule the original used when a
+//  factor had nothing to say. A 5-factor 72 and a 7-factor 72 mean the same
+//  thing: 72% of the weight that spoke, spoke bullish.
+//
+//  ⚠ Not backtested. A confluence read, not an edge. A higher number is not
+//    a better trade.
+// ════════════════════════════════════════════════════════════════════════════
+//@version=6
+indicator("All-in-One Pro Core", shorttitle="AIO Core", overlay=false, max_lines_count=100, max_boxes_count=100, max_labels_count=200, max_bars_back=1000)
+
+// ╔═══════════════════════════════════════════════════════╗
+// ║  ① MODULES                                             ║
+// ╚═══════════════════════════════════════════════════════╝
+gM = "① Modules"
+showEMA    = input.bool(true,  "EMAs",                group=gM)
+showTunnel = input.bool(true,  "Double Tunnel",       group=gM)
+showVegas  = input.bool(true,  "Vegas EMA200 Line",   group=gM)
+showSIG    = input.bool(true,  "Long / Short Markers", group=gM, tooltip="Fires when the Confidence Meter crosses into a bias AND the ADX regime filter allows it. Not trading advice.")
+cleanMode  = input.bool(true,  "★ Clean Chart Mode",  group=gM, tooltip="Hides EMA 50/100 so the tunnels and trend stay readable. Both tunnels always draw — they are the point of this script, not clutter.\n\nThe Confidence Meter score is identical either way.")
+
+// ╔═══════════════════════════════════════════════════════╗
+// ║  ② EMA                                                 ║
+// ╚═══════════════════════════════════════════════════════╝
+gE = "② EMA"
+ema20len  = input.int(20,  "EMA Fast",   minval=1, group=gE)
+ema50len  = input.int(50,  "EMA Medium", minval=1, group=gE)
+ema100len = input.int(100, "EMA Slow",   minval=1, group=gE)
+ema200len = input.int(200, "EMA Trend",  minval=1, group=gE)
+
+emaFast  = ta.ema(close, ema20len)
+emaMed   = ta.ema(close, ema50len)
+emaSlow  = ta.ema(close, ema100len)
+emaTrend = ta.ema(close, ema200len)
+
+// ╔═══════════════════════════════════════════════════════╗
+// ║  ③ DOUBLE TUNNEL (Sykes) + VEGAS                       ║
+// ╚═══════════════════════════════════════════════════════╝
+gDT = "③ Double Tunnel"
+
+f_ma(source, length, maType) =>
+    switch maType
+        "SMA" => ta.sma(source, length)
+        "EMA" => ta.ema(source, length)
+        "WMA" => ta.wma(source, length)
+        "RMA" => ta.rma(source, length)
+        => ta.ema(source, length)
+
+// Inner tunnel — Sykes' 144/169
+dt_ma1Period = input.int(144, "Inner Tunnel — A", minval=1, group=gDT, inline="t1")
+dt_ma1Type   = input.string("EMA", "", options=["SMA","EMA","WMA","RMA"], group=gDT, inline="t1")
+dt_ma2Period = input.int(169, "/ B", minval=1, group=gDT, inline="t1")
+dt_ma2Type   = input.string("EMA", "", options=["SMA","EMA","WMA","RMA"], group=gDT, inline="t1")
+dt_t1Bull    = input.color(color.new(color.orange, 60), "Bull", group=gDT, inline="t1c")
+dt_t1Bear    = input.color(color.new(color.red,    80), "Bear", group=gDT, inline="t1c")
+
+// Outer tunnel — Sykes' 576/676 (4× the inner), not the generic 288/338
+dt_ma3Period = input.int(576, "Outer Tunnel — A", minval=1, group=gDT, inline="t2")
+dt_ma3Type   = input.string("EMA", "", options=["SMA","EMA","WMA","RMA"], group=gDT, inline="t2")
+dt_ma4Period = input.int(676, "/ B", minval=1, group=gDT, inline="t2")
+dt_ma4Type   = input.string("EMA", "", options=["SMA","EMA","WMA","RMA"], group=gDT, inline="t2")
+dt_t2Bull    = input.color(color.new(color.lime, 90), "Bull", group=gDT, inline="t2c")
+dt_t2Bear    = input.color(color.new(color.gray, 85), "Bear", group=gDT, inline="t2c")
+
+dt_ma1 = f_ma(close, dt_ma1Period, dt_ma1Type)
+dt_ma2 = f_ma(close, dt_ma2Period, dt_ma2Type)
+dt_ma3 = f_ma(close, dt_ma3Period, dt_ma3Type)
+dt_ma4 = f_ma(close, dt_ma4Period, dt_ma4Type)
+
+vegasEMA200 = ta.sma(ta.ema(close, 200), 5)
+vegasChange = ta.change(vegasEMA200)
+vegasCol    = vegasChange > 0 ? color.new(color.green, 0) : color.new(color.red, 0)
+
+// ╔═══════════════════════════════════════════════════════╗
+// ║  ④ CONFIDENCE METER                                    ║
+// ╚═══════════════════════════════════════════════════════╝
+gSC = "④ Confidence Meter"
+showScore    = input.bool(true, "Show Confidence Meter", group=gSC)
+showFactors  = input.bool(false, "Show Factor Breakdown", group=gSC)
+scoreLongTh  = input.int(70, "Long Threshold", minval=50, maxval=100, group=gSC)
+scoreShortTh = input.int(70, "Short Threshold", minval=50, maxval=100, group=gSC, tooltip="Short bias triggers at or below (100 − this). E.g. 70 → short at score ≤ 30.")
+volBiasLen   = input.int(360, "Volume Bias Length", minval=20, maxval=2000, group=gSC, tooltip="Window for the volume-weighted mean price behind the Volume factor. A rolling per-bar calculation, identical on history and in realtime.")
+confirmClose = input.bool(true, "Confirm Signals on Bar Close", group=gSC)
+useAdxFilter = input.bool(true, "ADX Regime Filter ≥", group=gSC, inline="adx")
+adxTh        = input.int(20, "", minval=10, maxval=50, group=gSC, inline="adx")
+adxLen       = input.int(14, "ADX Length", minval=5, maxval=50, group=gSC)
+sigCooldown  = input.int(0, "Min Bars Between Signals", minval=0, maxval=500, group=gSC)
+
+// weights (sum = 100 when every factor speaks)
+wEMAstack = 25
+wEMA200   = 25
+wVegas    = 20
+wTunnel   = 20
+wVolume   = 10
+
+fEMAstack = emaFast > emaMed and emaMed > emaSlow and emaSlow > emaTrend ? 1 : emaFast < emaMed and emaMed < emaSlow and emaSlow < emaTrend ? -1 : 0
+fEMA200   = close > emaTrend ? 1 : close < emaTrend ? -1 : 0
+fVegas    = vegasChange > 0 ? 1 : vegasChange < 0 ? -1 : 0
+
+// Symmetric tunnel test: both sides ask the same question (price fully clear
+// of BOTH tunnels), so a close sitting inside cannot score a full -1 while its
+// mirror-image bull case scores 0.
+t1Top = math.max(dt_ma1, dt_ma2)
+t1Bot = math.min(dt_ma1, dt_ma2)
+t2Top = math.max(dt_ma3, dt_ma4)
+t2Bot = math.min(dt_ma3, dt_ma4)
+fTunnel = close > t1Top and close > t2Top ? 1 : close < t1Bot and close < t2Bot ? -1 : 0
+
+volMean = math.sum(close * volume, volBiasLen) / math.sum(volume, volBiasLen)
+fVolume = na(volMean) ? 0 : close > volMean ? 1 : close < volMean ? -1 : 0
+
+// A factor with no data ABSTAINS — its weight leaves the denominator instead of
+// voting a confident neutral. On a fresh chart the outer tunnel needs 676 bars;
+// without this the score would sit near 50 looking like a real balanced tape.
+stackSpeaks  = not na(emaFast) and not na(emaMed) and not na(emaSlow) and not na(emaTrend)
+ema200Speaks = not na(emaTrend)
+vegasSpeaks  = not na(vegasEMA200) and not na(vegasEMA200[1])
+tunnelSpeaks = not na(t1Top) and not na(t1Bot) and not na(t2Top) and not na(t2Bot)
+volSpeaks    = not na(volMean)
+
+activeW = (stackSpeaks ? wEMAstack : 0) + (ema200Speaks ? wEMA200 : 0) + (vegasSpeaks ? wVegas : 0) + (tunnelSpeaks ? wTunnel : 0) + (volSpeaks ? wVolume : 0)
+netRaw  = (stackSpeaks ? fEMAstack * wEMAstack : 0) + (ema200Speaks ? fEMA200 * wEMA200 : 0) + (vegasSpeaks ? fVegas * wVegas : 0) + (tunnelSpeaks ? fTunnel * wTunnel : 0) + (volSpeaks ? fVolume * wVolume : 0)
+confScore = activeW > 0 ? 50 + 50.0 * netRaw / activeW : 50.0
+confScore := math.max(0, math.min(100, confScore))
+
+confScoreLongGate  = scoreLongTh
+confScoreShortGate = 100 - scoreShortTh
+
+sigWindow = not confirmClose or barstate.isconfirmed
+scoreLong  = showScore and sigWindow and confScore >= confScoreLongGate and nz(confScore[1], 50) <  confScoreLongGate
+scoreShort = showScore and sigWindow and confScore <= confScoreShortGate and nz(confScore[1], 50) >  confScoreShortGate
+
+[dmiPlus, dmiMinus, adxVal] = ta.dmi(adxLen, adxLen)
+regimeOK = not useAdxFilter or adxVal >= adxTh
+
+var int lastSigBar = -1000000
+longSig  = false
+shortSig = false
+if showSIG and sigWindow
+    cooled = bar_index - lastSigBar >= sigCooldown
+    if scoreLong and regimeOK and cooled
+        longSig := true
+        lastSigBar := bar_index
+    if scoreShort and regimeOK and cooled
+        shortSig := true
+        lastSigBar := bar_index
+
+// ╔═══════════════════════════════════════════════════════╗
+// ║  ⑤ CONFIDENCE PANEL                                    ║
+// ╚═══════════════════════════════════════════════════════╝
+gP = "⑤ Confidence Panel"
+showPanel = input.bool(true, "Show Panel", group=gP)
+panelPos  = input.string("Top Right", "Position", ["Top Right", "Top Left", "Bottom Right", "Bottom Left", "Middle Right"], group=gP)
+panelSize = input.string(size.normal, "Text Size", [size.tiny, size.small, size.normal, size.large], group=gP)
+
+f_panelpos(p) =>
+    p == "Top Right" ? position.top_right : p == "Top Left" ? position.top_left : p == "Bottom Right" ? position.bottom_right : p == "Bottom Left" ? position.bottom_left : position.middle_right
+
+f_facCol(int f) => f == 1 ? #26a69a : f == -1 ? #ef5350 : color.gray
+f_facTxt(int f) => f == 1 ? "Bull" : f == -1 ? "Bear" : "—"
+f_rowTxt(bool speaks, int f) => speaks ? f_facTxt(f) : "abstain"
+f_rowCol(bool speaks, int f) => speaks ? f_facCol(f) : color.new(color.gray, 30)
+
+// A row's BACKGROUND carries its bull/bear reading, so the panel reads as a
+// colour shape before a word is parsed. Reserved for rows that state a
+// DIRECTION — status rows (Regime, Basis) stay plain, so a tint always means
+// "this row has an opinion".
+f_dirBg(color c) => color.new(c, 88)
+TRANSPARENT = color.new(color.black, 100)
+
+// 11 rows (0-10): header, bar+bias, trend, regime, basis, divider, 5 factors.
+var table infoPanel = table.new(f_panelpos(panelPos), 2, 11, bgcolor=color.new(#0d0d12, 15), border_color=color.new(color.gray, 65), border_width=1, frame_color=color.new(color.gray, 45), frame_width=1, force_overlay=true)
+
+f_scoreBar(float sc) =>
+    filled = math.round(sc / 10)
+    string s = ""
+    for i = 1 to 10
+        s += i <= filled ? "█" : "░"
+    s
+
+if barstate.islast and showPanel
+    scoreCol  = confScore >= confScoreLongGate ? #26a69a : confScore <= confScoreShortGate ? #ef5350 : #ffb300
+    biasArrow = confScore >= confScoreLongGate ? "▲ " : confScore <= confScoreShortGate ? "▼ " : "– "
+    biasTxt   = biasArrow + (confScore >= confScoreLongGate ? "LONG" : confScore <= confScoreShortGate ? "SHORT" : "Neutral")
+    trendTxt  = close > emaTrend ? "Above 200" : "Below 200"
+    trendCol  = close > emaTrend ? #26a69a : #ef5350
+    regState  = adxVal >= adxTh ? "Trending" : "Ranging"
+    regTxt    = regState + " · " + str.tostring(adxVal, "#") + (useAdxFilter ? "" : " (filter off)")
+    regCol    = not useAdxFilter ? color.silver : adxVal >= adxTh ? color.white : #ffb300
+
+    table.cell(infoPanel, 0, 0, " CONFIDENCE", text_color=color.white, text_size=panelSize, text_halign=text.align_left, bgcolor=color.new(#1c1c28, 0))
+    table.cell(infoPanel, 1, 0, str.tostring(math.round(confScore)) + " ", text_color=color.white, text_size=panelSize, text_halign=text.align_center, bgcolor=color.new(scoreCol, 25))
+
+    table.cell(infoPanel, 0, 1, " " + f_scoreBar(confScore), text_color=scoreCol, text_size=panelSize, text_halign=text.align_left, bgcolor=f_dirBg(scoreCol))
+    table.cell(infoPanel, 1, 1, biasTxt + " ", text_color=scoreCol, text_size=panelSize, text_halign=text.align_right, bgcolor=f_dirBg(scoreCol))
+
+    table.cell(infoPanel, 0, 2, " Trend", text_color=color.silver, text_size=panelSize, text_halign=text.align_left, bgcolor=f_dirBg(trendCol))
+    table.cell(infoPanel, 1, 2, trendTxt + " ", text_color=trendCol, text_size=panelSize, text_halign=text.align_right, bgcolor=f_dirBg(trendCol))
+
+    table.cell(infoPanel, 0, 3, " Regime", text_color=color.silver, text_size=panelSize, text_halign=text.align_left)
+    table.cell(infoPanel, 1, 3, regTxt + " ", text_color=regCol, text_size=panelSize, text_halign=text.align_right)
+
+    // BASIS — the weight the score is actually computed on. A meter built from
+    // 40 of its 100 points is a different claim from one built on all of them.
+    basisTxt = str.tostring(activeW) + " / 100"
+    basisCol = activeW >= 100 ? color.silver : activeW >= 60 ? #ffb300 : #ef5350
+    table.cell(infoPanel, 0, 4, " Basis", text_color=color.silver, text_size=panelSize, text_halign=text.align_left)
+    table.cell(infoPanel, 1, 4, basisTxt + " ", text_color=basisCol, text_size=panelSize, text_halign=text.align_right)
+
+    // No table.merge_cells: infoPanel is a `var` table re-filled every last bar,
+    // so merging the same region repeatedly is a runtime error. Both cells just
+    // share the divider background, which looks identical.
+    if showFactors
+        table.cell(infoPanel, 0, 5, " FACTOR BREAKDOWN", text_color=color.new(color.silver, 25), text_size=size.tiny, text_halign=text.align_left, bgcolor=color.new(#16161f, 0))
+        table.cell(infoPanel, 1, 5, "", bgcolor=color.new(#16161f, 0))
+
+        table.cell(infoPanel, 0, 6, " EMA Stack", text_color=color.silver, text_size=panelSize, text_halign=text.align_left, bgcolor=f_dirBg(f_rowCol(stackSpeaks, fEMAstack)))
+        table.cell(infoPanel, 1, 6, f_rowTxt(stackSpeaks, fEMAstack) + " ", text_color=f_rowCol(stackSpeaks, fEMAstack), text_size=panelSize, text_halign=text.align_right, bgcolor=f_dirBg(f_rowCol(stackSpeaks, fEMAstack)))
+        table.cell(infoPanel, 0, 7, " Px vs 200", text_color=color.silver, text_size=panelSize, text_halign=text.align_left, bgcolor=f_dirBg(f_rowCol(ema200Speaks, fEMA200)))
+        table.cell(infoPanel, 1, 7, f_rowTxt(ema200Speaks, fEMA200) + " ", text_color=f_rowCol(ema200Speaks, fEMA200), text_size=panelSize, text_halign=text.align_right, bgcolor=f_dirBg(f_rowCol(ema200Speaks, fEMA200)))
+        table.cell(infoPanel, 0, 8, " Vegas", text_color=color.silver, text_size=panelSize, text_halign=text.align_left, bgcolor=f_dirBg(f_rowCol(vegasSpeaks, fVegas)))
+        table.cell(infoPanel, 1, 8, f_rowTxt(vegasSpeaks, fVegas) + " ", text_color=f_rowCol(vegasSpeaks, fVegas), text_size=panelSize, text_halign=text.align_right, bgcolor=f_dirBg(f_rowCol(vegasSpeaks, fVegas)))
+        table.cell(infoPanel, 0, 9, " Tunnel", text_color=color.silver, text_size=panelSize, text_halign=text.align_left, bgcolor=f_dirBg(f_rowCol(tunnelSpeaks, fTunnel)))
+        table.cell(infoPanel, 1, 9, f_rowTxt(tunnelSpeaks, fTunnel) + " ", text_color=f_rowCol(tunnelSpeaks, fTunnel), text_size=panelSize, text_halign=text.align_right, bgcolor=f_dirBg(f_rowCol(tunnelSpeaks, fTunnel)))
+        table.cell(infoPanel, 0, 10, " Volume", text_color=color.silver, text_size=panelSize, text_halign=text.align_left, bgcolor=f_dirBg(f_rowCol(volSpeaks, fVolume)))
+        table.cell(infoPanel, 1, 10, f_rowTxt(volSpeaks, fVolume) + " ", text_color=f_rowCol(volSpeaks, fVolume), text_size=panelSize, text_halign=text.align_right, bgcolor=f_dirBg(f_rowCol(volSpeaks, fVolume)))
+
+// ╔═══════════════════════════════════════════════════════╗
+// ║  ⑥ MULTI-TIMEFRAME BIAS                                ║
+// ╚═══════════════════════════════════════════════════════╝
+// Inputs first: Pine resolves identifiers top-down, and f_tfLevels() reads
+// mtfSrLen, so the whole group must sit above the functions.
+gMTF = "⑥ Multi-Timeframe Bias"
+showMTF   = input.bool(true, "Show MTF Bias Panel", group=gMTF, tooltip="Direction on three timeframes at once, scored the same way as the chart-timeframe meter's price factors.\n\nReads the last CLOSED bar on each timeframe, so rows step when each higher-timeframe candle closes rather than moving tick by tick. That lag is real information, not a downgrade — a panel that repaints tells you a LONG existed where the history shows none.")
+mtfTf1    = input.timeframe("15", "TF 1", group=gMTF, inline="tf")
+mtfTf2    = input.timeframe("30", "TF 2", group=gMTF, inline="tf")
+mtfTf3    = input.timeframe("60", "TF 3", group=gMTF, inline="tf")
+mtfLongTh = input.int(65, "Long Threshold", minval=50, maxval=100, group=gMTF)
+mtfSrLen  = input.int(10, "S/R Pivot Length", minval=3, maxval=50, group=gMTF, tooltip="Bars each side to confirm a swing on the HIGHER timeframe. These are that timeframe's own pivots, not chart-timeframe pivots relabelled.")
+mtfShowSR = input.bool(true, "Show S/R Columns", group=gMTF, tooltip="Nearest untouched resistance ABOVE and support BELOW price, on each row's own timeframe. Levels price has already broken are skipped — a broken level is not a level.")
+mtfPos    = input.string("Middle Right", "Position", ["Top Right","Top Left","Bottom Right","Bottom Left","Middle Right","Middle Left"], group=gMTF)
+mtfSize   = input.string(size.small, "Text Size", [size.tiny, size.small, size.normal], group=gMTF)
+
+// Mirrors the chart-timeframe price factors so each row is scored the SAME way,
+// reading the user's actual inputs rather than hard-coded lengths.
+f_tfScore() =>
+    eF  = ta.ema(close, ema20len)
+    eM  = ta.ema(close, ema50len)
+    eS  = ta.ema(close, ema100len)
+    eT  = ta.ema(close, ema200len)
+    m1  = f_ma(close, dt_ma1Period, dt_ma1Type)
+    m2  = f_ma(close, dt_ma2Period, dt_ma2Type)
+    m3  = f_ma(close, dt_ma3Period, dt_ma3Type)
+    m4  = f_ma(close, dt_ma4Period, dt_ma4Type)
+    veg = ta.sma(ta.ema(close, 200), 5)
+    vegCh = ta.change(veg)
+    vMean = math.sum(close * volume, volBiasLen) / math.sum(volume, volBiasLen)
+    s1 = eF > eM and eM > eS and eS > eT ? 1 : eF < eM and eM < eS and eS < eT ? -1 : 0
+    s2 = close > eT ? 1 : close < eT ? -1 : 0
+    s3 = vegCh > 0 ? 1 : vegCh < 0 ? -1 : 0
+    s4 = close > math.max(m1, m2) and close > math.max(m3, m4) ? 1 : close < math.min(m1, m2) and close < math.min(m3, m4) ? -1 : 0
+    s5 = na(vMean) ? 0 : close > vMean ? 1 : close < vMean ? -1 : 0
+    sp1 = not na(eF) and not na(eM) and not na(eS) and not na(eT)
+    sp2 = not na(eT)
+    sp3 = not na(veg) and not na(veg[1])
+    sp4 = not na(m1) and not na(m2) and not na(m3) and not na(m4)
+    sp5 = not na(vMean)
+    aw  = (sp1 ? 25 : 0) + (sp2 ? 25 : 0) + (sp3 ? 20 : 0) + (sp4 ? 20 : 0) + (sp5 ? 10 : 0)
+    net = (sp1 ? s1 * 25 : 0) + (sp2 ? s2 * 25 : 0) + (sp3 ? s3 * 20 : 0) + (sp4 ? s4 * 20 : 0) + (sp5 ? s5 * 10 : 0)
+    // Nothing readable → na, rendered as "…". A fabricated 50 would be
+    // indistinguishable from a genuinely balanced higher timeframe.
+    aw > 0 ? math.max(0, math.min(100, 50 + 50.0 * net / aw)) : float(na)
+
+// Resistance = LOWEST confirmed pivot high still above price; support = HIGHEST
+// confirmed pivot low still below. Fixed 16-slot windows — bounded work per bar.
+// Names are mtf_-prefixed to avoid shadowing anything at global scope.
+f_tfLevels() =>
+    mtf_ph = ta.pivothigh(high, mtfSrLen, mtfSrLen)
+    mtf_pl = ta.pivotlow(low, mtfSrLen, mtfSrLen)
+    var array<float> hs = array.new<float>()
+    var array<float> ls = array.new<float>()
+    if not na(mtf_ph)
+        hs.push(mtf_ph)
+        if hs.size() > 16
+            hs.shift()
+    if not na(mtf_pl)
+        ls.push(mtf_pl)
+        if ls.size() > 16
+            ls.shift()
+    float res = na
+    for h in hs
+        if h > close and (na(res) or h < res)
+            res := h
+    float sup = na
+    for l in ls
+        if l < close and (na(sup) or l > sup)
+            sup := l
+    [sup, res]
+
+// The score AND levels of the LAST CLOSED bar on the requested timeframe.
+// Paired with lookahead_on this is the standard non-repainting idiom: the same
+// values appear on history and in realtime.
+f_tfScorePrev() =>
+    s = f_tfScore()
+    [sup, res] = f_tfLevels()
+    [s[1], sup[1], res[1]]
+
+[mtfScore1, mtfSup1, mtfRes1] = request.security(syminfo.tickerid, mtfTf1, f_tfScorePrev(), lookahead=barmerge.lookahead_on)
+[mtfScore2, mtfSup2, mtfRes2] = request.security(syminfo.tickerid, mtfTf2, f_tfScorePrev(), lookahead=barmerge.lookahead_on)
+[mtfScore3, mtfSup3, mtfRes3] = request.security(syminfo.tickerid, mtfTf3, f_tfScorePrev(), lookahead=barmerge.lookahead_on)
+
+f_tfBelowChart(string tf) => timeframe.in_seconds(tf) < timeframe.in_seconds()
+f_mtfDir(float sc) => sc >= mtfLongTh ? 1 : sc <= (100 - mtfLongTh) ? -1 : 0
+
+mtfAligned  = f_mtfDir(mtfScore1) != 0 and f_mtfDir(mtfScore1) == f_mtfDir(mtfScore2) and f_mtfDir(mtfScore2) == f_mtfDir(mtfScore3)
+mtfAllLong  = mtfAligned and f_mtfDir(mtfScore1) == 1
+mtfAllShort = mtfAligned and f_mtfDir(mtfScore1) == -1
+
+f_mtfpos(p) =>
+    p == "Top Right" ? position.top_right : p == "Top Left" ? position.top_left : p == "Bottom Right" ? position.bottom_right : p == "Bottom Left" ? position.bottom_left : p == "Middle Left" ? position.middle_left : position.middle_right
+
+// 5 columns: R and S get their OWN column. A single table.cell carries one
+// text_color for its whole string, so a combined "R … / S …" cell could not
+// colour the two levels apart.
+var table mtfPanel = table.new(f_mtfpos(mtfPos), 5, 5, bgcolor=color.new(#0d0d12, 15), border_color=color.new(color.gray, 65), border_width=1, frame_color=color.new(color.gray, 45), frame_width=1, force_overlay=true)
+
+f_tfLabel(string tf) =>
+    tf == "60" ? "1H" : tf == "120" ? "2H" : tf == "180" ? "3H" : tf == "240" ? "4H" : tf == "D" or tf == "1D" ? "1D" : tf == "W" or tf == "1W" ? "1W" : str.contains(tf, "D") or str.contains(tf, "W") or str.contains(tf, "M") or str.contains(tf, "S") ? tf : tf + "m"
+
+f_srOne(float lvl) =>
+    dist = na(lvl) ? na : (lvl - close) / close * 100
+    na(lvl) ? "—" : str.tostring(lvl, format.mintick) + "  " + str.tostring(dist, "+#.#") + "%"
+
+// Resistance wears the bearish red (a ceiling), support the bullish teal (a
+// floor) — the script's one hue pair, not a third colour family.
+resCol = color.new(#ef5350, 15)
+supCol = color.new(#26a69a, 15)
+
+f_mtfRow(int rowN, string tfName, float sc, float sup, float res) =>
+    dir = f_mtfDir(sc)
+    // An unreadable timeframe says "no data" rather than "Neutral" — that is a
+    // claim about the feed, not about the market, and it feeds the Align row.
+    txt = na(sc) ? "no data" : dir == 1 ? "LONG" : dir == -1 ? "SHORT" : "Neutral"
+    col = na(sc) ? color.new(color.gray, 30) : dir == 1 ? #26a69a : dir == -1 ? #ef5350 : #ffb300
+    below = f_tfBelowChart(tfName)
+    // Transparent, never na: v6 rejects na for params expecting a concrete type.
+    rowBg = na(sc) ? TRANSPARENT : f_dirBg(col)
+    table.cell(mtfPanel, 0, rowN, " " + f_tfLabel(tfName) + (below ? " ↓" : ""), text_color=below ? color.new(color.silver, 45) : color.silver, text_size=mtfSize, text_halign=text.align_left, bgcolor=rowBg)
+    table.cell(mtfPanel, 1, rowN, na(sc) ? "…" : str.tostring(math.round(sc)), text_color=color.white, text_size=mtfSize, text_halign=text.align_center, bgcolor=rowBg)
+    table.cell(mtfPanel, 2, rowN, txt + " ", text_color=col, text_size=mtfSize, text_halign=text.align_right, bgcolor=rowBg)
+    if mtfShowSR
+        table.cell(mtfPanel, 3, rowN, f_srOne(res) + " ", text_color=resCol, text_size=size.tiny, text_halign=text.align_right, bgcolor=rowBg)
+        table.cell(mtfPanel, 4, rowN, f_srOne(sup) + " ", text_color=supCol, text_size=size.tiny, text_halign=text.align_right, bgcolor=rowBg)
+
+if barstate.islast and showMTF
+    table.cell(mtfPanel, 0, 0, " MTF BIAS", text_color=color.white, text_size=mtfSize, text_halign=text.align_left, bgcolor=color.new(#1c1c28, 0))
+    table.cell(mtfPanel, 1, 0, "", bgcolor=color.new(#1c1c28, 0))
+    table.cell(mtfPanel, 2, 0, "closed ", text_color=color.new(color.silver, 35), text_size=size.tiny, text_halign=text.align_right, bgcolor=color.new(#1c1c28, 0))
+    if mtfShowSR
+        table.cell(mtfPanel, 3, 0, "R ", text_color=color.new(resCol, 25), text_size=size.tiny, text_halign=text.align_right, bgcolor=color.new(#1c1c28, 0))
+        table.cell(mtfPanel, 4, 0, "S ", text_color=color.new(supCol, 25), text_size=size.tiny, text_halign=text.align_right, bgcolor=color.new(#1c1c28, 0))
+    f_mtfRow(1, mtfTf1, mtfScore1, mtfSup1, mtfRes1)
+    f_mtfRow(2, mtfTf2, mtfScore2, mtfSup2, mtfRes2)
+    f_mtfRow(3, mtfTf3, mtfScore3, mtfSup3, mtfRes3)
+    alignTxt = mtfAllLong ? "▲ ALL LONG" : mtfAllShort ? "▼ ALL SHORT" : "– mixed"
+    alignCol = mtfAllLong ? #26a69a : mtfAllShort ? #ef5350 : color.gray
+    alignBg  = mtfAligned ? f_dirBg(alignCol) : TRANSPARENT
+    table.cell(mtfPanel, 0, 4, " Align", text_color=color.silver, text_size=mtfSize, text_halign=text.align_left, bgcolor=alignBg)
+    table.cell(mtfPanel, 1, 4, "", text_size=mtfSize, bgcolor=alignBg)
+    table.cell(mtfPanel, 2, 4, alignTxt + " ", text_color=alignCol, text_size=mtfSize, text_halign=text.align_right, bgcolor=alignBg)
+    if mtfShowSR
+        table.cell(mtfPanel, 3, 4, "", text_size=mtfSize, bgcolor=alignBg)
+        table.cell(mtfPanel, 4, 4, "", text_size=mtfSize, bgcolor=alignBg)
+
+// ╔═══════════════════════════════════════════════════════╗
+// ║  ⑦ PRICE-CHART DRAWING (force_overlay)                 ║
+// ╚═══════════════════════════════════════════════════════╝
+// overlay=false + force_overlay=true is what lets one script put the tunnels,
+// EMAs, signals and panels ON the price chart while MACD + volume get a REAL
+// pane of their own below. Note fill() takes no force_overlay — it has no need
+// of one, inheriting the pane of the two plots it joins.
+plot(showEMA ? emaFast : na, "EMA Fast", color=color.new(#2962ff, 0), linewidth=1, force_overlay=true)
+plot(showEMA and not cleanMode ? emaMed : na, "EMA Medium", color=color.new(#ff9800, 0), linewidth=1, force_overlay=true)
+plot(showEMA and not cleanMode ? emaSlow : na, "EMA Slow", color=color.new(#9c27b0, 0), linewidth=1, force_overlay=true)
+plot(showEMA ? emaTrend : na, "EMA Trend", color=color.new(#787b86, 0), linewidth=2, force_overlay=true)
+
+dt_l1 = plot(showTunnel ? dt_ma1 : na, "Inner-A", color=color.new(color.orange, 50), linewidth=1, force_overlay=true)
+dt_l2 = plot(showTunnel ? dt_ma2 : na, "Inner-B", color=color.new(color.orange, 50), linewidth=1, force_overlay=true)
+dt_l3 = plot(showTunnel ? dt_ma3 : na, "Outer-A", color=color.new(color.lime, 70), linewidth=1, force_overlay=true)
+dt_l4 = plot(showTunnel ? dt_ma4 : na, "Outer-B", color=color.new(color.lime, 70), linewidth=1, force_overlay=true)
+
+fill(dt_l1, dt_l2, color=showTunnel ? (dt_ma1 > dt_ma2 and dt_ma1 >= dt_ma1[1] ? dt_t1Bull : dt_t1Bear) : na, title="Inner Tunnel Fill")
+fill(dt_l3, dt_l4, color=showTunnel ? (dt_ma3 > dt_ma4 and dt_ma3 >= dt_ma3[1] ? dt_t2Bull : dt_t2Bear) : na, title="Outer Tunnel Fill")
+
+plot(showVegas ? vegasEMA200 : na, "Vegas EMA200", color=vegasCol, linewidth=2, force_overlay=true)
+
+plotshape(longSig,  "Long Signal",  shape.triangleup,   location.belowbar, color.new(#26a69a, 0), text="LONG",  textcolor=color.white, size=size.small, force_overlay=true)
+plotshape(shortSig, "Short Signal", shape.triangledown, location.abovebar, color.new(#ef5350, 0), text="SHORT", textcolor=color.white, size=size.small, force_overlay=true)
+
+alertcondition(longSig,  "Long Signal",  "AIO Core: bullish confluence")
+alertcondition(shortSig, "Short Signal", "AIO Core: bearish confluence")
+alertcondition(scoreLong,  "High Long Confidence",  "Confidence meter crossed into long bias")
+alertcondition(scoreShort, "High Short Confidence", "Confidence meter crossed into short bias")
+alertcondition(mtfAllLong  and not mtfAllLong[1],  "MTF All Long",  "All three timeframes aligned LONG")
+alertcondition(mtfAllShort and not mtfAllShort[1], "MTF All Short", "All three timeframes aligned SHORT")
+
+// ╔═══════════════════════════════════════════════════════╗
+// ║  ⑧ MACD + VOLUME — this script's own pane              ║
+// ╚═══════════════════════════════════════════════════════╝
+gMV = "⑧ MACD + Volume"
+showMV       = input.bool(true, "Show MACD + Volume", group=gMV)
+mv_fastLen   = input.int(12, "MACD Fast", group=gMV)
+mv_slowLen   = input.int(26, "MACD Slow", group=gMV)
+mv_sigLen    = input.int(9,  "MACD Signal", group=gMV)
+mv_volAvgLen = input.int(20, "Volume Average Length", group=gMV, tooltip="Relative volume (this bar ÷ its average) is converted into the MACD histogram's own rolling standard-deviation units, so the two share a legible scale on any asset without a per-symbol guess.")
+mv_volSpike  = input.float(2.0, "Volume Spike Highlight (×avg)", minval=1.0, step=0.1, group=gMV)
+
+[mv_macdLine, mv_signalLine, mv_histLine] = ta.macd(close, mv_fastLen, mv_slowLen, mv_sigLen)
+mv_volAvg = ta.sma(volume, mv_volAvgLen)
+mv_relVol = mv_volAvg > 0 ? volume / mv_volAvg : 1.0
+
+plot(showMV ? mv_histLine : na, "MACD Histogram", style=plot.style_columns, color=mv_histLine >= 0 ? color.new(#00c3ff, 0) : color.new(#ff0062, 0))
+plot(showMV ? mv_macdLine : na, "MACD", color=#2962ff, linewidth=2)
+plot(showMV ? mv_signalLine : na, "Signal", color=#ff9800, linewidth=1)
+
+// 0 = average volume, positive = expanding, negative = contracting. A real
+// reading in its own right, not a colour-opacity hint on someone else's bar.
+mv_histStdev = ta.stdev(mv_histLine, 100)
+mv_volOsc = (mv_relVol - 1) * mv_histStdev
+plot(showMV ? mv_volOsc : na, "Relative Volume", style=plot.style_columns, color=mv_volOsc >= 0 ? color.new(#ffca28, 25) : color.new(#ffca28, 70))
+
+hline(0, "Zero", color=color.new(color.gray, 60), linestyle=hline.style_dotted)
+bgcolor(showMV and mv_relVol >= mv_volSpike ? (close >= open ? color.new(color.teal, 85) : color.new(color.maroon, 85)) : na, title="Volume Spike")

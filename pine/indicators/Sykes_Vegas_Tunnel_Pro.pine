@@ -1,0 +1,327 @@
+//@version=6
+indicator("Sykes Vegas Tunnel Pro", shorttitle="Sykes Pro", overlay=false, max_labels_count=500, max_boxes_count=500)
+
+// Stripped down from "Sykes Strategy & Market Structure Combined [Final]":
+// dropped the HH/LL market-structure mode, the 4 free-text timezone slots,
+// and QQE MOD. What is left is ONLY the two Vegas tunnels driving trend,
+// entries, and the panel — plus MACD + relative volume replacing QQE as the
+// entry confirmation, shown in their own pane below instead of squares
+// jammed onto the price scale.
+//
+// overlay=false + force_overlay=true is deliberate: it is what lets the
+// tunnels/signals/panel sit ON the price chart while MACD + volume get a
+// REAL separate pane underneath, all from one script instance.
+//
+// v2: the lower pane's volume readout was too subtle (only the MACD
+// histogram's opacity changed with volume — easy to miss). Volume is now
+// its own visible bar series, converted into the MACD histogram's own
+// standard-deviation units so the two share a legible scale on any asset
+// without a fixed, asset-specific guess. See section 13.
+
+// ==========================================
+// 1. Vegas 通道 (Sykes Tunnel)
+// ==========================================
+group_vegas = "Vegas 通道 (Sykes Tunnel)"
+ema_len1 = input.int(144, "EMA 1 (小通道 1)", group=group_vegas)
+ema_len2 = input.int(169, "EMA 2 (小通道 2)", group=group_vegas)
+ema_len3 = input.int(576, "EMA 3 (大通道 1)", group=group_vegas)
+ema_len4 = input.int(676, "EMA 4 (大通道 2)", group=group_vegas)
+ema_len5 = input.int(12, "EMA 5 (過濾線)", group=group_vegas)
+ema_fast_len = input.int(7, "EMA 快線 (出場用)", group=group_vegas)
+
+// ==========================================
+// 2. 進場精準度設定
+// ==========================================
+group_precision = "進場精準度設定"
+ignore_bars_after_ema_exit = input.int(0, "過濾線收回後忽略 K 棒數", minval=0, group=group_precision, tooltip="在過濾線（EMA 12）收回到趨勢方向（脫離小通道）後的 N 根 K 棒內禁止進場。")
+ignore_bars_after_breakout = input.int(0, "實體突破後忽略 K 棒數", minval=0, group=group_precision, tooltip="收盤價突破通道後，必須經過 N 根 K 棒才開始判定回測。")
+ema12_buffer_mult = input.float(0.3, "過濾線安全邊距 (ATR倍數)", step=0.1, minval=0.0, group=group_precision, tooltip="過濾線離通道太近時視為纏繞、重置判斷。建議值 0.3~0.8，設為 0 則僅在真正纏繞時重置。")
+filter_same_bar = input.bool(true, "過濾單根 K 棒同時完成回測與進場 (防急漲急跌)", group=group_precision)
+use_macd_filter = input.bool(true, "需要 MACD 動能確認", group=group_precision, tooltip="MACD 快於慢線，且動能柱正在擴張，才允許進場。")
+use_volume_filter = input.bool(true, "需要成交量放大確認", group=group_precision)
+vol_mult = input.float(1.2, "成交量倍數門檻 (相對均量)", minval=1.0, step=0.1, group=group_precision)
+one_trade_at_a_time = input.bool(true, "同時間只允許一筆訊號 (避免訊號堆疊)", group=group_precision)
+require_mtf_align = input.bool(false, "進場需與 15m / 30m 趨勢一致 (共振過濾)", group=group_precision, tooltip="開啟後訊號會更少、更嚴格；只用 15m/30m，5m 太雜訊不納入過濾。")
+
+// ==========================================
+// 3. 止盈止損設定
+// ==========================================
+group_tp_sl = "止盈止損設定"
+show_tp_sl = input.bool(true, "顯示止盈止損框", group=group_tp_sl)
+reward_risk_ratio = input.float(1.0, "盈虧比 (R:R)", step=0.1, minval=0.1, group=group_tp_sl, tooltip="止盈距離相對於止損距離的倍數")
+
+// ==========================================
+// 4. MACD + 成交量 (下方副圖)
+// ==========================================
+group_macd = "MACD + 成交量 (下方副圖)"
+macd_fast_len = input.int(12, "MACD 快線", group=group_macd)
+macd_slow_len = input.int(26, "MACD 慢線", group=group_macd)
+macd_sig_len = input.int(9, "MACD 訊號線", group=group_macd)
+vol_avg_len = input.int(20, "成交量均線長度", group=group_macd, tooltip="下方副圖會畫出一條獨立的相對成交量柱狀圖（換算成與 MACD 同量級的單位），也是進場精準度設定裡「成交量放大確認」用的均量長度。")
+
+// ==========================================
+// 5. 多時區監控面板
+// ==========================================
+group_panel = "多時區監控面板"
+show_panel = input.bool(true, "顯示面板", group=group_panel)
+panel_pos = input.string("Top Right", "面板位置", options=["Top Right", "Bottom Right", "Top Left", "Bottom Left", "Top Center", "Bottom Center"], group=group_panel)
+show_5m = input.bool(true, "顯示 5 分鐘", group=group_panel)
+show_15m = input.bool(true, "顯示 15 分鐘", group=group_panel)
+show_30m = input.bool(true, "顯示 30 分鐘", group=group_panel)
+
+// ==========================================
+// 6. 型別與工具函數
+// ==========================================
+type Trade
+    float entry
+    float sl
+    float tp
+    bool isLong
+    box tpBox
+    box slBox
+    label entryLabel
+    label slLabel
+    label tpLabel
+
+f_vegas_trend() =>
+    _e1 = ta.ema(close, ema_len1)
+    _e2 = ta.ema(close, ema_len2)
+    _e3 = ta.ema(close, ema_len3)
+    _e4 = ta.ema(close, ema_len4)
+    _bull = math.min(_e1, _e2) > math.max(_e3, _e4)
+    _bear = math.max(_e1, _e2) < math.min(_e3, _e4)
+    _bull ? 1 : _bear ? -1 : 0
+
+get_pos(_pos) =>
+    switch _pos
+        "Top Right"      => position.top_right
+        "Bottom Right"   => position.bottom_right
+        "Top Left"       => position.top_left
+        "Bottom Left"    => position.bottom_left
+        "Top Center"     => position.top_center
+        "Bottom Center"  => position.bottom_center
+        => position.top_right
+
+f_add_row(_table, _r, _name, _trend) =>
+    _txt = _trend == 1 ? "多 ▲" : _trend == -1 ? "空 ▼" : "中性"
+    _bg  = _trend == 1 ? color.new(color.green, 40) : _trend == -1 ? color.new(color.red, 40) : color.new(color.gray, 50)
+    table.cell(_table, 0, _r, _name, bgcolor=color.new(color.black, 40), text_color=color.white, text_size=size.small)
+    table.cell(_table, 1, _r, _txt, bgcolor=_bg, text_color=color.white, text_size=size.small)
+
+// ==========================================
+// 7. 多時區趨勢 (固定 5m / 15m / 30m)
+// ==========================================
+trend_5  = request.security(syminfo.tickerid, "5",  f_vegas_trend(), gaps=barmerge.gaps_off)
+trend_15 = request.security(syminfo.tickerid, "15", f_vegas_trend(), gaps=barmerge.gaps_off)
+trend_30 = request.security(syminfo.tickerid, "30", f_vegas_trend(), gaps=barmerge.gaps_off)
+
+// ==========================================
+// 8. Vegas 通道核心計算 (當前圖表)
+// ==========================================
+ema144 = ta.ema(close, ema_len1)
+ema169 = ta.ema(close, ema_len2)
+ema576 = ta.ema(close, ema_len3)
+ema676 = ta.ema(close, ema_len4)
+ema12  = ta.ema(close, ema_len5)
+ema7   = ta.ema(close, ema_fast_len)
+
+bull_trend_aligned = math.min(ema144, ema169) > math.max(ema576, ema676)
+bear_trend_aligned = math.max(ema144, ema169) < math.min(ema576, ema676)
+
+tunnel_max = math.max(ema144, ema169)
+tunnel_min = math.min(ema144, ema169)
+body_high = math.max(open, close)
+body_low  = math.min(open, close)
+
+// 過濾線必須脫離通道 (含安全邊距)
+buffer_dist = nz(ta.atr(14)) * ema12_buffer_mult
+ema12_ok_long  = ema12 > (tunnel_max + buffer_dist)
+ema12_ok_short = ema12 < (tunnel_min - buffer_dist)
+
+ema_exit_long  = ta.crossover(ema12, tunnel_max)
+ema_exit_short = ta.crossunder(ema12, tunnel_min)
+bars_since_ema_exit_long  = ta.barssince(ema_exit_long)
+bars_since_ema_exit_short = ta.barssince(ema_exit_short)
+
+price_break_long  = ta.crossover(close, tunnel_max)
+price_break_short = ta.crossunder(close, tunnel_min)
+bars_since_price_break_long  = ta.barssince(price_break_long)
+bars_since_price_break_short = ta.barssince(price_break_short)
+
+// 回測判定
+is_retest_bull_bar = ema12_ok_long  and bull_trend_aligned and (nz(bars_since_ema_exit_long, 999) >= ignore_bars_after_ema_exit) and (nz(bars_since_price_break_long, 999) >= ignore_bars_after_breakout) and low <= tunnel_max and body_low > tunnel_min
+is_retest_bear_bar = ema12_ok_short and bear_trend_aligned and (nz(bars_since_ema_exit_short, 999) >= ignore_bars_after_ema_exit) and (nz(bars_since_price_break_short, 999) >= ignore_bars_after_breakout) and high >= tunnel_min and body_high < tunnel_max
+
+var bool waiting_for_long = false
+var bool waiting_for_short = false
+var float sl_long = na
+var float sl_short = na
+
+// 過濾線纏繞回通道內 -> 作廢
+if not ema12_ok_long
+    waiting_for_long := false
+    sl_long := na
+if not ema12_ok_short
+    waiting_for_short := false
+    sl_short := na
+
+if is_retest_bull_bar
+    waiting_for_long := true
+    sl_long := low
+if is_retest_bear_bar
+    waiting_for_short := true
+    sl_short := high
+
+// 等待期間持續追蹤更極端的止損點
+if waiting_for_long and low <= tunnel_min
+    sl_long := math.min(nz(sl_long, low), low)
+if waiting_for_short and high >= tunnel_max
+    sl_short := math.max(nz(sl_short, high), high)
+
+// ==========================================
+// 9. MACD + 相對成交量 (進場確認 + 下方副圖共用)
+// ==========================================
+[macdLine, signalLine, histLine] = ta.macd(close, macd_fast_len, macd_slow_len, macd_sig_len)
+macd_bull_raw = macdLine > signalLine and histLine > histLine[1]
+macd_bear_raw = macdLine < signalLine and histLine < histLine[1]
+macd_bull_confirm = not use_macd_filter or macd_bull_raw
+macd_bear_confirm = not use_macd_filter or macd_bear_raw
+
+volAvg = ta.sma(volume, vol_avg_len)
+relVol = volAvg > 0 ? volume / volAvg : 1.0
+vol_confirm = not use_volume_filter or relVol >= vol_mult
+
+var array<Trade> active_trades = array.new<Trade>()
+
+// ==========================================
+// 10. 進場觸發判定 (嚴格順序：位置 -> 計時 -> 狀態 -> 價格 -> 動能 -> 量能)
+// ==========================================
+long_trigger_potential = ema12_ok_long and (nz(bars_since_ema_exit_long, 999) >= ignore_bars_after_ema_exit) and waiting_for_long and close > ema12 and bull_trend_aligned and close > tunnel_max and macd_bull_confirm and vol_confirm
+short_trigger_potential = ema12_ok_short and (nz(bars_since_ema_exit_short, 999) >= ignore_bars_after_ema_exit) and waiting_for_short and close < ema12 and bear_trend_aligned and close < tunnel_min and macd_bear_confirm and vol_confirm
+
+long_trigger  = long_trigger_potential and (not filter_same_bar or waiting_for_long[1])
+short_trigger = short_trigger_potential and (not filter_same_bar or waiting_for_short[1])
+
+mtf_long_ok  = not require_mtf_align or (trend_15 == 1 and trend_30 == 1)
+mtf_short_ok = not require_mtf_align or (trend_15 == -1 and trend_30 == -1)
+
+trade_slot_free = not one_trade_at_a_time or array.size(active_trades) == 0
+
+long_signal  = long_trigger  and mtf_long_ok  and trade_slot_free and not (long_trigger[1] and mtf_long_ok[1])
+short_signal = short_trigger and mtf_short_ok and trade_slot_free and not (short_trigger[1] and mtf_short_ok[1])
+
+// ==========================================
+// 11. 止盈止損管理
+// ==========================================
+if show_tp_sl
+    if long_signal and not na(sl_long)
+        trade_entry = close
+        trade_sl = sl_long
+        trade_risk = trade_entry - trade_sl
+        trade_tp = trade_entry + (trade_risk * reward_risk_ratio)
+
+        tp_box = box.new(bar_index, trade_entry, bar_index + 1, trade_tp, border_color=na, bgcolor=color.new(color.green, 80), force_overlay=true)
+        sl_box = box.new(bar_index, trade_entry, bar_index + 1, trade_sl, border_color=na, bgcolor=color.new(color.red, 80), force_overlay=true)
+        entry_label = label.new(bar_index + 3, trade_entry, text="Entry: " + str.tostring(trade_entry, format.mintick), color=color.new(color.black, 100), textcolor=color.white, style=label.style_label_left, size=size.small, force_overlay=true)
+        sl_label = label.new(bar_index + 3, trade_sl, text="SL: " + str.tostring(trade_sl, format.mintick), color=color.new(color.black, 100), textcolor=color.white, style=label.style_label_left, size=size.small, force_overlay=true)
+        tp_label = label.new(bar_index + 3, trade_tp, text="TP: " + str.tostring(trade_tp, format.mintick), color=color.new(color.black, 100), textcolor=color.white, style=label.style_label_left, size=size.small, force_overlay=true)
+
+        array.push(active_trades, Trade.new(trade_entry, trade_sl, trade_tp, true, tp_box, sl_box, entry_label, sl_label, tp_label))
+
+    if short_signal and not na(sl_short)
+        trade_entry = close
+        trade_sl = sl_short
+        trade_risk = trade_sl - trade_entry
+        trade_tp = trade_entry - (trade_risk * reward_risk_ratio)
+
+        tp_box = box.new(bar_index, trade_entry, bar_index + 1, trade_tp, border_color=na, bgcolor=color.new(color.green, 80), force_overlay=true)
+        sl_box = box.new(bar_index, trade_entry, bar_index + 1, trade_sl, border_color=na, bgcolor=color.new(color.red, 80), force_overlay=true)
+        entry_label = label.new(bar_index + 3, trade_entry, text="Entry: " + str.tostring(trade_entry, format.mintick), color=color.new(color.black, 100), textcolor=color.white, style=label.style_label_left, size=size.small, force_overlay=true)
+        sl_label = label.new(bar_index + 3, trade_sl, text="SL: " + str.tostring(trade_sl, format.mintick), color=color.new(color.black, 100), textcolor=color.white, style=label.style_label_left, size=size.small, force_overlay=true)
+        tp_label = label.new(bar_index + 3, trade_tp, text="TP: " + str.tostring(trade_tp, format.mintick), color=color.new(color.black, 100), textcolor=color.white, style=label.style_label_left, size=size.small, force_overlay=true)
+
+        array.push(active_trades, Trade.new(trade_entry, trade_sl, trade_tp, false, tp_box, sl_box, entry_label, sl_label, tp_label))
+
+    if array.size(active_trades) > 0
+        for i = array.size(active_trades) - 1 to 0
+            t = array.get(active_trades, i)
+            box.set_right(t.tpBox, bar_index + 1)
+            box.set_right(t.slBox, bar_index + 1)
+
+            if t.isLong
+                if high >= t.tp or low <= t.sl
+                    box.delete(t.tpBox)
+                    box.delete(t.slBox)
+                    label.delete(t.entryLabel)
+                    label.delete(t.slLabel)
+                    label.delete(t.tpLabel)
+                    array.remove(active_trades, i)
+            else
+                if low <= t.tp or high >= t.sl
+                    box.delete(t.tpBox)
+                    box.delete(t.slBox)
+                    label.delete(t.entryLabel)
+                    label.delete(t.slLabel)
+                    label.delete(t.tpLabel)
+                    array.remove(active_trades, i)
+
+// 最終重置：正常出訊號 / 趨勢反轉 / 跌破大通道 / 實體跌回通道內 / 一次到位但被 same-bar 過濾掉
+if long_signal or not bull_trend_aligned or close < math.min(ema576, ema676) or body_low < tunnel_min or (long_trigger_potential and not waiting_for_long[1] and filter_same_bar)
+    waiting_for_long := false
+    sl_long := na
+if short_signal or not bear_trend_aligned or close > math.max(ema576, ema676) or body_high > tunnel_max or (short_trigger_potential and not waiting_for_short[1] and filter_same_bar)
+    waiting_for_short := false
+    sl_short := na
+
+// ==========================================
+// 12. 主圖繪製 (force_overlay = 釘在價格圖上)
+// ==========================================
+plot(ema144, "EMA 144 (小通道)", color=#1848cc, linewidth=2, force_overlay=true)
+plot(ema169, "EMA 169 (小通道)", color=#1848cc, linewidth=2, force_overlay=true)
+plot(ema576, "EMA 576 (大通道)", color=#f23645, linewidth=2, force_overlay=true)
+plot(ema676, "EMA 676 (大通道)", color=#f23645, linewidth=2, force_overlay=true)
+plot(ema12, "EMA 12 (過濾線)", color=#ff9800, linewidth=2, force_overlay=true)
+plot(ema7, "EMA 7 (快線)", color=color.new(color.white, 70), linewidth=1, force_overlay=true)
+
+plotshape(long_signal, "BUY", shape.labelup, location.belowbar, color.green, text="BUY", textcolor=color.white, size=size.small, force_overlay=true)
+plotshape(short_signal, "SELL", shape.labeldown, location.abovebar, color.red, text="SELL", textcolor=color.white, size=size.small, force_overlay=true)
+
+plotshape(ta.crossunder(ema7, ema12), "多單出場", shape.xcross, location.abovebar, color.new(color.orange, 50), force_overlay=true)
+plotshape(ta.crossover(ema7, ema12), "空單出場", shape.xcross, location.belowbar, color.new(color.orange, 50), force_overlay=true)
+
+if show_panel and barstate.islast
+    var trend_table = table.new(get_pos(panel_pos), 2, 4, border_width=1, border_color=color.new(color.gray, 50), force_overlay=true)
+    table.cell(trend_table, 0, 0, "時區", bgcolor=color.new(color.gray, 20), text_color=color.white, text_size=size.small)
+    table.cell(trend_table, 1, 0, "方向", bgcolor=color.new(color.gray, 20), text_color=color.white, text_size=size.small)
+    curr_row = 1
+    if show_5m
+        f_add_row(trend_table, curr_row, "5m", trend_5)
+        curr_row += 1
+    if show_15m
+        f_add_row(trend_table, curr_row, "15m", trend_15)
+        curr_row += 1
+    if show_30m
+        f_add_row(trend_table, curr_row, "30m", trend_30)
+        curr_row += 1
+
+// ==========================================
+// 13. 下方副圖：MACD + 相對成交量
+// v2：柱體深淺調整太不明顯，量能幾乎看不出來。改成真正畫出一條量能柱，
+// 而不是只調 MACD 柱體的透明度。兩者原始單位差太多沒法共用刻度 (成交量
+// 常是萬位數，MACD 只是價格的小數)，所以把「相對成交量」換算成跟 MACD
+// 動能柱同量級的單位：用 MACD 柱體近期標準差當尺，不管什麼幣種、什麼
+// 價位，量能柱都會落在跟 MACD 差不多的視覺範圍內，彼此不會蓋掉。
+// ==========================================
+plot(histLine, "MACD 動能柱", style=plot.style_columns, color=histLine >= 0 ? color.new(#00c3ff, 0) : color.new(#ff0062, 0))
+plot(macdLine, "MACD", color=#2962ff, linewidth=2)
+plot(signalLine, "Signal", color=#ff9800, linewidth=1)
+
+// 0 = 均量，正值 = 量能放大、負值 = 量能萎縮；換算成 MACD 柱體的標準差
+// 單位後直接畫成柱狀圖，是真正的量能讀數，不是顏色深淺猜測。
+hist_stdev = ta.stdev(histLine, 100)
+vol_osc = (relVol - 1) * hist_stdev
+vol_osc_color = vol_osc >= 0 ? color.new(#ffca28, 25) : color.new(#ffca28, 70)
+plot(vol_osc, "相對成交量 (換算 MACD 單位)", style=plot.style_columns, color=vol_osc_color)
+
+hline(0, "Zero", color=color.new(color.gray, 60), linestyle=hline.style_dotted)
+bgcolor(relVol >= 2.0 ? (close >= open ? color.new(color.teal, 85) : color.new(color.maroon, 85)) : na, title="成交量爆量提示 (≥2倍均量)")

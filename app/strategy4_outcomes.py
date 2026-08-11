@@ -93,14 +93,22 @@ def record(signals: list, store: dict = None, now_ts: float = None) -> int:
     for s in signals or []:
         plan = s.get("plan") or {}
         entry, sl, tp = plan.get("entry"), plan.get("sl"), plan.get("tp")
-        if not entry or not sl or not tp or sl >= entry or tp <= entry:
+        side = s.get("side") or plan.get("side") or "long"
+        if not entry or not sl or not tp:
             continue                       # unusable plan — nothing to score
+        # The geometry test has to follow the side. Left as the long-only form
+        # (sl < entry < tp) every short would have been silently dropped here
+        # and the book would have shown shorts firing but never being scored.
+        ok = (sl < entry < tp) if side == "long" else (tp < entry < sl)
+        if not ok:
+            continue
         k = key_of(s)
         if k in store["open"] or any(c.get("key") == k for c in store["closed"]):
             continue
         store["open"][k] = {
             "key": k, "symbol": s.get("symbol"), "base": s.get("base"),
             "segment": s.get("segment"), "entry": entry, "sl": sl, "tp": tp,
+            "side": side,
             "rr": plan.get("rr"), "stop_pct": plan.get("stop_pct"),
             "quality": s.get("quality"), "score": s.get("score"),
             "div_sources": s.get("div_sources") or [],
@@ -116,17 +124,26 @@ def settle(trade: dict, candles: list, now_ts: float = None,
     """Walk the candles AFTER the signal bar and decide what happened.
 
     Returns {} while the trade is still live and undecided, otherwise the
-    closing fields. LONG only, which is all S4 produces.
+    closing fields. Handles BOTH sides.
 
     Order inside a candle is deliberate and pessimistic: the stop is checked
     before the target, so a candle spanning both is scored as a loss. A 15m
     range cannot tell you which came first, and the alternative assumption
     flatters the strategy in a way no future data could ever correct.
+
+    Everything directional below is expressed in R FROM THE TRADE'S SIDE, so a
+    short that falls to its target scores +2R exactly as a long that rises to
+    its own. Scoring shorts on the long formulae would not merely be wrong, it
+    would be wrong in the flattering direction on losses and the punishing one
+    on wins — the stop sits ABOVE entry on a short, so `low <= sl` would have
+    fired on the first candle of every short ever recorded.
     """
     entry, sl, tp = trade.get("entry"), trade.get("sl"), trade.get("tp")
     if not entry or not sl or not tp:
         return {}
-    risk = entry - sl
+    side = trade.get("side") or "long"
+    is_long = side == "long"
+    risk = (entry - sl) if is_long else (sl - entry)
     if risk <= 0:
         return {}
     bar_ts = int(trade.get("bar_ts") or 0)
@@ -139,17 +156,25 @@ def settle(trade: dict, candles: list, now_ts: float = None,
     mae = mfe = 0.0
     for c in after:
         high, low = float(c[2]), float(c[3])
-        mae = min(mae, (low - entry) / risk)
-        mfe = max(mfe, (high - entry) / risk)
-        if low <= sl:                                   # stop first, always
+        # Adverse excursion is the move against the trade, favourable the move
+        # with it — which extreme of the candle supplies each one flips by side.
+        adverse = (low - entry) / risk if is_long else (entry - high) / risk
+        favour = (high - entry) / risk if is_long else (entry - low) / risk
+        mae = min(mae, adverse)
+        mfe = max(mfe, favour)
+        hit_sl = low <= sl if is_long else high >= sl
+        hit_tp = high >= tp if is_long else low <= tp
+        if hit_sl:                                      # stop first, always
             return _close(trade, "sl", -1.0, c[0], mae, mfe, after)
-        if high >= tp:
-            return _close(trade, "tp", (tp - entry) / risk, c[0], mae, mfe, after)
+        if hit_tp:
+            r = (tp - entry) / risk if is_long else (entry - tp) / risk
+            return _close(trade, "tp", r, c[0], mae, mfe, after)
 
     age_h = (now_ts - (bar_ts / 1000.0)) / 3600.0
     if age_h >= track_hours:
         last = float(after[-1][4]) if after else entry
-        return _close(trade, "expired", (last - entry) / risk,
+        r = (last - entry) / risk if is_long else (entry - last) / risk
+        return _close(trade, "expired", r,
                       after[-1][0] if after else bar_ts, mae, mfe, after)
     return {}                                            # still live
 

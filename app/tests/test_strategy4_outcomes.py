@@ -265,3 +265,73 @@ def test_the_store_round_trips(tmp_path, monkeypatch):
     O.record([_sig()], store, time.time())
     O.save(store)
     assert O.load()["open"] == store["open"]
+
+
+# ── short settlement (added 2026-08-11) ─────────────────────────────────────
+# settle() was long-only. Left that way, a short's stop sits ABOVE entry so
+# `low <= sl` fires on the first candle and EVERY short records -1R instantly —
+# a book full of losses that never happened.
+def _c(ts, high, low, close):
+    return [ts, close, high, low, close, 1000.0]
+
+
+def _short(entry=100.0, sl=103.0, tp=94.0, bar_ts=0):
+    return {"entry": entry, "sl": sl, "tp": tp, "side": "short", "bar_ts": bar_ts}
+
+
+def test_short_target_scores_a_win_not_a_loss():
+    """Price FALLING to the target is the short's win. On the long formula this
+    same walk scores -1R."""
+    r = O.settle(_short(), [_c(1, 100.5, 93.0, 94.0)], now_ts=0)
+    assert r and r["outcome"] == "tp"
+    assert r["r"] > 0
+
+
+def test_short_stop_is_hit_by_price_rising():
+    r = O.settle(_short(), [_c(1, 104.0, 99.0, 103.5)], now_ts=0)
+    assert r and r["outcome"] == "sl"
+    assert r["r"] == -1.0
+
+
+def test_a_quiet_candle_settles_neither_side():
+    assert O.settle(_short(), [_c(1, 101.0, 99.0, 100.0)], now_ts=0) == {}
+
+
+def test_short_ties_still_go_to_the_stop():
+    """Same pessimism as the long side: a candle spanning both is a loss."""
+    r = O.settle(_short(), [_c(1, 104.0, 93.0, 100.0)], now_ts=0)
+    assert r and r["outcome"] == "sl"
+
+
+def test_short_excursions_are_measured_from_the_shorts_side():
+    """MAE is the move AGAINST a short (price up), MFE the move with it."""
+    r = O.settle(_short(), [_c(1, 102.0, 99.0, 100.0),
+                            _c(2, 100.0, 93.0, 94.0)], now_ts=0)
+    assert r and r["outcome"] == "tp"
+    assert r["mae"] < 0 and r["mfe"] > 0
+
+
+def test_long_settlement_is_unchanged_by_the_short_support():
+    """The regression guard: adding shorts must not have moved the long path."""
+    long_t = {"entry": 100.0, "sl": 97.0, "tp": 106.0, "side": "long", "bar_ts": 0}
+    win = O.settle(long_t, [_c(1, 107.0, 100.0, 106.5)], now_ts=0)
+    loss = O.settle(long_t, [_c(1, 101.0, 96.0, 96.5)], now_ts=0)
+    assert win["outcome"] == "tp" and win["r"] > 0
+    assert loss["outcome"] == "sl" and loss["r"] == -1.0
+
+
+def test_a_trade_with_no_side_is_still_treated_as_long():
+    """Everything recorded before today has no `side` field. It must keep
+    settling exactly as it did, not silently become a short."""
+    legacy = {"entry": 100.0, "sl": 97.0, "tp": 106.0, "bar_ts": 0}
+    r = O.settle(legacy, [_c(1, 107.0, 100.0, 106.5)], now_ts=0)
+    assert r["outcome"] == "tp" and r["r"] > 0
+
+
+def test_record_keeps_a_short_instead_of_dropping_it():
+    store = {"open": {}, "closed": []}
+    sig = {"symbol": "AAPL/USDT:USDT", "base": "AAPL", "segment": "tradfi",
+           "side": "short", "bar_ts": 1,
+           "plan": {"entry": 100.0, "sl": 103.0, "tp": 94.0, "rr": 2, "stop_pct": 3.0}}
+    assert O.record([sig], store, now_ts=0) == 1
+    assert next(iter(store["open"].values()))["side"] == "short"

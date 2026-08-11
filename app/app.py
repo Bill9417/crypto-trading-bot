@@ -2070,7 +2070,7 @@ def api_main_coins():
     coins = []
     for sym in ("BTC/USDT:USDT", "ETH/USDT:USDT"):
         try:
-            ohlcv = rest_client.call("fetch_ohlcv", sym, "1h", None, 450)
+            ohlcv = rest_client.call("fetch_ohlcv", sym, "1h", None, 750)
             t = rest_client.call("fetch_ticker", sym)
             meter = strategy2_meter.compute_meter(ohlcv)
             funding = None
@@ -3157,10 +3157,10 @@ def strategy2():
 def api_strategy2(symbol="BTC/USDT:USDT"):
     """Live confidence-meter JSON for one symbol. Reuses the shared rest_client
     (same throttle/cooldown as the rest of the app) and the pure-compute meter in
-    strategy2_meter.py. 450 1h candles cover the outer tunnel EMA338 + Vegas SMA5."""
+    strategy2_meter.py. 750 1h candles cover the outer tunnel EMA676 + Vegas SMA5."""
     import strategy2_meter
     try:
-        ohlcv = rest_client.call("fetch_ohlcv", symbol, "1h", None, 450)
+        ohlcv = rest_client.call("fetch_ohlcv", symbol, "1h", None, 750)
     except RateLimitCooldownError as exc:
         return jsonify({"symbol": symbol, "error": str(exc)}), 200
     except Exception as exc:  # noqa: BLE001 — never 500 the dashboard
@@ -3176,11 +3176,11 @@ def api_strategy2(symbol="BTC/USDT:USDT"):
 def api_strategy2_ohlcv(symbol="BTC/USDT:USDT"):
     """Raw 1h OHLC for the Strategy-2 chart. The Lightweight-Charts mirror draws the
     candles + the full TV.pine EMA stack client-side (each EMA its own colour), so it
-    uses the SAME 1h/450 window the meter does — the on-chart EMAs line up exactly with
+    uses the SAME 1h/750 window the meter does — the on-chart EMAs line up exactly with
     the confidence factors. Distinct path so it never collides with the <path:symbol>
     meter route. Volume is dropped to keep the payload small."""
     try:
-        ohlcv = rest_client.call("fetch_ohlcv", symbol, "1h", None, 450)
+        ohlcv = rest_client.call("fetch_ohlcv", symbol, "1h", None, 750)
     except RateLimitCooldownError as exc:
         return jsonify({"symbol": symbol, "error": str(exc), "candles": []}), 200
     except Exception as exc:  # noqa: BLE001 — never 500 the dashboard
@@ -3208,7 +3208,7 @@ def api_strategy2_score_history(symbol="BTC/USDT:USDT"):
     if hit and now - hit[0] < 300:
         return jsonify(hit[1])
     try:
-        ohlcv = rest_client.call("fetch_ohlcv", symbol, "1h", None, 450)
+        ohlcv = rest_client.call("fetch_ohlcv", symbol, "1h", None, 750)
     except RateLimitCooldownError as exc:
         return jsonify({"symbol": symbol, "error": str(exc), "points": []}), 200
     except Exception as exc:  # noqa: BLE001 — never 500 the dashboard

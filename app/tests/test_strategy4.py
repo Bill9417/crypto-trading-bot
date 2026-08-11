@@ -7,6 +7,15 @@ scan's whole value is that it stays quiet.
 import strategy4 as S
 
 
+import strategy2_meter as _M
+
+# Fixture length, DERIVED. evaluate() needs the meter's full window, which grew
+# when the outer tunnel moved to EMA676 — every 380/400-bar fixture here became
+# "not enough history" and the reason lived three files away. Deriving it means
+# the next period change adjusts these instead of breaking them.
+N = _M.SIGNAL_MIN_CANDLES + 40
+
+
 def _bars(closes, highs=None, lows=None, vol=1000.0):
     """[ts,o,h,l,c,v] oldest→newest."""
     highs = highs or [c * 1.002 for c in closes]
@@ -141,7 +150,7 @@ def test_only_the_two_price_up_states_qualify_a_long():
 def test_evaluate_reports_which_gate_failed(monkeypatch):
     """A filter whose effect you cannot see is a filter you cannot tune."""
     assert S.evaluate([])["reason"] == "not enough history"
-    flat = _bars([100.0] * 400)
+    flat = _bars([100.0] * N)
     r = S.evaluate(flat)
     assert r["pass"] is False and r["reason"]
 
@@ -150,7 +159,7 @@ def test_evaluate_stops_at_the_triangle_before_spending_anything(monkeypatch):
     import strategy2_meter
     monkeypatch.setattr(strategy2_meter, "compute_signal",
                         lambda o: {"signal": None, "score": 40})
-    r = S.evaluate(_bars([100.0 + i * 0.01 for i in range(400)]))
+    r = S.evaluate(_bars([100.0 + i * 0.01 for i in range(N)]))
     assert r["reason"] == "no long triangle"
     assert r["plan"] is None
 
@@ -160,8 +169,14 @@ def test_a_passing_setup_carries_a_complete_plan(monkeypatch):
     monkeypatch.setattr(strategy2_meter, "compute_signal",
                         lambda o: {"signal": "long", "score": 82})
     monkeypatch.setattr(S, "REQUIRE_DIVERGENCE", False)
-    closes = [100 + i * 0.05 for i in range(380)]
-    closes += [119.0, 118.0, 117.5, 118.2, 119.5, 120.0]    # a pullback + swing low
+    closes = [100 + i * 0.05 for i in range(N - 6)]
+    # The pullback must CONTINUE from where the ramp ended, not jump to fixed
+    # prices: with a longer fixture the old literals (119.x) sat ~16 below the
+    # ramp's end and the "pullback" was a cliff that turned the EMA200 slope
+    # negative, failing an earlier gate than the one under test.
+    _end = closes[-1]
+    closes += [_end + 0.05, _end - 0.95, _end - 1.45,
+               _end - 0.75, _end + 0.55, _end + 1.05]      # pullback + swing low
     b = _bars(closes)
     oi = [100 + i for i in range(30)]
     r = S.evaluate(b, oi)
@@ -466,3 +481,123 @@ def test_more_agreeing_sources_scores_higher():
                           "score": 70.0, "slope": 1.0,
                           "oi_state": S.OI_LONGS_OPENING, "plan": {"stop_pct": 1.0}})
     assert q(1) < q(2) < q(3) < q(4)
+
+
+# ── the short side (added 2026-08-11) ───────────────────────────────────────
+# The long side had gates and a plan builder; the mirror had neither until it
+# was asked for. These assert the SIGNS, because every short bug in this file
+# would have been a sign error: a stop below entry, an R computed off the long
+# formula, an OI state read from the wrong table.
+def test_short_plan_puts_the_stop_above_entry():
+    p = S.plan(100.0, 103.0, side="short")
+    assert p is not None
+    assert p["tp"] < p["entry"] < p["sl"], "short stop must sit ABOVE entry"
+    assert p["side"] == "short"
+    # 2R below entry, measured off the same risk the stop defines
+    risk = p["sl"] - p["entry"]
+    assert abs(p["tp"] - (p["entry"] - risk * p["rr"])) < 1e-9
+
+
+def test_long_and_short_plans_are_mirror_images():
+    long_p = S.plan(100.0, 97.0, side="long")
+    short_p = S.plan(100.0, 103.0, side="short")
+    assert long_p and short_p
+    assert abs(long_p["stop_pct"] - short_p["stop_pct"]) < 0.2
+    assert abs(long_p["tp_pct"] - short_p["tp_pct"]) < 0.4
+
+
+def test_plan_refuses_a_level_on_the_wrong_side():
+    """A 'resistance' below price would build a stop that is already hit."""
+    assert S.plan(100.0, 97.0, side="short") is None
+    assert S.plan(100.0, 103.0, side="long") is None
+
+
+def test_resistance_above_finds_a_confirmed_swing_high():
+    closes = [100.0] * 12 + [100, 101, 105, 101, 100] + [100.0] * 12
+    highs = [c + 0.5 for c in closes]
+    lows = [c - 0.5 for c in closes]
+    r = S.resistance_above(highs, lows, price=100.0)
+    assert r is not None and r["level"] > 100.0
+
+
+def test_ema_trending_wants_the_slope_to_follow_the_trade():
+    up = [100 + i * 0.05 for i in range(400)]
+    dn = list(reversed(up))
+    assert S.ema_trending(up, "long")[0] is True
+    assert S.ema_trending(up, "short")[0] is False
+    assert S.ema_trending(dn, "short")[0] is True
+    assert S.ema_trending(dn, "long")[0] is False
+
+
+def test_short_oi_states_are_the_mirror_of_long():
+    assert S.OI_OK["short"] == (S.OI_SHORTS_OPENING, S.OI_LONGS_CLOSING)
+    assert set(S.OI_OK["short"]).isdisjoint(S.OI_OK_FOR_LONG)
+
+
+def test_evaluate_short_names_its_own_refusals(monkeypatch):
+    import strategy2_meter
+    monkeypatch.setattr(strategy2_meter, "compute_signal",
+                        lambda o: {"signal": None, "score": 60})
+    r = S.evaluate(_bars([100.0 + i * 0.01 for i in range(N)]), side="short")
+    assert r["reason"] == "no short triangle"
+    assert r["side"] == "short"
+
+
+def test_quality_reads_a_short_from_the_shorts_point_of_view():
+    """A perfect short scored on the long scale would grade 0/100 — the meter
+    at 5, a hard-falling EMA and shorts opening are the STRONGEST short this
+    scan can produce."""
+    ev = {"side": "short", "score": 5.0, "slope": -1.8,
+          "oi_state": S.OI_SHORTS_OPENING, "div_sources": ["MACD", "KD"],
+          "plan": {"stop_pct": 1.0}}
+    assert S.quality(ev) > 70
+
+
+def test_evaluate_sides_reports_the_deepest_rejection(monkeypatch):
+    """When neither side passes, the useful rejection is the one that got
+    furthest — 'stop distance out of range' says something about the symbol,
+    'no short triangle' says only that it was not a short."""
+    import strategy2_meter
+    monkeypatch.setattr(strategy2_meter, "compute_signal",
+                        lambda o: {"signal": "long", "score": 80})
+    monkeypatch.setattr(S, "REQUIRE_DIVERGENCE", False)
+    r = S.evaluate_sides(_bars([100.0 + i * 0.01 for i in range(N)]))
+    assert r["reason"] != "no short triangle"
+
+
+def test_disabling_a_side_removes_it_from_the_scan(monkeypatch):
+    monkeypatch.setattr(S, "ENABLE_SHORT", False)
+    assert S.enabled_sides() == ("long",)
+    monkeypatch.setattr(S, "ENABLE_LONG", False)
+    monkeypatch.setattr(S, "ENABLE_SHORT", True)
+    assert S.enabled_sides() == ("short",)
+
+
+def test_bearish_divergence_is_the_mirror_not_a_copy():
+    """Price higher high + oscillator lower high. Feeding the BULLISH shape in
+    must not fire it, or the gate is direction-blind and every short would
+    inherit the long's divergences."""
+    n = 80
+    highs = [100 + i * 0.1 for i in range(n)]
+    lows = [h - 1 for h in highs]
+    falling_osc = [50 - i * 0.3 for i in range(n)]
+    rising_osc = [50 + i * 0.3 for i in range(n)]
+    # price rising with a falling oscillator is the bearish case
+    bear = S.bearish_divergence(highs, lows, falling_osc, atr=None)
+    same_shape_bull = S.bearish_divergence(highs, lows, rising_osc, atr=None)
+    assert same_shape_bull is None, "bearish gate fired on a bullish shape"
+    assert bear is None or isinstance(bear, int)
+
+
+def test_short_alert_says_short_in_the_headline():
+    """A short whose header still read 做多 is a plan that loses money by being
+    read correctly."""
+    sig = {"base": "AAPL", "segment": "tradfi", "side": "short",
+           "price": 100.0, "score": 20.0, "slope": -1.2, "quality": 70,
+           "quality_basis": 100, "div_sources": ["MACD"], "div_ago": 3,
+           "oi_state": S.OI_SHORTS_OPENING,
+           "support": {"level": 103.0, "bars_ago": 5},
+           "plan": S.plan(100.0, 103.0, side="short")}
+    txt = S.format_signal(sig)
+    assert "做空" in txt and "做多" not in txt
+    assert "壓力" in txt          # not 支撐 — the level is above price

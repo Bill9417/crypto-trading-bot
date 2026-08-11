@@ -123,10 +123,36 @@ history behind them, the honest next step is to run it through walk_forward.py
 and find out — the scan records every signal it fires so that test has data to
 work with when the time comes.
 
-LONG ONLY: the gates above describe an uptrend pullback. The mirror image for
+BOTH SIDES SINCE 2026-08-11 — AND THE SHORT SIDE IS UNMEASURED
+──────────────────────────────────────────────────────────────
+This shipped long-only, with this note explaining why: "the mirror image for
 shorts is not simply the inverse — a stock perp's borrow, its funding and its
 overnight gap behave differently on the short side — so rather than ship a
-symmetric rule nobody checked, this side is left out until someone measures it.
+symmetric rule nobody checked, this side is left out until someone measures it."
+
+Shorts were then requested, so they are here, and that reasoning has NOT been
+answered — it has been overridden. Every gate is mirrored exactly: short
+triangle, EMA200 FALLING, confirmed swing high above price as the stop, bearish
+divergence (price higher high / oscillator lower high, same four quality
+filters), and OI showing shorts opening or longs being flushed. What is missing
+is any evidence the mirror is VALID on this universe. The long side has an
+inconclusive n=50 behind it; the short side has nothing at all.
+
+S4_ENABLE_SHORT=false turns it off without touching the long side.
+
+WHICH INDICATOR THIS TRACKS (changed 2026-08-11)
+───────────────────────────────────────────────
+The triangle gate reads strategy2_meter, which now mirrors
+All-in-One_ULTIMATE_Pro.pine rather than All-in-One_ULTIMATE.pine. The only
+scoring-relevant difference is the outer Double-Tunnel pair, 288/338 → 576/676
+(Sykes' own 4x periods). That is a real change to a 10-weight factor: the
+tunnel now asks a slower question, so symbols that sat outside the old tunnel
+can sit inside the new one and score differently. It also raised the meter's
+history requirement to ~690 bars, which is why S4_CANDLES went 450 → 750.
+
+Both of the above reset the measurement counter AGAIN, on top of the 08-09
+divergence rewrite. The n=50 below describes an engine that no longer exists in
+two further ways. Treat the record as starting from zero.
 """
 import json
 import math
@@ -140,7 +166,16 @@ SIGNALS_FILE = os.path.join(os.path.dirname(__file__), "strategy4_signals.json")
 
 ENABLED = os.getenv("S4_ENABLED", "true").strip().lower() in ("1", "true", "yes", "on")
 TIMEFRAME = os.getenv("S4_TIMEFRAME", "15m")
-CANDLES = int(os.getenv("S4_CANDLES", "450"))       # meter needs ≥365
+# 750, not the old 450: All-in-One_ULTIMATE_Pro moved the outer tunnel to
+# EMA676, so strategy2_meter.MIN_CANDLES rose to ~690. At 450 the tunnel factor
+# would abstain on every bar and the triangle gate would quietly be scoring on
+# 90 of its 100 points — the same silent-degradation failure as the 2026-07-25
+# weight drift, just arriving through a period change instead.
+CANDLES = int(os.getenv("S4_CANDLES", "750"))
+# Both sides, independently switchable. Long has the (inconclusive) n=50 behind
+# it; short has NOTHING measured — see the LONG/SHORT note in the docstring.
+ENABLE_LONG = os.getenv("S4_ENABLE_LONG", "true").strip().lower() in ("1", "true", "yes", "on")
+ENABLE_SHORT = os.getenv("S4_ENABLE_SHORT", "true").strip().lower() in ("1", "true", "yes", "on")
 # Two pools, ranked by 24h turnover and cut separately. One combined ranking
 # would be no ranking at all: BTC alone turns over 3.8 BILLION a day against
 # ~50M for a busy stock perp, so a single top-N list would be crypto only and
@@ -186,6 +221,9 @@ OI_TEXT = {0: "no data", 1: "開多 longs opening", 2: "開空 shorts opening",
 # For a LONG: new longs entering, or shorts being squeezed out. The two states
 # that mean the opposite side is being built are what disqualifies.
 OI_OK_FOR_LONG = (OI_LONGS_OPENING, OI_SHORTS_CLOSING)
+# The exact mirror for a SHORT: new shorts entering, or longs being flushed.
+OI_OK_FOR_SHORT = (OI_SHORTS_OPENING, OI_LONGS_CLOSING)
+OI_OK = {"long": OI_OK_FOR_LONG, "short": OI_OK_FOR_SHORT}
 
 
 # ── state ────────────────────────────────────────────────────────────────────
@@ -245,6 +283,17 @@ def _pivots(highs, lows, left, right):
     return ph, plw
 
 
+def ema_trending(closes, side, period=200, bars=EMA_SLOPE_BARS) -> tuple:
+    """(ok, slope_pct) — the trend EMA must slope WITH the trade, not merely sit
+    on the right side of price. Price pops above a falling 200 constantly in a
+    downtrend and below a rising one in an uptrend; the triangle alone cannot
+    tell those apart, which is the whole reason this gate exists."""
+    _, slope = ema_rising(closes, period, bars)
+    if slope is None:
+        return False, None
+    return (slope > 0 if side == "long" else slope < 0), slope
+
+
 def support_below(highs, lows, price, left=3, right=3):
     """Most recent CONFIRMED swing low below price. The stop goes here, so an
     invented level is worse than no signal: return None and let the gate fail."""
@@ -253,6 +302,23 @@ def support_below(highs, lows, price, left=3, right=3):
         if lows[i] < price:
             return {"level": lows[i], "bars_ago": len(lows) - 1 - i}
     return None
+
+
+def resistance_above(highs, lows, price, left=3, right=3):
+    """Mirror of support_below for shorts: most recent CONFIRMED swing high
+    ABOVE price. Same rule — this IS the stop, so no level means no signal
+    rather than a stop distance nobody measured."""
+    ph, _ = _pivots(highs, lows, left, right)
+    for i in reversed(ph):
+        if highs[i] > price:
+            return {"level": highs[i], "bars_ago": len(highs) - 1 - i}
+    return None
+
+
+def structure_level(highs, lows, price, side, left=3, right=3):
+    """The level that qualifies the setup AND carries the stop, either side."""
+    return (support_below(highs, lows, price, left, right) if side == "long"
+            else resistance_above(highs, lows, price, left, right))
 
 
 def macd_series(closes, fast=12, slow=26, signal=9):
@@ -424,7 +490,53 @@ def bullish_divergence(highs, lows, osc, pivot=DIV_PIVOT, lookback=DIV_LOOKBACK,
     return best
 
 
-def divergence_scan(ohlcv, highs, lows, closes):
+def bearish_divergence(highs, lows, osc, pivot=DIV_PIVOT, lookback=DIV_LOOKBACK,
+                       min_gap=DIV_MIN_GAP, max_gap=DIV_MAX_GAP,
+                       min_osc_gap=DIV_MIN_OSC_GAP, atr=None,
+                       min_leg_atr=DIV_MIN_LEG_ATR, norm=DIV_NORM):
+    """Regular BEARISH divergence: price prints a HIGHER high while the
+    oscillator prints a LOWER high. The exact mirror of bullish_divergence,
+    including all four quality filters added on 2026-08-09 — pivot-age window,
+    scale-free oscillator gap, swing prominence, and the same confirmation lag.
+
+    Written out rather than folded into the bullish function with a sign flag:
+    the two walk DIFFERENT pivot lists (highs vs lows) and measure prominence
+    against opposite extremes, so a shared body would be a chain of `if side`
+    branches with no line doing the same work for both.
+    """
+    n = min(len(highs), len(osc))
+    if n < pivot * 2 + 2:
+        return None
+    ph, _ = _pivots(highs[:n], lows[:n], pivot, pivot)
+
+    win = osc[max(0, n - norm):n]
+    osc_rng = (max(win) - min(win)) if win else 0.0
+
+    best = None
+    for a, b in zip(ph, ph[1:], strict=False):
+        if not (min_gap <= b - a <= max_gap):
+            continue
+        # price higher high, oscillator lower high — the divergence itself
+        if highs[b] <= highs[a] or osc[b] >= osc[a]:
+            continue
+        if osc_rng > 0 and (osc[a] - osc[b]) / osc_rng < min_osc_gap:
+            continue
+        if atr and min_leg_atr > 0:
+            a_pv = atr[b] if b < len(atr) else atr[-1]
+            if a_pv and a_pv > 0:
+                w0, w1 = max(0, b - pivot), min(n, b + pivot + 1)
+                # prominence measured DOWN from the pivot high, mirroring the
+                # bullish case's measurement up from the pivot low
+                if (highs[b] - min(lows[w0:w1])) / a_pv < min_leg_atr:
+                    continue
+        confirmed = b + pivot
+        ago = n - 1 - confirmed
+        if 0 <= ago <= lookback:
+            best = ago if best is None else min(best, ago)
+    return best
+
+
+def divergence_scan(ohlcv, highs, lows, closes, side="long"):
     """Every source, measured. Returns {name: bars_ago} for those that fired.
 
     FOUR sources, not five. Accumulation/Distribution is deliberately absent,
@@ -448,11 +560,12 @@ def divergence_scan(ohlcv, highs, lows, closes):
                ("KD", stoch_k(highs, lows, closes)),
                ("FISH", fisher_series(highs, lows)),
                ("CVD", detrend(cvd_series(ohlcv))))
+    detect = bullish_divergence if side == "long" else bearish_divergence
     hits = {}
     for name, s in sources:
         if not s:
             continue
-        ago = bullish_divergence(highs, lows, s, atr=atr)
+        ago = detect(highs, lows, s, atr=atr)
         if ago is not None:
             hits[name] = ago
     return hits
@@ -478,19 +591,35 @@ def oi_state(oi_values, closes, smooth=3):
     return 0, oi_d
 
 
-def plan(entry, support_level):
-    """Stop under the support that qualified the setup, target at TP_R × risk.
-    Returns None when the resulting stop is absurd in either direction — too
-    tight to survive noise, or so wide the 2R target needs a move the symbol
-    will not make."""
-    if not entry or not support_level or support_level >= entry:
+def plan(entry, level, side="long"):
+    """Stop beyond the structure level that qualified the setup, target at
+    TP_R × risk. Returns None when the resulting stop is absurd in either
+    direction — too tight to survive noise, or so wide the 2R target needs a
+    move the symbol will not make.
+
+    The buffer pushes the stop AWAY from the trade on both sides: below support
+    for a long, above resistance for a short. Getting that sign wrong would put
+    the stop inside the level it is meant to sit behind."""
+    if not entry or not level:
         return None
-    sl = support_level * (1 - STOP_BUFFER)
-    risk = entry - sl
+    if side == "long":
+        if level >= entry:
+            return None
+        sl = level * (1 - STOP_BUFFER)
+        risk = entry - sl
+        tp = entry + risk * TP_R
+    else:
+        if level <= entry:
+            return None
+        sl = level * (1 + STOP_BUFFER)
+        risk = sl - entry
+        tp = entry - risk * TP_R
+    if risk <= 0:
+        return None
     stop_pct = risk / entry
     if stop_pct < MIN_STOP_PCT or stop_pct > MAX_STOP_PCT:
         return None
-    return {"entry": entry, "sl": sl, "tp": entry + risk * TP_R,
+    return {"entry": entry, "sl": sl, "tp": tp, "side": side,
             "stop_pct": stop_pct * 100, "tp_pct": risk * TP_R / entry * 100,
             "rr": TP_R}
 
@@ -516,6 +645,12 @@ def quality(ev: dict) -> int:
     more of the things this scan looks for lined up, not a better trade.
     """
     parts, live = 0.0, 0
+    # Every directional component below is read FROM THE TRADE'S POINT OF VIEW.
+    # Left as-is, a short would have scored its meter, slope and OI on the long
+    # scale — a perfect short (score 0, EMA falling hard, shorts opening) would
+    # have graded 0/100 while the setup it describes is the strongest the scan
+    # can produce.
+    side = ev.get("side", "long")
 
     srcs = len(ev.get("div_sources") or [])
     if srcs or not REQUIRE_DIVERGENCE:
@@ -525,22 +660,29 @@ def quality(ev: dict) -> int:
 
     score = ev.get("score")
     if score is not None:
-        # the meter only ever qualifies a long above ~50, so 50→100 is the
-        # range that carries information
-        parts += max(0.0, min(1.0, (score - 50) / 50.0)) * QUALITY_WEIGHTS["meter"]
+        # the meter only ever qualifies a trade beyond ~50 in its own direction,
+        # so 50→100 (long) or 50→0 (short) is the range that carries information
+        conv = (score - 50) / 50.0 if side == "long" else (50 - score) / 50.0
+        parts += max(0.0, min(1.0, conv)) * QUALITY_WEIGHTS["meter"]
         live += QUALITY_WEIGHTS["meter"]
 
     slope = ev.get("slope")
     if slope is not None:
         # 0…2% of EMA level over the slope window; beyond that it is already
-        # a trend and more does not add information
-        parts += max(0.0, min(1.0, slope / 2.0)) * QUALITY_WEIGHTS["slope"]
+        # a trend and more does not add information. A short wants it negative.
+        mag = slope if side == "long" else -slope
+        parts += max(0.0, min(1.0, mag / 2.0)) * QUALITY_WEIGHTS["slope"]
         live += QUALITY_WEIGHTS["slope"]
 
     st = ev.get("oi_state") or 0
     if st:                                   # 0 is "no data" — abstain, not neutral
-        parts += (1.0 if st == OI_LONGS_OPENING else 0.6 if st == OI_SHORTS_CLOSING
-                  else 0.0) * QUALITY_WEIGHTS["oi"]
+        # Full credit when the trade's own side is being OPENED, partial when
+        # the opposite side is merely closing out.
+        if side == "long":
+            oi_frac = 1.0 if st == OI_LONGS_OPENING else 0.6 if st == OI_SHORTS_CLOSING else 0.0
+        else:
+            oi_frac = 1.0 if st == OI_SHORTS_OPENING else 0.6 if st == OI_LONGS_CLOSING else 0.0
+        parts += oi_frac * QUALITY_WEIGHTS["oi"]
         live += QUALITY_WEIGHTS["oi"]
 
     p = ev.get("plan") or {}
@@ -555,14 +697,24 @@ def quality(ev: dict) -> int:
     return int(round(parts / live * 100)) if live else 0
 
 
-def evaluate(ohlcv, oi_values=None) -> dict:
-    """All gates on one symbol's candles. Pure — every failure is NAMED, so the
-    scan can report what it rejected instead of only what it passed. A filter
-    you cannot see the effect of is a filter you cannot tune."""
+def evaluate(ohlcv, oi_values=None, side="long") -> dict:
+    """All gates on one symbol's candles, for ONE side. Pure — every failure is
+    NAMED, so the scan can report what it rejected instead of only what it
+    passed. A filter you cannot see the effect of is a filter you cannot tune.
+
+    `support` keeps its name on both sides for the sake of every existing
+    caller, the stored signal history and the /s4 template; on a short it holds
+    the resistance above price. The stop sits beyond it either way — the field
+    is 'the level that qualified this setup and carries the stop'."""
     out = {"pass": False, "reason": None, "score": None, "slope": None,
            "support": None, "div_ago": None, "div_sources": [], "oi_state": 0,
-           "oi_delta": None, "plan": None, "quality": None, "quality_basis": None}
-    if not ohlcv or len(ohlcv) < 380:
+           "oi_delta": None, "plan": None, "quality": None, "quality_basis": None,
+           "side": side}
+    # The meter needs its full window or the tunnel factor abstains silently;
+    # derive the floor from the meter rather than restating it as a literal.
+    import strategy2_meter
+    need = strategy2_meter.SIGNAL_MIN_CANDLES + 20
+    if not ohlcv or len(ohlcv) < need:
         out["reason"] = "not enough history"
         return out
 
@@ -571,49 +723,82 @@ def evaluate(ohlcv, oi_values=None) -> dict:
     closes = [c[4] for c in ohlcv]
     price = closes[-1]
 
-    import strategy2_meter
     sig = strategy2_meter.compute_signal(ohlcv)
     out["score"] = sig.get("score")
-    if sig.get("signal") != "long":
-        out["reason"] = "no long triangle"
+    if sig.get("signal") != side:
+        out["reason"] = f"no {side} triangle"
         return out
 
-    rising, slope = ema_rising(closes)
+    trending, slope = ema_trending(closes, side)
     out["slope"] = slope
-    if not rising:
-        out["reason"] = "EMA200 not rising"
+    if not trending:
+        out["reason"] = "EMA200 not rising" if side == "long" else "EMA200 not falling"
         return out
 
-    sup = support_below(highs, lows, price)
-    out["support"] = sup
-    if not sup:
-        out["reason"] = "no support below"
+    lvl = structure_level(highs, lows, price, side)
+    out["support"] = lvl
+    if not lvl:
+        out["reason"] = "no support below" if side == "long" else "no resistance above"
         return out
 
-    p = plan(price, sup["level"])
+    p = plan(price, lvl["level"], side)
     out["plan"] = p
     if not p:
         out["reason"] = "stop distance out of range"
         return out
 
     if REQUIRE_DIVERGENCE:
-        hits = divergence_scan(ohlcv, highs, lows, closes)
+        hits = divergence_scan(ohlcv, highs, lows, closes, side)
         out["div_sources"] = sorted(hits)
         out["div_ago"] = min(hits.values()) if hits else None
         if len(hits) < MIN_DIV_SOURCES:
-            out["reason"] = ("no recent bullish divergence" if not hits
+            word = "bullish" if side == "long" else "bearish"
+            out["reason"] = (f"no recent {word} divergence" if not hits
                              else f"only {len(hits)} of {MIN_DIV_SOURCES} divergence sources")
             return out
 
     st, delta = oi_state(oi_values or [], closes)
     out["oi_state"], out["oi_delta"] = st, delta
-    if REQUIRE_OI and st not in OI_OK_FOR_LONG:
+    if REQUIRE_OI and st not in OI_OK[side]:
         out["reason"] = "OI not supportive" if st else "no OI data"
         return out
 
     out["quality"] = quality(out)
     out["pass"] = True
     return out
+
+
+def enabled_sides() -> tuple:
+    """Which directions this scan is currently allowed to fire."""
+    return tuple(s for s, on in (("long", ENABLE_LONG), ("short", ENABLE_SHORT)) if on)
+
+
+def evaluate_sides(ohlcv, oi_values=None, sides=None) -> dict:
+    """Best passing side for one symbol, or the more informative rejection.
+
+    A symbol cannot be both at once — compute_signal fires one triangle per bar
+    — so the first side to pass wins and the other is not even evaluated. When
+    neither passes, the rejection reported is the one that got FURTHEST through
+    the gates, because "stop distance out of range" says something about this
+    symbol while "no short triangle" says only that it was not a short."""
+    order = ("no long triangle", "no short triangle", "EMA200 not rising",
+             "EMA200 not falling", "no support below", "no resistance above",
+             "stop distance out of range")
+
+    def depth(reason):
+        try:
+            return order.index(reason or "")
+        except ValueError:
+            return len(order)          # divergence/OI failures are the deepest
+
+    best = None
+    for side in (sides if sides is not None else enabled_sides()):
+        res = evaluate(ohlcv, oi_values, side)
+        if res["pass"]:
+            return res
+        if best is None or depth(res["reason"]) > depth(best["reason"]):
+            best = res
+    return best or {"pass": False, "reason": "no side enabled", "side": None}
 
 
 # ── network ──────────────────────────────────────────────────────────────────
@@ -717,12 +902,13 @@ def scan(client=None, limit=None) -> dict:
         except Exception:  # noqa: BLE001 — one bad symbol never stops the scan
             continue
         checked[seg] = checked.get(seg, 0) + 1
-        res = evaluate(ohlcv)
+        res = evaluate_sides(ohlcv)
         # OI costs a call, so it is only asked for once everything cheaper has
-        # already passed. Re-run the last gate with the data now in hand.
+        # already passed. Re-run with the data now in hand — and only for the
+        # side that got that far, so adding shorts did not double the OI calls.
         if res["reason"] in ("no OI data", "OI not supportive") or res["pass"]:
             oi = _oi_history(ex, sym)
-            res = evaluate(ohlcv, oi)
+            res = evaluate_sides(ohlcv, oi, sides=(res.get("side"),) if res.get("side") else None)
         if res["pass"]:
             signals.append({"symbol": sym, "base": sym.split("/")[0], "segment": seg,
                             **res, "price": ohlcv[-1][4], "bar_ts": ohlcv[-1][0]})
@@ -760,12 +946,18 @@ def format_signal(sig: dict) -> str:
     p = sig.get("plan") or {}
     base = sig.get("base") or ""
     tag = "美股永續" if sig.get("segment") == "tradfi" else "加密永續"
-    bits = [F.headline(f"📊 S4 {tag}", base, "做多 LONG")]
+    # The side must be in the HEADLINE, not inferred from the numbers. A short
+    # whose header still said 做多 would be a plan that loses money by being
+    # read correctly.
+    is_long = sig.get("side", "long") == "long"
+    bits = [F.headline(f"📊 S4 {tag}", base, "做多 LONG" if is_long else "做空 SHORT")]
     rows = []
     if p:
+        # Stop is always AGAINST the trade and target always WITH it, so the
+        # signs flip with the side rather than being hard-coded −/+.
         rows += [("進場", F.fmt_price(p["entry"])),
-                 ("停損", f"{F.fmt_price(p['sl'])}  −{p['stop_pct']:.2f}%"),
-                 ("目標", f"{F.fmt_price(p['tp'])}  +{p['tp_pct']:.2f}%  {p['rr']:g}R")]
+                 ("停損", f"{F.fmt_price(p['sl'])}  {'−' if is_long else '+'}{p['stop_pct']:.2f}%"),
+                 ("目標", f"{F.fmt_price(p['tp'])}  {'+' if is_long else '−'}{p['tp_pct']:.2f}%  {p['rr']:g}R")]
     # Quality is S4's OWN read; 信心 is the S2 meter's. They answer different
     # questions and printing one as the other has bitten this repo before, so
     # both are shown with the basis quality was computed on — a 100 built from
@@ -775,8 +967,10 @@ def format_signal(sig: dict) -> str:
     rows += [("品質", f"{q}/100" + (f"（基準 {qb}/100）" if qb and qb < 100 else "")
               if q is not None else "—"),
              ("信心", f"{sig['score']:.0f}/100" if sig.get("score") is not None else "—"),
-             ("EMA200", f"上升 +{sig['slope']:.2f}%" if sig.get("slope") is not None else "—"),
-             ("支撐", F.fmt_price(sig["support"]["level"]) + f"（{sig['support']['bars_ago']} 根前）"
+             ("EMA200", (f"{'上升 +' if sig['slope'] >= 0 else '下降 '}{sig['slope']:.2f}%")
+              if sig.get("slope") is not None else "—"),
+             ("支撐" if is_long else "壓力",
+              F.fmt_price(sig["support"]["level"]) + f"（{sig['support']['bars_ago']} 根前）"
               if sig.get("support") else "—"),
              ("背離", (f"{sig['div_ago']} 根前 · " + "+".join(srcs)) if srcs
               else (f"{sig['div_ago']} 根前" if sig.get("div_ago") is not None else "—")),
