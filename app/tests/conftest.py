@@ -161,6 +161,19 @@ def _no_live_side_effects(request, monkeypatch, tmp_path):
     monkeypatch.setattr(liquidations, "BUFFER_FILE",
                         str(tmp_path / "liquidations_buffer.json"))
     monkeypatch.setattr(liquidations, "start", lambda: None)
+    # 🐋 Crowd radar: one HTTP seam (_get) and one state file. Both closed for
+    # the reason the market_intel note gives, plus a sharper one this module
+    # demonstrated on its first test run — a fixture using the plausible-looking
+    # ticker "HOTUSDT" reached Binance, and HOTUSDT is REAL (Holo), so the call
+    # succeeded and spliced ~10^9 of live open interest onto a fixture series of
+    # ~1000. The test did not fail as itself; it failed as whatever Holo was
+    # doing that minute. Fake symbols are not isolation.
+    import crowd_radar
+    monkeypatch.setattr(crowd_radar, "_get", _no_net)
+    monkeypatch.setattr(crowd_radar, "STATE_FILE",
+                        str(tmp_path / "crowd_radar_state.json"))
+    monkeypatch.setattr(crowd_radar, "_tradfi_cache",
+                        {"ts": 0.0, "symbols": frozenset()})
     # Learned Bybit position modes: redirect the file AND reset the in-process
     # cache, or a test that trips the hedge-retry would teach the real engines
     # that a live symbol is hedge mode and mis-index the next real order.

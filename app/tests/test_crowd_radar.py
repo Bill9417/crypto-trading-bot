@@ -255,12 +255,25 @@ class _Fake:
         self.ratio_calls.append(sym)
         return [1.0] * 400 + [2.9]
 
+    def live_oi(self, sym):
+        """No-op live reading: returns the symbol's own last bar, so splicing
+        it changes nothing and the fixtures keep asserting about the series
+        they actually define."""
+        return self.oi_history(sym)[0][-1]
+
 
 @pytest.fixture
 def fake(monkeypatch):
     f = _Fake()
     monkeypatch.setattr(C, "oi_history", f.oi_history)
     monkeypatch.setattr(C, "ls_ratio", f.ls_ratio)
+    # live_oi MUST be stubbed too. Left real, these tests hit Binance — and
+    # "HOTUSDT" is a genuine symbol (Holo), so the call SUCCEEDED and spliced
+    # real open interest of ~10^9 onto a fixture series of ~1000, producing a
+    # fake build large enough to break its own cooldown. A test that reaches
+    # the network does not fail honestly, it fails as whatever the market is
+    # doing that minute.
+    monkeypatch.setattr(C, "live_oi", f.live_oi)
     monkeypatch.setattr(C, "PACE_SEC", 0)
     return f
 
@@ -383,3 +396,55 @@ def test_the_sweep_refuses_to_run_unfiltered_if_it_cannot_tell_stocks_apart(monk
     # and scan() turns that into a reported error rather than a crash
     out = C.scan(now=1000.0, store=C._blank(), send=None)
     assert "error" in out
+
+
+# ── instant: the live reading (added 2026-08-12) ────────────────────────────
+def test_the_live_reading_replaces_the_last_closed_bar():
+    """openInterestHist is binned, so a build starting at :01 is invisible
+    until :15. The live value is what removes that."""
+    oi, px = C.with_live([100.0, 101.0], [10.0, 10.0], 130.0)
+    assert oi == [100.0, 101.0, 130.0]
+
+
+def test_price_does_not_take_the_live_value():
+    """The price here is IMPLIED from the OI notional. Splicing a live
+    last-traded price onto an implied series puts a ~0.3% basis error into a
+    comparison whose only job is to decide a sign — a 2h move reading +0.1% on
+    one basis and −0.2% on the other flips the long/short read on rounding."""
+    oi, px = C.with_live([100.0, 101.0], [10.0, 12.0], 130.0)
+    assert px == [10.0, 12.0, 12.0], "the price series grew a foreign basis"
+    assert len(px) == len(oi), "series must stay aligned"
+
+
+def test_a_live_build_is_caught_before_the_bar_closes():
+    """End to end: five quiet days of closed bars, and a spike that exists
+    ONLY in the live reading. Without with_live this is invisible."""
+    oi = [1000 * (1 + 0.0008 * (i % 7 - 3)) for i in range(300)]
+    px = flat(len(oi))
+    assert not C.assess(oi, px, span=8)["massive"], "the closed bars are quiet"
+    loi, lpx = C.with_live(oi, px, oi[-1] * 1.14)
+    a = C.assess(loi, lpx, span=8)
+    assert a["massive"] and a["oi_pct"] > 12, a
+
+
+def test_a_dead_live_endpoint_falls_back_to_the_bars(monkeypatch, fake):
+    """Freshness is allowed to fail; correctness is not. A 500 on the live call
+    must cost 15 minutes of latency, never the whole sweep."""
+    def boom(sym):
+        raise RuntimeError("openInterest 500")
+
+    monkeypatch.setattr(C, "live_oi", boom)
+    out = C.scan([{"symbol": "HOTUSDT", "turnover": 5e8}],
+                 now=1000.0, store=C._blank(), send=None)
+    assert out["checked"] == 1 and out["errors"] == 0
+    assert [h["symbol"] for h in out["hits"]] == ["HOTUSDT"]
+
+
+def test_with_live_on_an_empty_series_does_not_invent_one():
+    assert C.with_live([], [], 100.0) == ([], [])
+
+
+def test_the_radar_runs_every_sweep_not_every_third_one():
+    """The S2 sweep is ~5 min. A self-pace above that would throttle the radar
+    back to exactly the bin lag the live call was added to remove."""
+    assert C.RUN_EVERY_SEC <= 300, C.RUN_EVERY_SEC

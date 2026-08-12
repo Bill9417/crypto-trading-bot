@@ -75,7 +75,11 @@ MIN_TURNOVER = float(os.getenv("CROWD_MIN_TURNOVER", "50000000"))   # 24h USDT
 TOP_N = int(os.getenv("CROWD_TOP_N", "120"))
 COOLDOWN_SEC = float(os.getenv("CROWD_COOLDOWN_SEC", "7200"))
 ESCALATE_MULT = 1.5              # inside cooldown, only a 1.5× bigger move re-alerts
-RUN_EVERY_SEC = float(os.getenv("CROWD_RUN_EVERY_SEC", "900"))
+# Every S2 sweep. The sweep is ~5 min, the live-OI call removes the bin lag,
+# and Binance publishes no OI WebSocket — so one sweep IS the fastest this can
+# be without inventing a stream that does not exist. Set above the sweep
+# interval this would silently throttle itself back to a bin's worth of lag.
+RUN_EVERY_SEC = float(os.getenv("CROWD_RUN_EVERY_SEC", "240"))
 PACE_SEC = float(os.getenv("CROWD_PACE_SEC", "0.15"))
 KEEP_RECENT = 60
 TIMEOUT = 15
@@ -287,6 +291,38 @@ def oi_history(symbol: str, period: str = PERIOD, limit: int = HIST) -> tuple:
     return oi, px
 
 
+def live_oi(symbol: str) -> float:
+    """Open interest RIGHT NOW, not at the last 15m bin.
+
+    openInterestHist is binned and can be up to a full period stale, so a build
+    that starts at :01 is invisible until :15. This endpoint is the same
+    quantity (base-coin open interest) sampled at this instant, which is what
+    makes the radar report a pile-up while it is happening instead of after.
+    """
+    row = _get("/fapi/v1/openInterest", {"symbol": symbol})
+    return float(row["openInterest"])
+
+
+def with_live(oi_series: list, px_series: list, oi_now: float) -> tuple:
+    """Splice the live reading onto the closed bars.
+
+    OI gets the live value. PRICE DELIBERATELY DOES NOT: the price in this
+    module is implied from the OI notional, and mixing an implied price with a
+    live last-traded price puts a ~0.3% basis error into a comparison whose
+    only job is to decide a sign. A 2h price move that reads +0.1% one way and
+    −0.2% the other would flip the long/short read on rounding. The bar price
+    is at most one period stale, which cannot matter to a direction over two
+    hours, so both ends stay on the same basis.
+
+    The window this creates is (span−1) bars plus the age of the last bar —
+    105 to 120 minutes for span 8, not exactly 120. That imprecision is worth
+    the 15 minutes of latency it removes.
+    """
+    if not oi_series or not px_series:
+        return oi_series, px_series
+    return oi_series + [float(oi_now)], px_series + [px_series[-1]]
+
+
 def ls_ratio(symbol: str, period: str = PERIOD, limit: int = HIST) -> list:
     rows = _get("/futures/data/topLongShortPositionRatio",
                 {"symbol": symbol, "period": period, "limit": limit})
@@ -404,6 +440,14 @@ def scan(symbols: list = None, now: float = None, store: dict = None,
             continue
         finally:
             time.sleep(PACE_SEC)
+        # The live reading is what makes this instant, but it is an extra call
+        # that is allowed to fail: falling back to the last closed bar costs
+        # freshness, never correctness.
+        try:
+            oi, px = with_live(oi, px, live_oi(sym))
+            time.sleep(PACE_SEC)
+        except Exception:  # noqa: BLE001
+            pass
         checked += 1
         a = assess(oi, px)
         if not a.get("massive"):

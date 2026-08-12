@@ -1870,6 +1870,99 @@
         </script>
 
 
+        <!-- 🐋 OI 異常 — the crowd piling massively into one side.
+             Sits next to Pump Radar because they answer adjacent questions:
+             that one is price moving, this one is POSITIONS being built. A
+             pump with no OI build is spot money; a pump with a huge OI build
+             is leverage, and only one of those has fuel for a squeeze.
+
+             Polls /api/crowd_radar, which reads the scanner's state file and
+             makes no exchange call — so a 30s poll costs nothing. The scanner
+             re-scans every sweep against a LIVE open-interest reading, not the
+             last 15m bin, which is what makes this current rather than late. -->
+        <section class="analytics-panel" id="oi-panel">
+            <div class="analytics-head">
+                <div>
+                    <div class="analytics-title">🐋 OI 異常 <span style="text-transform:none;letter-spacing:0;font-weight:600;opacity:.7;">未平倉異常堆積</span></div>
+                    <div class="analytics-subtitle" id="oi-sub">開倉／平倉的異常量 —— 跟每個幣自己過去 5 天比</div>
+                </div>
+                <a href="{{ url_for('market') }}" class="analytics-link">Market →</a>
+            </div>
+            <div id="oi-row" style="display:flex; gap:8px; overflow-x:auto; padding:2px 0 6px; -webkit-overflow-scrolling:touch;">
+                <div class="analytics-subtitle">等待下一次掃描…</div>
+            </div>
+        </section>
+        <script>
+        (function () {
+            // Colour follows what the move means for PRICE, not whether the
+            // number is positive: shorts piling in is red even though OI rose,
+            // and shorts covering is green even though OI fell. Colouring by
+            // the sign of OI would paint a short build green.
+            var READ = {
+                longs_opening:  {zh: '新多單進場', ico: '🐋', bull: true,  build: true},
+                shorts_opening: {zh: '新空單進場', ico: '🐻', bull: false, build: true},
+                shorts_closing: {zh: '空單回補',   ico: '🔥', bull: true,  build: false},
+                longs_closing:  {zh: '多單平倉',   ico: '🩸', bull: false, build: false}
+            };
+            function ago(ts) {
+                if (!ts) return '';
+                var s = Math.max(0, Date.now() / 1000 - ts);
+                if (s < 90) return Math.round(s) + '秒前';
+                if (s < 5400) return Math.round(s / 60) + '分前';
+                if (s < 172800) return Math.round(s / 3600) + '小時前';
+                return Math.round(s / 86400) + '天前';
+            }
+            function chip(r) {
+                var meta = READ[r.state] || {zh: r.state, ico: '•', bull: true, build: true};
+                var col = meta.bull ? 'var(--long, #4ade80)' : 'var(--short, #f87171)';
+                var base = (r.symbol || '').replace(/USDT$/, '');
+                var rare = Math.max(0.1, 100 - (r.pctile || 0));
+                return '<a href="https://www.bybit.com/trade/usdt/' + base + 'USDT"' +
+                    ' target="_blank" rel="noopener" style="' +
+                    'flex:0 0 auto; min-width:132px; text-decoration:none; color:inherit;' +
+                    'background:rgba(255,255,255,.03); border:1px solid ' + col + ';' +
+                    'border-radius:12px; padding:8px 11px; display:block;">' +
+                    '<div style="font-weight:800; font-size:.82rem;">' + base + ' ' + meta.ico + '</div>' +
+                    '<div style="font-size:.95rem; font-weight:800; color:' + col + ';">' +
+                        (r.oi_pct >= 0 ? '+' : '') + r.oi_pct.toFixed(1) +
+                        '% <span style="font-size:.62rem; opacity:.65;">OI</span></div>' +
+                    '<div style="font-size:.66rem; color:' + col + '; opacity:.9;">' + meta.zh + '</div>' +
+                    '<div style="font-size:.64rem; color:var(--wolf-muted, #8a99ad); margin-top:2px;">' +
+                        '價 ' + (r.px_pct >= 0 ? '+' : '') + r.px_pct.toFixed(1) + '% · 前' + rare.toFixed(1) + '%</div>' +
+                    '<div style="font-size:.62rem; color:var(--wolf-muted, #8a99ad);">' + ago(r.ts) + '</div></a>';
+            }
+            function load() {
+                fetch('/api/crowd_radar')
+                    .then(function (r) { return r.ok ? r.json() : null; })
+                    .then(function (d) {
+                        if (!d) return;
+                        var row = document.getElementById('oi-row');
+                        var rows = d.recent || [];
+                        var sub = document.getElementById('oi-sub');
+                        if (!rows.length) {
+                            row.innerHTML = '<div class="analytics-subtitle">目前沒有異常堆積 —— ' +
+                                '只有排進自己近 5 天前 ' + (100 - (d.pctile_gate || 98)).toFixed(0) +
+                                '%、且幅度 ≥' + (d.min_oi_pct || 5) + '% 才會列出。空的是常態。</div>';
+                        } else {
+                            row.innerHTML = rows.map(chip).join('');
+                        }
+                        if (sub) {
+                            sub.textContent = '開倉／平倉的異常量 —— 跟每個幣自己過去 5 天比' +
+                                (d.ran_ts ? ' · 掃描於 ' + ago(d.ran_ts) : '');
+                        }
+                    })
+                    .catch(function () {});
+            }
+            load();
+            // 30s: the scanner re-scans every sweep, and this endpoint only
+            // reads a file, so polling faster than the producer costs nothing
+            // and shows a new pile-up the moment it is written.
+            setInterval(function () { if (!document.hidden) load(); }, 30000);
+            document.addEventListener('visibilitychange', function () { if (!document.hidden) load(); });
+        })();
+        </script>
+
+
         <!-- 🐳 Whale positioning — a diverging bar read, not a 3D skyline.
              The skyline wasted a wide, short panel: one long on the far left,
              six shorts bunched right, and a lake of empty space between them.
