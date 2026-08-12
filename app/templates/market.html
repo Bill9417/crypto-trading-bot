@@ -308,6 +308,61 @@
             <span id="econ-events" style="display:inline-flex;gap:8px;flex-wrap:wrap;font-size:.72rem;"></span>
         </div>
 
+        <!-- 🐋 Crowd radar — abnormal open-interest builds.
+             Sits directly above Liquidations on purpose: this is the crowd
+             getting INTO a position, that is the same crowd being carried out.
+             Rendered server-side from the scanner's state file, so the panel
+             costs no exchange call and cannot slow the page. -->
+        <div class="analytics-panel">
+            <div class="analytics-head">
+                <div class="analytics-title">🐋 Crowd radar <span style="text-transform:none;letter-spacing:0;font-weight:600;">— 未平倉異常堆積（{{ crowd.span_h|default(2) }}h）</span></div>
+                <div style="font-size:.66rem;opacity:.6;" id="crowd-ago">—</div>
+            </div>
+            {% if crowd and crowd.recent %}
+            <div style="overflow-x:auto;">
+            <table style="width:100%;border-collapse:collapse;font-size:.76rem;">
+                <thead><tr style="text-align:left;opacity:.55;font-size:.66rem;text-transform:uppercase;letter-spacing:.04em;">
+                    <th style="padding:6px 8px;">Symbol</th><th style="padding:6px 8px;">判讀</th>
+                    <th style="padding:6px 8px;text-align:right;">未平倉</th>
+                    <th style="padding:6px 8px;text-align:right;">價格</th>
+                    <th style="padding:6px 8px;text-align:right;">罕見度</th>
+                    <th style="padding:6px 8px;text-align:right;">多空比</th>
+                    <th style="padding:6px 8px;text-align:right;">When</th>
+                </tr></thead>
+                <tbody>
+                {% for r in crowd.recent %}
+                {% set building = r.state in ('longs_opening', 'shorts_opening') %}
+                {% set bullish = r.state in ('longs_opening', 'shorts_closing') %}
+                <tr style="border-top:1px solid rgba(255,255,255,.06);">
+                    <td style="padding:6px 8px;font-weight:700;">{{ r.symbol[:-4] }}</td>
+                    <td style="padding:6px 8px;color:{{ '#86efac' if bullish else '#fca5a5' }};">
+                        {{ crowd.read_zh.get(r.state, r.state) }}
+                        {% if not building %}<span style="opacity:.5;font-size:.62rem;">平倉</span>{% endif %}
+                    </td>
+                    <td style="padding:6px 8px;text-align:right;font-variant-numeric:tabular-nums;color:{{ '#86efac' if r.oi_pct > 0 else '#fca5a5' }};">{{ '%+.1f'|format(r.oi_pct) }}%</td>
+                    <td style="padding:6px 8px;text-align:right;font-variant-numeric:tabular-nums;opacity:.8;">{{ '%+.1f'|format(r.px_pct) }}%</td>
+                    <td style="padding:6px 8px;text-align:right;font-variant-numeric:tabular-nums;opacity:.7;">前 {{ '%.1f'|format([0.1, 100 - r.pctile]|max) }}%</td>
+                    <td style="padding:6px 8px;text-align:right;font-variant-numeric:tabular-nums;opacity:.7;">{% if r.ratio %}{{ '%.2f'|format(r.ratio) }}{% else %}—{% endif %}</td>
+                    <td style="padding:6px 8px;text-align:right;opacity:.6;" class="crowd-ago" data-ts="{{ r.ts }}">—</td>
+                </tr>
+                {% endfor %}
+                </tbody>
+            </table>
+            </div>
+            <div style="margin-top:10px;font-size:.68rem;opacity:.6;line-height:1.6;">
+                未平倉上升 = 有人開新倉；下降 = 有人平倉。配合價格方向推測是哪一邊 —— 這是<b>慣例讀法</b>，
+                未平倉本身無法指認誰是主動方。罕見度 = 跟該幣自己過去 5 天的每 {{ crowd.span_h|default(2) }} 小時變化比的排名，不是機率。
+                <b>這是「持倉位置」不是進場訊號</b> —— 本系統從未驗證過它能預測方向。
+            </div>
+            {% else %}
+            <div style="padding:18px 4px;opacity:.6;font-size:.78rem;">
+                目前沒有異常堆積。<br>
+                <span style="opacity:.75;font-size:.72rem;">只有當某幣的 {{ crowd.span_h|default(2) }} 小時未平倉變化排進自己近 5 天的前
+                {{ '%.0f'|format(100 - (crowd.pctile_gate|default(98))) }}%、且幅度 ≥{{ crowd.min_oi_pct|default(5) }}% 才會列出 —— 空的是常態。</span>
+            </div>
+            {% endif %}
+        </div>
+
         <!-- 💥 Live liquidations (Binance + Bybit + OKX WebSockets) -->
         <div class="analytics-panel">
             <div class="analytics-head">
@@ -747,6 +802,30 @@
         }
         loadEvents();
         wolfPoll(loadEvents, 300000);
+
+        // 🐋 Crowd radar timestamps. Rendered client-side because the panel is
+        // server-rendered and may be served from cache — a baked-in "3 分鐘前"
+        // would keep claiming that for as long as the page stayed open.
+        function crowdAgo(ts) {
+            if (!ts) return '—';
+            const s = Math.max(0, Date.now() / 1000 - ts);
+            if (s < 90) return Math.round(s) + ' 秒前';
+            if (s < 5400) return Math.round(s / 60) + ' 分鐘前';
+            if (s < 172800) return Math.round(s / 3600) + ' 小時前';
+            return Math.round(s / 86400) + ' 天前';
+        }
+        function paintCrowdAgo() {
+            document.querySelectorAll('.crowd-ago').forEach(function (el) {
+                el.textContent = crowdAgo(parseFloat(el.dataset.ts));
+            });
+            const head = document.getElementById('crowd-ago');
+            if (head) {
+                const ran = {{ (crowd.ran_ts or 0)|tojson }};
+                head.textContent = ran ? '掃描於 ' + crowdAgo(ran) : '尚未掃描';
+            }
+        }
+        paintCrowdAgo();
+        wolfPoll(paintCrowdAgo, 60000);
     </script>
 </body>
 </html>

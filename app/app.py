@@ -3665,7 +3665,27 @@ def market():
     except Exception as e:  # noqa: BLE001
         print(f"Circuit state error: {e}")
         circuit = build_circuit_state([])
-    return render_template("market.html", intel=intel, circuit=circuit)
+    # 🐋 Crowd radar reads a file the scanner writes; it never fetches here, so
+    # a slow or down Binance cannot delay this page.
+    try:
+        import crowd_radar
+        crowd = crowd_radar.web_view()
+    except Exception as e:  # noqa: BLE001 — a strip must never break the page
+        print(f"Crowd radar view error: {e}")
+        crowd = {"recent": [], "ran_ts": 0}
+    return render_template("market.html", intel=intel, circuit=circuit, crowd=crowd)
+
+
+@app.route("/api/crowd_radar")
+@login_required
+def api_crowd_radar():
+    """Latest extreme open-interest builds. Reads the scanner's state file —
+    no exchange call — so polling this is free."""
+    try:
+        import crowd_radar
+        return jsonify(crowd_radar.web_view())
+    except Exception as e:  # noqa: BLE001
+        return jsonify({"recent": [], "ran_ts": 0, "error": str(e)[:150]}), 200
 
 
 @app.route("/api/market_intel")

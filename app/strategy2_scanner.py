@@ -693,6 +693,18 @@ def main() -> None:
             strategy4.tick()
         except Exception as exc:  # noqa: BLE001 — a watch-only scan never kills the loop
             print(f"[strategy2] s4 error: {exc}")
+        # 🐋 Crowd radar — abnormal open-interest builds on the most liquid
+        # crypto perps. Self-paced to 15 min (the sweep runs every 5), ~46
+        # symbols × 1 public Binance call. Positioning, not a signal.
+        try:
+            import crowd_radar
+            crowd = crowd_radar.tick()
+            if crowd.get("checked"):
+                print(f"[crowd] checked {crowd['checked']} · "
+                      f"{len(crowd.get('hits') or [])} extreme · "
+                      f"{crowd.get('alerted', 0)} alerted")
+        except Exception as exc:  # noqa: BLE001 — a watch-only scan never kills the loop
+            print(f"[strategy2] crowd radar error: {exc}")
         # 📋 台股週結 — honest Sunday-morning TP/SL scorecard to LINE
         # (self-paced no-op except Sunday mornings).
         try:
