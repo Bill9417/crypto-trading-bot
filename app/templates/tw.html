@@ -3,6 +3,11 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <!-- iOS Safari auto-links anything shaped like a phone number. A price
+         such as 866.0700 is NNN.NNNN = a 7-digit US number, so Safari turned
+         it into a blue underlined tel: link that dialled when tapped. Prices,
+         R multiples and quantities are numbers, never numbers to call. -->
+    <meta name="format-detection" content="telephone=no">
     <title>台股．好進場點</title>
     <meta name="theme-color" content="#0d1220">
     <link rel="preconnect" href="https://fonts.googleapis.com">

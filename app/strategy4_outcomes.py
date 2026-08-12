@@ -47,11 +47,29 @@ STORE_FILE = os.path.join(os.path.dirname(__file__), "strategy4_outcomes.json")
 # 192 bars — the same window signal_outcomes uses, so the two records are
 # comparable rather than accidentally different.
 TRACK_HOURS = float(os.getenv("S4_TRACK_HOURS", "48"))
-MAX_EVAL_PER_TICK = int(os.getenv("S4_EVAL_PER_TICK", "6"))   # API-friendly trickle
+# Raised 6→12 on 2026-08-12. The scan that calls this already fetches candles
+# for ~140 symbols on the same tick, so a dozen more is not what threatens the
+# rate limit — but a cap of 6 was small enough to be smaller than the open book,
+# which is what broke the record (see evaluate_open).
+MAX_EVAL_PER_TICK = int(os.getenv("S4_EVAL_PER_TICK", "12"))
 KEEP_CLOSED = int(os.getenv("S4_KEEP_CLOSED", "400"))
 PACE_SEC = float(os.getenv("S4_PACE_SEC", "0.25"))
 
 OUTCOMES = ("tp", "sl", "expired")
+
+# Tally keys. Segments partition the universe, sides partition the direction,
+# and the two are tallied independently rather than crossed — a 2×2 grid of
+# n≈7 buckets would be four numbers none of which can say anything.
+#
+# The side split exists because strategy4's own docstring says the short side
+# has NOTHING measured behind it, and it was switched on 2026-08-11. Pooling
+# both sides into one expectancy is precisely how an unmeasured half hides
+# inside a measured one. Prefixed so a side can never collide with a segment.
+SIDE_KEYS = ("side:long", "side:short")
+
+
+def _side_key(side: str) -> str:
+    return "side:short" if side == "short" else "side:long"
 
 
 # ── store ────────────────────────────────────────────────────────────────────
@@ -205,7 +223,12 @@ def accumulate(store: dict, closed: dict) -> None:
     if not isinstance(r, (int, float)):
         return
     seg = closed.get("segment") or "?"
-    for name in ("all", seg):
+    # Missing side means a row recorded before the short side existed, which
+    # settle() scored on the long formulae — so long is what it actually is,
+    # not a guess. Both must default identically or the record would disagree
+    # with the maths that produced it.
+    side = _side_key(closed.get("side") or "long")
+    for name in ("all", seg, side):
         b = store.setdefault("tally", {}).setdefault(name, _bucket())
         for k, v in _bucket().items():                 # heal older shapes
             b.setdefault(k, v)
@@ -229,28 +252,49 @@ def _candles(client, symbol, since_ms, timeframe, need):
 
 
 def evaluate_open(client=None, store: dict = None, now_ts: float = None,
-                  max_eval: int = MAX_EVAL_PER_TICK) -> dict:
-    """Fetch candles for the oldest open trades and settle what has resolved.
+                  max_eval: int = None) -> dict:
+    """Fetch candles for open trades and settle what has resolved.
 
-    Oldest first: those are the ones closest to expiry, and the ones whose
-    candles would age out of a `since` fetch. Bounded per tick so tracking
-    never competes with the scan itself for rate limit.
+    LEAST-RECENTLY-CHECKED FIRST, not oldest-first. That ordering is the whole
+    point of this function's correctness, and getting it wrong is not a delay,
+    it is a wrong record. Sorted by signal age with a per-tick cap, the first
+    `max_eval` trades are the SAME trades on every tick: nothing after position
+    `max_eval` is ever looked at until something ahead of it closes. On
+    2026-08-12 that left 0G showing as live on /s4 five hours after it had
+    stopped out, queued behind six older trades, and it would have stayed there
+    until the oldest of them expired 31 hours later.
+
+    Rotating on `checked_ts` bounds the staleness of every row instead: with n
+    open and a cap of k, each trade is re-checked at least every ceil(n/k)
+    ticks, whatever else is in the book. Trades that error out are stamped too
+    — a delisted symbol that can never be fetched must lose its turn like any
+    other, or it re-acquires the head of the queue forever and starves the book
+    exactly the way the old ordering did.
     """
     import strategy4 as S4
     store = load() if store is None else store
     now_ts = now_ts if now_ts is not None else time.time()
+    max_eval = MAX_EVAL_PER_TICK if max_eval is None else max_eval
     ex = client or S4._client()
 
-    pending = sorted(store["open"].values(), key=lambda t: t.get("bar_ts") or 0)
+    pending = sorted(store["open"].values(),
+                     key=lambda t: (t.get("checked_ts") or 0, t.get("bar_ts") or 0))
     done = {"settled": 0, "still_open": 0, "errors": 0}
     for trade in pending[:max_eval]:
         bar_ms = int(trade.get("bar_ts") or 0)
         need = int(TRACK_HOURS * 60 / 15) + 5
+        trade["checked_ts"] = now_ts       # stamped before the call can fail
         try:
             candles = _candles(ex, trade["symbol"], bar_ms, S4.TIMEFRAME, need)
         except Exception:  # noqa: BLE001 — a dead symbol must not stall the book
             done["errors"] += 1
             continue
+        finally:
+            # Pacing belongs to the FETCH, not to the settlement: the request is
+            # what costs rate limit, and it was charged whether or not the trade
+            # happened to resolve. Behind the old placement a book of live
+            # trades made every one of its calls back to back.
+            time.sleep(PACE_SEC)
         closed = settle(trade, candles, now_ts)
         if not closed:
             done["still_open"] += 1
@@ -259,16 +303,55 @@ def evaluate_open(client=None, store: dict = None, now_ts: float = None,
         store["closed"].append(closed)
         accumulate(store, closed)
         done["settled"] += 1
-        time.sleep(PACE_SEC)
 
     if len(store["closed"]) > KEEP_CLOSED:
         store["closed"] = store["closed"][-KEEP_CLOSED:]
     return done
 
 
+def backfill_sides(store: dict) -> bool:
+    """One-time: build the side buckets from trades settled before they existed.
+
+    Only safe while the `closed` list is still the COMPLETE history, which is
+    what the length check tests. `closed` is pruned to KEEP_CLOSED and the
+    tally deliberately is not, so once anything has been dropped the list can
+    no longer reproduce the totals — replaying it then would silently invent a
+    record shorter than the real one. In that case the split simply starts
+    from today and says so by being smaller than `all`, which is honest;
+    a fabricated backfill would not be.
+    """
+    tally = store.setdefault("tally", {})
+    if any(k in tally for k in SIDE_KEYS) or store.get("side_backfill"):
+        return False
+    closed = store.get("closed") or []
+    total = (tally.get("all") or {}).get("n", 0)
+    if total and len(closed) != total:
+        store["side_backfill"] = "skipped: closed list is already pruned"
+        return False
+    for c in closed:
+        r = c.get("r")
+        if not isinstance(r, (int, float)):
+            continue
+        b = tally.setdefault(_side_key(c.get("side") or "long"), _bucket())
+        b["n"] += 1
+        b["sum"] = round(b["sum"] + r, 4)
+        b["sumsq"] = round(b["sumsq"] + r * r, 4)
+        b["sumsq_n"] += 1
+        if r > 0:
+            b["wins"] += 1
+            b["gain"] = round(b["gain"] + r, 4)
+        else:
+            b["loss"] = round(b["loss"] - r, 4)
+        if c.get("outcome") in OUTCOMES:
+            b[c["outcome"]] += 1
+    store["side_backfill"] = f"rebuilt from {len(closed)} settled trades"
+    return True
+
+
 def tick(client=None, signals: list = None, now_ts: float = None) -> dict:
     """One maintenance pass: record what just fired, settle what has resolved."""
     store = load()
+    backfill_sides(store)
     added = record(signals or [], store, now_ts)
     done = evaluate_open(client, store, now_ts)
     save(store)
@@ -303,8 +386,11 @@ def stats(store: dict = None, segment: str = "all") -> dict:
     b = (store.get("tally") or {}).get(segment) or {}
     row = reality.row(b, segment, {segment: (segment, segment)})
     row.update({k: b.get(k, 0) for k in OUTCOMES})
-    row["hit_rate"] = (100.0 * b["tp"] / (b["tp"] + b["sl"])
-                       if (b.get("tp", 0) + b.get("sl", 0)) else None)
+    tp, sl = b.get("tp", 0), b.get("sl", 0)
+    # Expired trades are excluded on purpose: they never hit either level, so
+    # counting them as misses would answer a different question than "when it
+    # resolved, which way did it resolve".
+    row["hit_rate"] = 100.0 * tp / (tp + sl) if (tp + sl) else None
     row["verdict_zh"] = VERDICT_ZH.get(row.get("tag"), row.get("verdict") or "")
     return row
 
@@ -314,7 +400,7 @@ def web_view(store: dict = None) -> dict:
     store = load() if store is None else store
     closed = sorted(store.get("closed") or [],
                     key=lambda c: c.get("exit_ts") or 0, reverse=True)
-    segs = [s for s in ("all", "crypto", "tradfi")
+    segs = [s for s in ("all", "crypto", "tradfi") + SIDE_KEYS
             if (store.get("tally") or {}).get(s)]
     return {
         "tracked": len(store.get("open") or {}) + len(closed),

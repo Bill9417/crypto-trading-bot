@@ -3,6 +3,11 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <!-- iOS Safari auto-links anything shaped like a phone number. A price
+         such as 866.0700 is NNN.NNNN = a 7-digit US number, so Safari turned
+         it into a blue underlined tel: link that dialled when tapped. Prices,
+         R multiples and quantities are numbers, never numbers to call. -->
+    <meta name="format-detection" content="telephone=no">
     <title>Wolf Scanner — S4 掃描</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -121,12 +126,20 @@
 
     {% if s4.signals %}
         {% for s in s4.signals %}
+        {# Every directional word on this card follows s.side. It was written
+           when S4 was long-only and kept saying 做多 / 支撐 / 上升 / −停損 +停利
+           after the short side went live on 2026-08-11, so a short setup
+           rendered as its own mirror image: stop shown as a fall when it is a
+           rise, resistance labelled support. The Telegram alert had already
+           been made side-aware; this page had not, and the page is the copy
+           you read when you are not looking at your phone. #}
+        {% set is_long = (s.side or 'long') == 'long' %}
         <div class="s4-card">
             <div class="s4-top">
                 <div>
                     <span class="s4-sym">{{ s.base }}</span>
                     <span class="s4-badge" style="background:rgba(255,176,32,.16);color:var(--amber)">{{ '美股' if s.segment == 'tradfi' else '加密' }}</span>
-                    <span class="s4-badge">做多 LONG</span>
+                    <span class="s4-badge" style="background:{{ 'rgba(52,211,153,.16)' if is_long else 'rgba(248,113,113,.16)' }};color:{{ '#86efac' if is_long else '#fca5a5' }}">{{ '做多 LONG' if is_long else '做空 SHORT' }}</span>
                     {% if s.score is not none %}<span class="s4-badge" style="background:rgba(0,210,255,.14);color:var(--blue)">信心 {{ '%.0f'|format(s.score) }}</span>{% endif %}
                 </div>
                 <div class="s4-px">{{ s.price }}</div>
@@ -134,12 +147,17 @@
             <div class="s4-grid">
                 {% if s.plan %}
                 <div><b>進場</b><span class="s4-lv">{{ '%.4f'|format(s.plan.entry) }}</span></div>
-                <div><b>停損</b><span class="s4-lv dn">{{ '%.4f'|format(s.plan.sl) }} · −{{ '%.2f'|format(s.plan.stop_pct) }}%</span></div>
-                <div><b>停利 {{ s.plan.rr }}R</b><span class="s4-lv up">{{ '%.4f'|format(s.plan.tp) }} · +{{ '%.2f'|format(s.plan.tp_pct) }}%</span></div>
+                {# The stop is always AGAINST the trade and the target always
+                   WITH it, so both signs flip with the side. #}
+                <div><b>停損</b><span class="s4-lv dn">{{ '%.4f'|format(s.plan.sl) }} · {{ '−' if is_long else '+' }}{{ '%.2f'|format(s.plan.stop_pct) }}%</span></div>
+                <div><b>停利 {{ s.plan.rr }}R</b><span class="s4-lv up">{{ '%.4f'|format(s.plan.tp) }} · {{ '+' if is_long else '−' }}{{ '%.2f'|format(s.plan.tp_pct) }}%</span></div>
                 {% endif %}
-                <div><b>EMA200</b><span class="s4-lv up">上升 {% if s.slope is not none %}+{{ '%.2f'|format(s.slope) }}%{% endif %}</span></div>
+                <div><b>EMA200</b><span class="s4-lv {{ 'up' if is_long else 'dn' }}">{% if s.slope is not none %}{{ '上升 +' if s.slope >= 0 else '下降 ' }}{{ '%.2f'|format(s.slope) }}%{% else %}{{ '上升' if is_long else '下降' }}{% endif %}</span></div>
                 {% if s.support %}
-                <div><b>支撐</b><span class="s4-lv">{{ '%.4f'|format(s.support.level) }} <i style="opacity:.6">{{ s.support.bars_ago }} 根前</i></span></div>
+                {# One field, two names: strategy4.structure_level() returns
+                   support for a long and resistance for a short under the same
+                   key, and that is the level the stop sits behind. #}
+                <div><b>{{ '支撐' if is_long else '壓力' }}</b><span class="s4-lv">{{ '%.4f'|format(s.support.level) }} <i style="opacity:.6">{{ s.support.bars_ago }} 根前</i></span></div>
                 {% endif %}
                 <div><b>背離</b><span class="s4-lv">{% if s.div_ago is not none %}{{ s.div_ago }} 根前{% else %}—{% endif %}</span></div>
                 <div><b>未平倉</b><span class="s4-lv">{{ {1:'開多',2:'開空',3:'空單回補',4:'多單平倉'}.get(s.oi_state, '—') }}</span></div>
@@ -194,9 +212,15 @@
                     {{ '%+.1f'|format(st.net or 0) }}R</b></div>
             </div>
             {% if rec.stats and rec.stats|length > 1 %}
+            {# Split by direction as well as by universe. S4's short side was
+               switched on 2026-08-11 with nothing measured behind it, and one
+               pooled expectancy is exactly where an unmeasured half hides
+               inside a measured one. #}
+            {% set seg_label = {'tradfi': '美股', 'crypto': '加密',
+                                'side:long': '做多', 'side:short': '做空'} %}
             <div class="s4-seg">
                 {% for k, v in rec.stats.items() %}{% if k != 'all' %}
-                <span>{{ '美股' if k == 'tradfi' else '加密' }} · {{ v.n }} 筆 ·
+                <span>{{ seg_label.get(k, k) }} · {{ v.n }} 筆 ·
                       {{ '%+.3f'|format(v.exp or 0) }}R</span>
                 {% endif %}{% endfor %}
             </div>
@@ -215,20 +239,29 @@
             <div class="s4-rechd" style="font-size:.8rem">追蹤中 · {{ rec.open|length }} 筆</div>
             <div class="s4-tbl"><table class="s4-t">
                 <thead><tr><th class="l">標的</th><th>進場</th><th class="hs">停損</th>
-                    <th class="hs">停利</th><th>通知時間</th></tr></thead>
+                    <th class="hs">停利</th><th>通知時間</th><th>最後對帳</th></tr></thead>
                 <tbody>
                 {% for t in rec.open %}
                 <tr>
                     <td class="l"><b>{{ t.base }}</b>
+                        <span style="color:{{ '#86efac' if (t.side or 'long') == 'long' else '#fca5a5' }};font-size:.68rem">{{ '多' if (t.side or 'long') == 'long' else '空' }}</span>
                         <span style="opacity:.55;font-size:.68rem">{{ '美股' if t.segment == 'tradfi' else '加密' }}</span></td>
                     <td>{{ '%.4f'|format(t.entry) }}</td>
                     <td class="hs" style="color:#fca5a5">{{ '%.4f'|format(t.sl) }}</td>
                     <td class="hs" style="color:#86efac">{{ '%.4f'|format(t.tp) }}</td>
                     <td class="s4-ago" data-ts="{{ t.fired_ts or 0 }}">—</td>
+                    <td class="s4-ago" data-ts="{{ t.checked_ts or 0 }}" style="opacity:.7">—</td>
                 </tr>
                 {% endfor %}
                 </tbody>
             </table></div>
+            {# 最後對帳 is the honest half of this table. "追蹤中" only means "not
+               resolved as of the last check", so the age of that check is what
+               tells you whether the row can be trusted — a row that says 5 小時前
+               may already be dead. Before 2026-08-12 the column did not exist
+               and rows could sit unchecked indefinitely with nothing to show it. #}
+            <div class="s4-verd" style="opacity:.75">「追蹤中」= 最後一次對帳時還沒觸發。
+                對帳時間越舊，越可能其實已經出場了。</div>
         </div>
         {% endif %}
 
@@ -242,7 +275,10 @@
                 <tbody>
                 {% for c in rec.closed %}
                 <tr>
+                    {# Missing side = settled before the short side existed, so
+                       it was scored long. Same default as settle(). #}
                     <td class="l"><b>{{ c.base }}</b>
+                        <span style="color:{{ '#86efac' if (c.side or 'long') == 'long' else '#fca5a5' }};font-size:.68rem">{{ '多' if (c.side or 'long') == 'long' else '空' }}</span>
                         <span style="opacity:.55;font-size:.68rem">{{ '美股' if c.segment == 'tradfi' else '加密' }}</span></td>
                     <td class="l"><span class="s4-oc {{ 'tp' if c.outcome == 'tp' else 'sl' if c.outcome == 'sl' else 'exp' }}">{{
                         '停利' if c.outcome == 'tp' else '停損' if c.outcome == 'sl' else '到期' }}</span></td>

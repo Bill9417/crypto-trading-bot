@@ -335,3 +335,229 @@ def test_record_keeps_a_short_instead_of_dropping_it():
            "plan": {"entry": 100.0, "sl": 103.0, "tp": 94.0, "rr": 2, "stop_pct": 3.0}}
     assert O.record([sig], store, now_ts=0) == 1
     assert next(iter(store["open"].values()))["side"] == "short"
+
+
+# ── who gets checked, and how often (added 2026-08-12) ──────────────────────
+# The bug this pins: evaluate_open sorted the open book by signal age and then
+# took the first MAX_EVAL_PER_TICK. Once the book grew past the cap, the head of
+# that list was the same set of trades every tick and everything behind it was
+# NEVER evaluated. 0G stopped out at 05:45 and /s4 still listed it as live at
+# 09:00, seventh in a queue of eight behind a cap of six — it would have stayed
+# "追蹤中" until the oldest trade in front of it expired 31 hours later.
+class _FakeEx:
+    """Records which symbols were asked for, and returns a candle that resolves
+    nothing so every trade stays open and the queue keeps its shape."""
+
+    def __init__(self):
+        self.asked = []
+
+    def fetch_ohlcv(self, symbol, timeframe, since, limit):
+        self.asked.append(symbol)
+        return [[since + M15, 100.0, 100.5, 99.5, 100.0, 0]]
+
+
+def _book(n, now_ts=0.0):
+    store = O._blank()
+    for i in range(n):
+        k = f"S{i}/USDT:USDT:{i}"
+        store["open"][k] = trade(key=k, symbol=f"S{i}/USDT:USDT", base=f"S{i}",
+                                 bar_ts=BAR + i, checked_ts=None)
+    return store
+
+
+def test_every_open_trade_is_checked_within_one_rotation(monkeypatch):
+    """The property that makes the record true rather than merely eventual:
+    with n open and a cap of k, nothing goes unchecked for more than
+    ceil(n/k) ticks — no matter where it sits in the book."""
+    monkeypatch.setattr(O, "PACE_SEC", 0)
+    store, ex = _book(8), _FakeEx()
+    for tick_no in range(2):                       # ceil(8/6) == 2 ticks
+        O.evaluate_open(ex, store, now_ts=NOW + tick_no, max_eval=6)
+    assert set(ex.asked) == {f"S{i}/USDT:USDT" for i in range(8)}
+
+
+def test_the_tail_of_the_book_is_not_starved_by_the_head(monkeypatch):
+    """The exact failure: a trade behind the cap must not be skipped forever
+    while older, still-unresolved trades keep re-claiming every slot."""
+    monkeypatch.setattr(O, "PACE_SEC", 0)
+    store, ex = _book(8), _FakeEx()
+    for tick_no in range(6):
+        O.evaluate_open(ex, store, now_ts=NOW + tick_no, max_eval=6)
+    last = "S7/USDT:USDT"
+    assert ex.asked.count(last) >= 2, "the newest trade never came up for air"
+
+
+def test_an_unfetchable_symbol_loses_its_turn_like_any_other(monkeypatch):
+    """A delisted symbol errors on every fetch. If erroring left it unstamped
+    it would re-take the head of the queue forever and starve the book exactly
+    the way the old ordering did."""
+    monkeypatch.setattr(O, "PACE_SEC", 0)
+
+    class _Dead(_FakeEx):
+        def fetch_ohlcv(self, symbol, *a, **k):
+            self.asked.append(symbol)
+            if symbol == "S0/USDT:USDT":
+                raise RuntimeError("delisted")
+            return [[BAR + M15, 100.0, 100.5, 99.5, 100.0, 0]]
+
+    store, ex = _book(4), _Dead()
+    for tick_no in range(3):
+        O.evaluate_open(ex, store, now_ts=NOW + tick_no, max_eval=2)
+    assert ex.asked.count("S0/USDT:USDT") <= 2, "the dead symbol hogged the queue"
+    assert "S3/USDT:USDT" in ex.asked, "the tail never got a turn"
+
+
+def test_a_checked_trade_carries_when_it_was_checked(monkeypatch):
+    """'追蹤中' only ever means 'not resolved AS OF the last check', so the age
+    of that check is what tells a reader whether the row can be trusted. With
+    no timestamp the page could not distinguish 'still live' from 'never
+    looked at'."""
+    monkeypatch.setattr(O, "PACE_SEC", 0)
+    store, ex = _book(1), _FakeEx()
+    O.evaluate_open(ex, store, now_ts=NOW, max_eval=6)
+    assert next(iter(store["open"].values()))["checked_ts"] == NOW
+
+
+def test_the_cap_still_bounds_one_tick(monkeypatch):
+    """Fair ordering must not become unbounded work: a large book still costs
+    at most max_eval fetches per tick."""
+    monkeypatch.setattr(O, "PACE_SEC", 0)
+    store, ex = _book(50), _FakeEx()
+    O.evaluate_open(ex, store, now_ts=NOW, max_eval=6)
+    assert len(ex.asked) == 6
+
+
+# ── the record must not pool an unmeasured side into a measured one ─────────
+# strategy4's own docstring: "the long side has an inconclusive n=50 behind it;
+# the short side has nothing at all". The short side went live 2026-08-11 and
+# every settled trade went into one bucket, so the half with no evidence was
+# averaged into the half with some and neither number answered its question.
+def test_settled_trades_are_tallied_by_side_as_well_as_by_segment():
+    store = O._blank()
+    O.accumulate(store, {**trade(side="long", segment="crypto"),
+                         "outcome": "tp", "r": 2.0})
+    O.accumulate(store, {**trade(side="short", segment="tradfi"),
+                         "outcome": "sl", "r": -1.0})
+    t = store["tally"]
+    assert t["side:long"]["n"] == 1 and t["side:long"]["sum"] == 2.0
+    assert t["side:short"]["n"] == 1 and t["side:short"]["sum"] == -1.0
+    # the existing splits must be untouched by the new one
+    assert t["all"]["n"] == 2
+    assert t["crypto"]["n"] == 1 and t["tradfi"]["n"] == 1
+
+
+def test_a_trade_with_no_side_is_tallied_the_way_it_was_scored():
+    """Rows settled before the short side existed carry no side. settle()
+    scores those on the long formulae, so long is what they ARE — if the two
+    defaults ever disagreed the record would contradict its own maths."""
+    store = O._blank()
+    legacy = {**trade(), "outcome": "sl", "r": -1.0}
+    legacy.pop("side", None)
+    O.accumulate(store, legacy)
+    assert store["tally"]["side:long"]["n"] == 1
+    assert "side:short" not in store["tally"]
+
+
+def test_the_side_split_is_rebuilt_from_history_only_while_history_is_whole():
+    """The backfill replays `closed`, which is pruned to KEEP_CLOSED while the
+    tally deliberately is not. Once anything has been dropped the list can no
+    longer reproduce the totals, and replaying it would invent a record
+    shorter than the real one."""
+    store = O._blank()
+    store["closed"] = [{**trade(side="short"), "outcome": "sl", "r": -1.0},
+                       {**trade(side="long"), "outcome": "tp", "r": 2.0}]
+    store["tally"] = {"all": {**O._bucket(), "n": 2, "sum": 1.0}}
+    assert O.backfill_sides(store) is True
+    assert store["tally"]["side:short"]["n"] == 1
+    assert store["tally"]["side:long"]["n"] == 1
+
+    pruned = O._blank()
+    pruned["closed"] = [{**trade(side="long"), "outcome": "tp", "r": 2.0}]
+    pruned["tally"] = {"all": {**O._bucket(), "n": 400, "sum": 3.0}}
+    assert O.backfill_sides(pruned) is False
+    assert "side:long" not in pruned["tally"], \
+        "a 1-trade side record was invented next to a 400-trade total"
+
+
+def test_the_backfill_cannot_double_count_on_the_next_tick():
+    store = O._blank()
+    store["closed"] = [{**trade(side="long"), "outcome": "tp", "r": 2.0}]
+    store["tally"] = {"all": {**O._bucket(), "n": 1, "sum": 2.0}}
+    O.backfill_sides(store)
+    O.backfill_sides(store)
+    O.backfill_sides(store)
+    assert store["tally"]["side:long"]["n"] == 1
+
+
+def test_the_web_view_exposes_the_side_split():
+    store = O._blank()
+    O.accumulate(store, {**trade(side="short"), "outcome": "sl", "r": -1.0})
+    view = O.web_view(store)
+    assert "side:short" in view["stats"]
+    assert view["stats"]["side:short"]["n"] == 1
+
+
+# ── the page must not describe a short as its own mirror image ──────────────
+def _render_s4_card(**sig):
+    """Render the /s4 signal card for one signal.
+
+    Through the real app's Jinja environment, inside a request context: the
+    page includes _nav.html, which calls url_for. A bare jinja2.Environment
+    renders the card but blows up on the nav, and stubbing url_for would mean
+    testing a template this app never serves.
+    """
+    import app as APP
+    base = {"symbol": "X/USDT:USDT", "base": "X", "segment": "crypto",
+            "side": "long", "price": 100.0, "score": 70, "slope": 1.5,
+            "div_ago": 3, "oi_state": 1,
+            "support": {"level": 95.0, "bars_ago": 4},
+            "plan": {"entry": 100.0, "sl": 95.0, "tp": 110.0, "rr": 2,
+                     "stop_pct": 5.0, "tp_pct": 10.0}}
+    s4 = {"signals": [{**base, **sig}], "rejected": {}, "record": {},
+          "disclaimer": "", "ts": 0, "min_turnover": 0, "max_tradfi": 5,
+          "max_crypto": 5, "tp_r": 2, "enabled": True, "next_ts": 0}
+    # flask.render_template, not jinja_env.render: context processors are a
+    # Flask layer, and _nav.html reads current_user from one of them.
+    import flask
+    with APP.app.test_request_context("/s4"):
+        return flask.render_template("s4.html", s4=s4, user=None,
+                                     asset_ver="t", now_ts=0)
+
+
+def test_a_short_setup_is_not_labelled_long_on_the_page():
+    """The engine has scanned both directions since 2026-08-11 and the Telegram
+    alert says 做空 for a short. The page kept saying 做多 LONG, so the same
+    setup read one way on the phone and the opposite way in the browser."""
+    html = _render_s4_card(side="short", slope=-1.5,
+                           plan={"entry": 100.0, "sl": 105.0, "tp": 90.0,
+                                 "rr": 2, "stop_pct": 5.0, "tp_pct": 10.0})
+    assert "做空 SHORT" in html
+    assert "做多 LONG" not in html
+
+
+def test_a_short_setups_stop_is_shown_as_a_rise_and_its_target_as_a_fall():
+    """The stop sits ABOVE entry on a short. Printed as −5.00% it reads as the
+    price falling to safety when it is the price rising into the loss — the
+    one number on the card that decides how much you lose."""
+    html = _render_s4_card(side="short", slope=-1.5,
+                           plan={"entry": 100.0, "sl": 105.0, "tp": 90.0,
+                                 "rr": 2, "stop_pct": 5.0, "tp_pct": 10.0})
+    assert "+5.00%" in html, "stop shown as a fall on a short"
+    assert "−10.00%" in html, "target shown as a rise on a short"
+
+
+def test_a_short_setups_level_is_resistance_and_its_trend_is_falling():
+    html = _render_s4_card(side="short", slope=-1.5,
+                           plan={"entry": 100.0, "sl": 105.0, "tp": 90.0,
+                                 "rr": 2, "stop_pct": 5.0, "tp_pct": 10.0})
+    assert "壓力" in html and "支撐" not in html
+    assert "下降" in html and "上升" not in html
+
+
+def test_the_long_card_is_unchanged():
+    """The fix is a mirror, not a rewrite — the side that was already correct
+    must render exactly as before."""
+    html = _render_s4_card()
+    assert "做多 LONG" in html and "做空" not in html
+    assert "支撐" in html and "上升" in html
+    assert "−5.00%" in html and "+10.00%" in html

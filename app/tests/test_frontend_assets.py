@@ -75,3 +75,35 @@ def test_asset_ver_changes_when_static_files_do():
     """A soft guard: ASSET_VER should look like a date, so bumping it is
     obviously required rather than an arbitrary token someone forgets."""
     assert re.fullmatch(r"\d{8}", APP.ASSET_VER), APP.ASSET_VER
+
+
+# ── iOS number auto-linking (added 2026-08-12) ──────────────────────────────
+def test_every_page_opts_out_of_ios_phone_number_detection():
+    """iOS Safari turns anything shaped like a phone number into a tel: link,
+    with no opt-out short of this meta tag.
+
+    A price is exactly that shape. MU at 866.0700 is NNN.NNNN — seven digits —
+    so /s4 rendered it blue and underlined, and tapping a price on an iPhone
+    offered to dial it. It hits prices selectively (4386.3000 and 0.6411 are
+    left alone), which is worse than hitting all of them: the table looks like
+    some numbers are deliberately links.
+
+    Repo-wide rather than per page: every template here carries its own <head>,
+    so the next page to be added inherits nothing and would ship the same bug.
+    """
+    offenders = [p.name for p in TEMPLATES.glob("*.html")
+                 if "<head>" in p.read_text(encoding="utf-8")
+                 and "format-detection" not in p.read_text(encoding="utf-8")]
+    assert not offenders, (
+        "pages whose numbers iOS may turn into phone links: " + ", ".join(offenders))
+
+
+def test_the_opt_out_sits_in_the_head_where_safari_reads_it():
+    """A meta tag placed after <body> is ignored — the page would look correct
+    in the source and still dial on an iPhone."""
+    for page in _pages():
+        src = page.read_text(encoding="utf-8")
+        if "format-detection" not in src:
+            continue
+        assert src.index("format-detection") < src.index("<body"), \
+            f"{page.name}: format-detection is outside <head>"
