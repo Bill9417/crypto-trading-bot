@@ -71,8 +71,58 @@ PCTILE_GATE = float(os.getenv("CROWD_PCTILE", "98"))
 # as "massive" would be true and useless. A guard, not an edge parameter.
 MIN_OI_PCT = float(os.getenv("CROWD_MIN_OI_PCT", "5"))
 
-MIN_TURNOVER = float(os.getenv("CROWD_MIN_TURNOVER", "50000000"))   # 24h USDT
-TOP_N = int(os.getenv("CROWD_TOP_N", "120"))
+# SMALL CAPS ARE THE POINT (2026-08-12, user request). The first version swept
+# 45 majors at a $50M floor, which is where OI anomalies are least interesting:
+# a 6% build on BTC is a rounding error on a $10B book. $2M covers 301 of
+# Binance's 527 crypto perps and reaches down to the JASMY/MOODENG/LAYER tier.
+#
+# The floor is not zero, and the reason is structural rather than fussy: on a
+# genuinely dead book a single position IS the open interest, so "the crowd is
+# piling in" would be describing one trader with a spreadsheet. Below roughly
+# $2M/24h that stops being a crowding read and becomes a whale read — which is
+# what whale_tracker is for. Every hit carries its OI notional and a size tier
+# so a thin-book reading is visible AS one instead of being silently excluded.
+MIN_TURNOVER = float(os.getenv("CROWD_MIN_TURNOVER", "2000000"))     # 24h USDT
+TOP_N = int(os.getenv("CROWD_TOP_N", "320"))
+
+# Size tiers, by 24h turnover. Purely descriptive — they change nothing about
+# detection, they just let a reader tell a $400M book from a $3M one at a
+# glance, because the same +20% means very different things on each.
+TIERS = ((500e6, "大型"), (50e6, "中型"), (0, "小型"))
+
+
+def tier_of(turnover: float) -> str:
+    for floor, name in TIERS:
+        if (turnover or 0) >= floor:
+            return name
+    return "小型"
+
+
+# Widening to 301 symbols breaks the alert budget by construction: a 98th
+# percentile gate over 301 symbols is ~6 hits EVERY sweep, which at one sweep
+# per five minutes is ~72 Telegram messages an hour. The dashboard wants all of
+# them (it is a glance, and volume costs nothing there); Telegram wants only the
+# ones worth an interruption. So the gates are split — PCTILE_GATE decides what
+# is shown, ALERT_PCTILE and MAX_ALERTS_PER_SWEEP decide what is sent.
+#
+# 99.0 = top 1% of a symbol's own history, and the percentile resolution is
+# ~1/300 so anything finer is quantisation noise dressed as precision. Note
+# what a percentile gate does across a wide universe: it fires on ~1% of
+# symbols per sweep BY CONSTRUCTION, whether or not anything is happening. The
+# thing that actually makes quiet markets quiet is MIN_OI_PCT — on a calm day
+# most symbols' top-1% moves do not reach 5% and nothing alerts; on a violent
+# one many do. Volume scaling with market activity is the intended behaviour,
+# and the cap plus the cooldown are what bound it.
+ALERT_PCTILE = float(os.getenv("CROWD_ALERT_PCTILE", "99"))
+MAX_ALERTS_PER_SWEEP = int(os.getenv("CROWD_MAX_ALERTS", "3"))
+
+# The live-OI call is a second request per symbol, and at 301 symbols that is
+# 602 requests a sweep. It is only spent where it could change the answer: a
+# symbol whose CLOSED bars already put it near the gate. A build invisible in
+# every closed bar and decisive in the live reading would have to go from
+# nothing to the full threshold inside one bar; the cost of that rare miss is
+# one sweep of latency, against halving the request budget every sweep.
+LIVE_NEAR_GATE = float(os.getenv("CROWD_LIVE_NEAR", "0.5"))   # × MIN_OI_PCT
 COOLDOWN_SEC = float(os.getenv("CROWD_COOLDOWN_SEC", "7200"))
 ESCALATE_MULT = 1.5              # inside cooldown, only a 1.5× bigger move re-alerts
 # Every S2 sweep. The sweep is ~5 min, the live-OI call removes the bin lag,
@@ -303,6 +353,17 @@ def live_oi(symbol: str) -> float:
     return float(row["openInterest"])
 
 
+def _worth_a_live_call(bar_read: dict) -> bool:
+    """Is this symbol close enough to the gate that a live reading could move
+    it across? At 301 symbols the live call is half the request budget, and on
+    a symbol whose closed bars sit at +0.4% it cannot change any answer."""
+    if bar_read.get("massive"):
+        return True          # already over — refresh it so the number is current
+    oi_pct = abs(bar_read.get("oi_pct") or 0)
+    return (oi_pct >= MIN_OI_PCT * LIVE_NEAR_GATE
+            or (bar_read.get("pctile") or 0) >= PCTILE_GATE - 5)
+
+
 def with_live(oi_series: list, px_series: list, oi_now: float) -> tuple:
     """Splice the live reading onto the closed bars.
 
@@ -399,6 +460,13 @@ def build_alert(row: dict) -> str:
     if row.get("ratio") is not None:
         rows.append(("多空比", f"{row['ratio']:.2f}"
                                f" · 前 {max(0.1, 100 - row['ratio_pctile']):.0f}%"))
+    # Size is shown, never used to exclude. On a small book the same +20% can
+    # be one trader rather than a crowd, and the honest way to handle that is
+    # to put the money on screen and let it be judged — not to drop the symbol
+    # and pretend nothing happened there.
+    if row.get("notional"):
+        rows.append(("未平倉額", f"{_usd(row['notional'])}"
+                                 f"{'  · ' + row['tier'] if row.get('tier') else ''}"))
     rows.append(("成交額", f"{_usd(row['turnover'])} / 24h"))
 
     tail = ("擁擠的多單是反向插針的燃料。" if row["state"] == LONGS_OPENING else
@@ -429,7 +497,7 @@ def scan(symbols: list = None, now: float = None, store: dict = None,
     except Exception as exc:  # noqa: BLE001 — a dead endpoint must not kill the scanner
         return {"error": f"universe: {exc}", "checked": 0, "hits": []}
 
-    hits, checked, errors = [], 0, 0
+    hits, checked, errors, live = [], 0, 0, 0
     for item in pool:
         sym = item["symbol"] if isinstance(item, dict) else item
         turnover = item.get("turnover", 0) if isinstance(item, dict) else 0
@@ -442,18 +510,23 @@ def scan(symbols: list = None, now: float = None, store: dict = None,
             time.sleep(PACE_SEC)
         # The live reading is what makes this instant, but it is an extra call
         # that is allowed to fail: falling back to the last closed bar costs
-        # freshness, never correctness.
-        try:
-            oi, px = with_live(oi, px, live_oi(sym))
-            time.sleep(PACE_SEC)
-        except Exception:  # noqa: BLE001
-            pass
+        # freshness, never correctness. Spent only where it could change the
+        # answer — see LIVE_NEAR_GATE.
+        bar_read = assess(oi, px)
+        if _worth_a_live_call(bar_read):
+            try:
+                oi, px = with_live(oi, px, live_oi(sym))
+                live += 1
+                time.sleep(PACE_SEC)
+            except Exception:  # noqa: BLE001
+                pass
         checked += 1
         a = assess(oi, px)
         if not a.get("massive"):
             continue
 
         row = {**a, "symbol": sym, "turnover": turnover,
+               "tier": tier_of(turnover), "notional": round(oi[-1] * px[-1]),
                "span_h": SPAN_BARS * 15 / 60, "ts": now}
         # Only now is the second call worth spending.
         try:
@@ -464,22 +537,42 @@ def scan(symbols: list = None, now: float = None, store: dict = None,
 
         if not should_alert(store, sym, a["state"], a["oi_pct"], now):
             row["suppressed"] = "cooldown"
-            hits.append(row)
-            continue
-        store.setdefault("last", {})[f"{sym}:{a['state']}"] = {
-            "ts": now, "oi_pct": a["oi_pct"]}
-        store.setdefault("recent", []).insert(0, row)
         hits.append(row)
+
+    # Everything found goes on the board; only the loudest few go to Telegram.
+    # Ranked by how far past its own history each one is, then by size, so a
+    # major and a micro-cap at the same rank are separated by which has more
+    # money behind it rather than by which was scanned first.
+    for row in sorted(hits, key=lambda h: (-(h.get("pctile") or 0),
+                                           -(h.get("notional") or 0))):
+        if row.get("suppressed"):
+            continue
+        store.setdefault("recent", []).insert(0, row)
+        store.setdefault("last", {})[f"{row['symbol']}:{row['state']}"] = {
+            "ts": now, "oi_pct": row["oi_pct"]}
+
+    sendable = [h for h in hits if not h.get("suppressed")]
+    sendable.sort(key=lambda h: (-(h.get("pctile") or 0), -(h.get("notional") or 0)))
+    loud = [h for h in sendable if (h.get("pctile") or 0) >= ALERT_PCTILE]
+    for row in loud[MAX_ALERTS_PER_SWEEP:]:
+        row["quiet"] = "over the per-sweep alert cap"
+    for row in sendable:
+        if row not in loud[:MAX_ALERTS_PER_SWEEP]:
+            row.setdefault("quiet", f"below p{ALERT_PCTILE:g} alert bar")
+    for row in loud[:MAX_ALERTS_PER_SWEEP]:
         if send:
             try:
                 send(build_alert(row))
             except Exception as exc:  # noqa: BLE001
-                print(f"[crowd] alert failed {sym}: {exc}")
+                print(f"[crowd] alert failed {row['symbol']}: {exc}")
 
     store["recent"] = (store.get("recent") or [])[:KEEP_RECENT]
     store["ran_ts"] = now
-    return {"checked": checked, "errors": errors, "hits": hits,
-            "alerted": sum(1 for h in hits if not h.get("suppressed"))}
+    # `shown` vs `alerted` are deliberately both reported: a cap that silently
+    # dropped findings would read as "nothing else was happening".
+    return {"checked": checked, "errors": errors, "hits": hits, "live": live,
+            "shown": len(sendable), "alerted": min(len(loud), MAX_ALERTS_PER_SWEEP),
+            "held_back": max(0, len(loud) - MAX_ALERTS_PER_SWEEP)}
 
 
 def _send(msg: str) -> None:

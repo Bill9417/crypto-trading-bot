@@ -327,6 +327,7 @@
                     <th style="padding:6px 8px;text-align:right;">價格</th>
                     <th style="padding:6px 8px;text-align:right;">罕見度</th>
                     <th style="padding:6px 8px;text-align:right;">多空比</th>
+                    <th style="padding:6px 8px;text-align:right;">未平倉額</th>
                     <th style="padding:6px 8px;text-align:right;">When</th>
                 </tr></thead>
                 <tbody>
@@ -343,6 +344,11 @@
                     <td style="padding:6px 8px;text-align:right;font-variant-numeric:tabular-nums;opacity:.8;">{{ '%+.1f'|format(r.px_pct) }}%</td>
                     <td style="padding:6px 8px;text-align:right;font-variant-numeric:tabular-nums;opacity:.7;">前 {{ '%.1f'|format([0.1, 100 - r.pctile]|max) }}%</td>
                     <td style="padding:6px 8px;text-align:right;font-variant-numeric:tabular-nums;opacity:.7;">{% if r.ratio %}{{ '%.2f'|format(r.ratio) }}{% else %}—{% endif %}</td>
+                    {# Size, not as a gate but as the caveat made visible: most
+                       of this universe is 小型, where the same +20% can be one
+                       trader rather than a crowd. #}
+                    <td style="padding:6px 8px;text-align:right;font-variant-numeric:tabular-nums;opacity:.7;white-space:nowrap;">
+                        {% if r.notional %}{{ r.tier }} ${{ '%.1f'|format(r.notional / 1000000) }}M{% else %}—{% endif %}</td>
                     <td style="padding:6px 8px;text-align:right;opacity:.6;" class="crowd-ago" data-ts="{{ r.ts }}">—</td>
                 </tr>
                 {% endfor %}

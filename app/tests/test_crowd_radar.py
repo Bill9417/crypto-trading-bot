@@ -245,7 +245,12 @@ class _Fake:
     def oi_history(self, sym, **kw):
         if sym == "HOTUSDT":
             oi = [1000 * (1 + 0.0008 * (i % 7 - 3)) for i in range(300)]
-            oi += [oi[-1] * (1 + 0.02) ** k for k in range(1, 9)]
+            # A SHORT, sharp spike, not a long ramp. Spread over the full
+            # 8-bar span, every trailing window contains most of the ramp, so
+            # the reading barely exceeds its own reference distribution and
+            # lands at p99.3 — an artefact of the fixture, not of the market.
+            # Two bars keeps the historical windows clean and the rank honest.
+            oi += [oi[-1] * 1.09, oi[-1] * 1.09 * 1.09]
             px = flat(len(oi))
             px[-1] = px[-9] * 1.04
             return oi, px
@@ -448,3 +453,109 @@ def test_the_radar_runs_every_sweep_not_every_third_one():
     """The S2 sweep is ~5 min. A self-pace above that would throttle the radar
     back to exactly the bin lag the live call was added to remove."""
     assert C.RUN_EVERY_SEC <= 300, C.RUN_EVERY_SEC
+
+
+# ── small caps are the point (2026-08-12) ───────────────────────────────────
+def test_the_universe_reaches_small_caps():
+    """A $50M floor keeps only ~45 majors, which is where OI anomalies matter
+    LEAST — a 6% build on BTC is a rounding error on a $10B book. The whole
+    request was the small-cap tier."""
+    assert C.MIN_TURNOVER <= 5_000_000, C.MIN_TURNOVER
+    assert C.TOP_N >= 250, C.TOP_N
+
+
+def test_the_floor_is_not_zero():
+    """On a genuinely dead book one position IS the open interest, so a
+    crowding read becomes a whale read — which is a different module."""
+    assert C.MIN_TURNOVER > 0
+
+
+def test_size_is_reported_rather_than_used_to_exclude():
+    """The thin-book caveat is handled by putting the money on screen, not by
+    dropping the symbol and pretending nothing happened there."""
+    assert C.tier_of(9e8) == "大型"
+    assert C.tier_of(2e8) == "中型"
+    assert C.tier_of(3e6) == "小型"
+    msg = C.build_alert(_row(notional=3_100_000, tier="小型"))
+    assert "未平倉額" in msg and "小型" in msg and "$3.1M" in msg
+
+
+def test_a_small_cap_hit_carries_its_notional(fake):
+    out = C.scan([{"symbol": "HOTUSDT", "turnover": 3e6}],
+                 now=1000.0, store=C._blank(), send=None)
+    hit = out["hits"][0]
+    assert hit["tier"] == "小型"
+    assert hit["notional"] > 0
+
+
+# ── the alert budget at 301 symbols ─────────────────────────────────────────
+def _many(n, pctiles):
+    return [{"symbol": f"S{i}USDT", "turnover": 5e6} for i in range(n)]
+
+
+def test_the_dashboard_shows_more_than_telegram_sends():
+    """A 98th-percentile gate over 301 symbols is ~6 hits EVERY sweep — 72
+    Telegram messages an hour. The board wants all of them; the phone does
+    not. Two gates, one purpose each."""
+    assert C.ALERT_PCTILE > C.PCTILE_GATE
+    assert C.MAX_ALERTS_PER_SWEEP <= 5
+
+
+def test_only_the_loudest_few_are_sent_and_the_rest_are_still_recorded(monkeypatch):
+    """The cap must not become a silent filter: everything found stays on the
+    board and in the return value, with a reason for the silence."""
+    rows = []
+    for i in range(8):
+        oi = [1000 * (1 + 0.0008 * (i % 7 - 3)) for i in range(300)]
+        oi += [oi[-1] * (1 + 0.02) ** k for k in range(1, 9)]
+        rows.append(oi)
+
+    def hist(sym, **kw):
+        idx = int(sym[1:-4])
+        oi = rows[idx]
+        px = flat(len(oi))
+        px[-1] = px[-9] * 1.04
+        return oi, px
+
+    monkeypatch.setattr(C, "oi_history", hist)
+    monkeypatch.setattr(C, "live_oi", lambda s: hist(s)[0][-1])
+    monkeypatch.setattr(C, "ls_ratio", lambda s, **k: [1.0] * 400 + [2.0])
+    monkeypatch.setattr(C, "PACE_SEC", 0)
+
+    sent = []
+    store = C._blank()
+    out = C.scan([{"symbol": f"S{i}USDT", "turnover": 5e6} for i in range(8)],
+                 now=1000.0, store=store, send=sent.append)
+    assert len(out["hits"]) == 8, "findings were dropped, not just silenced"
+    assert len(sent) <= C.MAX_ALERTS_PER_SWEEP
+    assert len(store["recent"]) == 8, "the board lost what Telegram skipped"
+    quiet = [h for h in out["hits"] if h.get("quiet")]
+    assert len(quiet) == 8 - len(sent)
+    assert all(q["quiet"] for q in quiet), "silenced with no reason recorded"
+
+
+def test_the_sweep_reports_what_it_held_back():
+    """A cap that reported only what it sent would read as 'nothing else was
+    happening'."""
+    import inspect
+    src = inspect.getsource(C.scan)
+    assert "held_back" in src and "shown" in src
+
+
+# ── the request budget ──────────────────────────────────────────────────────
+def test_the_live_call_is_skipped_where_it_cannot_change_the_answer():
+    """At 301 symbols the live reading is half the request budget. On a symbol
+    whose closed bars sit at +0.4% it cannot move anything across the gate."""
+    assert not C._worth_a_live_call({"oi_pct": 0.4, "pctile": 30, "massive": False})
+
+
+def test_the_live_call_is_spent_on_anything_near_the_gate():
+    assert C._worth_a_live_call({"oi_pct": 4.0, "pctile": 80, "massive": False})
+    assert C._worth_a_live_call({"oi_pct": 1.0, "pctile": 96, "massive": False})
+    assert C._worth_a_live_call({"massive": True, "oi_pct": 9.0, "pctile": 99})
+
+
+def test_a_symbol_already_over_the_gate_still_gets_a_fresh_reading():
+    """Skipping the live call there would alert on a stale number — the one
+    place freshness is most visible."""
+    assert C._worth_a_live_call({"massive": True, "oi_pct": 20.0, "pctile": 99.9})

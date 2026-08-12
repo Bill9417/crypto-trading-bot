@@ -1912,6 +1912,13 @@
                 if (s < 172800) return Math.round(s / 3600) + '小時前';
                 return Math.round(s / 86400) + '天前';
             }
+            function usd(v) {
+                v = Number(v) || 0;
+                if (v >= 1e9) return '$' + (v / 1e9).toFixed(1) + 'B';
+                if (v >= 1e6) return '$' + (v / 1e6).toFixed(1) + 'M';
+                if (v >= 1e3) return '$' + (v / 1e3).toFixed(0) + 'K';
+                return '$' + v.toFixed(0);
+            }
             function chip(r) {
                 var meta = READ[r.state] || {zh: r.state, ico: '•', bull: true, build: true};
                 var col = meta.bull ? 'var(--long, #4ade80)' : 'var(--short, #f87171)';
@@ -1929,6 +1936,12 @@
                     '<div style="font-size:.66rem; color:' + col + '; opacity:.9;">' + meta.zh + '</div>' +
                     '<div style="font-size:.64rem; color:var(--wolf-muted, #8a99ad); margin-top:2px;">' +
                         '價 ' + (r.px_pct >= 0 ? '+' : '') + r.px_pct.toFixed(1) + '% · 前' + rare.toFixed(1) + '%</div>' +
+                    // Size is the caveat made visible. Most of this universe is
+                    // 小型, where the same +20% can be one trader rather than a
+                    // crowd — so the money is on the chip instead of the symbol
+                    // being excluded and the event silently never reported.
+                    '<div style="font-size:.62rem; color:var(--wolf-muted, #8a99ad);">' +
+                        (r.tier || '') + ' ' + usd(r.notional) + ' OI</div>' +
                     '<div style="font-size:.62rem; color:var(--wolf-muted, #8a99ad);">' + ago(r.ts) + '</div></a>';
             }
             function load() {

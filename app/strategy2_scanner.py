@@ -693,18 +693,6 @@ def main() -> None:
             strategy4.tick()
         except Exception as exc:  # noqa: BLE001 — a watch-only scan never kills the loop
             print(f"[strategy2] s4 error: {exc}")
-        # 🐋 Crowd radar — abnormal open-interest builds on the most liquid
-        # crypto perps. Self-paced to 15 min (the sweep runs every 5), ~46
-        # symbols × 1 public Binance call. Positioning, not a signal.
-        try:
-            import crowd_radar
-            crowd = crowd_radar.tick()
-            if crowd.get("checked"):
-                print(f"[crowd] checked {crowd['checked']} · "
-                      f"{len(crowd.get('hits') or [])} extreme · "
-                      f"{crowd.get('alerted', 0)} alerted")
-        except Exception as exc:  # noqa: BLE001 — a watch-only scan never kills the loop
-            print(f"[strategy2] crowd radar error: {exc}")
         # 📋 台股週結 — honest Sunday-morning TP/SL scorecard to LINE
         # (self-paced no-op except Sunday mornings).
         try:
@@ -723,6 +711,27 @@ def main() -> None:
             whale_tracker.tick(client)
         except Exception as exc:  # noqa: BLE001 — must never kill the loop
             print(f"[strategy2] whale tracker error: {exc}")
+        # 🐋 Crowd radar — abnormal open-interest builds across 300 crypto
+        # perps, small caps included (that tier is the point: a 6% build on
+        # BTC is a rounding error on a $10B book).
+        #
+        # DELIBERATELY LAST of the alerting steps. It is the slowest thing in
+        # this loop by an order of magnitude — ~90s for 300 symbols against
+        # ~10s for everything else combined — and placed earlier it pushed the
+        # liquidation-cascade alerts 90s later every sweep. Those watch a
+        # 10-minute window, so that delay is a real cost; nothing waits behind
+        # this one now.
+        try:
+            import crowd_radar
+            crowd = crowd_radar.tick()
+            if crowd.get("checked"):
+                print(f"[crowd] checked {crowd['checked']} · "
+                      f"{crowd.get('shown', 0)} extreme · "
+                      f"{crowd.get('alerted', 0)} alerted"
+                      + (f" · {crowd['held_back']} held back (cap)"
+                         if crowd.get("held_back") else ""))
+        except Exception as exc:  # noqa: BLE001 — a watch-only scan never kills the loop
+            print(f"[strategy2] crowd radar error: {exc}")
         # 🚨 Watchdog — bark on Telegram if a stack process died (S3 watches us).
         try:
             watchdog.tick("strategy2_scanner.py")
