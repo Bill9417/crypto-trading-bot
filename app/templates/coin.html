@@ -1,0 +1,235 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <!-- iOS Safari auto-links anything shaped like a phone number. A price
+         such as 866.0700 is NNN.NNNN = a 7-digit US number, so Safari turned
+         it into a blue underlined tel: link that dialled when tapped. Prices,
+         R multiples and quantities are numbers, never numbers to call. -->
+    <meta name="format-detection" content="telephone=no">
+    <title>Wolf Scanner — 幣種分析</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&display=swap" rel="stylesheet">
+    <link rel="manifest" href="/manifest.webmanifest">
+    <meta name="theme-color" content="#0d1220">
+    <link rel="stylesheet" href="/static/app.css?v={{ asset_ver }}">
+<style>
+* { box-sizing: border-box; }
+body { background: var(--wolf-slate); background-image: var(--page-bg-glow);
+       color: var(--wolf-text); font-family: 'Inter', -apple-system, sans-serif;
+       -webkit-font-smoothing: antialiased; min-height: 100vh; }
+.wrap { max-width: 760px; margin: 0 auto; padding: 12px 14px 40px; }
+.num { font-variant-numeric: tabular-nums; }
+
+/* search */
+.searchbar { position: relative; margin: 10px 0 14px; }
+.searchbar input {
+    width: 100%; background: var(--wolf-card); border: 1px solid var(--wolf-border);
+    border-radius: 14px; padding: 13px 46px 13px 16px; color: var(--wolf-text);
+    font-size: 1rem; font-weight: 700; outline: none; }
+.searchbar input:focus { border-color: var(--wolf-blue); }
+.searchbar .ico { position: absolute; right: 15px; top: 50%; transform: translateY(-50%);
+                  opacity: .5; font-size: 1.05rem; }
+.sugg { position: absolute; z-index: 40; left: 0; right: 0; top: 52px;
+        background: var(--wolf-card); border: 1px solid var(--wolf-border);
+        border-radius: 12px; overflow: hidden; display: none; }
+.sugg.on { display: block; }
+.sugg div { padding: 10px 14px; cursor: pointer; font-weight: 700; font-size: .86rem; }
+.sugg div:hover, .sugg div.sel { background: rgba(0,210,255,.12); }
+
+.card { background: var(--wolf-card); border: 1px solid var(--wolf-border);
+        border-radius: 14px; padding: 14px; margin-bottom: 10px; }
+.hd { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+.sym { font-size: 1.5rem; font-weight: 800; }
+.px { font-size: 1.1rem; font-weight: 700; }
+.up { color: var(--long, #4ade80); } .dn { color: var(--short, #f87171); }
+.muted { color: var(--wolf-muted); }
+
+/* lean banner */
+.lean { display: flex; align-items: center; justify-content: space-between;
+        gap: 12px; border-radius: 14px; padding: 13px 15px; margin-bottom: 10px;
+        border: 1px solid; }
+.lean.long { background: rgba(52,211,153,.09); border-color: rgba(52,211,153,.42); }
+.lean.short { background: rgba(248,113,113,.09); border-color: rgba(248,113,113,.42); }
+.lean.neutral { background: rgba(255,255,255,.03); border-color: var(--wolf-border); }
+.lean-n { font-size: 1.5rem; font-weight: 800; line-height: 1; }
+.lean-l { font-size: .68rem; opacity: .75; }
+
+/* factors */
+.f { display: flex; gap: 10px; padding: 9px 0; border-top: 1px solid rgba(255,255,255,.055); }
+.f:first-child { border-top: 0; }
+.f-mark { flex: 0 0 20px; font-weight: 800; text-align: center; }
+.f-body { flex: 1 1 auto; min-width: 0; }
+.f-top { display: flex; justify-content: space-between; gap: 10px; font-size: .84rem; font-weight: 700; }
+.f-note { font-size: .72rem; color: var(--wolf-muted); margin-top: 2px; line-height: 1.5; }
+.tag { font-size: .62rem; font-weight: 800; padding: 2px 7px; border-radius: 999px; }
+.tag.long { background: rgba(52,211,153,.16); color: #86efac; }
+.tag.short { background: rgba(248,113,113,.16); color: #fca5a5; }
+.tag.neutral { background: rgba(255,255,255,.07); color: var(--wolf-muted); }
+
+.stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px,1fr)); gap: 8px; }
+.stat { background: rgba(255,255,255,.03); border: 1px solid var(--wolf-border);
+        border-radius: 11px; padding: 10px 12px; }
+.stat b { display: block; font-size: 1.02rem; margin-top: 3px; }
+.stat span { font-size: .64rem; color: var(--wolf-muted); text-transform: uppercase; letter-spacing: .05em; }
+.note { font-size: .7rem; color: var(--wolf-muted); line-height: 1.65; }
+.spark { width: 100%; height: 54px; display: block; }
+</style>
+</head>
+<body>
+<div class="wrap">
+    <div class="nav-standalone">{% include '_nav.html' %}</div>
+
+    <div class="searchbar">
+        <input id="q" type="search" autocomplete="off" autocapitalize="off"
+               spellcheck="false" placeholder="搜尋幣種代號，例如 BEAT、SOL、MYX…"
+               value="{{ initial }}">
+        <span class="ico">🔍</span>
+        <div class="sugg" id="sugg"></div>
+    </div>
+
+    <div id="out"></div>
+
+    {# The disclaimer is rendered even before a search: this page's whole risk
+       is that it LOOKS like a verdict, and the reason it has no weighted score
+       should be visible before the first number is. #}
+    <div class="card">
+        <div class="note" id="disc">
+            ⚠️ 這頁是「現在的條件」，不是預測。每個因子都是實際量到的數字，
+            但把它們加權成一個分數等於宣稱知道哪個因子比較重要 —— 本專案沒有量過，
+            所以這裡只數「幾項偏多、幾項偏空」。本專案量過 48 組高勝率設定有 46 組在賠錢。
+        </div>
+    </div>
+</div>
+
+<script>
+(function () {
+    var Q = document.getElementById('q'), SUGG = document.getElementById('sugg'),
+        OUT = document.getElementById('out');
+    var MARK = {long: '▲', short: '▼', neutral: '·'};
+    var LABEL = {long: '偏多', short: '偏空', neutral: '中性'};
+
+    function esc(s) { return String(s == null ? '' : s)
+        .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+    function usd(v) { v = Number(v)||0;
+        if (v>=1e9) return '$'+(v/1e9).toFixed(2)+'B';
+        if (v>=1e6) return '$'+(v/1e6).toFixed(1)+'M';
+        if (v>=1e3) return '$'+(v/1e3).toFixed(1)+'K'; return '$'+v.toFixed(2); }
+    function px(v) { v = Number(v)||0;
+        return v >= 1000 ? v.toLocaleString('en-US',{maximumFractionDigits:2})
+             : v >= 1 ? v.toFixed(4) : v.toPrecision(4); }
+
+    function sparkline(vals) {
+        if (!vals || vals.length < 2) return '';
+        var lo = Math.min.apply(null, vals), hi = Math.max.apply(null, vals);
+        var rng = (hi - lo) || 1, W = 700, H = 54;
+        var pts = vals.map(function (v, i) {
+            return (i / (vals.length - 1) * W).toFixed(1) + ',' +
+                   (H - (v - lo) / rng * (H - 6) - 3).toFixed(1); }).join(' ');
+        var up = vals[vals.length-1] >= vals[0];
+        var col = up ? 'var(--long,#4ade80)' : 'var(--short,#f87171)';
+        return '<svg class="spark" viewBox="0 0 ' + W + ' ' + H + '" preserveAspectRatio="none">' +
+               '<polyline fill="none" stroke="' + col + '" stroke-width="2" points="' + pts + '"/></svg>';
+    }
+
+    function render(d) {
+        if (!d || !d.ok) {
+            OUT.innerHTML = '<div class="card"><div class="muted">' +
+                esc((d && d.error) || '找不到這個幣種') + '</div></div>';
+            return;
+        }
+        var leanCls = d.long_count > d.short_count ? 'long'
+                    : d.short_count > d.long_count ? 'short' : 'neutral';
+        var h = '';
+        h += '<div class="card"><div class="hd">' +
+             '<span class="sym">' + esc(d.base) + '</span>' +
+             '<span class="px num">$' + px(d.price) + '</span>' +
+             '<span class="num ' + (d.chg_24h>=0?'up':'dn') + '">' +
+                (d.chg_24h>=0?'+':'') + Number(d.chg_24h).toFixed(2) + '% <span class="muted" style="font-size:.7rem">24h</span></span>' +
+             '</div>' + sparkline(d.spark) + '</div>';
+
+        h += '<div class="lean ' + leanCls + '">' +
+             '<div><div style="font-size:.9rem;font-weight:800;">綜合傾向 · ' + esc(d.lean) + '</div>' +
+             '<div class="lean-l">八項因子的方向統計 —— 不是加權分數，也不是預測</div></div>' +
+             '<div style="text-align:right;"><div class="lean-n">' +
+                d.long_count + ' / ' + d.short_count + '</div>' +
+             '<div class="lean-l">偏多 / 偏空（中性 ' + d.neutral_count + '）</div></div></div>';
+
+        h += '<div class="card">';
+        (d.factors||[]).forEach(function (f) {
+            h += '<div class="f"><div class="f-mark ' +
+                 (f.read==='long'?'up':f.read==='short'?'dn':'muted') + '">' + MARK[f.read] + '</div>' +
+                 '<div class="f-body"><div class="f-top"><span>' + esc(f.label) + '</span>' +
+                 '<span class="num">' + esc(f.value) +
+                 ' <span class="tag ' + f.read + '">' + LABEL[f.read] + '</span></span></div>' +
+                 '<div class="f-note">' + esc(f.note) + '</div></div></div>';
+        });
+        h += '</div>';
+
+        h += '<div class="card"><div class="stats">' +
+             '<div class="stat"><span>未平倉量</span><b class="num">' + usd(d.oi_usd) + '</b>' +
+                '<span style="text-transform:none">' + esc(d.oi_venue||'') + '</span></div>' +
+             '<div class="stat"><span>市值</span><b class="num">' + usd(d.mcap) + '</b></div>' +
+             '<div class="stat"><span>OI / 市值</span><b class="num">' +
+                (d.oi_share!=null ? Number(d.oi_share).toFixed(1)+'%' : '—') + '</b></div>' +
+             '<div class="stat"><span>24h 成交額</span><b class="num">' + usd(d.turnover) + '</b></div>' +
+             '</div></div>';
+
+        if ((d.strategies||[]).length) {
+            h += '<div class="card"><div style="font-size:.74rem;font-weight:800;opacity:.7;letter-spacing:.06em;margin-bottom:6px;">本系統的策略怎麼看</div>';
+            d.strategies.forEach(function (s) {
+                h += '<div class="f"><div class="f-mark ' +
+                     (s.read==='long'?'up':s.read==='short'?'dn':'muted') + '">' + MARK[s.read] + '</div>' +
+                     '<div class="f-body"><div class="f-top"><span>' + esc(s.name) + '</span>' +
+                     '<span class="num">' + esc(s.value) + '</span></div>' +
+                     '<div class="f-note">' + esc(s.note) + '</div></div></div>';
+            });
+            h += '</div>';
+        }
+        OUT.innerHTML = h;
+        if (d.disclaimer) document.getElementById('disc').textContent = d.disclaimer;
+    }
+
+    var timer = null, lastQ = '';
+    function suggest() {
+        var v = Q.value.trim();
+        if (!v) { SUGG.classList.remove('on'); return; }
+        fetch('/api/coin_search?q=' + encodeURIComponent(v))
+            .then(function(r){return r.ok?r.json():null;})
+            .then(function (d) {
+                var m = (d && d.matches) || [];
+                if (!m.length) { SUGG.classList.remove('on'); return; }
+                SUGG.innerHTML = m.map(function(b){return '<div data-b="'+esc(b)+'">'+esc(b)+'</div>';}).join('');
+                SUGG.classList.add('on');
+                Array.prototype.forEach.call(SUGG.children, function (el) {
+                    el.onclick = function () { Q.value = el.dataset.b; SUGG.classList.remove('on'); go(); };
+                });
+            }).catch(function(){});
+    }
+    function go() {
+        var v = Q.value.trim();
+        if (!v || v === lastQ) return;
+        lastQ = v;
+        SUGG.classList.remove('on');
+        OUT.innerHTML = '<div class="card"><div class="muted">分析 ' + esc(v.toUpperCase()) + ' …</div></div>';
+        fetch('/api/coin?q=' + encodeURIComponent(v))
+            .then(function(r){return r.ok?r.json():null;}).then(render)
+            .catch(function(){ render({ok:false, error:'連線失敗'}); });
+        if (history.replaceState) history.replaceState(null, '', '/coin/' + encodeURIComponent(v.toUpperCase()));
+    }
+    Q.addEventListener('input', function () {
+        clearTimeout(timer); timer = setTimeout(suggest, 180);
+    });
+    Q.addEventListener('keydown', function (e) {
+        if (e.key === 'Enter') { e.preventDefault(); SUGG.classList.remove('on'); go(); }
+        if (e.key === 'Escape') SUGG.classList.remove('on');
+    });
+    document.addEventListener('click', function (e) {
+        if (!SUGG.contains(e.target) && e.target !== Q) SUGG.classList.remove('on');
+    });
+    if (Q.value.trim()) go();
+})();
+</script>
+</body>
+</html>

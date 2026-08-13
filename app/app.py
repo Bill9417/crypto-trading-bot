@@ -3714,6 +3714,41 @@ def market():
     return render_template("market.html", intel=intel, circuit=circuit, crowd=crowd)
 
 
+@app.route("/coin")
+@app.route("/coin/<base>")
+@login_required
+def coin_page(base=None):
+    """🔍 One-coin analysis. Server-renders nothing but the shell — the search
+    box drives /api/coin, so a slow exchange cannot block the page."""
+    return render_template("coin.html", user=current_user, initial=(base or ""))
+
+
+@app.route("/api/coin_search")
+@login_required
+def api_coin_search():
+    """Ticker autocomplete over the live perp universe, cached 10 min."""
+    import coin_analysis
+    q = (request.args.get("q") or "").strip()
+    try:
+        return jsonify({"matches": coin_analysis.search(q, coin_analysis.universe())})
+    except Exception as e:  # noqa: BLE001
+        print(f"[coin] search failed: {e}")
+        return jsonify({"matches": [], "error": str(e)[:120]}), 200
+
+
+@app.route("/api/coin")
+@login_required
+def api_coin():
+    import coin_analysis
+    try:
+        out = coin_analysis.analyse(request.args.get("q") or "")
+        out.setdefault("disclaimer", coin_analysis.DISCLAIMER)
+        return jsonify(_json_safe(out))
+    except Exception as e:  # noqa: BLE001
+        print(f"[coin] analyse failed: {e}")
+        return jsonify({"ok": False, "error": str(e)[:150]}), 200
+
+
 @app.route("/api/flips")
 @login_required
 def api_flips():

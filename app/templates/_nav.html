@@ -48,6 +48,9 @@
     <div class="wsb-group">Overview</div>
     <a href="{{ url_for('index') }}" class="wsb-item{% if request.endpoint == 'index' %} on{% endif %}"><svg class="wsb-ico" viewBox="0 0 24 24"><use href="#wi-grid"/></svg><span>Overview</span></a>
     <a href="/market" class="wsb-item{% if request.endpoint == 'market' %} on{% endif %}"><svg class="wsb-ico" viewBox="0 0 24 24"><use href="#wi-pulse"/></svg><span>Market Pulse</span></a>
+    {# Hardcoded href like its neighbours — url_for on a route the running
+       process has not imported yet would 500 the whole nav (see line 15). #}
+    <a href="/coin" class="wsb-item{% if request.endpoint == 'coin_page' %} on{% endif %}"><svg class="wsb-ico" viewBox="0 0 24 24"><use href="#wi-pulse"/></svg><span>幣種分析</span></a>
     <a href="/universe" class="wsb-item{% if request.endpoint == 'universe_page' %} on{% endif %}"><svg class="wsb-ico" viewBox="0 0 24 24"><use href="#wi-cube"/></svg><span>3D Universe</span></a>
 
     <div class="wsb-group">Strategy</div>
