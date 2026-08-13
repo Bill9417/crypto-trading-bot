@@ -96,6 +96,9 @@ body { background: var(--wolf-slate); background-image: var(--page-bg-glow);
 .chip { font-size: .6rem; font-weight: 800; padding: 2px 6px; border-radius: 999px;
         background: rgba(255,255,255,.07); color: var(--wolf-muted); }
 .chip.hot { background: var(--wolf-blue-dim); color: var(--wolf-blue); }
+.row-tv { flex:0 0 auto; text-decoration:none; font-size:1.05rem; opacity:.55;
+          padding:6px 4px 6px 10px; }
+.row-tv:hover { opacity:1; }
 </style>
 </head>
 <body>
@@ -238,7 +241,11 @@ body { background: var(--wolf-slate); background-image: var(--page-bg-glow);
                   (READ[r.state] ? ' · ' + READ[r.state] : '') +
                   (r.pctile != null ? ' · 前' + Math.max(0.1,100-r.pctile).toFixed(1) + '%' : '');
         }
-        return '<button class="row ' + cls + '" data-b="' + esc(r.base) + '">' +
+        // The row still OPENS the analysis (that is the page's job); the ↗
+        // is a separate tap for the chart, so one control does not have to
+        // mean two things.
+        var tv = 'https://www.tradingview.com/chart/?symbol=BINANCE:' + esc(r.base) + 'USDT.P';
+        return '<div class="row ' + cls + '" data-b="' + esc(r.base) + '">' +
             '<div class="row-b"><div class="row-t"><span class="row-sym">' + esc(r.base) + '</span>' +
                 (r.pinned ? '<span class="chip">基準</span>'
                           : r.flagged ? '<span class="chip hot">OI 異常</span>' : '') +
@@ -246,7 +253,9 @@ body { background: var(--wolf-slate); background-image: var(--page-bg-glow);
             '</div><div class="row-sub">' + esc(sub) + '</div></div>' +
             '<div class="row-r"><div class="row-px num">$' + px(r.price) + '</div>' +
             '<div class="num ' + (r.chg_24h>=0?'up':'dn') + '" style="font-size:.74rem">' +
-                (r.chg_24h>=0?'+':'') + Number(r.chg_24h).toFixed(2) + '%</div></div></button>';
+                (r.chg_24h>=0?'+':'') + Number(r.chg_24h).toFixed(2) + '%</div></div>' +
+            '<a class="row-tv" href="' + tv + '" target="_blank" rel="noopener" ' +
+              'title="在 TradingView 開圖">📈</a></div>';
     }
 
     function loadDefault() {

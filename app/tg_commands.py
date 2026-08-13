@@ -504,6 +504,27 @@ def handle(cmd: str, args: str = "", owner: bool = False) -> str:
         import daily_report
         return daily_report.build_report(daily_report._gather(),
                                          datetime.now(daily_report.TZ))
+    if cmd in ("mute", "unmute", "alerts", "notify"):
+        # 🔕 Runtime notification switches. Muting stops the Telegram message
+        # only — the scan, the record and the web page are untouched.
+        import alert_prefs
+        # `args` is the raw string after the command, not a list — args[0]
+        # would take the first CHARACTER, so "/mute mover" would look for a
+        # kind called "m" and report it unknown.
+        target = (args or "").strip().lower().split(" ")[0]
+        if not target:
+            return alert_prefs.status_text()
+        if target not in alert_prefs.KINDS:
+            import tg_format as _F
+            return ("不認得 <code>" + _F.esc(target) + "</code>。\n\n"
+                    + alert_prefs.status_text())
+        if cmd == "unmute":
+            alert_prefs.unmute(target)
+            return f"🔔 已開啟 <code>{target}</code> —— {alert_prefs.KINDS[target]}"
+        alert_prefs.mute(target)
+        return (f"🔕 已靜音 <code>{target}</code> —— {alert_prefs.KINDS[target]}\n"
+                f"偵測和網頁照常，只是不再發 Telegram。"
+                f"用 <code>/unmute {target}</code> 開回來。")
     if cmd in ("link", "url", "web"):
         import site_link
         return site_link.link_reply()

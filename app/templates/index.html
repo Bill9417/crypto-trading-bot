@@ -1967,7 +1967,11 @@
             function chip(f) {
                 var blue = f.blue_sky;
                 var col = blue ? 'var(--long, #4ade80)' : '#fbbf24';
-                return '<a href="https://www.bybit.com/trade/usdt/' + f.base + 'USDT"' +
+                // TradingView, not the exchange: tapping a card is "show me
+                // the chart", and the perp chart is where the zone and the OI
+                // panel actually are. The order ticket is one tap further on
+                // and is the wrong default for a scanner card.
+                return '<a href="https://www.tradingview.com/chart/?symbol=BINANCE:' + f.base + 'USDT.P"' +
                     ' target="_blank" rel="noopener" style="flex:0 0 auto; min-width:138px;' +
                     'text-decoration:none; color:inherit; background:rgba(255,255,255,.03);' +
                     'border:1px solid ' + col + '; border-radius:12px; padding:8px 11px; display:block;">' +
@@ -2085,7 +2089,7 @@
                 var col = meta.bull ? 'var(--long, #4ade80)' : 'var(--short, #f87171)';
                 var base = (r.symbol || '').replace(/USDT$/, '');
                 var rare = Math.max(0.1, 100 - (r.pctile || 0));
-                return '<a href="https://www.bybit.com/trade/usdt/' + base + 'USDT"' +
+                return '<a href="https://www.tradingview.com/chart/?symbol=BINANCE:' + base + 'USDT.P"' +
                     ' target="_blank" rel="noopener" style="' +
                     'flex:0 0 auto; min-width:132px; text-decoration:none; color:inherit;' +
                     'background:rgba(255,255,255,.03); border:1px solid ' + col + ';' +

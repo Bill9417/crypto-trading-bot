@@ -174,3 +174,109 @@ def test_confirmation_is_configurable_but_never_zero():
     """PUBLIC_STRIKES=0 or 1 would restore the exact behaviour this replaced."""
     import watchdog as W
     assert W.PUBLIC_STRIKES >= 2
+
+
+# ── 🔕 alert mute switches (added 2026-08-14) ───────────────────────────────
+def test_muting_stops_the_message_not_the_detector(monkeypatch, tmp_path):
+    """The distinction the whole module rests on. Turning the DETECTOR off
+    would silently stop the pump radar feeding the dashboard strip and the
+    record — "I muted a notification" must never mean "I stopped collecting
+    the data"."""
+    import alert_prefs as P
+    import telegram_utils as T
+    monkeypatch.setattr(P, "STORE_FILE", str(tmp_path / "prefs.json"))
+    sent = []
+    monkeypatch.setattr(T, "_route", lambda ch, force: ("tok", {"chat_id": "1"}, "b"))
+    monkeypatch.setattr(T, "_post_one",
+                        lambda url, body, retries: (sent.append(body), (True, 1))[1])
+
+    assert T.send_message("x", kind="mover") is not False
+    assert len(sent) == 1
+    P.mute("mover")
+    assert T.send_message("x", kind="mover") is False
+    assert len(sent) == 1, "a muted alert still reached Telegram"
+    # a DIFFERENT kind is unaffected
+    assert T.send_message("y", kind="crowd") is not False
+    assert len(sent) == 2
+
+
+def test_an_untagged_send_is_never_silenced(monkeypatch, tmp_path):
+    """Most call sites pass no kind. If an unknown/absent kind resolved to
+    'muted', a typo at one call site would disable an alert nobody knows is
+    off — silent, and only discoverable by missing something."""
+    import alert_prefs as P
+    monkeypatch.setattr(P, "STORE_FILE", str(tmp_path / "prefs.json"))
+    P.mute("mover")
+    assert P.is_muted(None) is False
+    assert P.is_muted("") is False
+    assert P.is_muted("not_a_registered_kind") is False
+
+
+def test_only_registered_kinds_can_be_muted(monkeypatch, tmp_path):
+    """Otherwise '/mute mvoer' silently succeeds and mutes nothing."""
+    import alert_prefs as P
+    monkeypatch.setattr(P, "STORE_FILE", str(tmp_path / "prefs.json"))
+    assert P.mute("mvoer") is False
+    assert P.load()["muted"] == []
+
+
+def test_mute_survives_a_restart(monkeypatch, tmp_path):
+    import alert_prefs as P
+    monkeypatch.setattr(P, "STORE_FILE", str(tmp_path / "prefs.json"))
+    P.mute("mover")
+    assert P.is_muted("mover") is True
+    assert P.unmute("mover") is True
+    assert P.is_muted("mover") is False
+
+
+def test_a_corrupt_prefs_file_does_not_silence_everything(monkeypatch, tmp_path):
+    """Failing closed here would mute every alert at once, which is the worst
+    possible direction for this particular failure."""
+    import alert_prefs as P
+    f = tmp_path / "prefs.json"
+    f.write_text("{ not json")
+    monkeypatch.setattr(P, "STORE_FILE", str(f))
+    assert P.load()["muted"] == []
+    assert P.is_muted("mover") is False
+
+
+def test_a_prefs_failure_never_eats_an_alert(monkeypatch):
+    """telegram_utils imports prefs inside a try. If that raised, every alert
+    in the system would stop."""
+    import telegram_utils as T
+    import alert_prefs as P
+    monkeypatch.setattr(P, "is_muted",
+                        lambda k: (_ for _ in ()).throw(RuntimeError("boom")))
+    sent = []
+    monkeypatch.setattr(T, "_route", lambda ch, force: ("tok", {"chat_id": "1"}, "b"))
+    monkeypatch.setattr(T, "_post_one",
+                        lambda url, body, retries: (sent.append(body), (True, 1))[1])
+    T.send_message("x", kind="mover")
+    assert len(sent) == 1
+
+
+def test_the_mover_alert_is_tagged():
+    """The one the owner asked to silence. Untagged, /mute mover does nothing
+    and the failure is invisible — the command reports success."""
+    import os
+    here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    src = open(os.path.join(here, "strategy2_scanner.py"), encoding="utf-8").read()
+    assert 'kind="mover"' in src
+
+
+def test_the_mute_command_parses_its_argument():
+    """`args` is the raw string after the command, not a list. args[0] takes
+    the first CHARACTER, so '/mute mover' would look for a kind called 'm'."""
+    import tempfile
+    import alert_prefs as P
+    import tg_commands as TC
+    old = P.STORE_FILE
+    P.STORE_FILE = tempfile.mktemp()
+    try:
+        assert "已靜音" in TC.handle("mute", "mover")
+        assert P.is_muted("mover") is True
+        assert "已開啟" in TC.handle("unmute", "mover")
+        assert "不認得" in TC.handle("mute", "nonsense")
+        assert "通知開關" in TC.handle("mute", "")
+    finally:
+        P.STORE_FILE = old

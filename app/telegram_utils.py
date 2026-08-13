@@ -467,7 +467,7 @@ def redact(text) -> str:
 
 
 def send_message(message, parse_mode=None, *, force=False, retries=2, channel="alerts",
-                 reply_markup=None):
+                 reply_markup=None, kind=None):
     """Long messages are split on line boundaries and sent as in-order
     chunks; returns True only when EVERY chunk was delivered. See _route()
     for the channel routing rules.
@@ -475,6 +475,18 @@ def send_message(message, parse_mode=None, *, force=False, retries=2, channel="a
     reply_markup (an inline keyboard dict) rides on the LAST chunk only —
     Telegram attaches a keyboard to one specific message, and a button under
     part 1 of 3 would sit above the text it acts on."""
+    # 🔕 Muted alert types are dropped HERE, at the send, not at the detector.
+    # The scan still runs, the dashboard still fills and the record is still
+    # written — only the Telegram message is skipped. Muting a notification
+    # must never mean "stop collecting the data".
+    if kind:
+        try:
+            import alert_prefs
+            if alert_prefs.is_muted(kind):
+                return False
+        except Exception:  # noqa: BLE001 — a prefs failure must not eat alerts
+            pass
+
     routed = _route(channel, force)
     if not routed:
         return False

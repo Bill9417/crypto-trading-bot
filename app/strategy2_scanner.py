@@ -462,7 +462,8 @@ def scan_once(client, recent: list, last_alert: dict, pending: list) -> list:
                 try:
                     by_line = bybit_data.price_line(base_, fallback_price=mv["price"])
                     telegram_utils.send_message(
-                        f"{arrow} {zh} MOVER · {base_} 一小時 {mv['chg_1h']:+.1f}%\n"
+                        kind="mover",
+                        message=f"{arrow} {zh} MOVER · {base_} 一小時 {mv['chg_1h']:+.1f}%\n"
                         f"成交量 {mv['vol_mult']:.1f}× 平常 · 24h {mv['chg_24h']:+.1f}%"
                         + (f"\n{by_line}" if by_line else "")
                         + f"\n{bybit_data.trade_url(base_) or _tv_url(sym)}",
