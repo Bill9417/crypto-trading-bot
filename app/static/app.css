@@ -5,46 +5,56 @@
    page's own <style> block and can override anything here. */
 
 :root {
-    --wolf-blue: #00d2ff;
-    --wolf-blue-dim: rgba(0, 210, 255, 0.16);
-    --wolf-gold: #ffcf4b;
-    --wolf-champagne: #e8ca8d;     /* nav accent — muted champagne, quieter than the data gold */
+    /* ── Palette, made vivid 2026-08-13 ────────────────────────────────────
+       The old accents were a single cyan + gold against desaturated finance
+       green/red (#16a34a / #dc2626). Those two read as brown-green and
+       brick on a dark ground — they are print colours, and on an emissive
+       screen at 12px they lose against the background instead of carrying.
+       Brighter, more saturated hues, plus four extra accent channels so
+       panels can differ by HUE rather than by yet another shade of blue. */
+    --wolf-blue: #29ddff;
+    --wolf-blue-dim: rgba(41, 221, 255, 0.18);
+    --wolf-gold: #ffd257;
+    --wolf-champagne: #f0d49a;     /* nav accent — quieter than the data gold */
+    --wolf-violet: #a78bfa;
+    --wolf-magenta: #f472b6;
+    --wolf-teal: #2dd4bf;
+    --wolf-orange: #fb923c;
     --wolf-dark: #171a26;
-    --wolf-slate: #0d1220;
-    --wolf-bg: #0d1220;            /* alias some pages use */
-    /* Surfaces: a touch lighter and cooler-neutral than before, so cards
-       separate from the page instead of melting into it. */
-    --wolf-card: rgba(33, 40, 62, 0.82);
-    --wolf-card-hi: rgba(41, 49, 74, 0.82);   /* hover / raised */
-    --wolf-border: rgba(255, 255, 255, 0.10);
-    --wolf-border-hi: rgba(255, 255, 255, 0.18);
-    --wolf-muted: #93a3b8;
-    --wolf-text: #f2f6fb;
-    --long: #16a34a;
-    --long-bg: rgba(22, 163, 74, 0.14);
-    --short: #dc2626;
-    --short-bg: rgba(220, 38, 38, 0.14);
+    --wolf-slate: #0b1020;
+    --wolf-bg: #0b1020;            /* alias some pages use */
+    /* Surfaces carry a faint indigo tint now rather than neutral grey, so a
+       card looks lit by the page instead of cut out of it. */
+    --wolf-card: rgba(34, 43, 71, 0.84);
+    --wolf-card-hi: rgba(44, 55, 88, 0.86);   /* hover / raised */
+    --wolf-border: rgba(255, 255, 255, 0.11);
+    --wolf-border-hi: rgba(120, 190, 255, 0.30);
+    --wolf-muted: #9dadc4;
+    --wolf-text: #f4f8ff;
+    /* Long/short: the two colours read most often and from furthest away.
+       Lifted well clear of the background while keeping green/red apart for
+       the ~8% of men with red-green deficiency — these differ in LIGHTNESS
+       too (green reads lighter), so the pair survives being seen as one hue. */
+    --long: #2ee88a;
+    --long-bg: rgba(46, 232, 138, 0.16);
+    --short: #ff4d6d;
+    --short-bg: rgba(255, 77, 109, 0.16);
     --radius: 14px;
-    /* Card shadow + a 1px inner top highlight — the highlight is what makes dark
-       glass cards read as "lit from above" instead of flat rectangles. */
-    --shadow: 0 16px 44px rgba(0, 0, 0, 0.42), inset 0 1px 0 rgba(255, 255, 255, 0.06);
+    --shadow: 0 16px 44px rgba(0, 0, 0, 0.46), inset 0 1px 0 rgba(255, 255, 255, 0.07);
     --page-max: 1440px;        /* ONE shared content width for every page + the nav */
-    /* ONE shared background for every page. Rebuilt 2026-08 for depth: the old
-       version was a flat near-black with two corner glows, which read as
-       "unfinished dark mode". Now a soft vertical lift (lighter at the top,
-       where the eye lands first), an indigo/violet mid-tone so the base is not
-       dead cold black, the brand cyan + gold as quiet corner auroras, a
-       vignette to pull focus inward, and a finer, dimmer grid.
-       Order matters: gradients paint front-to-back, so the grid is listed
-       first and the base wash last. */
+    /* Background: same structure as before (grid, vignette, corner auroras,
+       base wash) with the auroras roughly doubled and a magenta added, so the
+       page has colour of its own instead of being a dark rectangle that the
+       cards sit on. Order matters — gradients paint front-to-back. */
     --page-bg-glow:
-        repeating-linear-gradient(0deg, rgba(255, 255, 255, 0.012) 0 1px, transparent 1px 56px),
-        repeating-linear-gradient(90deg, rgba(255, 255, 255, 0.012) 0 1px, transparent 1px 56px),
-        radial-gradient(ellipse 120% 70% at 50% 120%, rgba(0, 0, 0, 0.55), transparent 60%),
-        radial-gradient(ellipse 90% 55% at 12% -8%, rgba(0, 190, 255, 0.13), transparent 62%),
-        radial-gradient(ellipse 70% 50% at 92% 8%, rgba(138, 110, 255, 0.10), transparent 60%),
-        radial-gradient(ellipse 80% 60% at 88% 96%, rgba(255, 190, 90, 0.055), transparent 58%),
-        linear-gradient(178deg, #151c2e 0%, #111726 38%, #0d1220 100%);
+        repeating-linear-gradient(0deg, rgba(255, 255, 255, 0.014) 0 1px, transparent 1px 56px),
+        repeating-linear-gradient(90deg, rgba(255, 255, 255, 0.014) 0 1px, transparent 1px 56px),
+        radial-gradient(ellipse 120% 70% at 50% 120%, rgba(0, 0, 0, 0.50), transparent 60%),
+        radial-gradient(ellipse 90% 55% at 10% -10%, rgba(41, 221, 255, 0.22), transparent 62%),
+        radial-gradient(ellipse 75% 52% at 94% 4%, rgba(167, 139, 250, 0.20), transparent 60%),
+        radial-gradient(ellipse 70% 50% at 78% 98%, rgba(244, 114, 182, 0.12), transparent 58%),
+        radial-gradient(ellipse 80% 60% at 18% 92%, rgba(255, 210, 87, 0.10), transparent 58%),
+        linear-gradient(178deg, #16203a 0%, #101830 40%, #0b1020 100%);
 }
 
 /* ── Global polish — one copy here instead of per-page duplicates ─────────── */
@@ -58,7 +68,8 @@ body {
 /* Brand signature: a hairline beam across the very top of every page. */
 body::before {
     content: ""; position: fixed; top: 0; left: 0; right: 0; height: 2px;
-    background: linear-gradient(90deg, transparent 2%, var(--wolf-blue) 30%, var(--wolf-gold) 70%, transparent 98%);
+    background: linear-gradient(90deg, transparent 1%, var(--wolf-blue) 22%,
+        var(--wolf-violet) 45%, var(--wolf-magenta) 62%, var(--wolf-gold) 82%, transparent 99%);
     opacity: .55; z-index: 2147483000; pointer-events: none;
 }
 ::selection { background: rgba(0, 210, 255, 0.32); color: #fff; }
