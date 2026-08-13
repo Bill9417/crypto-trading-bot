@@ -59,7 +59,16 @@
            spacing is unchanged. This is what lets the server render the user's
            order into the FIRST paint instead of shuffling nodes after load. */
         .page-wrap { max-width: var(--page-max); margin: 0 auto; padding: 12px 16px 28px;
-                     display: flex; flex-direction: column; align-items: stretch; }
+                     display: flex; flex-direction: column; align-items: stretch;
+                     row-gap: 14px; }
+        /* Spacing belongs to the CONTAINER now, not to each row. Measured on
+           2026-08-13: seven of the thirteen rows (s4, briefing, radar, oi,
+           whale, liqmap, news) carried no margin-bottom at all and sat flush
+           against the next one, while the rest had 14px — so the page had two
+           different gaps depending on which panel you were looking at. With a
+           row-gap the rows must NOT also bring their own margin, or the ones
+           that have it would space at 28px and the mismatch just inverts. */
+        .page-wrap > [data-card] { margin-bottom: 0; }
         /* Pinned: the status strip and the edit bar are chrome, not content. */
         .page-wrap > .status-row { order: 0; }
         .page-wrap > .layout-bar { order: -1; }

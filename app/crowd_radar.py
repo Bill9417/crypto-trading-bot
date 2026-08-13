@@ -575,11 +575,20 @@ def scan(symbols: list = None, now: float = None, store: dict = None,
             "held_back": max(0, len(loud) - MAX_ALERTS_PER_SWEEP)}
 
 
+# 訊號 — the topic the S2 scanner posts its own alerts to, which is where the
+# owner actually reads scanner output. It went to 💥 清算 first, on the reasoning
+# that positioning belongs next to liquidations; that grouping is tidy and
+# wrong, because a feed nobody opens is a feed that does not exist.
+#
+# Safe in a joinable topic for the same reason liq_alerts is: this message
+# carries public market data and no balance, size, leverage or margin. There is
+# a test asserting exactly that — see telegram_utils' note on channel defaults,
+# which is the mistake this repo has already made once.
+ALERT_CHANNEL = os.getenv("CROWD_CHANNEL", "signals")
+
+
 def _send(msg: str) -> None:
-    # 💥 清算 topic: this is the positioning thread, alongside liq_alerts and
-    # whale_tracker. It carries no account data, so it is safe in a joinable
-    # topic — see the group-channel note in telegram_utils.
-    telegram_utils.send_message(msg, parse_mode="HTML", channel="liq")
+    telegram_utils.send_message(msg, parse_mode="HTML", channel=ALERT_CHANNEL)
 
 
 def tick(now: float = None, force: bool = False) -> dict:

@@ -559,3 +559,30 @@ def test_a_symbol_already_over_the_gate_still_gets_a_fresh_reading():
     """Skipping the live call there would alert on a stale number — the one
     place freshness is most visible."""
     assert C._worth_a_live_call({"massive": True, "oi_pct": 20.0, "pctile": 99.9})
+
+
+# ── where the alert lands (2026-08-13) ──────────────────────────────────────
+def test_alerts_go_to_the_topic_the_scanner_posts_to():
+    """It shipped to 💥 清算, on the reasoning that positioning belongs beside
+    liquidations. Tidy and wrong: the owner reads scanner output in 訊號, so
+    the alerts were technically delivered and effectively invisible."""
+    import strategy2_scanner  # noqa: F401 — the module that owns that topic
+    assert C.ALERT_CHANNEL == "signals"
+
+
+def test_the_alert_channel_is_never_a_private_one(monkeypatch):
+    """Not a leak risk in this direction, but the inverse of the mistake this
+    repo made before: a channel default decides who can read a message, so it
+    is asserted rather than assumed."""
+    import telegram_utils as T
+    assert C.ALERT_CHANNEL not in T.PRIVATE_CHANNELS
+
+
+def test_the_send_path_uses_the_configured_channel(monkeypatch):
+    seen = {}
+    import telegram_utils as T
+    monkeypatch.setattr(T, "send_message",
+                        lambda msg, **kw: seen.update(msg=msg, **kw) or True)
+    C._send("hello")
+    assert seen["channel"] == C.ALERT_CHANNEL
+    assert seen["parse_mode"] == "HTML"
