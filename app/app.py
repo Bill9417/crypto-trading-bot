@@ -3714,6 +3714,20 @@ def market():
     return render_template("market.html", intel=intel, circuit=circuit, crowd=crowd)
 
 
+@app.route("/api/flips")
+@login_required
+def api_flips():
+    """壓力翻支撐 — live flips plus the forward track record. Reads the
+    scanner's state file, so polling costs no exchange call."""
+    try:
+        import flip_outcomes
+        return jsonify(_json_safe(flip_outcomes.web_view()))
+    except Exception as e:  # noqa: BLE001
+        print(f"[flips] view failed: {e}")
+        return jsonify({"recent": [], "open": [], "closed": [], "stats": {},
+                        "error": str(e)[:150]}), 200
+
+
 @app.route("/api/crowd_radar")
 @login_required
 def api_crowd_radar():

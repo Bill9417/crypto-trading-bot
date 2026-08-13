@@ -428,8 +428,12 @@ def scan_once(client, recent: list, last_alert: dict, pending: list) -> list:
             import breakout_flip
             _bf = breakout_flip.consider(sym, ohlcv, _BFLIP_STATE, time.time())
             if _bf:
-                LATEST_FLIPS[sym] = {**_bf, "ts": time.time(),
-                                     "tv_url": _tv_url(sym)}
+                LATEST_FLIPS[sym] = {**_bf, "tv_url": _tv_url(sym)}
+                # Written to disk BEFORE the alert: a Telegram failure must not
+                # cost the record. The track record is the only thing that can
+                # ever settle whether this pattern pays.
+                import flip_outcomes
+                flip_outcomes.note(_bf)
                 telegram_utils.send_message(
                     breakout_flip.format_alert(sym, _bf, _bf["plan"]),
                     parse_mode="HTML", force=True, channel="signals")
@@ -740,6 +744,16 @@ def main() -> None:
             watchdog.tick("strategy2_scanner.py")
         except Exception as exc:  # noqa: BLE001
             print(f"[strategy2] watchdog error: {exc}")
+        # 📓 壓力翻支撐 outcomes — replay alerted flips against real candles so
+        # the 163-trade backtest gains forward data it did not choose.
+        try:
+            import flip_outcomes
+            _fo = flip_outcomes.tick(client)
+            if _fo.get("settled"):
+                print(f"[flip] settled {_fo['settled']} · {_fo['open']} open · "
+                      f"{_fo['closed']} closed")
+        except Exception as exc:  # noqa: BLE001
+            print(f"[strategy2] flip outcomes error: {exc}")
         # 📋 Signal outcomes — replay 48h-old signals against real candles;
         # Sunday scorecard closes the honesty loop.
         try:

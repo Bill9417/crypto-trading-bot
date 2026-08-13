@@ -118,3 +118,4 @@ ENV/
 app/research_cache/
 liquidations_buffer.json
 dashboard_layout.json
+flip_outcomes.json

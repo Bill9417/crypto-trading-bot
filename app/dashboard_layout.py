@@ -41,6 +41,7 @@ CARDS = (
     ("coins", "◈ Main Coins"),
     ("briefing", "📊 Today's Briefing"),
     ("radar", "🚀 Pump Radar"),
+    ("flips", "🚀 壓力翻支撐"),
     ("oi", "🐋 OI 異常"),
     ("whale", "🐳 Whale Positioning"),
     ("liqmap", "💥 Liquidation Map"),

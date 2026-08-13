@@ -1938,6 +1938,99 @@
         </script>
 
 
+        <!-- 🚀 壓力翻支撐 — broke a multi-touch resistance zone, retested it,
+             the zone held as support, and nothing prior is overhead.
+             Two halves on purpose: the LIVE flips, and the TRACK RECORD. The
+             backtest behind this is 163 trades whose interval straddles zero
+             over one ~10-day regime, so the forward record is not decoration —
+             it is the only thing that can ever settle it. The backtest is
+             printed beside the live sample so a live n of 6 is not mistaken
+             for the answer. -->
+        <section class="analytics-panel" data-card="flips">
+            <div class="analytics-head">
+                <div>
+                    <div class="analytics-title">🚀 壓力翻支撐 <span style="text-transform:none;letter-spacing:0;font-weight:600;opacity:.7;">突破回踩不破 · 上方無壓</span></div>
+                    <div class="analytics-subtitle" id="flip-sub">壓力區被站上後回踩沒破 —— 舊壓力變新支撐</div>
+                </div>
+            </div>
+            <div id="flip-row" style="display:flex; gap:8px; overflow-x:auto; padding:2px 0 6px; -webkit-overflow-scrolling:touch;">
+                <div class="analytics-subtitle">等待掃描…</div>
+            </div>
+            <div id="flip-record" style="margin-top:10px;"></div>
+        </section>
+        <script>
+        (function () {
+            function usd(v){v=Number(v)||0;return v>=1e6?'$'+(v/1e6).toFixed(1)+'M':'$'+v.toFixed(0);}
+            function ago(ts){if(!ts)return'';var s=Math.max(0,Date.now()/1000-ts);
+                if(s<90)return Math.round(s)+'秒前';if(s<5400)return Math.round(s/60)+'分前';
+                if(s<172800)return Math.round(s/3600)+'小時前';return Math.round(s/86400)+'天前';}
+            function chip(f) {
+                var blue = f.blue_sky;
+                var col = blue ? 'var(--long, #4ade80)' : '#fbbf24';
+                return '<a href="https://www.bybit.com/trade/usdt/' + f.base + 'USDT"' +
+                    ' target="_blank" rel="noopener" style="flex:0 0 auto; min-width:138px;' +
+                    'text-decoration:none; color:inherit; background:rgba(255,255,255,.03);' +
+                    'border:1px solid ' + col + '; border-radius:12px; padding:8px 11px; display:block;">' +
+                    '<div style="font-weight:800; font-size:.82rem;">' + f.base + (blue ? ' 🚀' : ' ⚠️') + '</div>' +
+                    '<div style="font-size:.7rem; color:' + col + '; font-weight:700;">' +
+                        (blue ? '上方無壓' : '上方壓力 ' + (f.room_pct||0).toFixed(1) + '%') + '</div>' +
+                    '<div style="font-size:.64rem; color:var(--wolf-muted,#8a99ad); margin-top:2px;">' +
+                        '翻轉區 ' + Number(f.zone_top).toPrecision(5) + ' · ' + (f.touches||0) + ' 次測試</div>' +
+                    '<div style="font-size:.64rem; color:var(--wolf-muted,#8a99ad);">' +
+                        '停損 −' + (f.stop_pct||0).toFixed(2) + '% · ' + ago(f.fired_ts) + '</div></a>';
+            }
+            function record(d) {
+                var st = (d.stats||{}).all, m = d.measured||{};
+                var box = document.getElementById('flip-record');
+                var back = '<div style="font-size:.66rem;opacity:.6;line-height:1.6;margin-top:6px;">' +
+                    '📐 上線前回測 ' + (m.n||0) + ' 筆：勝率 ' + (m.wr||0).toFixed(0) + '%、期望值 ' +
+                    (m.exp>=0?'+':'') + (m.exp||0).toFixed(3) + 'R，信賴區間 [' +
+                    (m.ci?m.ci[0].toFixed(2):'?') + ', ' + (m.ci?m.ci[1].toFixed(2):'?') + '] <b>包含 0</b>。' +
+                    '只測過 ' + (m.window||'') + ' —— 形態偵測，不是已驗證的策略。</div>';
+                if (!st || !st.n) {
+                    box.innerHTML = '<div class="analytics-subtitle">還沒有結算完成的紀錄 —— ' +
+                        '通知過的形態會在這裡累積成績。</div>' + back;
+                    return;
+                }
+                var segs = Object.keys(d.stats||{}).filter(function(k){return k!=='all';})
+                    .map(function(k){var v=d.stats[k];
+                        return '<span style="opacity:.75;margin-right:10px;">' +
+                            ((d.segment_zh||{})[k]||k) + ' ' + v.n + ' 筆 ' +
+                            (v.exp>=0?'+':'') + v.exp.toFixed(3) + 'R</span>';}).join('');
+                box.innerHTML =
+                    '<div style="display:flex;gap:14px;flex-wrap:wrap;font-size:.74rem;">' +
+                    '<span>實際樣本 <b>' + st.n + '</b></span>' +
+                    '<span>停利 <b style="color:#86efac">' + (st.tp||0) + '</b></span>' +
+                    '<span>停損 <b style="color:#fca5a5">' + (st.sl||0) + '</b></span>' +
+                    '<span>期望值 <b style="color:' + ((st.exp||0)>0?'#86efac':'#fca5a5') + '">' +
+                        ((st.exp||0)>=0?'+':'') + (st.exp||0).toFixed(3) + 'R</b></span>' +
+                    '<span>累計 <b>' + ((st.net||0)>=0?'+':'') + (st.net||0).toFixed(1) + 'R</b></span>' +
+                    '</div>' +
+                    (segs ? '<div style="margin-top:5px;font-size:.7rem;">' + segs + '</div>' : '') +
+                    '<div style="margin-top:5px;font-size:.7rem;opacity:.8;">' +
+                        (st.verdict_zh || st.verdict || '') + '</div>' + back;
+            }
+            function load() {
+                fetch('/api/flips').then(function(r){return r.ok?r.json():null;})
+                    .then(function (d) {
+                        if (!d) return;
+                        var row = document.getElementById('flip-row');
+                        var live = (d.open||[]).concat(d.recent||[]);
+                        var seen = {}, uniq = [];
+                        live.forEach(function(f){ if(!seen[f.key]){seen[f.key]=1;uniq.push(f);} });
+                        row.innerHTML = uniq.length
+                            ? uniq.slice(0,12).map(chip).join('')
+                            : '<div class="analytics-subtitle">目前沒有翻轉形態 —— ' +
+                              '四個條件（壓力區／站上／回踩不破／上方無壓）要全部成立。空的是常態。</div>';
+                        record(d);
+                    }).catch(function(){});
+            }
+            load();
+            setInterval(function(){ if(!document.hidden) load(); }, 60000);
+            document.addEventListener('visibilitychange', function(){ if(!document.hidden) load(); });
+        })();
+        </script>
+
         <!-- 🐋 OI 異常 — the crowd piling massively into one side.
              Sits next to Pump Radar because they answer adjacent questions:
              that one is price moving, this one is POSITIONS being built. A
