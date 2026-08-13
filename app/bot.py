@@ -539,6 +539,16 @@ def record_signal(symbol, direction, entry, tp1, tp2, sl, lights_count,
             strategy = resolve_live_strategy()[0]
         except Exception:  # noqa: BLE001
             strategy = "default"
+    # 📓 Write down what open interest was doing at this instant. Capture only
+    # — it never filters or blocks. Asked 2026-08-13 whether adding OI improves
+    # S1; that cannot be answered backwards, because Binance keeps ~30 days of
+    # OI history and S1 fires 0.1×/symbol/30d, so the entire window holds about
+    # three S1 trades. Forward capture is the only route to a real sample.
+    try:
+        import s1_oi_capture
+        s1_oi_capture.note(symbol, direction, lights_count, entry)
+    except Exception:  # noqa: BLE001 — bookkeeping never blocks a signal
+        pass
     if not all([app, db, SignalRecord]):
         return False, "database unavailable"
 
