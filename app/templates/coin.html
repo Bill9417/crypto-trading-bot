@@ -75,6 +75,27 @@ body { background: var(--wolf-slate); background-image: var(--page-bg-glow);
 .stat span { font-size: .64rem; color: var(--wolf-muted); text-transform: uppercase; letter-spacing: .05em; }
 .note { font-size: .7rem; color: var(--wolf-muted); line-height: 1.65; }
 .spark { width: 100%; height: 54px; display: block; }
+.sec-hd { font-size: .74rem; font-weight: 800; letter-spacing: .07em;
+          text-transform: uppercase; color: var(--wolf-muted); margin: 4px 2px 8px; }
+.sec-hd span { text-transform: none; letter-spacing: 0; opacity: .7; font-weight: 600; }
+.row { display: flex; align-items: center; gap: 11px; width: 100%; text-align: left;
+       background: var(--wolf-card); border: 1px solid var(--wolf-border);
+       border-left: 3px solid transparent; border-radius: 12px; padding: 11px 13px;
+       margin-bottom: 7px; cursor: pointer; color: inherit; font: inherit; }
+.row:hover { background: var(--wolf-card-hi); border-color: var(--wolf-border-hi); }
+.row.long { border-left-color: var(--long); }
+.row.short { border-left-color: var(--short); }
+.row.pin { border-left-color: var(--wolf-gold); }
+.row-b { flex: 1 1 auto; min-width: 0; }
+.row-t { display: flex; align-items: baseline; gap: 7px; }
+.row-sym { font-weight: 800; font-size: .94rem; }
+.row-sub { font-size: .68rem; color: var(--wolf-muted); margin-top: 2px;
+           white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.row-r { text-align: right; flex: 0 0 auto; }
+.row-px { font-weight: 700; font-size: .84rem; }
+.chip { font-size: .6rem; font-weight: 800; padding: 2px 6px; border-radius: 999px;
+        background: rgba(255,255,255,.07); color: var(--wolf-muted); }
+.chip.hot { background: var(--wolf-blue-dim); color: var(--wolf-blue); }
 </style>
 </head>
 <body>
@@ -89,6 +110,13 @@ body { background: var(--wolf-slate); background-image: var(--page-bg-glow);
         <div class="sugg" id="sugg"></div>
     </div>
 
+    <div id="default">
+        <div class="sec-hd">🐋 OI 異常 <span>+ BTC / ETH</span></div>
+        <div id="deflist"><div class="muted" style="font-size:.8rem">載入中…</div></div>
+        <div class="note" style="margin:8px 2px 0">
+            預設顯示「未平倉異常」的幣種加上 BTC／ETH。點任一列看完整分析，或直接搜尋其他代號。
+        </div>
+    </div>
     <div id="out"></div>
 
     {# The disclaimer is rendered even before a search: this page's whole risk
@@ -191,6 +219,53 @@ body { background: var(--wolf-slate); background-image: var(--page-bg-glow);
         if (d.disclaimer) document.getElementById('disc').textContent = d.disclaimer;
     }
 
+    // ── default view: the OI-flagged coins plus BTC/ETH ──────────────────
+    var DEF = document.getElementById('default'), DEFL = document.getElementById('deflist');
+    var READ = {longs_opening:'新多單進場', shorts_opening:'新空單進場',
+                shorts_closing:'空單回補', longs_closing:'多單平倉'};
+    // Colour by what the move means for PRICE, not by the sign of the OI
+    // number: shorts piling in is bearish though OI rose, shorts covering is
+    // bullish though OI fell.
+    var BULL = {longs_opening:1, shorts_closing:1};
+
+    function defRow(r) {
+        var hasOi = r.oi_pct != null;
+        var cls = r.pinned ? 'pin' : !hasOi ? '' : (BULL[r.state] ? 'long' : 'short');
+        var sub = r.pinned ? '基準幣' : '';
+        if (hasOi) {
+            sub = (r.pinned ? '基準幣 · ' : '') +
+                  'OI ' + (r.oi_pct>=0?'+':'') + Number(r.oi_pct).toFixed(2) + '%' +
+                  (READ[r.state] ? ' · ' + READ[r.state] : '') +
+                  (r.pctile != null ? ' · 前' + Math.max(0.1,100-r.pctile).toFixed(1) + '%' : '');
+        }
+        return '<button class="row ' + cls + '" data-b="' + esc(r.base) + '">' +
+            '<div class="row-b"><div class="row-t"><span class="row-sym">' + esc(r.base) + '</span>' +
+                (r.pinned ? '<span class="chip">基準</span>'
+                          : r.flagged ? '<span class="chip hot">OI 異常</span>' : '') +
+                (r.tier ? '<span class="chip">' + esc(r.tier) + '</span>' : '') +
+            '</div><div class="row-sub">' + esc(sub) + '</div></div>' +
+            '<div class="row-r"><div class="row-px num">$' + px(r.price) + '</div>' +
+            '<div class="num ' + (r.chg_24h>=0?'up':'dn') + '" style="font-size:.74rem">' +
+                (r.chg_24h>=0?'+':'') + Number(r.chg_24h).toFixed(2) + '%</div></div></button>';
+    }
+
+    function loadDefault() {
+        fetch('/api/coin_overview').then(function(r){return r.ok?r.json():null;})
+            .then(function (d) {
+                if (!d || !d.rows || !d.rows.length) {
+                    DEFL.innerHTML = '<div class="muted" style="font-size:.8rem">' +
+                        '目前沒有 OI 異常 —— 搜尋任一代號即可分析。</div>';
+                    return;
+                }
+                DEFL.innerHTML = d.rows.map(defRow).join('');
+                Array.prototype.forEach.call(DEFL.querySelectorAll('.row'), function (el) {
+                    el.onclick = function () { Q.value = el.dataset.b; go(); };
+                });
+            }).catch(function(){
+                DEFL.innerHTML = '<div class="muted" style="font-size:.8rem">載入失敗</div>';
+            });
+    }
+
     var timer = null, lastQ = '';
     function suggest() {
         var v = Q.value.trim();
@@ -212,6 +287,8 @@ body { background: var(--wolf-slate); background-image: var(--page-bg-glow);
         if (!v || v === lastQ) return;
         lastQ = v;
         SUGG.classList.remove('on');
+        DEF.style.display = 'none';          // the list is the EMPTY state
+        window.scrollTo({top: 0, behavior: 'smooth'});
         OUT.innerHTML = '<div class="card"><div class="muted">分析 ' + esc(v.toUpperCase()) + ' …</div></div>';
         fetch('/api/coin?q=' + encodeURIComponent(v))
             .then(function(r){return r.ok?r.json():null;}).then(render)
@@ -220,6 +297,13 @@ body { background: var(--wolf-slate); background-image: var(--page-bg-glow);
     }
     Q.addEventListener('input', function () {
         clearTimeout(timer); timer = setTimeout(suggest, 180);
+        // Emptying the box is how you get BACK to the default list; without
+        // this the page would strand you on the last coin you looked at.
+        if (!Q.value.trim()) {
+            lastQ = ''; OUT.innerHTML = ''; DEF.style.display = '';
+            SUGG.classList.remove('on');
+            if (history.replaceState) history.replaceState(null, '', '/coin');
+        }
     });
     Q.addEventListener('keydown', function (e) {
         if (e.key === 'Enter') { e.preventDefault(); SUGG.classList.remove('on'); go(); }
@@ -228,7 +312,12 @@ body { background: var(--wolf-slate); background-image: var(--page-bg-glow);
     document.addEventListener('click', function (e) {
         if (!SUGG.contains(e.target) && e.target !== Q) SUGG.classList.remove('on');
     });
+    loadDefault();
     if (Q.value.trim()) go();
+    // The default list is live data; refresh it while it is the visible thing.
+    setInterval(function () {
+        if (!document.hidden && DEF.style.display !== 'none') loadDefault();
+    }, 90000);
 })();
 </script>
 </body>

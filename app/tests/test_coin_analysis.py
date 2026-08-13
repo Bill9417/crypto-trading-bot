@@ -190,3 +190,94 @@ def test_open_interest_is_labelled_as_single_venue():
     src = inspect.getsource(A._build)
     assert "oi_venue" in src
     assert "Binance" in src
+
+
+# ── the default view ────────────────────────────────────────────────────────
+def test_btc_and_eth_are_always_first():
+    """They are the two everything else is read against — relative strength on
+    this page is measured vs BTC — so they are pinned rather than depending on
+    whether the radar happened to flag them."""
+    syms = A.default_symbols()
+    assert syms[:2] == ["BTCUSDT", "ETHUSDT"]
+
+
+def test_a_coin_flagged_repeatedly_appears_once(monkeypatch):
+    """crowd_radar records every fresh alert, so a coin that keeps building is
+    in there several times — EDEN was there three times. Undeduped, the default
+    list is one coin wearing three rows and the rest pushed off the end."""
+    import crowd_radar as C
+    monkeypatch.setattr(C, "web_view", lambda **k: {"recent": [
+        {"symbol": "EDENUSDT", "ts": 3}, {"symbol": "EDENUSDT", "ts": 2},
+        {"symbol": "EDENUSDT", "ts": 1}, {"symbol": "GOATUSDT", "ts": 1}]})
+    syms = A.default_symbols()
+    assert syms.count("EDENUSDT") == 1
+    assert "GOATUSDT" in syms
+
+
+def test_the_newest_alert_comes_first(monkeypatch):
+    import crowd_radar as C
+    monkeypatch.setattr(C, "web_view", lambda **k: {"recent": [
+        {"symbol": "OLDUSDT", "ts": 1}, {"symbol": "NEWUSDT", "ts": 99}]})
+    syms = A.default_symbols()
+    assert syms.index("NEWUSDT") < syms.index("OLDUSDT")
+
+
+def test_an_empty_radar_still_leaves_the_two_pinned(monkeypatch):
+    """No OI anomalies is the normal state on a quiet day. The page must not
+    open empty."""
+    import crowd_radar as C
+    monkeypatch.setattr(C, "web_view", lambda **k: {"recent": []})
+    assert A.default_symbols() == ["BTCUSDT", "ETHUSDT"]
+
+
+def test_a_broken_radar_does_not_empty_the_page(monkeypatch):
+    import crowd_radar as C
+    monkeypatch.setattr(C, "web_view",
+                        lambda **k: (_ for _ in ()).throw(RuntimeError("no file")))
+    assert A.default_symbols() == ["BTCUSDT", "ETHUSDT"]
+
+
+def test_the_default_list_is_capped():
+    assert len(A.default_symbols(limit=4)) <= 4
+
+
+def test_the_overview_is_cheap_by_construction():
+    """Running analyse() over ten coins is ~70 requests and a page that takes
+    half a minute to open. The overview uses ONE bulk ticker call plus the
+    radar's already-stored numbers, and the full analysis stays lazy."""
+    # Behavioural, not a source grep. The grep version failed on overview()'s
+    # OWN docstring, which explains why it avoids analyse() — the fourth time
+    # in this codebase a test matched the prose describing the thing it was
+    # meant to forbid. Make analyse() explode and prove the path is not taken.
+    calls = []
+    real = A.analyse
+    A.analyse = lambda *a, **k: calls.append(1) or {}
+    A._get_calls = 0
+    try:
+        A.overview()
+    except Exception:
+        pass                      # network may be unavailable; the count is the point
+    finally:
+        A.analyse = real
+    assert calls == [], "the overview called the expensive per-coin path"
+
+
+def test_overview_rows_carry_what_the_list_renders(monkeypatch):
+    monkeypatch.setattr(A, "default_symbols", lambda limit=10: ["BTCUSDT"])
+    monkeypatch.setattr(A, "_get", lambda path, **kw: [
+        {"symbol": "BTCUSDT", "lastPrice": "63000", "priceChangePercent": "-0.2",
+         "quoteVolume": "9e9"}])
+    monkeypatch.setattr(A, "_oi_brief", lambda s: {"oi_pct": -0.45, "pctile": 74.0,
+                                                   "state": "shorts_closing"})
+    out = A.overview()
+    assert out["ok"] is True
+    r = out["rows"][0]
+    assert r["base"] == "BTC" and r["pinned"] is True
+    assert r["price"] == 63000.0 and r["oi_pct"] == -0.45
+
+
+def test_a_dead_ticker_call_reports_instead_of_raising(monkeypatch):
+    monkeypatch.setattr(A, "_get",
+                        lambda *a, **k: (_ for _ in ()).throw(RuntimeError("down")))
+    out = A.overview()
+    assert out["ok"] is False and out["rows"] == []

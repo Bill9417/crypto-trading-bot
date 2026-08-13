@@ -3736,6 +3736,20 @@ def api_coin_search():
         return jsonify({"matches": [], "error": str(e)[:120]}), 200
 
 
+@app.route("/api/coin_overview")
+@login_required
+def api_coin_overview():
+    """The default /coin view — OI-flagged coins plus BTC/ETH. Cheap by design
+    (one bulk ticker + the radar's stored numbers), so the page opens fast and
+    the full eight-factor analysis stays lazy."""
+    import coin_analysis
+    try:
+        return jsonify(_json_safe(coin_analysis.overview()))
+    except Exception as e:  # noqa: BLE001
+        print(f"[coin] overview failed: {e}")
+        return jsonify({"ok": False, "rows": [], "error": str(e)[:150]}), 200
+
+
 @app.route("/api/coin")
 @login_required
 def api_coin():

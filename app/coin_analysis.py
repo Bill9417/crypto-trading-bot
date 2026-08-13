@@ -371,3 +371,97 @@ def universe(now: float = None) -> list:
     _universe = (now, syms)
     return syms
 
+
+
+# ── the default view ─────────────────────────────────────────────────────────
+# Opening /coin to an empty search box wastes the page: the interesting coins
+# right now are the ones the OI radar just flagged, and BTC/ETH are the two
+# everything else is read against. Both are already on disk or one bulk call
+# away, so the default costs ~1 request rather than 7 per coin.
+PINNED = ("BTCUSDT", "ETHUSDT")
+DEFAULT_MAX = int(os.getenv("COIN_DEFAULT_MAX", "10"))
+
+
+def default_symbols(limit: int = DEFAULT_MAX) -> list:
+    """BTC and ETH first, then the most recent OI anomalies, newest first.
+
+    Deduped by symbol: crowd_radar records every fresh alert, so a coin that
+    keeps building appears several times (EDEN was in there three times) and an
+    undeduped list would be one coin wearing three rows.
+    """
+    out = list(PINNED)
+    seen = set(out)
+    try:
+        import crowd_radar as C
+        rows = sorted(C.web_view(limit=60).get("recent") or [],
+                      key=lambda r: -(r.get("ts") or 0))
+        for r in rows:
+            s = r.get("symbol")
+            if s and s not in seen:
+                seen.add(s)
+                out.append(s)
+    except Exception as exc:  # noqa: BLE001 — an empty radar still leaves BTC/ETH
+        print(f"[coin] default list: {exc}")
+    return out[:limit]
+
+
+def _oi_brief(sym: str) -> dict:
+    """A cheap OI read for a coin the radar has not flagged (BTC/ETH usually).
+    One call; failure just means the row shows price only."""
+    try:
+        import crowd_radar as C
+        oi, px = C.oi_history(sym, period="15m", limit=120)
+        if len(oi) < C.SPAN_BARS + 2:
+            return {}
+        a = C.assess(oi, px)
+        return {"oi_pct": a.get("oi_pct"), "pctile": a.get("pctile"),
+                "state": a.get("state")}
+    except Exception:  # noqa: BLE001
+        return {}
+
+
+def overview(limit: int = DEFAULT_MAX, now: float = None) -> dict:
+    """Compact rows for the default view — NOT the full eight-factor analysis.
+
+    Deliberately cheap: one bulk ticker call for every price, the radar's own
+    stored numbers for the flagged coins, and one extra call each for the
+    pinned two. Running analyse() across ten coins would be ~70 requests and a
+    page that takes half a minute to open.
+    """
+    now = now if now is not None else time.time()
+    syms = default_symbols(limit)
+    try:
+        tick = {t["symbol"]: t for t in _get("/fapi/v1/ticker/24hr")}
+    except Exception as exc:  # noqa: BLE001
+        return {"ok": False, "error": f"抓行情失敗：{str(exc)[:90]}", "rows": []}
+
+    flagged = {}
+    try:
+        import crowd_radar as C
+        for r in sorted(C.web_view(limit=60).get("recent") or [],
+                        key=lambda x: x.get("ts") or 0):
+            flagged[r["symbol"]] = r          # later rows win = most recent
+    except Exception:  # noqa: BLE001
+        pass
+
+    rows = []
+    for s in syms:
+        t = tick.get(s)
+        if not t:
+            continue
+        row = {"symbol": s, "base": s[:-4],
+               "price": float(t["lastPrice"]),
+               "chg_24h": float(t["priceChangePercent"]),
+               "turnover": float(t.get("quoteVolume") or 0),
+               "pinned": s in PINNED}
+        f = flagged.get(s)
+        if f:
+            row.update({"oi_pct": f.get("oi_pct"), "pctile": f.get("pctile"),
+                        "state": f.get("state"), "tier": f.get("tier"),
+                        "notional": f.get("notional"), "flagged_ts": f.get("ts"),
+                        "flagged": True})
+        elif s in PINNED:
+            row.update({**_oi_brief(s), "flagged": False})
+        rows.append(row)
+    return {"ok": True, "rows": rows, "ts": now,
+            "read_zh": __import__("crowd_radar").READ_ZH}
