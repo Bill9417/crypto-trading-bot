@@ -99,7 +99,6 @@ def test_a_capture_round_trips(monkeypatch):
 def test_capture_is_wired_into_s1_and_only_as_capture():
     """It must never gate a signal. A filter added on the strength of three
     trades is the thing this whole module exists to avoid."""
-    import inspect
     import os
     here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     src = open(os.path.join(here, "bot.py"), encoding="utf-8").read()
