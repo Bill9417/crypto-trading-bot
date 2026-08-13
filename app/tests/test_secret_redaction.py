@@ -161,3 +161,98 @@ def test_health_page_never_renders_a_token(tmp_path, monkeypatch):
     assert TOKEN not in (entry["last_error"] or "")
     assert TOKEN not in (entry["last_line"] or "")
     assert "bot***" in entry["last_error"]
+
+
+# ── tg_format HTML must actually be rendered (2026-08-13) ───────────────────
+# S4 shipped sending build_digest() — which is full of <pre> and <a href> from
+# tg_format — with no parse_mode. Telegram delivered it happily, so every layer
+# reported success while the owner received raw markup:
+#     <pre>進場  0.06999 … </a>
+# Nothing errors on this path. It has to be asserted.
+import re as _re
+
+import telegram_utils as _T
+
+
+def _sends_html(path):
+    """Does this module hand tg_format HTML to send_message?"""
+    src = open(path, encoding="utf-8").read()
+    builds = bool(_re.search(r"tg_format\.(pre_table|mono_plan|bybit_line)|"
+                             r"\bF\.(pre_table|mono_plan|bybit_line)", src))
+    return builds, src
+
+
+def test_the_s4_digest_really_is_html_and_its_send_says_so():
+    """The actual regression, checked at both ends rather than by grepping the
+    whole repo for `send_message`.
+
+    A repo-wide static rule was tried first and is not honest: it matched the
+    words "send_message" inside comments, and it cannot tell a plain-text
+    cascade alert from an HTML one without evaluating what was passed. Half the
+    repo would have needed exemptions, and an exempt-list that long guards
+    nothing. The runtime net below is the general protection; this pins the one
+    that actually broke.
+    """
+    import inspect
+    import strategy4 as S4
+
+    sig = {"symbol": "DOGE/USDT:USDT", "base": "DOGE", "segment": "crypto",
+           "side": "short", "price": 0.06999, "score": 26, "slope": -0.05,
+           "quality": 50, "div_ago": 9, "div_sources": ["FISH", "KD"],
+           "oi_state": 4, "bar_ts": 1,
+           "support": {"level": 0.07079, "bars_ago": 14},
+           "plan": {"entry": 0.06999, "sl": 0.070896, "tp": 0.068178,
+                    "rr": 2, "stop_pct": 1.29, "tp_pct": 2.59, "side": "short"}}
+    text = S4.format_signal(sig)
+    assert "<pre>" in text, "the digest stopped being HTML — this test is stale"
+
+    # AST, not a line grep. The first version of this scanned tick()'s source
+    # lines for "parse_mode" + "HTML" and PASSED against the broken code — it
+    # was matching the comment above the call that explains why parse_mode is
+    # required. A test that a comment can satisfy tests nothing.
+    import ast
+    import textwrap
+    tree = ast.parse(textwrap.dedent(inspect.getsource(S4.tick)))
+    calls = [n for n in ast.walk(tree)
+             if isinstance(n, ast.Call)
+             and getattr(n.func, "attr", None) == "send_message"]
+    assert calls, "strategy4.tick no longer sends anything — this test is stale"
+    for call in calls:
+        kw = {k.arg: getattr(k.value, "value", None) for k in call.keywords}
+        assert kw.get("parse_mode") == "HTML", (
+            "strategy4 sends tg_format HTML without parse_mode='HTML' — "
+            "Telegram prints <pre> and </a> as literal text")
+
+
+def test_the_send_path_rescues_a_forgotten_parse_mode(monkeypatch):
+    """The net. Sending <pre> as literal text is never what anyone wanted, so
+    a caller that forgets gets upgraded rather than shipping broken markup."""
+    seen = {}
+    monkeypatch.setattr(_T, "_route",
+                        lambda ch, force: ("tok", {"chat_id": "1"}, "bot"))
+    monkeypatch.setattr(_T, "_post_one",
+                        lambda url, body, retries: (seen.update(body), (True, 1))[1])
+    _T.send_message("<pre>進場  0.069</pre>", channel="alerts")
+    assert seen.get("parse_mode") == "HTML", "raw <pre> was sent as plain text"
+
+
+def test_a_tappable_link_also_triggers_the_rescue(monkeypatch):
+    seen = {}
+    monkeypatch.setattr(_T, "_route",
+                        lambda ch, force: ("tok", {"chat_id": "1"}, "bot"))
+    monkeypatch.setattr(_T, "_post_one",
+                        lambda url, body, retries: (seen.update(body), (True, 1))[1])
+    _T.send_message('x · <a href="https://bybit.com">下單 ↗</a>', channel="alerts")
+    assert seen.get("parse_mode") == "HTML"
+
+
+def test_plain_text_is_left_alone(monkeypatch):
+    """Upgrading a plain message would be a behaviour change, and an unescaped
+    < or & in ordinary text would then 400 instead of sending."""
+    seen = {}
+    monkeypatch.setattr(_T, "_route",
+                        lambda ch, force: ("tok", {"chat_id": "1"}, "bot"))
+    monkeypatch.setattr(_T, "_post_one",
+                        lambda url, body, retries: (seen.update(body), (True, 1))[1])
+    _T.send_message("BTC 破 100k < 看多 & 續抱", channel="alerts")
+    assert "parse_mode" not in seen

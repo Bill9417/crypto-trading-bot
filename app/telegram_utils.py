@@ -480,6 +480,24 @@ def send_message(message, parse_mode=None, *, force=False, retries=2, channel="a
         return False
     token, payload, bot = routed
     url = f"https://api.telegram.org/bot{token}/sendMessage"
+
+    # ── the net under a forgotten parse_mode (2026-08-13) ───────────────────
+    # tg_format.pre_table and bybit_line emit <pre> and <a href>. A caller that
+    # builds one of those and forgets parse_mode="HTML" gets NO error — Telegram
+    # cheerfully delivers the tags as literal text, so the reader receives
+    # "<pre>進場 0.06999 … </a>" and the plan is unreadable. strategy4 shipped
+    # that way and nothing caught it, because every layer succeeded.
+    #
+    # These two patterns are tg_format's own signatures and nothing else in the
+    # repo writes them, so their presence means the text was built for HTML.
+    # tg_format escapes interpolated content with esc(), so upgrading is safe.
+    # Loud rather than silent: the aim is to rescue the message AND get the
+    # call site fixed.
+    if not parse_mode and ('<pre>' in message or '<a href="' in message):
+        print("[telegram] WARNING: message carries tg_format HTML but no "
+              "parse_mode — sending as HTML. Fix the caller.")
+        parse_mode = "HTML"
+
     if parse_mode:
         payload["parse_mode"] = parse_mode
 

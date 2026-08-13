@@ -1071,7 +1071,13 @@ def tick(client=None) -> bool:
             # be pointed at a private GROUP via TELEGRAM_TRADES_CHAT_ID, so the
             # old rule still stands — nothing here may carry balances, position
             # sizes or free margin, only the setup itself.
-            telegram_utils.send_message(text, force=True, channel="trades")
+            # parse_mode="HTML" is REQUIRED, not decoration: build_digest →
+            # format_signal → tg_format.pre_table/bybit_line, which emit <pre>
+            # and <a href>. Sent without it, Telegram prints the tags as
+            # literal text and the whole plan arrives as unreadable markup —
+            # which is exactly how this shipped until 2026-08-13.
+            telegram_utils.send_message(text, parse_mode="HTML",
+                                        force=True, channel="trades")
         sent = state.get("sent") or {}
         for s in fresh:
             sent[s["symbol"]] = now_ts
