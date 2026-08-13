@@ -215,10 +215,10 @@ oiTicker = syminfo.prefix + ":" + syminfo.ticker + "_OI"
 oiRaw    = request.security(oiTicker, timeframe.period, close, ignore_invalid_symbol=true)
 haveOi   = not na(oiRaw)
 
-oiPct = haveOi and not na(oiRaw[sqSpan]) and oiRaw[sqSpan] != 0
-     ? (oiRaw - oiRaw[sqSpan]) / math.abs(oiRaw[sqSpan]) * 100 : na
-pxPct = not na(close[sqSpan]) and close[sqSpan] != 0
-     ? (close - close[sqSpan]) / math.abs(close[sqSpan]) * 100 : na
+oiOk  = haveOi and not na(oiRaw[sqSpan]) and oiRaw[sqSpan] != 0
+pxOk  = not na(close[sqSpan]) and close[sqSpan] != 0
+oiPct = oiOk ? (oiRaw - oiRaw[sqSpan]) / math.abs(oiRaw[sqSpan]) * 100 : na
+pxPct = pxOk ? (close - close[sqSpan]) / math.abs(close[sqSpan]) * 100 : na
 
 // The same four-state read the scanner uses, so chart and alerts agree.
 bigOi   = not na(oiPct) and math.abs(oiPct) >= sqMinOi
@@ -235,11 +235,15 @@ bgcolor(showSq and newShort ? color.new(color.red,    92) : na, title="新空單
 
 var label sqLab = na
 if showSq and barstate.islast and haveOi and not na(oiPct)
-    txt = squeeze ? "軋空 · OI " + str.tostring(oiPct, "#.##") + "% 價 +" + str.tostring(pxPct, "#.##") + "%\n空單被平掉 —— 波動事件，不是方向"
-         : newLong ? "新多單進場 · OI +" + str.tostring(oiPct, "#.##") + "%\n四種狀態裡唯一區間不含 0 的"
-         : newShort ? "新空單進場 · OI +" + str.tostring(oiPct, "#.##") + "%"
-         : longOut ? "多單平倉 · OI " + str.tostring(oiPct, "#.##") + "%"
-         : "OI " + str.tostring(oiPct, "#.##") + "% · 無明顯堆積"
+    txt = "OI " + str.tostring(oiPct, "#.##") + "% · 無明顯堆積"
+    if squeeze
+        txt := "軋空 · OI " + str.tostring(oiPct, "#.##") + "% 價 +" + str.tostring(pxPct, "#.##") + "%\n空單被平掉 —— 波動事件，不是方向"
+    else if newLong
+        txt := "新多單進場 · OI +" + str.tostring(oiPct, "#.##") + "%\n四種狀態裡唯一區間不含 0 的"
+    else if newShort
+        txt := "新空單進場 · OI +" + str.tostring(oiPct, "#.##") + "%"
+    else if longOut
+        txt := "多單平倉 · OI " + str.tostring(oiPct, "#.##") + "%"
     label.delete(sqLab)
     sqLab := label.new(bar_index, 5, txt, style=label.style_label_up,
                        color=color.new(color.black, 30), textcolor=color.white,
@@ -269,7 +273,6 @@ f_ma(src, len, t) =>
         "SMMA (RMA)"            => ta.rma(src, len)
         "WMA"                   => ta.wma(src, len)
         "VWMA"                  => ta.vwma(src, len)
-        => na
 
 isBB   = maType == "SMA + Bollinger Bands"
 maOn   = maType != "None"
@@ -313,10 +316,17 @@ fill(bbU, bbL, color=isBB ? color.new(#29ddff, 92) : na, title="BB fill")
 
 // Which zone, in words, on the last bar — the fastest possible answer to the
 // question this pane exists for.
-zoneTxt = rsi >= obLevel ? "超買 " + str.tostring(rsi, "#.#")
-        : rsi <= osLevel ? "超賣 " + str.tostring(rsi, "#.#")
-        : rsi >= 50      ? "中性偏多 " + str.tostring(rsi, "#.#")
-        :                  "中性偏空 " + str.tostring(rsi, "#.#")
+// if/else rather than a stacked ternary: Pine treats a continuation line
+// indented by a MULTIPLE OF FOUR as the start of a new block, so an aligned
+// ternary chain compiles as CE10013 "expecting ':'". if/else has no
+// continuation at all and cannot be broken by re-indenting.
+zoneTxt = "中性偏空 " + str.tostring(rsi, "#.#")
+if rsi >= obLevel
+    zoneTxt := "超買 " + str.tostring(rsi, "#.#")
+else if rsi <= osLevel
+    zoneTxt := "超賣 " + str.tostring(rsi, "#.#")
+else if rsi >= 50
+    zoneTxt := "中性偏多 " + str.tostring(rsi, "#.#")
 var label zoneLab = na
 if barstate.islast
     label.delete(zoneLab)

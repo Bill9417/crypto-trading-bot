@@ -108,6 +108,41 @@ def check(path):
     return bad
 
 
+def check_continuations(path):
+    """Continuation lines indented by a MULTIPLE OF FOUR.
+
+    Pine reads a line indented by 4, 8, 12 … as the start of a new BLOCK, not
+    as the continuation of the expression above it. So a ternary chain aligned
+    for readability —
+
+        zoneTxt = a ? "x"
+                : b ? "y"          <- 8 spaces, looks tidy, is a new block
+                : "z"
+
+    — fails to compile with `Mismatched input "end of line without line
+    continuation" expecting ':' (CE10013)`, which names neither the line nor
+    the reason. 2026-08-14: this script passed that exact file, because it only
+    ever looked for forward references.
+
+    Flags lines beginning with `?` or `:` only. A bare `=>` at line start is a
+    legitimate switch default and is left alone.
+    """
+    with open(path, encoding="utf-8") as fh:
+        raw = fh.readlines()
+    bad = []
+    for i, line in enumerate(raw, 1):
+        body = line.rstrip("\n")
+        stripped = body.strip()
+        if not stripped or stripped.startswith("//"):
+            continue
+        m = re.match(r"^( +)\S", body)
+        if not m:
+            continue
+        if stripped[0] in "?:" and len(m.group(1)) % 4 == 0:
+            bad.append((i, len(m.group(1)), stripped[:70]))
+    return bad
+
+
 if __name__ == "__main__":
     if len(sys.argv) < 2:
         print(__doc__)
@@ -115,13 +150,23 @@ if __name__ == "__main__":
     fail = 0
     for path in sys.argv[1:]:
         bad = check(path)
+        cont = check_continuations(path)
         name = path.split("/")[-1]
-        if bad:
+        if bad or cont:
             fail = 1
-            print(f"\u274c {name}: {len(bad)} forward reference(s)")
-            for i, n, d, txt in bad:
-                print(f"   L{i}: uses '{n}', declared at L{d}")
-                print(f"        {txt}")
+            if bad:
+                print(f"\u274c {name}: {len(bad)} forward reference(s)")
+                for i, n, d, txt in bad:
+                    print(f"   L{i}: uses '{n}', declared at L{d}")
+                    print(f"        {txt}")
+            if cont:
+                print(f"\u274c {name}: {len(cont)} continuation line(s) "
+                      f"indented by a multiple of 4 \u2014 Pine reads these as a "
+                      f"new block (CE10013)")
+                for i, ind, txt in cont:
+                    print(f"   L{i}: indent {ind} \u2014 use if/else, or re-indent "
+                          f"to a non-multiple of 4")
+                    print(f"        {txt}")
         else:
             print(f"\u2705 {name}")
     raise SystemExit(fail)
