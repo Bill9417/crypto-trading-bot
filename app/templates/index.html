@@ -53,7 +53,47 @@
             min-height: 100vh;
         }
 
-        .page-wrap { max-width: var(--page-max); margin: 0 auto; padding: 12px 16px 28px; }
+        /* Flex column so a saved layout can be applied with `order` alone.
+           Was block; the rows already carry their own margin-bottom and set no
+           margin-top, so nothing was margin-collapsing between them and the
+           spacing is unchanged. This is what lets the server render the user's
+           order into the FIRST paint instead of shuffling nodes after load. */
+        .page-wrap { max-width: var(--page-max); margin: 0 auto; padding: 12px 16px 28px;
+                     display: flex; flex-direction: column; align-items: stretch; }
+        /* Pinned: the status strip and the edit bar are chrome, not content. */
+        .page-wrap > .status-row { order: 0; }
+        .page-wrap > .layout-bar { order: -1; }
+
+        /* ── layout editor ── */
+        .layout-bar { display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-bottom:10px; }
+        .layout-btn { background:rgba(255,255,255,.04); border:1px solid var(--wolf-border);
+                      color:var(--wolf-muted); font-weight:700; font-size:.7rem;
+                      padding:6px 12px; border-radius:9px; cursor:pointer; }
+        .layout-btn:hover { color:var(--wolf-text); border-color:rgba(0,210,255,.35); }
+        .layout-btn.on { background:var(--wolf-blue); color:#000; border-color:transparent; }
+        .layout-hint { font-size:.66rem; color:var(--wolf-muted); }
+        .layout-list { display:none; flex-direction:column; gap:6px; width:100%;
+                       background:var(--wolf-card); border:1px solid var(--wolf-border);
+                       border-radius:12px; padding:10px; margin-bottom:12px; }
+        body.layout-editing .layout-list { display:flex; }
+        .layout-row { display:flex; align-items:center; gap:8px; padding:7px 9px;
+                      background:rgba(255,255,255,.03); border:1px solid var(--wolf-border);
+                      border-radius:9px; font-size:.76rem; }
+        .layout-row.dragging { opacity:.5; }
+        .layout-row.over { border-color:var(--wolf-blue); }
+        .layout-row .lr-grip { cursor:grab; opacity:.5; font-size:.9rem; touch-action:none;
+                               padding:2px 4px; }
+        .layout-row .lr-name { flex:1 1 auto; min-width:0; overflow:hidden;
+                               text-overflow:ellipsis; white-space:nowrap; }
+        .layout-row.off .lr-name { opacity:.4; text-decoration:line-through; }
+        .layout-row button { background:rgba(255,255,255,.05); border:1px solid var(--wolf-border);
+                             color:var(--wolf-muted); border-radius:7px; cursor:pointer;
+                             font-size:.72rem; padding:3px 8px; line-height:1.3; }
+        .layout-row button:hover { color:var(--wolf-text); }
+        /* Editing highlights the real rows so the list maps onto the page. */
+        body.layout-editing .page-wrap > [data-card] { outline:1px dashed rgba(0,210,255,.35);
+                                                       outline-offset:3px; }
+        body.layout-editing .page-wrap > [data-card].card-off { display:none; }
 
         /* ── Header ── */
         /* Row 1: brand on the left, status + meta + actions on the right */
@@ -1493,10 +1533,21 @@
             .pulse-ring { width: 112px; height: 112px; }
             .pulse-score { font-size: 2rem; }
         }
-    </style>
+        </style>
+    {# The saved layout, rendered server-side. Doing this in JavaScript after
+       load would paint the default order and then visibly jump, every view. #}
+    <style id="layout-order">{{ layout_css|default('', true)|safe }}</style>
 </head>
 <body>
     <div class="page-wrap">
+        <!-- 🧩 Layout editor. Hidden behind a toggle: the dashboard is read far
+             more often than it is rearranged, so the default view carries one
+             small button and nothing else. -->
+        <div class="layout-bar">
+            <button class="layout-btn" id="layout-toggle" type="button">🧩 編輯版面</button>
+            <span class="layout-hint" id="layout-hint"></span>
+        </div>
+        <div class="layout-list" id="layout-list"></div>
         <!-- Page header. The brand and all 16 destinations moved into the fixed
              sidebar (2026-08-09), so this row is now only about THIS page: what
              it is, how fresh it is, and the two actions it owns. -->
@@ -1548,7 +1599,7 @@
              zeroes) any input it could not fetch and reports the resulting
              confidence, so a partial read is visible as a partial read.
              ══════════════════════════════════════════════════════════════════ -->
-        <section class="bento bento-hero">
+        <section class="bento bento-hero" data-card="pulse">
 
             <!-- ── 1. The composite ───────────────────────────────────────── -->
             <article class="bcard bc-pulse">
@@ -1637,7 +1688,7 @@
             </article>
         </section>
 
-        <section class="bento bento-4">
+        <section class="bento bento-4" data-card="breadth">
 
             <!-- ── 4. Breadth ─────────────────────────────────────────────── -->
             <article class="bcard bc-breadth">
@@ -1697,7 +1748,7 @@
 
              S4 is a SCAN NOTICE, not a validated strategy — the disclaimer
              rides along with the setups rather than living on another page. -->
-        <section class="analytics-panel s4-panel">
+        <section class="analytics-panel s4-panel" data-card="s4">
             <div class="analytics-head">
                 <div>
                     <div class="analytics-title">📊 S4 · Perp Setups</div>
@@ -1710,7 +1761,7 @@
         </section>
 
         <!-- ── Top entry candidates ── -->
-        <section class="entries-panel">
+        <section class="entries-panel" data-card="entries">
             <div class="entries-head">
                 <div>
                     <div class="entries-title">🎯 Top Entry Candidates</div>
@@ -1722,7 +1773,7 @@
         </section>
 
         <!-- ◈ Hero — main-coin heatmap tiles (everyone) + live account/strategy (admin) -->
-        <div class="hero-grid">
+        <div class="hero-grid" data-card="coins">
             <section class="coins-panel">
                 <div class="cp-head">
                     <span class="cp-title">◈ Main Coins · 1h chart · 24h heat</span>
@@ -1797,7 +1848,7 @@
         </div>
 
         <!-- 📊 Today's briefing — computed from live BTC, US indices & alt breadth -->
-        <section class="analytics-panel" id="briefing">
+        <section class="analytics-panel" id="briefing" data-card="briefing">
             <div class="analytics-head">
                 <div>
                     <div class="analytics-title">📊 Today's Briefing</div>
@@ -1812,7 +1863,7 @@
              Data rides on /api/strategy2_signals (the S2 sweep computes it from
              candles it already fetched); rows marked HOT crossed both alert
              thresholds and also triggered a Telegram alert. -->
-        <section class="analytics-panel" id="radar-panel">
+        <section class="analytics-panel" id="radar-panel" data-card="radar">
             <div class="analytics-head">
                 <div>
                     <div class="analytics-title">🚀 Pump Radar</div>
@@ -1880,7 +1931,7 @@
              makes no exchange call — so a 30s poll costs nothing. The scanner
              re-scans every sweep against a LIVE open-interest reading, not the
              last 15m bin, which is what makes this current rather than late. -->
-        <section class="analytics-panel" id="oi-panel">
+        <section class="analytics-panel" id="oi-panel" data-card="oi">
             <div class="analytics-head">
                 <div>
                     <div class="analytics-title">🐋 OI 異常 <span style="text-transform:none;letter-spacing:0;font-weight:600;opacity:.7;">未平倉異常堆積</span></div>
@@ -1981,7 +2032,7 @@
              six shorts bunched right, and a lake of empty space between them.
              This shows the same data as a tug-of-war, which is the actual
              question — which side are the big players leaning on. -->
-        <section class="analytics-panel wh-panel">
+        <section class="analytics-panel wh-panel" data-card="whale">
             <div class="analytics-head">
                 <div>
                     <div class="analytics-title">🐳 Whale Positioning</div>
@@ -2106,7 +2157,7 @@
              main coin. The 3D terrain answers "when"; this answers the question
              you trade off: which prices have been eating stops, and where spot
              sits relative to them. -->
-        <section class="analytics-panel liq2d-panel">
+        <section class="analytics-panel liq2d-panel" data-card="liqmap">
             <div class="analytics-head">
                 <div>
                     <div class="analytics-title">💥 Liquidation Map</div>
@@ -2366,7 +2417,7 @@
         </script>
 
         <!-- Market headlines — same feeds as the Market page (cached server-side) -->
-        <section class="analytics-panel">
+        <section class="analytics-panel" data-card="news">
             <div class="analytics-head">
                 <div>
                     <div class="analytics-title">📰 Market Headlines</div>
@@ -2377,7 +2428,7 @@
             <div class="news-strip" id="dash-news"><div class="analytics-subtitle">Loading headlines…</div></div>
         </section>
 
-        <div class="analytics-grid">
+        <div class="analytics-grid" data-card="signals">
             <section class="analytics-panel">
                 <div class="analytics-head">
                     <div>
@@ -2495,7 +2546,7 @@
         </div>
 
         <!-- Main panel -->
-        <div class="panel">
+        <div class="panel" data-card="hunting">
             <div class="panel-head">
                 <span>🔥</span>
                 <h2>Hunting Signals</h2>
@@ -4090,6 +4141,173 @@
         }
         load();
         if (window.wolfPoll) wolfPoll(load, 120000);
+    })();
+    </script>
+    <script>
+    // ── 🧩 Layout editor ────────────────────────────────────────────────────
+    // Order and visibility are applied by rewriting ONE <style> block, never by
+    // moving DOM nodes. Moving a live panel would tear down its canvas, its
+    // scroll position and any listener bound to a node rather than a selector —
+    // several of these rows redraw on a timer and would not survive it.
+    (function () {
+        var LIST = document.getElementById('layout-list');
+        var BAR  = document.getElementById('layout-toggle');
+        var HINT = document.getElementById('layout-hint');
+        var STYLE = document.getElementById('layout-order');
+        if (!LIST || !BAR || !STYLE) return;
+
+        // default() is load-bearing, not defensive padding. Templates hot-reload
+        // and app.py does NOT, so between editing this file and restarting the
+        // stack the running server renders the NEW template with the OLD
+        // context — and `Undefined|tojson` is a 500 on the live dashboard.
+        // That is a real outage I caused once; it costs nothing to make the
+        // page degrade to "no saved layout" instead.
+        var CSRF = "{{ csrf_token() }}";
+        var cards = {{ layout_cards|default([], true)|tojson }};
+        var dirty = false;
+
+        function paintStyle() {
+            var css = '';
+            cards.forEach(function (c, i) {
+                css += '.page-wrap > [data-card="' + c.id + '"]{order:' + (i + 1) + '}';
+                if (c.hidden) css += '.page-wrap > [data-card="' + c.id + '"]{display:none}';
+            });
+            STYLE.textContent = css;
+            // Editing shows hidden rows in the LIST but not on the page, so the
+            // page always previews exactly what saving would produce.
+            document.querySelectorAll('.page-wrap > [data-card]').forEach(function (el) {
+                var c = cards.find(function (x) { return x.id === el.dataset.card; });
+                el.classList.toggle('card-off', !!(c && c.hidden));
+            });
+        }
+
+        function markDirty(on) {
+            dirty = on;
+            HINT.textContent = on ? '有未儲存的變更' : '';
+            SAVE.classList.toggle('on', on);
+        }
+
+        function move(idx, delta) {
+            var to = idx + delta;
+            if (to < 0 || to >= cards.length) return;
+            var moved = cards.splice(idx, 1)[0];
+            cards.splice(to, 0, moved);
+            paint(); paintStyle(); markDirty(true);
+        }
+
+        function paint() {
+            LIST.innerHTML = '';
+            cards.forEach(function (c, i) {
+                var row = document.createElement('div');
+                row.className = 'layout-row' + (c.hidden ? ' off' : '');
+                row.draggable = true;
+                row.dataset.idx = i;
+                row.innerHTML =
+                    '<span class="lr-grip">⠿</span>' +
+                    '<span class="lr-name">' + c.title + '</span>' +
+                    '<button data-act="up"   title="上移">↑</button>' +
+                    '<button data-act="down" title="下移">↓</button>' +
+                    '<button data-act="eye">' + (c.hidden ? '顯示' : '隱藏') + '</button>';
+                row.querySelector('[data-act="up"]').onclick   = function () { move(i, -1); };
+                row.querySelector('[data-act="down"]').onclick = function () { move(i, 1); };
+                row.querySelector('[data-act="eye"]').onclick  = function () {
+                    cards[i].hidden = !cards[i].hidden;
+                    paint(); paintStyle(); markDirty(true);
+                };
+                // Desktop drag. The ↑↓ buttons are not a fallback for the
+                // impatient — HTML5 drag events never fire on touch, so on a
+                // phone they are the ONLY way to reorder.
+                row.addEventListener('dragstart', function (e) {
+                    row.classList.add('dragging');
+                    e.dataTransfer.setData('text/plain', String(i));
+                    e.dataTransfer.effectAllowed = 'move';
+                });
+                row.addEventListener('dragend', function () {
+                    row.classList.remove('dragging');
+                    LIST.querySelectorAll('.over').forEach(function (n) { n.classList.remove('over'); });
+                });
+                row.addEventListener('dragover', function (e) {
+                    e.preventDefault(); row.classList.add('over');
+                });
+                row.addEventListener('dragleave', function () { row.classList.remove('over'); });
+                row.addEventListener('drop', function (e) {
+                    e.preventDefault();
+                    row.classList.remove('over');
+                    var from = parseInt(e.dataTransfer.getData('text/plain'), 10);
+                    if (isNaN(from) || from === i) return;
+                    var moved = cards.splice(from, 1)[0];
+                    cards.splice(i, 0, moved);
+                    paint(); paintStyle(); markDirty(true);
+                });
+                LIST.appendChild(row);
+            });
+        }
+
+        // Buttons live in the list header so they are reachable without
+        // scrolling back to the top after a long reorder.
+        var ctl = document.createElement('div');
+        ctl.className = 'layout-bar';
+        ctl.style.marginBottom = '2px';
+        var SAVE = document.createElement('button');
+        SAVE.className = 'layout-btn'; SAVE.type = 'button'; SAVE.textContent = '💾 儲存';
+        var RESET = document.createElement('button');
+        RESET.className = 'layout-btn'; RESET.type = 'button'; RESET.textContent = '↺ 回預設';
+        ctl.appendChild(SAVE); ctl.appendChild(RESET);
+
+        SAVE.onclick = function () {
+            SAVE.disabled = true; HINT.textContent = '儲存中…';
+            fetch('/api/dashboard_layout', {
+                method: 'POST',
+                // Same-origin state change, so it needs the CSRF header the
+                // app validates everywhere else. Exempting the route would be
+                // the easy fix and the wrong one.
+                headers: {'Content-Type': 'application/json', 'X-CSRFToken': CSRF},
+                body: JSON.stringify({
+                    order: cards.map(function (c) { return c.id; }),
+                    hidden: cards.filter(function (c) { return c.hidden; })
+                                 .map(function (c) { return c.id; })
+                })
+            }).then(function (r) { return r.ok ? r.json() : null; })
+              .then(function (d) {
+                  SAVE.disabled = false;
+                  if (!d || !d.ok) { HINT.textContent = '儲存失敗 — 再試一次'; return; }
+                  markDirty(false);
+                  HINT.textContent = '已儲存 ✓';
+                  setTimeout(function () { if (!dirty) HINT.textContent = ''; }, 2500);
+              }).catch(function () {
+                  SAVE.disabled = false; HINT.textContent = '儲存失敗 — 再試一次';
+              });
+        };
+
+        RESET.onclick = function () {
+            fetch('/api/dashboard_layout', {method: 'DELETE',
+                                            headers: {'X-CSRFToken': CSRF}})
+                .then(function (r) { return r.ok ? r.json() : null; })
+                .then(function (d) {
+                    if (!d || !d.cards) return;
+                    cards = d.cards;
+                    paint(); paintStyle(); markDirty(false);
+                    HINT.textContent = '已回到預設 ✓';
+                });
+        };
+
+        BAR.onclick = function () {
+            var on = document.body.classList.toggle('layout-editing');
+            BAR.classList.toggle('on', on);
+            BAR.textContent = on ? '✓ 完成' : '🧩 編輯版面';
+            if (on && !LIST.dataset.ready) {
+                LIST.dataset.ready = '1';
+                LIST.appendChild(ctl);
+                paint();
+                LIST.insertBefore(ctl, LIST.firstChild);
+            }
+            // Leaving edit mode with unsaved changes would look saved on this
+            // page and be gone on the next load, so say so rather than
+            // silently discarding or silently auto-saving.
+            if (!on && dirty) HINT.textContent = '⚠️ 還沒儲存 — 重新整理就會回到上次儲存的版面';
+        };
+
+        paintStyle();
     })();
     </script>
 </body>

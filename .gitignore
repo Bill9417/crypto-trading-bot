@@ -117,3 +117,4 @@ ENV/
 .stack_stopped
 app/research_cache/
 liquidations_buffer.json
+dashboard_layout.json

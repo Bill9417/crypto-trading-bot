@@ -2060,8 +2060,21 @@ def index():
         dashboard_summary = build_dashboard_summary({"signals": []})
         data["signals"] = []
 
+    # 🧩 Per-user row order. Rendered into the page (not fetched after load)
+    # so the saved layout is correct in the first paint instead of shuffling.
+    try:
+        import dashboard_layout
+        _lay = dashboard_layout.load(current_user.get_id())
+        layout_css = dashboard_layout.style_block(_lay)
+        layout_cards = dashboard_layout.cards_for_editor(_lay)
+    except Exception as e:  # noqa: BLE001 — a layout must never break the page
+        print(f"Dashboard layout error: {e}")
+        layout_css, layout_cards = "", []
+
     return render_template(
         "index.html", 
+        layout_css=layout_css,
+        layout_cards=layout_cards,
         signals=data["signals"], 
         last_update=data["last_update"],
         symbol_limit=TOP_SYMBOL_LIMIT,
@@ -2079,6 +2092,31 @@ def index():
         top_entries=top_entries,
         live_strategy=_live_strategy_state(),
     )
+
+@app.route("/api/dashboard_layout", methods=["GET", "POST", "DELETE"])
+@login_required
+def api_dashboard_layout():
+    """Read / save / reset the signed-in user's dashboard row order.
+
+    Keyed on the session user, never on anything the client sends: a layout is
+    trivial data, but accepting a user id from the body would let one account
+    rewrite another's page.
+    """
+    import dashboard_layout
+    uid = current_user.get_id()
+    try:
+        if request.method == "DELETE":
+            lay = dashboard_layout.reset(uid)
+        elif request.method == "POST":
+            lay = dashboard_layout.save(uid, request.get_json(silent=True) or {})
+        else:
+            lay = dashboard_layout.load(uid)
+        return jsonify({"ok": True, **lay,
+                        "cards": dashboard_layout.cards_for_editor(lay)})
+    except Exception as e:  # noqa: BLE001
+        print(f"Dashboard layout API error: {e}")
+        return jsonify({"ok": False, "error": str(e)[:150]}), 200
+
 
 @app.route("/api/scan_data")
 @login_required
