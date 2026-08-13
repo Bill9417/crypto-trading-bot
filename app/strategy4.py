@@ -197,6 +197,7 @@ DIV_MAX_GAP = int(os.getenv("S4_DIV_MAX_GAP", "60"))      # ...and the ceiling
 DIV_MIN_OSC_GAP = float(os.getenv("S4_DIV_MIN_OSC_GAP", "0.05"))   # × osc's own range
 DIV_MIN_LEG_ATR = float(os.getenv("S4_DIV_MIN_LEG_ATR", "0.8"))    # swing prominence
 DIV_NORM = int(os.getenv("S4_DIV_NORM", "200"))           # osc range window
+RSI_LEN = int(os.getenv("S4_RSI_LEN", "14"))              # Wilder, TradingView default
 MIN_DIV_SOURCES = int(os.getenv("S4_MIN_DIV_SOURCES", "1"))
 FISHER_LEN = int(os.getenv("S4_FISHER_LEN", "9"))
 FLOW_DETREND = int(os.getenv("S4_FLOW_DETREND", "200"))   # CVD baseline EMA
@@ -373,6 +374,45 @@ def atr_series(highs, lows, closes, period=ATR_LEN):
                        abs(highs[i] - closes[i - 1]),
                        abs(lows[i] - closes[i - 1])))
     return ema(trs, period)
+
+
+def rsi_series(closes, length=RSI_LEN):
+    """Wilder's RSI — the same series TradingView's built-in draws.
+
+    ta.rma is Wilder smoothing, NOT an EMA: the recursion is
+    (prev·(n−1) + new)/n, which is an EMA with k=1/n rather than 2/(n+1).
+    Using ema() here would produce a curve that tracks the real RSI closely
+    enough to look right on a chart and differ by 2-4 points at the turns —
+    exactly where a divergence is decided.
+
+    Padded flat at 50 through the warm-up, matching ema()'s
+    seeded-from-the-first-value convention above. divergence_scan indexes the
+    oscillator by the SAME index as highs/lows, so a shorter or None-padded
+    series silently misaligns every pivot it looks at.
+    """
+    n = len(closes)
+    if n < length + 1:
+        return []
+    out = [50.0] * n
+    gains = losses = 0.0
+    for i in range(1, length + 1):
+        d = float(closes[i]) - float(closes[i - 1])
+        gains += max(d, 0.0)
+        losses += max(-d, 0.0)
+    ag, al = gains / length, losses / length
+    def _rsi(a_gain, a_loss):
+        if a_loss == 0:
+            return 100.0
+        if a_gain == 0:
+            return 0.0
+        return 100.0 - 100.0 / (1.0 + a_gain / a_loss)
+    out[length] = _rsi(ag, al)
+    for i in range(length + 1, n):
+        d = float(closes[i]) - float(closes[i - 1])
+        ag = (ag * (length - 1) + max(d, 0.0)) / length
+        al = (al * (length - 1) + max(-d, 0.0)) / length
+        out[i] = _rsi(ag, al)
+    return out
 
 
 def fisher_series(highs, lows, length=FISHER_LEN):
@@ -559,6 +599,7 @@ def divergence_scan(ohlcv, highs, lows, closes, side="long"):
     sources = (("MACD", macd_line),
                ("KD", stoch_k(highs, lows, closes)),
                ("FISH", fisher_series(highs, lows)),
+               ("RSI", rsi_series(closes)),
                ("CVD", detrend(cvd_series(ohlcv))))
     detect = bullish_divergence if side == "long" else bearish_divergence
     hits = {}

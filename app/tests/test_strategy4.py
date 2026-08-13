@@ -601,3 +601,86 @@ def test_short_alert_says_short_in_the_headline():
     txt = S.format_signal(sig)
     assert "做空" in txt and "做多" not in txt
     assert "壓力" in txt          # not 支撐 — the level is above price
+
+
+# ── RSI as a fifth divergence source (added 2026-08-14) ─────────────────────
+# The bar for a new source is the one A/D failed: it must add a MEASUREMENT,
+# not another vote. Measured over 25,454 bars on 22 perps, as Jaccard overlap
+# of bullish-divergence bars:
+#     KD vs FISH  0.625   ← both were ALREADY in the set
+#     KD vs RSI   0.340 · MACD vs RSI 0.339 · FISH vs RSI 0.277 · CVD vs RSI 0.171
+# RSI is less redundant with the set than two existing members are with each
+# other. That is a statement about independence only — not about prediction.
+def test_rsi_is_wilder_smoothing_not_an_ema():
+    """ta.rma is (prev·(n−1) + new)/n; an EMA is 2/(n+1). Swapping them tracks
+    closely enough to look right on a chart and differs by points at the turns,
+    which is exactly where a divergence is decided."""
+    closes = [100.0] * 15 + [110.0] * 15          # one clean step
+    rsi = S.rsi_series(closes, length=14)
+    ema_like = S.ema(closes, 14)
+    assert abs(rsi[-1] - 100.0) < 1e-6, "a pure up-run must pin at 100"
+    assert rsi[:14] == [50.0] * 14, "warm-up must be padded, not shortened"
+    assert len(rsi) == len(closes) == len(ema_like)
+
+
+def test_rsi_is_bounded_and_aligned_to_the_price_series():
+    """divergence_scan indexes the oscillator by the SAME index as highs/lows.
+    A shorter or None-padded series silently misaligns every pivot — it does
+    not error, it just compares the wrong bars."""
+    closes = [100 + (i % 7) - (i % 3) * 2 + i * 0.05 for i in range(200)]
+    rsi = S.rsi_series(closes)
+    assert len(rsi) == len(closes)
+    assert all(0.0 <= v <= 100.0 for v in rsi)
+    assert all(isinstance(v, float) for v in rsi)
+
+
+def test_a_flat_series_has_no_rsi_and_no_divergence():
+    """All-flat means down == 0, which the Pine returns 100 for. It must not
+    divide by zero or produce a divergence out of nothing."""
+    rsi = S.rsi_series([100.0] * 60)
+    assert rsi[-1] == 100.0
+
+
+def test_too_little_history_returns_empty_rather_than_a_guess():
+    assert S.rsi_series([1, 2, 3]) == []
+
+
+def test_rsi_is_one_of_the_scan_sources():
+    import inspect
+    src = inspect.getsource(S.divergence_scan)
+    assert '"RSI"' in src, "RSI was measured as independent but never wired in"
+
+
+def test_the_pine_mirror_pins_the_same_defaults():
+    """pine/indicators/RSI_Divergence_PRO.pine draws what the scanner scores.
+    They drifted once before on the S2 meter (wrong weights, missing factor),
+    so the defaults are parsed OUT of the .pine rather than trusted."""
+    import os
+    import re
+    root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    pine = open(os.path.join(root, "pine", "indicators",
+                             "RSI_Divergence_PRO.pine"), encoding="utf-8").read()
+
+    def num(name):
+        m = re.search(r'input\.(?:int|float)\(\s*([0-9.]+)\s*,\s*"' + name, pine)
+        assert m, f"could not parse {name!r} out of the .pine"
+        return float(m.group(1))
+
+    assert num("RSI Length") == S.RSI_LEN
+    assert num("Pivot Lookback") == S.DIV_PIVOT
+    assert num("Min bars between pivots") == S.DIV_MIN_GAP
+    assert num("Max bars between pivots") == S.DIV_MAX_GAP
+    assert num("Min Momentum Gap") == S.DIV_MIN_OSC_GAP
+    assert num("RSI range window") == S.DIV_NORM
+    assert num("Min Swing Size") == S.DIV_MIN_LEG_ATR
+
+
+def test_the_pine_does_not_claim_an_edge():
+    """The indicator is stricter, not proven. A .pine that promises profit is
+    the artefact this repo's 46-of-48 finding exists to prevent."""
+    import os
+    root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    pine = open(os.path.join(root, "pine", "indicators",
+                             "RSI_Divergence_PRO.pine"), encoding="utf-8").read()
+    assert "NOT* CLAIMED" in pine or "NOT CLAIMED" in pine
+    assert "46" in pine
