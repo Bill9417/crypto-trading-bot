@@ -85,6 +85,30 @@
 //  downside rate of the four. That is the opposite of the intuition this panel
 //  was requested to confirm, which is why it is written here rather than in a
 //  commit message nobody reads.
+//
+//  ── THE LOTTERY-TICKET VERSION, MEASURED ──────────────────────────────────
+//  "Ride the tail: tiny stop, far target, many attempts." Simulated PATH-
+//  dependently — you must survive the stop to reach the tail, and a same-bar
+//  tie goes to the stop — on 90 perps, entry at the NEXT bar's open, WITH
+//  costs (taker 0.05% × 2 + funding).
+//
+//  軋空 shorts_closing, n=391 — every cell of an 11-cell grid:
+//        3%/10%  −0.062R    3%/15%  −0.107R    5%/15%  −0.059R
+//  ALL ELEVEN CELLS NEGATIVE. Profit factor 0.87–0.92. The fat tail is real —
+//  19% ran +10% — and it does not pay for the 30% that stop out first. The
+//  intervals straddle zero, so this is "no edge found", not "proven losing";
+//  but eleven of eleven is a pattern, not one unlucky cell.
+//
+//  新多單 longs_opening, n=1148 — the SAME grid, same costs:
+//        2%/20%  +0.311R *   3%/20%  +0.254R *   2%/15%  +0.229R *
+//        3%/15%  +0.183R *   5%/20%  +0.183R *   3%/10%  +0.161R *
+//  Nine of eleven cells have an interval EXCLUDING zero, and every cell is
+//  positive. The lottery structure works — on the other state.
+//
+//  Caveat that limits all of it: 500 × 15m bars is 5.2 days, ONE regime, and
+//  openInterestHist retains ~30 days so a real hold-out does not exist. Nine
+//  significant cells out of eleven on five days is a strong hint, not a
+//  validated strategy.
 // ════════════════════════════════════════════════════════════════════════════
 //@version=6
 indicator("RSI Divergence PRO", shorttitle="RSI DIV PRO", overlay=false,
@@ -226,11 +250,79 @@ if showSq and barstate.islast and haveOi and not na(oiPct)
 alertcondition(squeeze, "軋空 short squeeze (OI falling, price rising)",
      "軋空條件成立：未平倉下降、價格上漲 —— 空單正在被平掉。實測 207 次：19% 之後 4 小時漲超過 10%，但中位數 −0.2%、30% 跌超過 5%。這是「波動事件」不是方向，信賴區間包含 0。")
 
-// ── plot ────────────────────────────────────────────────────────────────────
-plot(rsi, "RSI", color=#7E57C2, linewidth=2)
-hline(obLevel, "Overbought", color=color.new(#787B86, 40))
-hline(50,      "Middle",     color=color.new(#787B86, 70))
-hline(osLevel, "Oversold",   color=color.new(#787B86, 40))
+// ── smoothing MA (restored from the built-in) ──────────────────────────────
+// The PRO rewrite dropped this and the zone fills, which left one bare line —
+// the built-in's MA and its shaded bands are the parts that make an RSI pane
+// readable at a glance, and they were removed for no reason beyond focusing on
+// the divergence logic.
+gMa = "Smoothing"
+maType = input.string("SMA", "MA Type", group=gMa,
+     options=["None", "SMA", "SMA + Bollinger Bands", "EMA", "SMMA (RMA)", "WMA", "VWMA"])
+maLen  = input.int(14, "MA Length", minval=1, group=gMa)
+bbMult = input.float(2.0, "BB StdDev", minval=0.001, maxval=50, step=0.5, group=gMa)
+
+f_ma(src, len, t) =>
+    switch t
+        "SMA"                   => ta.sma(src, len)
+        "SMA + Bollinger Bands" => ta.sma(src, len)
+        "EMA"                   => ta.ema(src, len)
+        "SMMA (RMA)"            => ta.rma(src, len)
+        "WMA"                   => ta.wma(src, len)
+        "VWMA"                  => ta.vwma(src, len)
+        => na
+
+isBB   = maType == "SMA + Bollinger Bands"
+maOn   = maType != "None"
+rsiMa  = maOn ? f_ma(rsi, maLen, maType) : na
+bbDev  = isBB ? ta.stdev(rsi, maLen) * bbMult : na
+
+// ── zones ───────────────────────────────────────────────────────────────────
+// The RSI line is coloured BY ZONE rather than one flat purple, so "which zone
+// am I in" is answerable without reading the axis: green in oversold, red in
+// overbought, muted violet in the middle where RSI says least.
+rsiCol = rsi >= obLevel ? #ff4d6d : rsi <= osLevel ? #2ee88a : #a78bfa
+plot(rsi, "RSI", color=rsiCol, linewidth=2)
+
+obBand = hline(obLevel, "Overbought", color=color.new(#ff4d6d, 45), linestyle=hline.style_dashed)
+midBand = hline(50,     "Middle",     color=color.new(#787B86, 65), linestyle=hline.style_dotted)
+osBand = hline(osLevel, "Oversold",   color=color.new(#2ee88a, 45), linestyle=hline.style_dashed)
+topBand = hline(100, "Top", color=na, display=display.none)
+botBand = hline(0,   "Bottom", color=na, display=display.none)
+
+// Shaded zones: a tint between the bands so the middle reads as "nothing here",
+// and solid-ish caps above 70 / below 30 that darken the further in it goes.
+fill(obBand, osBand, color=color.new(#a78bfa, 94), title="中性區 band")
+fill(obBand, topBand, color=color.new(#ff4d6d, 88), title="超買區 overbought")
+fill(osBand, botBand, color=color.new(#2ee88a, 88), title="超賣區 oversold")
+
+// Gradient caps — brightest at the extreme, so 85 looks different from 71.
+rsiPlot  = plot(rsi, "RSI gradient anchor", color=na, display=display.none)
+midPlot  = plot(50,  "mid anchor", color=na, display=display.none, editable=false)
+fill(rsiPlot, midPlot, 100, obLevel,
+     top_color=color.new(#ff4d6d, 25), bottom_color=color.new(#ff4d6d, 100), title="超買漸層")
+fill(rsiPlot, midPlot, osLevel, 0,
+     top_color=color.new(#2ee88a, 100), bottom_color=color.new(#2ee88a, 25), title="超賣漸層")
+
+plot(rsiMa, "RSI-based MA", color=color.new(#ffd257, 0), linewidth=1,
+     display=maOn ? display.all : display.none, editable=maOn)
+bbU = plot(isBB ? rsiMa + bbDev : na, "BB Upper", color=color.new(#29ddff, 30),
+           display=isBB ? display.all : display.none)
+bbL = plot(isBB ? rsiMa - bbDev : na, "BB Lower", color=color.new(#29ddff, 30),
+           display=isBB ? display.all : display.none)
+fill(bbU, bbL, color=isBB ? color.new(#29ddff, 92) : na, title="BB fill")
+
+// Which zone, in words, on the last bar — the fastest possible answer to the
+// question this pane exists for.
+zoneTxt = rsi >= obLevel ? "超買 " + str.tostring(rsi, "#.#")
+        : rsi <= osLevel ? "超賣 " + str.tostring(rsi, "#.#")
+        : rsi >= 50      ? "中性偏多 " + str.tostring(rsi, "#.#")
+        :                  "中性偏空 " + str.tostring(rsi, "#.#")
+var label zoneLab = na
+if barstate.islast
+    label.delete(zoneLab)
+    zoneLab := label.new(bar_index + 3, rsi, zoneTxt, style=label.style_label_left,
+                         color=color.new(rsiCol, 20), textcolor=#0b1020,
+                         size=size.small)
 
 plotshape(bullDiv ? rsiPv : na, title="Bullish Divergence", offset=-divLen,
           location=location.absolute, style=shape.labelup, text="Bull",
