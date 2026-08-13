@@ -102,3 +102,75 @@ def test_tick_respects_check_interval_gate(monkeypatch, tmp_path):
     assert len(sent) == 1
     watchdog.tick("app.py")               # same 5-min window → no re-check at all
     assert len(sent) == 1
+
+
+# ── confirm before acting (2026-08-13) ──────────────────────────────────────
+# The public-URL check used to alert AND re-arm on a single failed probe. The
+# re-arm is not free: it runs `serve reset` and takes the site down for 30-60s
+# while relays re-register. So one flaky probe caused a repair that caused a
+# real outage that the owner got a 🚨 about — the watchdog manufacturing a
+# share of the events it reported.
+def _pub_tick(monkeypatch, tmp_path, results):
+    """Drive watchdog.tick() through a scripted sequence of probe results."""
+    import watchdog as W
+    monkeypatch.setattr(W, "STATE_FILE", str(tmp_path / "wd.json"))
+    monkeypatch.setattr(W, "CHECK_SEC", 0)
+    monkeypatch.setattr(W, "WATCH_TUNNEL", False)
+    monkeypatch.setattr(W, "WATCH_PUBLIC", True)
+    monkeypatch.setattr(W, "public_host", lambda: "x.ts.net")
+    monkeypatch.setattr(W, "public_ips", lambda h: ["1.1.1.1", "2.2.2.2"])
+    monkeypatch.setattr(W, "_ps", lambda: "")
+    monkeypatch.setattr(W, "parse_running", lambda t: set(W.EXPECTED))
+    monkeypatch.setattr(W, "rotate_logs", lambda: None)
+
+    fixes, sent = [], []
+    monkeypatch.setattr(W, "run_autofix", lambda: (fixes.append(1), True)[1])
+    import telegram_utils
+    monkeypatch.setattr(telegram_utils, "send_message",
+                        lambda *a, **k: sent.append(a[0] if a else ""))
+
+    seq = list(results)
+
+    def status(host=None, ips=None):
+        good = seq.pop(0) if seq else True
+        return {"ok": ["1.1.1.1", "2.2.2.2"], "bad": []} if good \
+            else {"ok": [], "bad": ["1.1.1.1", "2.2.2.2"]}
+
+    monkeypatch.setattr(W, "public_status", status)
+    for _ in range(len(results)):
+        W.tick("strategy2_scanner.py")
+    return fixes, sent
+
+
+def test_one_flaky_probe_neither_alerts_nor_repairs(monkeypatch, tmp_path):
+    """The blip case. A repair here would have CREATED a 30-60s outage."""
+    fixes, sent = _pub_tick(monkeypatch, tmp_path, [False, True])
+    assert fixes == [], "a single failed probe triggered a site-down repair"
+    assert sent == [], "a single failed probe alarmed the owner"
+
+
+def test_two_consecutive_failures_do_repair(monkeypatch, tmp_path):
+    """A real outage must still be caught and fixed unattended."""
+    fixes, sent = _pub_tick(monkeypatch, tmp_path, [False, False])
+    assert len(fixes) == 1, "a confirmed outage was not repaired"
+    assert sent, "a confirmed outage was not announced"
+
+
+def test_the_strike_counter_resets_on_a_good_check(monkeypatch, tmp_path):
+    """Alternating fail/pass is a flaky probe, not an outage. Without a reset
+    it would accumulate strikes forever and eventually fire anyway."""
+    fixes, _ = _pub_tick(monkeypatch, tmp_path,
+                         [False, True, False, True, False, True])
+    assert fixes == [], "alternating blips accumulated into a false outage"
+
+
+def test_a_sustained_outage_is_still_caught_within_two_checks(monkeypatch, tmp_path):
+    fixes, sent = _pub_tick(monkeypatch, tmp_path, [False, False, False])
+    assert len(fixes) >= 1
+    assert sent
+
+
+def test_confirmation_is_configurable_but_never_zero():
+    """PUBLIC_STRIKES=0 or 1 would restore the exact behaviour this replaced."""
+    import watchdog as W
+    assert W.PUBLIC_STRIKES >= 2

@@ -231,6 +231,12 @@ rearm)
     fi
     trap 'rmdir "$LOCK" 2>/dev/null' EXIT
 
+    # STAMP THE LINE. Until 2026-08-13 this log had no timestamps at all: 21
+    # re-arms recorded and no way to tell whether they were 21 in one bad hour
+    # or 21 across a month. "Why does this keep happening" is not answerable
+    # without a timeline, and the answer changes the fix — a nightly lapse is a
+    # renewal problem, a burst is a network problem.
+    echo "── $(date '+%Y-%m-%d %H:%M:%S %Z') · re-arming (${REARM_WHY:-watchdog}) ──"
     echo "Re-arming the Funnel registration…"
     "$TS" funnel --https="$PORT" off >/dev/null 2>&1 || true
     "$TS" serve reset >/dev/null 2>&1 || true

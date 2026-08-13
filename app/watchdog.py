@@ -73,6 +73,10 @@ PUBLIC_AUTOFIX = os.getenv("PUBLIC_AUTOFIX", "true").strip().lower() \
 # re-running it forever would bury that fact under its own noise.
 PUBLIC_AUTOFIX_MAX = int(os.getenv("PUBLIC_AUTOFIX_MAX", "4"))
 PUBLIC_AUTOFIX_WINDOW_SEC = 3600
+# Consecutive failed checks before the URL counts as down. See the long note at
+# the call site: the repair itself causes 30-60s of downtime, so acting on one
+# flaky probe let the watchdog manufacture the outages it then reported.
+PUBLIC_STRIKES = int(os.getenv("PUBLIC_STRIKES", "2"))
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 WATCH_PUBLIC = os.getenv("WATCHDOG_WATCH_PUBLIC", "true").strip().lower() \
     in ("1", "true", "yes")
@@ -402,8 +406,30 @@ def tick(self_name: str) -> list:
         _ips = public_ips(_host) if _host else []
         if _host and _ips:                       # unknown ≠ down
             pub = public_status(_host, _ips)
+            # ── CONFIRM BEFORE ACTING (2026-08-13) ──────────────────────────
+            # A single failed probe used to be enough to both alert AND
+            # re-arm. Both were wrong, and the re-arm was the expensive one:
+            # `rearm` runs `serve reset` and takes the site down for 30-60s
+            # while the relays re-register. So one flaky probe — a DNS hiccup,
+            # a 15s timeout on a loaded Mac, a relay mid-rotation — triggered a
+            # repair that CAUSED a real outage, and the owner got a 🚨 for it.
+            # The watchdog was manufacturing a share of the events it reported.
+            #
+            # Two consecutive failed checks (~5 min apart) before anything
+            # happens. A genuine outage is still caught within ~10 minutes and
+            # still repaired unattended; a blip now costs nothing and says
+            # nothing. The strictly-worse alternative is what was there before.
+            strikes = int(state.get("public_strikes") or 0)
             if pub["bad"]:
-                down = [*down, PUBLIC_KEY]
+                strikes += 1
+                if strikes >= PUBLIC_STRIKES:
+                    down = [*down, PUBLIC_KEY]
+                else:
+                    print(f"[watchdog] public URL failed probe {strikes}/"
+                          f"{PUBLIC_STRIKES} — confirming before acting")
+            else:
+                strikes = 0
+            state["public_strikes"] = strikes
 
     import telegram_utils
     alerted = []

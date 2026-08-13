@@ -443,7 +443,14 @@ def test_the_public_alert_carries_the_right_fix(monkeypatch, tmp_path):
     sent = []
     monkeypatch.setattr(telegram_utils, "send_message",
                         lambda msg, **k: sent.append((msg, k.get("channel"))) or True)
-    alerted = W.tick("strategy2_scanner.py")
+    # TWO ticks: since 2026-08-13 the URL must fail two consecutive checks
+    # before it counts as down, because the repair itself takes the site
+    # offline for 30-60s and acting on one flaky probe manufactured outages.
+    # The contract this test guards is unchanged — a CONFIRMED outage names
+    # the command that actually fixes it.
+    monkeypatch.setattr(W, "CHECK_SEC", 0)
+    W.tick("strategy2_scanner.py")               # strike 1: silent by design
+    alerted = W.tick("strategy2_scanner.py")     # strike 2: confirmed
     assert W.PUBLIC_KEY in alerted
     assert "tailscale.sh" in sent[0][0]          # not ./run_all.sh bg
     assert sent[0][1] == "private"
@@ -532,6 +539,12 @@ def test_a_down_url_triggers_the_repair_before_the_alert(monkeypatch, tmp_path):
     monkeypatch.setattr(telegram_utils, "send_message",
                         lambda msg, **k: sent.append(msg) or True)
 
+    # Two ticks to CONFIRM the outage (see PUBLIC_STRIKES). The first is
+    # deliberately silent: the repair takes the site down for 30-60s, so it
+    # must not run on a single flaky probe.
+    monkeypatch.setattr(W, "CHECK_SEC", 0)
+    W.tick("strategy2_scanner.py")
+    assert fired == [], "the repair ran on one unconfirmed probe"
     W.tick("strategy2_scanner.py")
     assert len(fired) == 1, "the repair must run, not just be recommended"
     # A command printed while it is already executing invites a second copy.

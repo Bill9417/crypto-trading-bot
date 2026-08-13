@@ -711,27 +711,6 @@ def main() -> None:
             whale_tracker.tick(client)
         except Exception as exc:  # noqa: BLE001 — must never kill the loop
             print(f"[strategy2] whale tracker error: {exc}")
-        # 🐋 Crowd radar — abnormal open-interest builds across 300 crypto
-        # perps, small caps included (that tier is the point: a 6% build on
-        # BTC is a rounding error on a $10B book).
-        #
-        # DELIBERATELY LAST of the alerting steps. It is the slowest thing in
-        # this loop by an order of magnitude — ~90s for 300 symbols against
-        # ~10s for everything else combined — and placed earlier it pushed the
-        # liquidation-cascade alerts 90s later every sweep. Those watch a
-        # 10-minute window, so that delay is a real cost; nothing waits behind
-        # this one now.
-        try:
-            import crowd_radar
-            crowd = crowd_radar.tick()
-            if crowd.get("checked"):
-                print(f"[crowd] checked {crowd['checked']} · "
-                      f"{crowd.get('shown', 0)} extreme · "
-                      f"{crowd.get('alerted', 0)} alerted"
-                      + (f" · {crowd['held_back']} held back (cap)"
-                         if crowd.get("held_back") else ""))
-        except Exception as exc:  # noqa: BLE001 — a watch-only scan never kills the loop
-            print(f"[strategy2] crowd radar error: {exc}")
         # 🚨 Watchdog — bark on Telegram if a stack process died (S3 watches us).
         try:
             watchdog.tick("strategy2_scanner.py")
@@ -757,6 +736,28 @@ def main() -> None:
             telegram_utils.auto_clean_tick()
         except Exception as exc:  # noqa: BLE001
             print(f"[strategy2] auto-clean error: {exc}")
+        # 🐋 Crowd radar — abnormal open-interest builds across 300 crypto
+        # perps, small caps included (that tier is the point: a 6% build on
+        # BTC is a rounding error on a $10B book).
+        #
+        # DEAD LAST, and the position is load-bearing. This is the slowest step
+        # in the loop by an order of magnitude — ~90s for 300 symbols against
+        # ~10s for everything else combined. Placed mid-sweep it delayed
+        # liq_alerts (which watch a 10-minute cascade window) and, worse, the
+        # WATCHDOG: funnel outages would have been detected 90s later every
+        # sweep, adding that to every public-URL outage. Nothing time-sensitive
+        # may ever sit behind this call.
+        try:
+            import crowd_radar
+            crowd = crowd_radar.tick()
+            if crowd.get("checked"):
+                print(f"[crowd] checked {crowd['checked']} · "
+                      f"{crowd.get('shown', 0)} extreme · "
+                      f"{crowd.get('alerted', 0)} alerted"
+                      + (f" · {crowd['held_back']} held back (cap)"
+                         if crowd.get("held_back") else ""))
+        except Exception as exc:  # noqa: BLE001 — a watch-only scan never kills the loop
+            print(f"[strategy2] crowd radar error: {exc}")
         # Flush a single grouped Telegram digest on a clean DIGEST_SEC cadence
         # (default every 30 min). Silent when nothing new fired in the window.
         if time.time() - last_digest >= DIGEST_SEC:
