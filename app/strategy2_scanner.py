@@ -80,6 +80,12 @@ SIGNALS_FILE = os.path.join(os.path.dirname(__file__), "strategy2_signals.json")
 LATEST_SCORES: dict = {}
 # Latest mover read per symbol, refreshed in place during each sweep.
 LATEST_MOVERS: dict = {}
+# 🚀 Resistance→support flips seen this run, and the per-symbol alert cooldown.
+# In-process rather than on disk: a flip is only reportable for a few bars
+# (breakout_flip.MAX_BARS_SINCE_FLIP), so nothing here outlives a restart in a
+# way that matters.
+LATEST_FLIPS: dict = {}
+_BFLIP_STATE: dict = {}
 
 
 def _mover_metrics(ohlcv):
@@ -413,6 +419,24 @@ def scan_once(client, recent: list, last_alert: dict, pending: list) -> list:
                 "score": res.get("score"), "price": res.get("price"),
                 "ts": time.time(), "tv_url": _tv_url(sym),
             }
+
+        # 🚀 壓力翻支撐 — same candles again, still no extra API call. Broke a
+        # multi-touch resistance zone, came back, the zone held as support, and
+        # nothing overhead. Detection only; the numbers behind it are in
+        # breakout_flip.MEASURED and every interval straddles zero.
+        try:
+            import breakout_flip
+            _bf = breakout_flip.consider(sym, ohlcv, _BFLIP_STATE, time.time())
+            if _bf:
+                LATEST_FLIPS[sym] = {**_bf, "ts": time.time(),
+                                     "tv_url": _tv_url(sym)}
+                telegram_utils.send_message(
+                    breakout_flip.format_alert(sym, _bf, _bf["plan"]),
+                    parse_mode="HTML", force=True, channel="signals")
+                print(f"[flip] {sym} zone {_bf['zone_top']:.6g} held · "
+                      f"{'blue sky' if _bf['blue_sky'] else 'room %.1f%%' % (_bf['room_pct'] or 0)}")
+        except Exception as exc:  # noqa: BLE001 — detection never kills the sweep
+            print(f"[flip] {sym} error: {exc}")
 
         # 🚀 Pump Radar — reuses this symbol's candles, no extra API call.
         mv = _mover_metrics(ohlcv)
