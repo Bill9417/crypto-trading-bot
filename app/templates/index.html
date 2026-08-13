@@ -1545,6 +1545,14 @@
              small button and nothing else. -->
         <div class="layout-bar">
             <button class="layout-btn" id="layout-toggle" type="button">🧩 編輯版面</button>
+            <!-- 儲存 / 回預設 live HERE, in the pinned bar, and not inside
+                 #layout-list. paint() rebuilds that list with innerHTML='' on
+                 every move, which destroyed the save button the first time you
+                 reordered anything — leaving a "還沒儲存" warning with no way
+                 to act on it. A control may not live inside the thing it
+                 controls when that thing is rebuilt from scratch. -->
+            <button class="layout-btn" id="layout-save" type="button" hidden>💾 儲存版面</button>
+            <button class="layout-btn" id="layout-reset" type="button" hidden>↺ 回預設</button>
             <span class="layout-hint" id="layout-hint"></span>
         </div>
         <div class="layout-list" id="layout-list"></div>
@@ -4183,8 +4191,9 @@
 
         function markDirty(on) {
             dirty = on;
-            HINT.textContent = on ? '有未儲存的變更' : '';
+            HINT.textContent = on ? '有未儲存的變更 — 按 💾 儲存版面' : '';
             SAVE.classList.toggle('on', on);
+            syncButtons();
         }
 
         function move(idx, delta) {
@@ -4243,16 +4252,17 @@
             });
         }
 
-        // Buttons live in the list header so they are reachable without
-        // scrolling back to the top after a long reorder.
-        var ctl = document.createElement('div');
-        ctl.className = 'layout-bar';
-        ctl.style.marginBottom = '2px';
-        var SAVE = document.createElement('button');
-        SAVE.className = 'layout-btn'; SAVE.type = 'button'; SAVE.textContent = '💾 儲存';
-        var RESET = document.createElement('button');
-        RESET.className = 'layout-btn'; RESET.type = 'button'; RESET.textContent = '↺ 回預設';
-        ctl.appendChild(SAVE); ctl.appendChild(RESET);
+        var SAVE  = document.getElementById('layout-save');
+        var RESET = document.getElementById('layout-reset');
+
+        // Save stays reachable while there is anything to save — including
+        // after leaving edit mode, so the "還沒儲存" warning always has its
+        // cure sitting next to it rather than one hidden panel away.
+        function syncButtons() {
+            var editing = document.body.classList.contains('layout-editing');
+            SAVE.hidden = !(editing || dirty);
+            RESET.hidden = !editing;
+        }
 
         SAVE.onclick = function () {
             SAVE.disabled = true; HINT.textContent = '儲存中…';
@@ -4272,6 +4282,7 @@
                   SAVE.disabled = false;
                   if (!d || !d.ok) { HINT.textContent = '儲存失敗 — 再試一次'; return; }
                   markDirty(false);
+                  syncButtons();
                   HINT.textContent = '已儲存 ✓';
                   setTimeout(function () { if (!dirty) HINT.textContent = ''; }, 2500);
               }).catch(function () {
@@ -4287,6 +4298,7 @@
                     if (!d || !d.cards) return;
                     cards = d.cards;
                     paint(); paintStyle(); markDirty(false);
+                    syncButtons();
                     HINT.textContent = '已回到預設 ✓';
                 });
         };
@@ -4297,14 +4309,13 @@
             BAR.textContent = on ? '✓ 完成' : '🧩 編輯版面';
             if (on && !LIST.dataset.ready) {
                 LIST.dataset.ready = '1';
-                LIST.appendChild(ctl);
                 paint();
-                LIST.insertBefore(ctl, LIST.firstChild);
             }
+            syncButtons();
             // Leaving edit mode with unsaved changes would look saved on this
             // page and be gone on the next load, so say so rather than
             // silently discarding or silently auto-saving.
-            if (!on && dirty) HINT.textContent = '⚠️ 還沒儲存 — 重新整理就會回到上次儲存的版面';
+            if (!on && dirty) HINT.textContent = '⚠️ 還沒儲存 — 按旁邊的 💾 儲存版面';
         };
 
         paintStyle();

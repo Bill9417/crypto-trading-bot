@@ -87,17 +87,40 @@ def normalise(saved: dict) -> dict:
     return {"order": order, "hidden": sorted(set(hidden), key=CARD_IDS.index)}
 
 
+def _key(user_id) -> str:
+    """The stable half of a user identity.
+
+    flask_login's get_id() here returns "<id>|<session_token>", and that token
+    is ROTATED — new_session_token() runs on a password change and on
+    log-out-everywhere. Keyed on the whole string, changing your password would
+    silently orphan your saved layout and the dashboard would quietly revert to
+    default with nothing to explain it.
+
+    Splitting on "|" also folds any row already written under the long form
+    onto the right bucket, so this heals rather than abandoning them.
+    """
+    return str(user_id).split("|")[0]
+
+
 def _read_all() -> dict:
     try:
         with open(STORE_FILE, encoding="utf-8") as f:
-            return json.load(f) or {}
+            raw = json.load(f) or {}
     except (OSError, ValueError):
         return {}
+    if not isinstance(raw, dict):
+        return {}
+    # Fold legacy "<id>|<token>" keys onto the stable id. Later keys win, which
+    # for a rotated token means the most recently written layout survives.
+    out = {}
+    for k, v in raw.items():
+        out[_key(k)] = v
+    return out
 
 
 def load(user_id) -> dict:
     """One user's layout, always valid."""
-    return normalise(_read_all().get(str(user_id)) or {})
+    return normalise(_read_all().get(_key(user_id)) or {})
 
 
 def save(user_id, layout: dict) -> dict:
@@ -105,7 +128,7 @@ def save(user_id, layout: dict) -> dict:
     clean = normalise(layout)
     with _lock:
         allof = _read_all()
-        allof[str(user_id)] = clean
+        allof[_key(user_id)] = clean
         tmp = f"{STORE_FILE}.{os.getpid()}.tmp"
         with open(tmp, "w", encoding="utf-8") as f:
             json.dump(allof, f)
@@ -116,7 +139,7 @@ def save(user_id, layout: dict) -> dict:
 def reset(user_id) -> dict:
     with _lock:
         allof = _read_all()
-        allof.pop(str(user_id), None)
+        allof.pop(_key(user_id), None)
         tmp = f"{STORE_FILE}.{os.getpid()}.tmp"
         with open(tmp, "w", encoding="utf-8") as f:
             json.dump(allof, f)

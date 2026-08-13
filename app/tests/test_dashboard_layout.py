@@ -268,3 +268,103 @@ def test_a_broken_layout_store_does_not_take_the_dashboard_down(client, monkeypa
     variable the running app.py did not yet pass."""
     monkeypatch.setattr(L, "load", lambda uid: (_ for _ in ()).throw(RuntimeError("boom")))
     assert client.get("/").status_code == 200
+
+
+# ── the control cannot live inside the thing it rebuilds ────────────────────
+def _dash_html():
+    import os
+    here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    return open(os.path.join(here, "templates", "index.html"), encoding="utf-8").read()
+
+
+def test_the_save_button_is_not_inside_the_list_that_gets_rebuilt():
+    """The bug the owner hit. paint() rebuilds #layout-list with
+    innerHTML='' on every move, and the 儲存 button was a child of it — so the
+    FIRST time you reordered anything the save button was destroyed, leaving a
+    "還沒儲存" warning and no way to act on it.
+
+    Structural, not cosmetic: a control may not live inside the container it
+    controls when that container is rebuilt from scratch.
+    """
+    html = _dash_html()
+    assert 'id="layout-save"' in html, "the save button is gone entirely"
+    bar_at = html.index('id="layout-save"')
+    list_at = html.index('id="layout-list"')
+    assert bar_at < list_at, \
+        "layout-save is rendered inside/after #layout-list — a repaint will eat it"
+
+
+def test_the_save_button_lives_in_the_pinned_bar():
+    """The bar is order:-1, so the button is reachable at the top of the page
+    without scrolling back up after a long reorder."""
+    html = _dash_html()
+    bar = html[html.index('class="layout-bar"'):html.index('id="layout-list"')]
+    assert 'id="layout-save"' in bar and 'id="layout-reset"' in bar
+
+
+def test_paint_only_ever_rebuilds_the_row_list():
+    """If paint() started clearing a wider container it would eat the buttons
+    again from a different direction."""
+    html = _dash_html()
+    assert "LIST.innerHTML = ''" in html
+    assert "BAR.innerHTML" not in html
+
+
+def test_leaving_edit_mode_dirty_points_at_a_button_that_exists():
+    """The old warning said 'refresh loses it' and named no action, while the
+    only button that could save was hidden with the list."""
+    html = _dash_html()
+    assert "還沒儲存" in html
+    warn_line = [l for l in html.split("\n") if "還沒儲存" in l and "HINT" in l]
+    assert warn_line, "the unsaved warning is gone"
+    assert "儲存版面" in warn_line[0], "the warning does not name the button"
+
+
+# ── the identity a layout is filed under ────────────────────────────────────
+def test_a_layout_survives_a_password_change():
+    """flask_login's get_id() here is "<id>|<session_token>", and that token is
+    ROTATED by new_session_token() on a password change and on log-out-
+    everywhere. Keyed on the whole string, changing your password silently
+    orphans your dashboard — it reverts to default with nothing to explain it,
+    which reads as the feature being broken rather than as a key change.
+    """
+    L.save("1|oldtoken", {"order": ["oi"], "hidden": ["whale"]})
+    after_rotation = L.load("1|BRAND-NEW-TOKEN-AFTER-PASSWORD-CHANGE")
+    assert after_rotation["order"][0] == "oi", "layout lost when the token rotated"
+    assert after_rotation["hidden"] == ["whale"]
+
+
+def test_the_bare_id_and_the_long_form_are_the_same_user():
+    L.save("1", {"order": ["news"]})
+    assert L.load("1|whatever")["order"][0] == "news"
+    L.save("1|other", {"order": ["radar"]})
+    assert L.load("1")["order"][0] == "radar"
+
+
+def test_a_layout_written_under_a_legacy_key_is_adopted_not_abandoned(store):
+    """The one row this feature had already written before the fix."""
+    store.write_text(json.dumps(
+        {"1|sometoken": {"order": ["hunting"], "hidden": ["pulse"]}}))
+    got = L.load("1")
+    assert got["order"][0] == "hunting"
+    assert got["hidden"] == ["pulse"]
+
+
+def test_reset_clears_the_layout_whatever_form_the_id_arrives_in(store):
+    store.write_text(json.dumps({"1|tok": {"order": ["hunting"], "hidden": []}}))
+    L.reset("1")
+    assert L.load("1|tok") == L.default_layout()
+
+
+def test_two_users_are_still_two_users_after_the_split():
+    """The split must not collapse distinct accounts — "1|x" and "2|x" are
+    different people, not one person with two tokens."""
+    L.save("1|a", {"order": ["oi"]})
+    L.save("2|b", {"order": ["news"]})
+    assert L.load("1|zzz")["order"][0] == "oi"
+    assert L.load("2|zzz")["order"][0] == "news"
+
+
+def test_a_corrupt_store_that_is_not_a_dict_is_survivable(store):
+    store.write_text('["not", "a", "dict"]')
+    assert L.load("1") == L.default_layout()
