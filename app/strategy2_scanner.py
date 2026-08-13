@@ -813,6 +813,11 @@ def main() -> None:
 
 
 if __name__ == "__main__":
+    # Timestamp every line. These logs had none, which made
+    # "is this error current?" unanswerable — see log_stamp.
+    import log_stamp
+    log_stamp.install()
+
     import signal as _signal
 
     def _term(signum, frame):        # ./run_all.sh stop pkills with SIGTERM —

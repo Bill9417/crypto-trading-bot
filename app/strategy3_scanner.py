@@ -720,4 +720,9 @@ def main() -> None:
 
 
 if __name__ == "__main__":
+    # Timestamp every line. These logs had none, which made
+    # "is this error current?" unanswerable — see log_stamp.
+    import log_stamp
+    log_stamp.install()
+
     main()

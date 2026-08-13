@@ -4895,6 +4895,11 @@ def internal_error(error):
     return "500 Internal Server Error - Check console logs", 500
 
 if __name__ == "__main__":
+    # Timestamp every line. These logs had none, which made
+    # "is this error current?" unanswerable — see log_stamp.
+    import log_stamp
+    log_stamp.install()
+
     with app.app_context():
         db.create_all() # Create database tables for all binds
         
