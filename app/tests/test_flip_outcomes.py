@@ -224,3 +224,39 @@ def test_the_dashboard_knows_about_the_flip_card():
     html = open(os.path.join(here, "templates", "index.html"),
                 encoding="utf-8").read()
     assert 'data-card="flips"' in html
+
+
+# ── the flip strip shows one row per coin (2026-08-14) ──────────────────────
+def test_the_strip_shows_each_symbol_once():
+    """The client-side dedupe keyed on `symbol:bar_ts`, which is unique per
+    flip — so the same coin flipping again produced a second key and rendered
+    twice. Live it was GENIUS×6, BLESS×6, AWE×5."""
+    store = F._blank()
+    store["recent"] = [
+        {"symbol": "GENIUS/USDT:USDT", "key": "g:3", "fired_ts": 3},
+        {"symbol": "GENIUS/USDT:USDT", "key": "g:2", "fired_ts": 2},
+        {"symbol": "GENIUS/USDT:USDT", "key": "g:1", "fired_ts": 1},
+        {"symbol": "BLESS/USDT:USDT", "key": "b:1", "fired_ts": 1}]
+    v = F.web_view(store)
+    assert [r["symbol"] for r in v["recent"]] == ["GENIUS/USDT:USDT",
+                                                  "BLESS/USDT:USDT"]
+
+
+def test_an_open_trade_does_not_also_appear_as_recent():
+    """One position, not two. The strip concatenates open + recent, and a
+    freshly opened flip is in BOTH."""
+    store = F._blank()
+    row = {"symbol": "X/USDT:USDT", "key": "x:1", "fired_ts": 5}
+    store["open"] = {"x:1": row}
+    store["recent"] = [row]
+    v = F.web_view(store)
+    assert [r["symbol"] for r in v["open"] + v["recent"]] == ["X/USDT:USDT"]
+
+
+def test_two_open_flips_on_one_symbol_collapse_to_one():
+    store = F._blank()
+    store["open"] = {"x:1": {"symbol": "X", "key": "x:1", "fired_ts": 1},
+                     "x:2": {"symbol": "X", "key": "x:2", "fired_ts": 9}}
+    v = F.web_view(store)
+    assert len(v["open"]) == 1
+    assert v["open"][0]["fired_ts"] == 9        # newest kept

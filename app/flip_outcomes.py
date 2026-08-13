@@ -170,10 +170,29 @@ def web_view(store: dict = None, limit: int = 20) -> dict:
                     key=lambda c: c.get("exit_ts") or 0, reverse=True)
     segs = [s for s in ("all", "blue", "ceiling")
             if (store.get("tally") or {}).get(s)]
+    # One row per SYMBOL. The previous client-side dedupe keyed on
+    # `symbol:bar_ts`, which is unique per flip — so the same coin flipping
+    # again produced a second key and rendered twice. Live it was GENIUS×6,
+    # BLESS×6, AWE×5. Keying on the symbol is the only thing that fixes it,
+    # and doing it here means /market and the dashboard cannot disagree.
+    def _one_per_symbol(rows):
+        seen, out = set(), []
+        for r in sorted(rows or [], key=lambda x: -(x.get("fired_ts") or 0)):
+            sym = r.get("symbol")
+            if sym and sym not in seen:
+                seen.add(sym)
+                out.append(r)
+        return out
+
+    open_rows = _one_per_symbol((store.get("open") or {}).values())
+    open_syms = {r.get("symbol") for r in open_rows}
+    # A symbol that is still OPEN must not also appear from `recent` — it is
+    # one position, not two.
+    recent_rows = [r for r in _one_per_symbol(store.get("recent"))
+                   if r.get("symbol") not in open_syms]
     return {
-        "recent": (store.get("recent") or [])[:limit],
-        "open": sorted((store.get("open") or {}).values(),
-                       key=lambda t: t.get("fired_ts") or 0, reverse=True),
+        "recent": recent_rows[:limit],
+        "open": open_rows,
         "closed": closed[:30],
         "stats": {s: stats(store, s) for s in segs},
         "segment_zh": SEGMENT_ZH,

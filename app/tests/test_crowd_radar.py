@@ -586,3 +586,38 @@ def test_the_send_path_uses_the_configured_channel(monkeypatch):
     C._send("hello")
     assert seen["channel"] == C.ALERT_CHANNEL
     assert seen["parse_mode"] == "HTML"
+
+
+# ── the dashboard strip shows one row per coin (2026-08-14) ─────────────────
+def test_the_strip_shows_each_symbol_once():
+    """Reported from a screenshot: the OI strip rendered EDEN twice. The store
+    appends on every fresh alert, so a coin that keeps building is in there
+    many times — live it was AKE×5, EDEN×3, AVNT×3. Rendered raw the strip
+    becomes one coin repeated with everything else pushed off the end."""
+    rows = [{"symbol": "EDENUSDT", "ts": 3, "oi_pct": 21.1},
+            {"symbol": "EDENUSDT", "ts": 2, "oi_pct": 13.6},
+            {"symbol": "EDENUSDT", "ts": 1, "oi_pct": 8.9},
+            {"symbol": "GOATUSDT", "ts": 2, "oi_pct": -5.0}]
+    out = C.dedupe_recent(rows)
+    assert [r["symbol"] for r in out] == ["EDENUSDT", "GOATUSDT"]
+
+
+def test_the_newest_reading_is_the_one_kept():
+    """An hours-old +8.9% next to a live +21.1% would misreport the state."""
+    rows = [{"symbol": "EDENUSDT", "ts": 1, "oi_pct": 8.9},
+            {"symbol": "EDENUSDT", "ts": 9, "oi_pct": 21.1}]
+    assert C.dedupe_recent(rows)[0]["oi_pct"] == 21.1
+
+
+def test_the_full_history_is_still_in_the_store():
+    """Deduping in web_view, not in the store: the tally and any later
+    analysis need every event, and it is only the DISPLAY that wants one row."""
+    store = C._blank()
+    store["recent"] = [{"symbol": "X", "ts": 2}, {"symbol": "X", "ts": 1}]
+    assert len(C.web_view(store)["recent"]) == 1
+    assert len(store["recent"]) == 2
+
+
+def test_dedupe_survives_rows_with_no_timestamp():
+    out = C.dedupe_recent([{"symbol": "A"}, {"symbol": "A", "ts": 5}])
+    assert len(out) == 1

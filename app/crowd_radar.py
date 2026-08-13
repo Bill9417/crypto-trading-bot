@@ -603,10 +603,31 @@ def tick(now: float = None, force: bool = False) -> dict:
 
 
 # ── the read ─────────────────────────────────────────────────────────────────
+def dedupe_recent(rows: list) -> list:
+    """One row per symbol, newest kept.
+
+    The store appends on every fresh alert, so a coin that keeps building is in
+    there many times — live it was AKE×5, EDEN×3, AVNT×3. Rendered raw, the
+    dashboard strip becomes one coin repeated with everything else pushed off
+    the end, which is exactly what it did.
+
+    Deduped in web_view rather than in the store: the full history is what
+    `tally` and any later analysis need, and it is only the DISPLAY that wants
+    one row per symbol.
+    """
+    seen, out = set(), []
+    for r in sorted(rows or [], key=lambda x: -(x.get("ts") or 0)):
+        sym = r.get("symbol")
+        if sym and sym not in seen:
+            seen.add(sym)
+            out.append(r)
+    return out
+
+
 def web_view(store: dict = None, limit: int = 20) -> dict:
     store = load() if store is None else store
     return {
-        "recent": (store.get("recent") or [])[:limit],
+        "recent": dedupe_recent(store.get("recent"))[:limit],
         "ran_ts": store.get("ran_ts") or 0,
         "span_h": SPAN_BARS * 15 / 60,
         "pctile_gate": PCTILE_GATE,
