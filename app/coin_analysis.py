@@ -31,6 +31,15 @@ import time
 
 import requests
 
+import strategy2_meter as S2
+
+# DERIVED from the meter, never a bare literal. _strategies() runs
+# S2.compute_signal on these candles; at the old 400 it took the
+# `n < SIGNAL_MIN_CANDLES` early return on every coin, so the S2 row read
+# "no signal" for reasons that had nothing to do with the market.
+# See the same note on strategy2_scanner.CANDLES.
+K15_CANDLES = max(400, S2.SIGNAL_MIN_CANDLES + 20)
+
 BASE = "https://fapi.binance.com"
 TIMEOUT = 12
 CACHE_TTL = float(os.getenv("COIN_CACHE_TTL", "60"))
@@ -232,7 +241,7 @@ def analyse(query: str, now: float = None) -> dict:
 def _build(sym: str) -> dict:
     base = sym[:-4]
     k1h = _get("/fapi/v1/klines", symbol=sym, interval="1h", limit=48)
-    k15 = _get("/fapi/v1/klines", symbol=sym, interval="15m", limit=400)
+    k15 = _get("/fapi/v1/klines", symbol=sym, interval="15m", limit=K15_CANDLES)
     tick = _get("/fapi/v1/ticker/24hr", symbol=sym)
     prem = _get("/fapi/v1/premiumIndex", symbol=sym)
     frh = _get("/fapi/v1/fundingRate", symbol=sym, limit=30)
@@ -323,7 +332,6 @@ def _strategies(k15: list) -> list:
     information about the chart, not about the future."""
     out = []
     try:
-        import strategy2_meter as S2
         m = S2.compute_signal(k15)
         score = m.get("score")
         out.append({"name": "S2 儀表", "value":

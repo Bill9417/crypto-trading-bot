@@ -51,7 +51,19 @@ from market_data import SafeBinanceClient, RateLimitCooldownError, is_tradfi_mar
 TIMEFRAME = os.getenv("STRATEGY2_TIMEFRAME", "15m")
 INTERVAL_SEC = int(os.getenv("STRATEGY2_INTERVAL_SEC", "300"))      # gap between full sweeps
 ALERT_COOLDOWN_SEC = int(os.getenv("STRATEGY2_ALERT_COOLDOWN_SEC", "14400"))  # 4h per symbol+dir
-CANDLES = int(os.getenv("STRATEGY2_CANDLES", "400"))               # ≥ SIGNAL_MIN_CANDLES (347)
+# DERIVED from the meter, never a bare literal. On 2026-08-11 the All-in-One
+# tunnel moved to EMA676, which raised strategy2_meter.SIGNAL_MIN_CANDLES from
+# 367 to 688. This line still said 400, so compute_signal took its
+# `n < SIGNAL_MIN_CANDLES` early return on EVERY symbol of EVERY sweep and
+# returned signal=None — the scanner ran clean, logged clean, and produced
+# ZERO signals for three days. That commit correctly bumped S4_CANDLES 450→750
+# for the same reason and missed the meter's own scanner.
+#
+# "No signals" is indistinguishable from "quiet market", which is why nothing
+# alerted. The max() is the guard: raising the meter's requirement now raises
+# the fetch with it instead of silently disarming the scanner.
+CANDLES = max(int(os.getenv("STRATEGY2_CANDLES", "750")),
+              S2.SIGNAL_MIN_CANDLES + 20)
 RETAIN_HOURS = float(os.getenv("STRATEGY2_RETAIN_HOURS", "24"))    # how long signals stay on the page
 MAX_KEEP = int(os.getenv("STRATEGY2_MAX_KEEP", "60"))
 DIGEST_SEC = int(os.getenv("STRATEGY2_DIGEST_SEC", "1800"))        # Telegram: one grouped digest every 30 min

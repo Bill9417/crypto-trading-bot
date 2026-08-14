@@ -176,6 +176,83 @@ def test_min_candles_covers_the_longest_input():
     assert M.MIN_CANDLES > M.VOL_BIAS_LEN
 
 
+# ── every consumer must SUPPLY at least what the meter REQUIRES ─────────────
+#
+# 2026-08-11 raised SIGNAL_MIN_CANDLES 367 → 688 (outer tunnel → EMA676). That
+# commit bumped S4_CANDLES 450 → 750 for exactly this reason and missed the
+# meter's own scanner, which still fetched 400. compute_signal then took its
+# `n < SIGNAL_MIN_CANDLES` early return on every symbol of every sweep and
+# returned signal=None. The scanner ran clean, logged clean, and produced ZERO
+# signals for three days — a silent failure indistinguishable from a quiet
+# market, so nothing alerted and no test caught it.
+#
+# test_min_candles_covers_the_longest_input already guarded the meter's own
+# internals and passed throughout. The unguarded edge was the one BETWEEN
+# modules, which is why this pair exists.
+_SUPPLIERS = {
+    "strategy2_scanner": "CANDLES",
+    "strategy4": "CANDLES",
+    "coin_analysis": "K15_CANDLES",
+}
+
+
+def test_every_compute_signal_consumer_fetches_enough_history():
+    import importlib
+    for mod_name, attr in _SUPPLIERS.items():
+        mod = importlib.import_module(mod_name)
+        supply = getattr(mod, attr)
+        assert supply >= M.SIGNAL_MIN_CANDLES, (
+            f"{mod_name}.{attr} = {supply} < SIGNAL_MIN_CANDLES "
+            f"({M.SIGNAL_MIN_CANDLES}) — compute_signal will return None on "
+            f"EVERY bar and the failure is silent")
+
+
+def test_the_consumer_list_is_complete():
+    """The list above is only as good as its coverage. Any module that calls
+    compute_signal must declare what it supplies, or this fails — otherwise the
+    next starved caller is added and goes silent exactly like the scanner did.
+    AST, not grep: a mention in a docstring is not a call."""
+    import ast
+    import os
+    app_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    callers = set()
+    for fn in os.listdir(app_dir):
+        if not fn.endswith(".py"):
+            continue
+        with open(os.path.join(app_dir, fn), encoding="utf-8") as f:
+            try:
+                tree = ast.parse(f.read())
+            except SyntaxError:
+                continue
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            fname = node.func.attr if isinstance(node.func, ast.Attribute) else \
+                getattr(node.func, "id", None)
+            if fname == "compute_signal":
+                callers.add(fn[:-3])
+    callers -= {"strategy2_meter"}          # the definition itself
+    callers -= {"research_s2_winrate"}      # offline replay, slices its own history
+    missing = callers - set(_SUPPLIERS)
+    assert not missing, (
+        f"modules call compute_signal but declare no candle supply: "
+        f"{sorted(missing)} — add them to _SUPPLIERS")
+
+
+def test_the_scanner_supply_actually_lets_a_signal_fire():
+    """The invariant above is arithmetic; this is the behaviour it protects.
+    A textbook qualifying series, cut to exactly what the scanner fetches, must
+    produce a real verdict rather than the insufficient-history early return."""
+    import strategy2_scanner as SC
+    rows, p = [], 100.0
+    for i in range(SC.CANDLES):
+        p *= 1.004
+        rows.append([1_700_000_000_000 + i * 900_000,
+                     p * 0.999, p * 1.006, p * 0.994, p, 1000 + i])
+    assert SC.CANDLES >= M.SIGNAL_MIN_CANDLES
+    assert M.compute_signal(rows).get("insufficient") is not True
+
+
 def test_score_can_reach_both_ends_of_the_scale():
     """The trendline factor cannot be computed server-side, so it abstains out
     of the denominator. Previously its 5 weight stayed in, capping the meter at
