@@ -2122,6 +2122,19 @@ syk_volMult     = input.float(1.2, "Volume ≥ ×average", minval=1.0, step=0.1,
 syk_showExits   = input.bool(true,  "Show exit crosses (EMA7 × EMA12)", group=gSY)
 
 // ── tunnel direction, reusable across timeframes ────────────────────────────
+// [1] + lookahead_on — the last CLOSED higher-timeframe bar.
+//
+// v4 FIX: this panel repainted, and it is the SAME defect v2 fixed for the MTF
+// Bias panel. Plain request.security() with the default lookahead_off returns
+// the CURRENTLY FORMING htf bar in realtime, so the 30m row could read 多 ▲,
+// you act on it, the 30m candle closes bearish — and the history then shows a
+// bar where that 多 never existed. The bug was reintroduced here because this
+// module was added after v2 and copied the naive idiom.
+//
+// The [1] is what makes it honest; lookahead_on is safe ONLY because of it
+// (lookahead_on alone, on the CURRENT bar, is the classic future-peek bug).
+// Visible cost: rows update when each htf bar closes, not tick by tick. That
+// lag is real information, not a downgrade.
 f_sykTrend() =>
     _m1 = f_ma(close, dt_ma1Period, dt_ma1Type)
     _m2 = f_ma(close, dt_ma2Period, dt_ma2Type)
@@ -2129,11 +2142,12 @@ f_sykTrend() =>
     _m4 = f_ma(close, dt_ma4Period, dt_ma4Type)
     _bull = math.min(_m1, _m2) > math.max(_m3, _m4)
     _bear = math.max(_m1, _m2) < math.min(_m3, _m4)
-    _bull ? 1 : _bear ? -1 : 0
+    _trend = _bull ? 1 : _bear ? -1 : 0
+    _trend[1]
 
-syk_t5  = request.security(syminfo.tickerid, "5",  f_sykTrend(), gaps=barmerge.gaps_off)
-syk_t15 = request.security(syminfo.tickerid, "15", f_sykTrend(), gaps=barmerge.gaps_off)
-syk_t30 = request.security(syminfo.tickerid, "30", f_sykTrend(), gaps=barmerge.gaps_off)
+syk_t5  = request.security(syminfo.tickerid, "5",  f_sykTrend(), gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_on)
+syk_t15 = request.security(syminfo.tickerid, "15", f_sykTrend(), gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_on)
+syk_t30 = request.security(syminfo.tickerid, "30", f_sykTrend(), gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_on)
 
 // ── strict entry engine (chart timeframe) ───────────────────────────────────
 syk_ema12 = ta.ema(close, syk_emaFilterLen)
@@ -2211,3 +2225,159 @@ if barstate.islast and syk_showPanel
     f_sykRow(sykPanel, 1, "5m",  syk_t5)
     f_sykRow(sykPanel, 2, "15m", syk_t15)
     f_sykRow(sykPanel, 3, "30m", syk_t30)
+
+// ════════════════════════════════════════════════════════════════════════════
+//  ⑮ SCANNER SYNC — what the bot is looking at, on the chart (v4, 2026-08-14)
+//
+//  WHY THIS EXISTS. Three detectors shipped on the scanner side after this
+//  file was last touched — the open-interest four-state read (crowd_radar),
+//  RSI divergence as a fifth confluence source (strategy4), and the
+//  resistance→support flip. None of them were visible here. So Telegram would
+//  say "MYX 新多單進場, OI +21%", you would open the chart, and the indicator
+//  showed nothing about it: two different pictures of the same coin, and no
+//  way to tell whether they agreed.
+//
+//  WHAT IT DELIBERATELY DOES NOT DO. It does not touch the seven Confidence
+//  Meter factors, their weights, or the score. Those are mirrored in
+//  app/strategy2_meter.py and pinned by a parity test; changing them here
+//  silently desyncs the chart from the live scanner, which is the exact drift
+//  that test exists to catch. This module only DISPLAYS what other modules
+//  already measure.
+//
+//  THE NUMBERS BELOW ARE MIRRORS, NOT CHOICES. Every default is the scanner's
+//  own constant:
+//      RSI length 14 ............ strategy4.RSI_LEN
+//      pivot lookback 5 ......... strategy4.DIV_PIVOT
+//      pivot gap 5…60 ........... strategy4.DIV_MIN_GAP / DIV_MAX_GAP
+//      momentum gap 0.05 ........ strategy4.DIV_MIN_OSC_GAP
+//      swing prominence 0.8 ATR . strategy4.DIV_MIN_LEG_ATR
+//      osc range window 200 ..... strategy4.DIV_NORM
+//      OI window 8 bars ......... crowd_radar.SPAN_BARS
+//      OI floor 5% .............. crowd_radar.MIN_OI_PCT
+//  A parity test parses them back out of this file, so a change on either side
+//  fails the suite instead of quietly drifting.
+//
+//  DEFAULT OFF. The file already carries a lot; this is opt-in, and every
+//  drawing call is a plotshape or bgcolor (no new line/box/label objects), so
+//  it cannot consume the 500-object budget the SMC and trendline engines need.
+//
+//  NOT AN EDGE. The OI read is conventional (open interest cannot name the
+//  aggressive side — every contract has a long and a short), and the measured
+//  forward returns for the squeeze state straddle zero. See
+//  RSI_Divergence_PRO.pine for the full numbers. This shows CONDITIONS.
+// ════════════════════════════════════════════════════════════════════════════
+gSync = "⑮ Scanner Sync"
+syncOn      = input.bool(false, "Enable Scanner Sync", group=gSync, tooltip="Mirrors what the bot's scanners measure: the open-interest four-state read and RSI divergence. Off by default — this file is already large.")
+syncShowOi  = input.bool(true,  "OI state background", group=gSync)
+syncShowDiv = input.bool(true,  "RSI divergence markers", group=gSync)
+
+// ── the mirrored constants ──────────────────────────────────────────────────
+syncRsiLen  = input.int(14, "RSI length", minval=1, group=gSync, tooltip="strategy4.RSI_LEN")
+syncPivot   = input.int(5,  "Pivot lookback", minval=1, group=gSync, tooltip="strategy4.DIV_PIVOT")
+syncMinGap  = input.int(5,  "Min bars between pivots", minval=1, group=gSync, tooltip="strategy4.DIV_MIN_GAP")
+syncMaxGap  = input.int(60, "Max bars between pivots", minval=2, group=gSync, tooltip="strategy4.DIV_MAX_GAP")
+syncOscGap  = input.float(0.05, "Min momentum gap (× osc range)", minval=0.0, maxval=1.0, step=0.01, group=gSync, tooltip="strategy4.DIV_MIN_OSC_GAP")
+syncLegAtr  = input.float(0.8,  "Min swing size (ATR at pivot)", minval=0.0, step=0.1, group=gSync, tooltip="strategy4.DIV_MIN_LEG_ATR")
+syncNorm    = input.int(200, "Osc range window", minval=20, group=gSync, tooltip="strategy4.DIV_NORM")
+syncOiSpan  = input.int(8,   "OI window (bars)", minval=2, group=gSync, tooltip="crowd_radar.SPAN_BARS — 8 × 15m = 2h")
+syncOiFloor = input.float(5.0, "Min |OI change| %", minval=0.0, step=0.5, group=gSync, tooltip="crowd_radar.MIN_OI_PCT — below this an OI move is noise")
+
+// ── open interest: the four-state read ──────────────────────────────────────
+// ignore_invalid_symbol keeps this working on spot and stocks, where the feed
+// simply does not exist and the module goes quiet rather than erroring.
+syncOiTicker = syminfo.prefix + ":" + syminfo.ticker + "_OI"
+syncOiRaw = syncOn and syncShowOi ? request.security(syncOiTicker, timeframe.period, close, ignore_invalid_symbol=true) : na
+
+syncOiOk = not na(syncOiRaw) and not na(syncOiRaw[syncOiSpan]) and syncOiRaw[syncOiSpan] != 0
+syncPxOk = not na(close[syncOiSpan]) and close[syncOiSpan] != 0
+syncOiPct = syncOiOk ? (syncOiRaw - syncOiRaw[syncOiSpan]) / math.abs(syncOiRaw[syncOiSpan]) * 100 : na
+syncPxPct = syncPxOk ? (close - close[syncOiSpan]) / math.abs(close[syncOiSpan]) * 100 : na
+
+// OI RISING means contracts were OPENED, falling means CLOSED — that half is
+// measured. WHICH SIDE opened them is the conventional inference, because open
+// interest cannot name the aggressor.
+syncBigOi    = not na(syncOiPct) and math.abs(syncOiPct) >= syncOiFloor
+syncNewLong  = syncBigOi and syncOiPct > 0 and syncPxPct > 0     // 新多單進場
+syncNewShort = syncBigOi and syncOiPct > 0 and syncPxPct < 0     // 新空單進場
+syncSqueeze  = syncBigOi and syncOiPct < 0 and syncPxPct > 0     // 軋空 shorts closing
+syncLongOut  = syncBigOi and syncOiPct < 0 and syncPxPct < 0     // 多單平倉
+
+// Colour follows what the move means for PRICE, not the sign of the OI number:
+// shorts piling in is bearish though OI rose. The squeeze is AMBER rather than
+// green because its measured median forward return is slightly negative.
+bgcolor(syncNewLong  ? color.new(#2ee88a, 90) : na, title="⑮ 新多單進場", force_overlay=true)
+bgcolor(syncNewShort ? color.new(#ff4d6d, 90) : na, title="⑮ 新空單進場", force_overlay=true)
+bgcolor(syncSqueeze  ? color.new(#fb923c, 88) : na, title="⑮ 軋空 shorts closing", force_overlay=true)
+bgcolor(syncLongOut  ? color.new(#a78bfa, 91) : na, title="⑮ 多單平倉", force_overlay=true)
+
+// ── RSI divergence, the scanner's fifth confluence source ───────────────────
+// Wilder (ta.rma), not an EMA: the recursion is (prev·(n−1) + new)/n against an
+// EMA's 2/(n+1). Substituting one tracks closely enough to look right and
+// differs by points at the turns — exactly where a divergence is decided.
+syncChg  = ta.change(close)
+syncUp   = ta.rma(math.max(syncChg, 0), syncRsiLen)
+syncDn   = ta.rma(-math.min(syncChg, 0), syncRsiLen)
+syncRsi  = syncDn == 0 ? 100.0 : syncUp == 0 ? 0.0 : 100.0 - (100.0 / (1.0 + syncUp / syncDn))
+
+syncAtr    = ta.atr(14)
+syncRsiRng = ta.highest(syncRsi, syncNorm) - ta.lowest(syncRsi, syncNorm)
+
+syncPh = ta.pivothigh(high, syncPivot, syncPivot)
+syncPl = ta.pivotlow(low,  syncPivot, syncPivot)
+
+// Values AT the pivot bar — syncPivot bars back. This is why the marker appears
+// late rather than repainting: a pivot is not knowable until its right-hand
+// bars have printed.
+syncRsiPv = syncRsi[syncPivot]
+syncAtrPv = syncAtr[syncPivot]
+syncHiPv  = high[syncPivot]
+syncLoPv  = low[syncPivot]
+
+// Swing prominence: a dip inside a flat drift is not a swing, and the built-in
+// divergence has no equivalent control.
+syncLegUp = syncHiPv - math.min(ta.lowest(low, syncPivot * 2 + 1)[0], syncLoPv)
+syncLegDn = math.max(ta.highest(high, syncPivot * 2 + 1)[0], syncHiPv) - syncLoPv
+syncLegOkH = syncAtrPv > 0 and syncLegUp >= syncLegAtr * syncAtrPv
+syncLegOkL = syncAtrPv > 0 and syncLegDn >= syncLegAtr * syncAtrPv
+
+var float syncPrevLoPx  = na
+var float syncPrevLoRsi = na
+var int   syncPrevLoBar = na
+var float syncPrevHiPx  = na
+var float syncPrevHiRsi = na
+var int   syncPrevHiBar = na
+
+syncBull = false
+syncBear = false
+
+if syncOn and syncShowDiv and not na(syncPl)
+    gapL = na(syncPrevLoBar) ? na : bar_index - syncPivot - syncPrevLoBar
+    if not na(syncPrevLoBar) and gapL >= syncMinGap and gapL <= syncMaxGap and syncLegOkL
+        priceLL = syncLoPv < syncPrevLoPx
+        rsiHL   = syncRsiPv > syncPrevLoRsi
+        bigOk   = syncRsiRng > 0 and (syncRsiPv - syncPrevLoRsi) >= syncOscGap * syncRsiRng
+        syncBull := priceLL and rsiHL and bigOk
+    syncPrevLoPx  := syncLoPv
+    syncPrevLoRsi := syncRsiPv
+    syncPrevLoBar := bar_index - syncPivot
+
+if syncOn and syncShowDiv and not na(syncPh)
+    gapH = na(syncPrevHiBar) ? na : bar_index - syncPivot - syncPrevHiBar
+    if not na(syncPrevHiBar) and gapH >= syncMinGap and gapH <= syncMaxGap and syncLegOkH
+        priceHH = syncHiPv > syncPrevHiPx
+        rsiLH   = syncRsiPv < syncPrevHiRsi
+        bigOkH  = syncRsiRng > 0 and (syncPrevHiRsi - syncRsiPv) >= syncOscGap * syncRsiRng
+        syncBear := priceHH and rsiLH and bigOkH
+    syncPrevHiPx  := syncHiPv
+    syncPrevHiRsi := syncRsiPv
+    syncPrevHiBar := bar_index - syncPivot
+
+plotshape(syncBull ? syncLoPv : na, "⑮ RSI 多頭背離", shape.triangleup, location.absolute, color.new(#2ee88a, 0), offset=-syncPivot, size=size.tiny, force_overlay=true)
+plotshape(syncBear ? syncHiPv : na, "⑮ RSI 空頭背離", shape.triangledown, location.absolute, color.new(#ff4d6d, 0), offset=-syncPivot, size=size.tiny, force_overlay=true)
+
+// The alerts name WHEN the read was confirmed and say what it is not, because
+// "軋空" reads as "buy" on its own and the measured median is slightly negative.
+alertcondition(syncSqueeze, "⑮ 軋空 (OI down, price up)", "軋空條件成立：未平倉下降、價格上漲 —— 空單正在被平掉。這是波動條件，不是方向；實測中位數略為負值。")
+alertcondition(syncNewLong, "⑮ 新多單進場 (OI up, price up)", "新多單進場：未平倉和價格同步上升 —— 新資金進場做多。這是持倉位置，不是進場訊號。")
+alertcondition(syncBull, "⑮ RSI 多頭背離", "RSI 多頭背離已確認 —— 樞紐在 5 根之前，現在才成立。形態，不是進場訊號。")
+alertcondition(syncBear, "⑮ RSI 空頭背離", "RSI 空頭背離已確認 —— 樞紐在 5 根之前，現在才成立。形態，不是進場訊號。")

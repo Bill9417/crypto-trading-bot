@@ -245,3 +245,129 @@ def test_price_inside_the_tunnel_is_not_scored_bearish():
     tunnel = next(f for f in strategy2_meter.compute_meter(rows)["factors"]
                   if f["key"] == "tunnel")
     assert tunnel["state"] == 0, "inside the tunnel is undecided, not bearish"
+
+
+# ── ⑮ Scanner Sync mirrors the scanner's constants (2026-08-14) ─────────────
+# The chart module displays what crowd_radar and strategy4 measure. If either
+# side's numbers move, the chart quietly stops agreeing with the alerts — which
+# is the same failure the factor-weight test above already exists to catch, and
+# the reason that test exists is that the weights HAD drifted (25/20 vs 20/15,
+# and a whole missing factor) without anything noticing.
+def _pro_src():
+    import os
+    root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    with open(os.path.join(root, "pine", "indicators",
+                           "All-in-One_ULTIMATE_Pro.pine"), encoding="utf-8") as fh:
+        return fh.read()
+
+
+def _sync_default(name):
+    """Parse one ⑮ input default straight out of the .pine."""
+    import re
+    m = re.search(r'input\.(?:int|float)\(\s*([0-9.]+)\s*,\s*"' + re.escape(name),
+                  _pro_src())
+    assert m, f"could not find the ⑮ input {name!r} in the .pine"
+    return float(m.group(1))
+
+
+def test_scanner_sync_mirrors_the_divergence_constants():
+    """These are strategy4's own numbers. A divergence drawn on the chart with
+    a different pivot gap or momentum floor is a different divergence from the
+    one the scanner alerts on."""
+    import strategy4 as S4
+    assert _sync_default("RSI length") == S4.RSI_LEN
+    assert _sync_default("Pivot lookback") == S4.DIV_PIVOT
+    assert _sync_default("Min bars between pivots") == S4.DIV_MIN_GAP
+    assert _sync_default("Max bars between pivots") == S4.DIV_MAX_GAP
+    assert _sync_default("Min momentum gap") == S4.DIV_MIN_OSC_GAP
+    assert _sync_default("Min swing size") == S4.DIV_MIN_LEG_ATR
+    assert _sync_default("Osc range window") == S4.DIV_NORM
+
+
+def test_scanner_sync_mirrors_the_open_interest_constants():
+    import crowd_radar as C
+    assert _sync_default("OI window") == C.SPAN_BARS
+    assert _sync_default("Min |OI change| %") == C.MIN_OI_PCT
+
+
+def test_scanner_sync_reads_the_four_states_the_same_way_as_the_radar():
+    """OI up + price up is new longs; OI DOWN + price up is shorts covering.
+    Getting that mapping backwards on the chart would paint a squeeze as a
+    fresh long build — the most confident possible way to be exactly wrong."""
+    src = _pro_src()
+    assert "syncNewLong  = syncBigOi and syncOiPct > 0 and syncPxPct > 0" in src
+    assert "syncNewShort = syncBigOi and syncOiPct > 0 and syncPxPct < 0" in src
+    assert "syncSqueeze  = syncBigOi and syncOiPct < 0 and syncPxPct > 0" in src
+    assert "syncLongOut  = syncBigOi and syncOiPct < 0 and syncPxPct < 0" in src
+
+
+def test_scanner_sync_does_not_touch_the_confidence_meter():
+    """The whole point of the module: display only. The seven factors and their
+    weights are mirrored in strategy2_meter.py, so a ⑮ edit that reached them
+    would desync the chart from the live scanner."""
+    src = _pro_src()
+    sync = src[src.index("⑮ SCANNER SYNC"):]
+    for factor in ("wEMAstack", "wSMC", "wVegas", "wTunnel", "wTrendln",
+                   "wVolume", "wEMA200", "confScore"):
+        assert factor not in sync, f"⑮ touches the scoring symbol {factor!r}"
+
+
+def test_scanner_sync_is_off_by_default():
+    """It is opt-in: the file is already 2,200+ lines and the SMC/trendline
+    engines need the 500-object drawing budget."""
+    import re
+    m = re.search(r'syncOn\s*=\s*input\.bool\(\s*(true|false)', _pro_src())
+    assert m and m.group(1) == "false"
+
+
+def test_scanner_sync_adds_no_new_drawing_objects():
+    """plotshape and bgcolor are per-bar plots, not line/box/label objects, so
+    ⑮ cannot eat the budget the SMC zones and trendlines draw from."""
+    src = _pro_src()
+    sync = src[src.index("⑮ SCANNER SYNC"):]
+    for heavy in ("line.new", "box.new", "label.new", "table.new"):
+        assert heavy not in sync, f"⑮ allocates {heavy} — it must not"
+
+
+def test_scanner_sync_says_it_is_not_an_edge():
+    """The squeeze state's measured forward returns straddle zero, and '軋空'
+    reads as 'buy' to anyone who has not read the numbers."""
+    src = _pro_src()
+    sync = src[src.index("⑮ SCANNER SYNC"):]
+    assert "NOT AN EDGE" in sync
+    assert "不是進場訊號" in sync or "不是方向" in sync
+
+
+def test_no_higher_timeframe_read_repaints():
+    """Repo-wide rule, not one panel. v2 fixed the MTF Bias panel to read the
+    last CLOSED htf bar; the Sykes 時區 panel was added later, copied the naive
+    idiom, and reintroduced the identical bug — a 30m row that reads 多 ▲, gets
+    acted on, then closes bearish and leaves no trace it ever said so.
+
+    Every request.security on a DIFFERENT timeframe must take [1] inside the
+    expression (last closed bar) together with lookahead_on. lookahead_on alone
+    is the classic future-peek; [1] is what makes it honest.
+    """
+    import re
+    src = _pro_src()
+    offenders = []
+    for i, line in enumerate(src.split("\n"), 1):
+        s = line.strip()
+        if "request.security(" not in s or s.startswith("//"):
+            continue
+        # same-timeframe reads (timeframe.period) cannot repaint
+        if "timeframe.period" in s:
+            continue
+        if "lookahead_on" not in s:
+            offenders.append(f"L{i}: {s[:80]}")
+    assert not offenders, (
+        "these higher-timeframe reads can repaint:\n  " + "\n  ".join(offenders))
+
+
+def test_the_sykes_trend_returns_the_previous_closed_bar():
+    """The [1] lives inside f_sykTrend, not at the call site — with
+    lookahead_on, a missing [1] is a genuine look into the future."""
+    src = _pro_src()
+    fn = src[src.index("f_sykTrend() =>"):]
+    fn = fn[:fn.index("syk_t5")]
+    assert "_trend[1]" in fn, "f_sykTrend returns the forming bar"
