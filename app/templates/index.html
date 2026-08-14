@@ -1549,9 +1549,11 @@
 </head>
 <body>
     <div class="page-wrap">
-        <!-- 🧩 Layout editor. Hidden behind a toggle: the dashboard is read far
-             more often than it is rearranged, so the default view carries one
-             small button and nothing else. -->
+        <!-- 🧩 Layout editor — ADMIN ONLY (the route enforces it too; hiding a
+             button is a suggestion, not a control). Hidden behind a toggle
+             even for admin: the dashboard is read far more often than it is
+             rearranged, so the default view carries one small button. -->
+        {% if current_user.is_admin %}
         <div class="layout-bar">
             <button class="layout-btn" id="layout-toggle" type="button">🧩 編輯版面</button>
             <!-- 儲存 / 回預設 live HERE, in the pinned bar, and not inside
@@ -1565,6 +1567,7 @@
             <span class="layout-hint" id="layout-hint"></span>
         </div>
         <div class="layout-list" id="layout-list"></div>
+        {% endif %}
         <!-- Page header. The brand and all 16 destinations moved into the fixed
              sidebar (2026-08-09), so this row is now only about THIS page: what
              it is, how fresh it is, and the two actions it owns. -->
@@ -4268,6 +4271,9 @@
         var BAR  = document.getElementById('layout-toggle');
         var HINT = document.getElementById('layout-hint');
         var STYLE = document.getElementById('layout-order');
+        // Absent for non-admins — the editor markup is not rendered at all,
+        // so everything below (including the save handler) simply does not
+        // exist for them. STYLE alone still applies their saved order.
         if (!LIST || !BAR || !STYLE) return;
 
         // default() is load-bearing, not defensive padding. Templates hot-reload

@@ -2094,13 +2094,20 @@ def index():
     )
 
 @app.route("/api/dashboard_layout", methods=["GET", "POST", "DELETE"])
-@login_required
+@admin_required
 def api_dashboard_layout():
-    """Read / save / reset the signed-in user's dashboard row order.
+    """Read / save / reset the dashboard row order. ADMIN ONLY.
 
     Keyed on the session user, never on anything the client sends: a layout is
     trivial data, but accepting a user id from the body would let one account
     rewrite another's page.
+
+    admin_required rather than login_required (2026-08-14, owner's request).
+    The editor UI is hidden from non-admins in the template, but hiding a
+    button is a suggestion, not a control — the route is what actually decides,
+    and a hidden button plus an open endpoint is the shape of most access-
+    control bugs. Non-admins keep READING their own layout because the
+    dashboard renders it server-side and never calls this.
     """
     import dashboard_layout
     uid = current_user.get_id()

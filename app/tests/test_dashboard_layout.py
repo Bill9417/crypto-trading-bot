@@ -368,3 +368,74 @@ def test_two_users_are_still_two_users_after_the_split():
 def test_a_corrupt_store_that_is_not_a_dict_is_survivable(store):
     store.write_text('["not", "a", "dict"]')
     assert L.load("1") == L.default_layout()
+
+
+# ── admin only (2026-08-14) ─────────────────────────────────────────────────
+class _NonAdmin:
+    is_active = True
+    is_anonymous = False
+    is_authenticated = True
+    is_admin = False
+    id = 9
+
+    def get_id(self):
+        return "9|tok"
+
+
+@pytest.fixture
+def as_member(monkeypatch):
+    import flask_login.utils
+    monkeypatch.setattr(flask_login.utils, "_get_user", lambda: _NonAdmin())
+    import app as APP
+    return APP.app.test_client()
+
+
+def test_a_member_cannot_save_a_layout(as_member):
+    """The route is what decides. Hiding the button is a suggestion — a hidden
+    control plus an open endpoint is the shape of most access-control bugs, and
+    the endpoint is one curl away regardless of what the page renders."""
+    import re
+    html = as_member.get("/").data.decode()
+    m = re.search(r'var CSRF = "([^"]+)"', html)
+    tok = m.group(1) if m else ""
+    r = as_member.post("/api/dashboard_layout", json={"order": ["oi"]},
+                       headers={"X-CSRFToken": tok})
+    assert r.status_code == 403
+    assert b"admin only" in r.data
+
+
+def test_a_member_cannot_reset_a_layout(as_member):
+    r = as_member.delete("/api/dashboard_layout")
+    assert r.status_code == 403
+
+
+def test_a_member_does_not_get_the_editor_markup(as_member):
+    """Not merely hidden with CSS — not rendered. The save handler binds to
+    these ids, so their absence removes the whole editor path for members."""
+    html = as_member.get("/").data.decode()
+    assert 'id="layout-toggle"' not in html
+    assert 'id="layout-list"' not in html
+
+
+def test_a_member_still_sees_the_dashboard(as_member):
+    """Losing the editor must not lose the page."""
+    assert as_member.get("/").status_code == 200
+
+
+def test_a_member_still_gets_a_valid_layout(as_member):
+    """The order is rendered server-side and never fetched, so a member gets
+    the default ordering rather than an unstyled pile."""
+    html = as_member.get("/").data.decode()
+    assert '[data-card="pulse"]{order:1}' in html
+
+
+def test_the_route_is_guarded_by_the_shared_admin_decorator():
+    """Pinned by name: a future edit that swaps admin_required back to
+    login_required to 'fix' a 403 would reopen it silently."""
+    import inspect
+    import app as APP
+    src = inspect.getsource(APP)
+    block = src[src.index('@app.route("/api/dashboard_layout"'):]
+    head = block[:block.index("def api_dashboard_layout")]
+    assert "@admin_required" in head
+    assert "@login_required" not in head
