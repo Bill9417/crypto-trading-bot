@@ -247,13 +247,9 @@ def test_price_inside_the_tunnel_is_not_scored_bearish():
     assert tunnel["state"] == 0, "inside the tunnel is undecided, not bearish"
 
 
-# ── ⑮ Scanner Sync mirrors the scanner's constants (2026-08-14) ─────────────
-# The chart module displays what crowd_radar and strategy4 measure. If either
-# side's numbers move, the chart quietly stops agreeing with the alerts — which
-# is the same failure the factor-weight test above already exists to catch, and
-# the reason that test exists is that the weights HAD drifted (25/20 vs 20/15,
-# and a whole missing factor) without anything noticing.
 def _pro_src():
+    """The big indicator's source. Several tests below read it directly rather
+    than trusting a summary — the factor weights had silently drifted once."""
     import os
     root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     with open(os.path.join(root, "pine", "indicators",
@@ -261,81 +257,91 @@ def _pro_src():
         return fh.read()
 
 
-def _sync_default(name):
-    """Parse one ⑮ input default straight out of the .pine."""
+# ── the scanner's constants live in ONE .pine (2026-08-14) ─────────────────
+# ⑮ Scanner Sync was briefly added to All-in-One_ULTIMATE_Pro. That duplicated
+# RSI_Divergence_PRO, which the owner already runs on the same chart, so every
+# series was computed twice — once inside the 2,400-line script that is already
+# at the resource ceiling. It was removed; RSI_Divergence_PRO is the single
+# owner and these tests follow it there.
+def _rsi_pro_src():
+    import os
+    root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    with open(os.path.join(root, "pine", "indicators",
+                           "RSI_Divergence_PRO.pine"), encoding="utf-8") as fh:
+        return fh.read()
+
+
+def _rsi_pro_default(name):
     import re
     m = re.search(r'input\.(?:int|float)\(\s*([0-9.]+)\s*,\s*"' + re.escape(name),
-                  _pro_src())
-    assert m, f"could not find the ⑮ input {name!r} in the .pine"
+                  _rsi_pro_src())
+    assert m, f"could not find the input {name!r} in RSI_Divergence_PRO.pine"
     return float(m.group(1))
 
 
-def test_scanner_sync_mirrors_the_divergence_constants():
-    """These are strategy4's own numbers. A divergence drawn on the chart with
-    a different pivot gap or momentum floor is a different divergence from the
-    one the scanner alerts on."""
+def test_the_divergence_pine_mirrors_the_scanner_constants():
+    """A divergence drawn with a different pivot gap or momentum floor is a
+    different divergence from the one the scanner alerts on."""
     import strategy4 as S4
-    assert _sync_default("RSI length") == S4.RSI_LEN
-    assert _sync_default("Pivot lookback") == S4.DIV_PIVOT
-    assert _sync_default("Min bars between pivots") == S4.DIV_MIN_GAP
-    assert _sync_default("Max bars between pivots") == S4.DIV_MAX_GAP
-    assert _sync_default("Min momentum gap") == S4.DIV_MIN_OSC_GAP
-    assert _sync_default("Min swing size") == S4.DIV_MIN_LEG_ATR
-    assert _sync_default("Osc range window") == S4.DIV_NORM
+    assert _rsi_pro_default("RSI Length") == S4.RSI_LEN
+    assert _rsi_pro_default("Pivot Lookback") == S4.DIV_PIVOT
+    assert _rsi_pro_default("Min bars between pivots") == S4.DIV_MIN_GAP
+    assert _rsi_pro_default("Max bars between pivots") == S4.DIV_MAX_GAP
+    assert _rsi_pro_default("Min Momentum Gap") == S4.DIV_MIN_OSC_GAP
+    assert _rsi_pro_default("Min Swing Size") == S4.DIV_MIN_LEG_ATR
+    assert _rsi_pro_default("RSI range window") == S4.DIV_NORM
 
 
-def test_scanner_sync_mirrors_the_open_interest_constants():
+def test_the_divergence_pine_mirrors_the_open_interest_constants():
     import crowd_radar as C
-    assert _sync_default("OI window") == C.SPAN_BARS
-    assert _sync_default("Min |OI change| %") == C.MIN_OI_PCT
+    assert _rsi_pro_default("OI window") == C.SPAN_BARS
+    assert _rsi_pro_default("Min |OI change| %") == C.MIN_OI_PCT
 
 
-def test_scanner_sync_reads_the_four_states_the_same_way_as_the_radar():
-    """OI up + price up is new longs; OI DOWN + price up is shorts covering.
-    Getting that mapping backwards on the chart would paint a squeeze as a
-    fresh long build — the most confident possible way to be exactly wrong."""
-    src = _pro_src()
-    assert "syncNewLong  = syncBigOi and syncOiPct > 0 and syncPxPct > 0" in src
-    assert "syncNewShort = syncBigOi and syncOiPct > 0 and syncPxPct < 0" in src
-    assert "syncSqueeze  = syncBigOi and syncOiPct < 0 and syncPxPct > 0" in src
-    assert "syncLongOut  = syncBigOi and syncOiPct < 0 and syncPxPct < 0" in src
+def test_the_oi_read_is_not_duplicated_across_two_indicators():
+    """Both files running the same request.security + RSI + pivot series on one
+    chart is what pushed the big script into RE10140. One owner, one cost."""
+    aio = _pro_src()
+    assert "syncOiTicker" not in aio, "⑮ came back into the AIO file"
+    assert "_OI" in _rsi_pro_src(), "the OI read lost its home"
 
 
-def test_scanner_sync_does_not_touch_the_confidence_meter():
-    """The whole point of the module: display only. The seven factors and their
-    weights are mirrored in strategy2_meter.py, so a ⑮ edit that reached them
-    would desync the chart from the live scanner."""
-    src = _pro_src()
-    sync = src[src.index("⑮ SCANNER SYNC"):]
-    for factor in ("wEMAstack", "wSMC", "wVegas", "wTunnel", "wTrendln",
-                   "wVolume", "wEMA200", "confScore"):
-        assert factor not in sync, f"⑮ touches the scoring symbol {factor!r}"
-
-
-def test_scanner_sync_is_off_by_default():
-    """It is opt-in: the file is already 2,200+ lines and the SMC/trendline
-    engines need the 500-object drawing budget."""
+# ── resource budget of the big script (2026-08-14) ─────────────────────────
+def test_the_big_script_does_not_buy_history_it_never_uses():
+    """max_bars_back allocates that buffer for EVERY series, and this file has
+    dozens. It was 5000 to match the maxval of three inputs whose defaults are
+    360 and 600 — paying for a ceiling nobody used, in the script already
+    hitting the runtime resource limit."""
     import re
-    m = re.search(r'syncOn\s*=\s*input\.bool\(\s*(true|false)', _pro_src())
-    assert m and m.group(1) == "false"
+    m = re.search(r"max_bars_back=(\d+)", _pro_src())
+    assert m and int(m.group(1)) <= 2000, "max_bars_back is back above the budget"
 
 
-def test_scanner_sync_adds_no_new_drawing_objects():
-    """plotshape and bgcolor are per-bar plots, not line/box/label objects, so
-    ⑮ cannot eat the budget the SMC zones and trendlines draw from."""
+def test_no_input_can_ask_for_more_history_than_was_allocated():
+    """An input whose maxval exceeds max_bars_back promises a range the runtime
+    cannot honour — the user sets it and gets a runtime error, not a warning."""
+    import re
     src = _pro_src()
-    sync = src[src.index("⑮ SCANNER SYNC"):]
-    for heavy in ("line.new", "box.new", "label.new", "table.new"):
-        assert heavy not in sync, f"⑮ allocates {heavy} — it must not"
+    cap = int(re.search(r"max_bars_back=(\d+)", src).group(1))
+    over = [(n, int(v)) for v, n in
+            re.findall(r'input\.int\([0-9]+,\s*"([^"]+)"[^)]*maxval=(\d+)', src)
+            ] if False else []
+    for m in re.finditer(r'input\.int\(\s*\d+,\s*"([^"]+)"[^)]*?maxval\s*=\s*(\d+)', src):
+        name, mx = m.group(1), int(m.group(2))
+        if mx > cap:
+            over.append((name, mx))
+    assert not over, f"inputs allow more history than max_bars_back={cap}: {over}"
 
 
-def test_scanner_sync_says_it_is_not_an_edge():
-    """The squeeze state's measured forward returns straddle zero, and '軋空'
-    reads as 'buy' to anyone who has not read the numbers."""
+def test_object_caps_are_sized_to_the_engines_not_to_pines_maximum():
+    """Pine allocates for the ceiling it is given. 500 of each was ~3x what the
+    trendline, S/R and SMC engines can actually draw at their own maxima."""
+    import re
     src = _pro_src()
-    sync = src[src.index("⑮ SCANNER SYNC"):]
-    assert "NOT AN EDGE" in sync
-    assert "不是進場訊號" in sync or "不是方向" in sync
+    caps = {k: int(v) for k, v in re.findall(r"max_(lines|boxes|labels)_count=(\d+)", src)}
+    assert caps.get("lines", 999) <= 300
+    assert caps.get("boxes", 999) <= 250
+    assert caps.get("labels", 999) <= 250
 
 
 def test_no_higher_timeframe_read_repaints():

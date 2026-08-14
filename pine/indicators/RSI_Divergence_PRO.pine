@@ -205,8 +205,8 @@ gSq = "Squeeze (OI)"
 showSq  = input.bool(true,  "Show OI squeeze state", group=gSq)
 sqSpan  = input.int(8,   "OI window (bars)", minval=2, group=gSq,
      tooltip="8 bars = 2h on a 15m chart, the same window the scanner ranks OI over.")
-sqMinOi = input.float(3.0, "Min |OI change| %", minval=0.0, step=0.5, group=gSq,
-     tooltip="Below this an OI move is noise. The measurement in the header used 3%.")
+sqMinOi = input.float(5.0, "Min |OI change| %", minval=0.0, step=0.5, group=gSq,
+     tooltip="Below this an OI move is noise.\n\nDefault 5% mirrors crowd_radar.MIN_OI_PCT — the floor the scanner actually alerts on, so the chart shades the same events Telegram messages you about. A parity test pins the two together.\n\nNOTE the measurement quoted in the header used a LOWER 3% floor, so those numbers cover a slightly wider set of events than this default shades. Set 3 to reproduce them exactly.")
 
 // TradingView publishes OI for perps as <EXCHANGE>:<TICKER>_OI. ignore_invalid
 // keeps the indicator working on spot and stocks, where it simply goes blank
