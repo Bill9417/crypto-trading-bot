@@ -231,8 +231,22 @@ dt_ma1Period = input.int(144, "Tunnel 1 — Period A", minval=1, group=gDT, inli
 dt_ma1Type   = input.string("EMA", "", options=["SMA","EMA","WMA","RMA"], group=gDT, inline="t1")
 dt_ma2Period = input.int(169, "/ B", minval=1, group=gDT, inline="t1")
 dt_ma2Type   = input.string("EMA", "", options=["SMA","EMA","WMA","RMA"], group=gDT, inline="t1")
-dt_t1Bull    = input.color(color.new(color.orange, 60), "Bull Fill", group=gDT, inline="t1c")
-dt_t1Bear    = input.color(color.new(color.red,    80), "Bear Fill", group=gDT, inline="t1c")
+// ── tunnel palette, redesigned 2026-08-14 ───────────────────────────────────
+// It was orange/red for Tunnel 1 and lime/gray for Tunnel 2: four unrelated
+// hues, so the chart read as "tunnel 1 vs tunnel 2" when the thing you
+// actually need to see is "bull vs bear". Orange bull against lime bull is
+// two different answers to the same question.
+//
+// Now BOTH tunnels use one hue per direction — green up, rose down — and the
+// two tunnels are told apart by INTENSITY instead: the inner 144/169 tunnel
+// is the nearer, more actionable band and reads stronger; the outer 576/676
+// is context and sits back. Same greens and roses as the web dashboard
+// (#2ee88a / #ff4d6d), so the chart and the site agree.
+//
+// The two greens also differ in LIGHTNESS, not just hue, so the pair still
+// separates for the ~8% of men with red-green deficiency.
+dt_t1Bull    = input.color(color.new(#2ee88a, 78), "Bull Fill", group=gDT, inline="t1c")
+dt_t1Bear    = input.color(color.new(#ff4d6d, 78), "Bear Fill", group=gDT, inline="t1c")
 
 // Tunnel 2 (outer): MA3=576, MA4=676 — Sykes' own big-tunnel periods (4× the
 // inner tunnel), not Gilbert0967's generic 2×/288/338 double-tunnel default.
@@ -241,8 +255,8 @@ dt_ma3Period = input.int(576, "Tunnel 2 — Period A", minval=1, group=gDT, inli
 dt_ma3Type   = input.string("EMA", "", options=["SMA","EMA","WMA","RMA"], group=gDT, inline="t2")
 dt_ma4Period = input.int(676, "/ B", minval=1, group=gDT, inline="t2")
 dt_ma4Type   = input.string("EMA", "", options=["SMA","EMA","WMA","RMA"], group=gDT, inline="t2")
-dt_t2Bull    = input.color(color.new(color.lime,   90), "Bull Fill", group=gDT, inline="t2c")
-dt_t2Bear    = input.color(color.new(color.gray,   85), "Bear Fill", group=gDT, inline="t2c")
+dt_t2Bull    = input.color(color.new(#2ee88a, 91), "Bull Fill", group=gDT, inline="t2c")
+dt_t2Bear    = input.color(color.new(#ff4d6d, 91), "Bear Fill", group=gDT, inline="t2c")
 
 dt_ma1 = f_ma(close, dt_ma1Period, dt_ma1Type)
 dt_ma2 = f_ma(close, dt_ma2Period, dt_ma2Type)
@@ -258,17 +272,26 @@ vegasCol    = ta.change(vegasEMA200) > 0 ? color.new(color.green, 0) : color.new
 // default), so the "double" in Double Tunnel was invisible out of the box —
 // only Tunnel 1 ever showed. Both tunnels are now core, always-on drawing
 // when showTunnel is on; Clean Mode still governs everything else it always did.
-dt_l1 = plot(showTunnel ? dt_ma1 : na, "Tunnel1-A", color=color.new(color.orange, 50), linewidth=1, force_overlay=true)
-dt_l2 = plot(showTunnel ? dt_ma2 : na, "Tunnel1-B", color=color.new(color.orange, 50), linewidth=1, force_overlay=true)
-dt_l3 = plot(showTunnel ? dt_ma3 : na, "Tunnel2-A", color=color.new(color.lime,   70), linewidth=1, force_overlay=true)
-dt_l4 = plot(showTunnel ? dt_ma4 : na, "Tunnel2-B", color=color.new(color.lime,   70), linewidth=1, force_overlay=true)
+// Each tunnel's EDGES take that tunnel's own direction too, so a band that
+// flips reads as a colour change rather than staying orange through both
+// states. Inner edges are solid-ish and 2px; outer edges stay thin and faint
+// so they frame without competing.
+dt_t1Up = dt_ma1 > dt_ma2 and dt_ma1 >= dt_ma1[1]
+dt_t2Up = dt_ma3 > dt_ma4 and dt_ma3 >= dt_ma3[1]
+dt_t1Edge = color.new(dt_t1Up ? #2ee88a : #ff4d6d, 30)
+dt_t2Edge = color.new(dt_t2Up ? #2ee88a : #ff4d6d, 62)
+
+dt_l1 = plot(showTunnel ? dt_ma1 : na, "Tunnel1-A", color=dt_t1Edge, linewidth=2, force_overlay=true)
+dt_l2 = plot(showTunnel ? dt_ma2 : na, "Tunnel1-B", color=dt_t1Edge, linewidth=2, force_overlay=true)
+dt_l3 = plot(showTunnel ? dt_ma3 : na, "Tunnel2-A", color=dt_t2Edge, linewidth=1, force_overlay=true)
+dt_l4 = plot(showTunnel ? dt_ma4 : na, "Tunnel2-B", color=dt_t2Edge, linewidth=1, force_overlay=true)
 
 // fill() has no force_overlay param (CE10120) — it doesn't need one, since it
 // fills the region between two plot() outputs and inherits their pane. Both
 // dt_l1/dt_l2 and dt_l3/dt_l4 already carry force_overlay=true, so their fill
 // follows them onto the main chart automatically.
-fill(dt_l1, dt_l2, color=showTunnel ? (dt_ma1 > dt_ma2 and dt_ma1 >= dt_ma1[1] ? dt_t1Bull : dt_t1Bear) : na, title="Tunnel 1 Fill")
-fill(dt_l3, dt_l4, color=showTunnel ? (dt_ma3 > dt_ma4 and dt_ma3 >= dt_ma3[1] ? dt_t2Bull : dt_t2Bear) : na, title="Tunnel 2 Fill")
+fill(dt_l1, dt_l2, color=showTunnel ? (dt_t1Up ? dt_t1Bull : dt_t1Bear) : na, title="Tunnel 1 Fill")
+fill(dt_l3, dt_l4, color=showTunnel ? (dt_t2Up ? dt_t2Bull : dt_t2Bear) : na, title="Tunnel 2 Fill")
 
 plot(showVegas ? vegasEMA200 : na, "Vegas EMA200", color=vegasCol, linewidth=2, force_overlay=true)
 
@@ -283,7 +306,16 @@ prd        = input.int(20, "Pivot Period",  minval=10, maxval=50, group=gT, tool
 PPnum      = input.int(3,  "Pivots to Check", minval=2, maxval=6, group=gT)
 tlMaxScan  = input.int(600, "Max Validation Scan (bars)", minval=100, maxval=3000, group=gT, tooltip="RE10140 FIX. Confirming a trendline means walking every bar from the anchor pivot to the present to check price never broke it. That walk used to run to bar_index with no upper bound, nested inside two more loops — so its cost grew with chart length until it blew past Pine's 500ms-per-bar limit and the script died with a runtime error.\n\nThe walk is now capped at this many bars. The line's slope and price math are UNCHANGED — the scan simply starts later and its running price is advanced to match, so a line that would have been drawn is still drawn identically. The only difference: a break that happened MORE than this many bars ago no longer invalidates the line.\n\nLower it if you still hit RE10140 on very long charts or low timeframes.")
 maxActiveTL = input.int(4, "Max Active Lines (each side)", minval=1, maxval=10, group=gT)
-keepBroken  = input.int(6, "Keep Broken Lines", minval=0, maxval=30, group=gT, tooltip="Dashed history lines kept after a break. 0 = delete on break.")
+// DEFAULT CHANGED 6 -> 0 (2026-08-14, owner: "if the trend line become useless
+// just delete it"). A broken trendline IS the useless one — price has already
+// gone through it, so it no longer describes anything the chart is doing, and
+// six of them left dashed across the candles is most of the clutter Clean Mode
+// was invented to fight. Raise it if you want the history back.
+//
+// This is a DRAWING change only. The engine still detects every break, so the
+// Confidence Meter's trendline factor is untouched — the same distinction v2
+// had to make when Clean Mode was capping the engine instead of the drawing.
+keepBroken  = input.int(0, "Keep Broken Lines", minval=0, maxval=30, group=gT, tooltip="Dashed history lines kept after a break. 0 (default) = delete the moment price breaks through, because a broken line no longer describes anything.\n\nThe break is still DETECTED either way — the Confidence Meter's trendline factor does not change with this setting.")
 touchTolPct = input.float(0.1, "Touch Tolerance %", 0.0, 2.0, 0.01, group=gT, tooltip="How close price must come to count as a touch.")
 showTLlabels = input.bool(true, "Show Touch Labels", group=gT)
 tlBreakAlerts = input.bool(true, "Break Alerts", group=gT)
@@ -2204,8 +2236,22 @@ if syk_shortSig or not syk_bear or close > math.max(dt_ma3, dt_ma4) or syk_bodyH
 
 plotshape(syk_longSig,  "Sykes BUY",  shape.labelup,   location.belowbar, color.new(#26a69a, 0), text="BUY",  textcolor=color.white, size=size.small, force_overlay=true)
 plotshape(syk_shortSig, "Sykes SELL", shape.labeldown, location.abovebar, color.new(#ef5350, 0), text="SELL", textcolor=color.white, size=size.small, force_overlay=true)
-plotshape(syk_showExits and ta.crossunder(syk_ema7, syk_ema12), "Sykes Long Exit",  shape.xcross, location.abovebar, color.new(color.orange, 40), size=size.tiny, force_overlay=true)
-plotshape(syk_showExits and ta.crossover(syk_ema7, syk_ema12),  "Sykes Short Exit", shape.xcross, location.belowbar, color.new(color.orange, 40), size=size.tiny, force_overlay=true)
+// v6 FIX (2026-08-14): ta.crossunder/ta.crossover were called INSIDE the
+// plotshape arguments, on the right-hand side of an `and`. Pine v6
+// short-circuits `and`, so on any bar where syk_showExits is false the ta.*
+// call does not execute — and ta.* functions carry state that must advance on
+// EVERY bar. The result is a compile error, and where it does not error it
+// silently produces a wrong series.
+//
+// This is the identical mistake already documented at the vegasChange line
+// above ("compute it once into a plain variable and branch on that instead").
+// The Sykes module was added after that fix and repeated it — the same way it
+// repeated the repaint bug. Hoisted to top level, where they run every bar.
+syk_exitLong  = ta.crossunder(syk_ema7, syk_ema12)
+syk_exitShort = ta.crossover(syk_ema7, syk_ema12)
+
+plotshape(syk_showExits and syk_exitLong,  "Sykes Long Exit",  shape.xcross, location.abovebar, color.new(color.orange, 40), size=size.tiny, force_overlay=true)
+plotshape(syk_showExits and syk_exitShort, "Sykes Short Exit", shape.xcross, location.belowbar, color.new(color.orange, 40), size=size.tiny, force_overlay=true)
 
 alertcondition(syk_longSig,  "Sykes BUY",  "Sykes tunnel: strict long retest→breakout")
 alertcondition(syk_shortSig, "Sykes SELL", "Sykes tunnel: strict short retest→breakout")

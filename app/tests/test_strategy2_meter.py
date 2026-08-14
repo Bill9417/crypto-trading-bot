@@ -371,3 +371,86 @@ def test_the_sykes_trend_returns_the_previous_closed_bar():
     fn = src[src.index("f_sykTrend() =>"):]
     fn = fn[:fn.index("syk_t5")]
     assert "_trend[1]" in fn, "f_sykTrend returns the forming bar"
+
+
+# ── ta.* must run on every bar (v6), 2026-08-14 ─────────────────────────────
+def test_no_ta_call_sits_behind_a_short_circuit():
+    """ta.* functions carry state that must advance on EVERY bar. Pine v6
+    short-circuits `and`/`or`, so a ta.* call on the right-hand side does not
+    execute when the left is false — a compile error, or worse, a silently
+    wrong series.
+
+    This exact lesson is already written at the vegasChange line ("compute it
+    once into a plain variable and branch on that instead"). The Sykes module
+    was added afterwards and repeated it inside two plotshape arguments, which
+    is what stopped the script compiling. Same shape as the repaint bug: a
+    later module copying an idiom the file had already outlawed.
+    """
+    import re
+    src = _pro_src()
+    offenders = []
+    for i, line in enumerate(src.split("\n"), 1):
+        s = line.strip()
+        if not s or s.startswith("//"):
+            continue
+        if re.search(r"\b(and|or)\s+[^/]*\bta\.\w+\(", s):
+            offenders.append(f"L{i}: {s[:80]}")
+    assert not offenders, (
+        "ta.* behind a short-circuit — hoist it to its own variable:\n  "
+        + "\n  ".join(offenders))
+
+
+# ── tunnel palette (2026-08-14) ─────────────────────────────────────────────
+def test_both_tunnels_use_one_hue_per_direction():
+    """It was orange/red for Tunnel 1 and lime/gray for Tunnel 2 — four
+    unrelated hues, so the chart read as 'tunnel 1 vs tunnel 2' when the
+    question you need answered is 'bull vs bear'."""
+    import re
+    src = _pro_src()
+    fills = re.findall(r'dt_t[12](?:Bull|Bear)\s*=\s*input\.color\(color\.new\((#[0-9a-fA-F]{6})', src)
+    assert len(fills) == 4, f"expected 4 tunnel fill colours, found {fills}"
+    assert fills[0] == fills[2], "the two bull fills are different hues"
+    assert fills[1] == fills[3], "the two bear fills are different hues"
+    assert fills[0] != fills[1], "bull and bear share a hue"
+
+
+def test_the_tunnels_are_told_apart_by_intensity_not_hue():
+    """Inner 144/169 is the actionable band and reads stronger; the outer
+    576/676 is context and sits back."""
+    import re
+    src = _pro_src()
+    a = re.findall(r'dt_t1(?:Bull|Bear)\s*=\s*input\.color\(color\.new\(#[0-9a-fA-F]{6},\s*(\d+)', src)
+    b = re.findall(r'dt_t2(?:Bull|Bear)\s*=\s*input\.color\(color\.new\(#[0-9a-fA-F]{6},\s*(\d+)', src)
+    assert a and b
+    assert all(int(x) < int(y) for x, y in zip(a, b)), \
+        "the outer tunnel is not fainter than the inner one"
+
+
+def test_the_tunnel_edges_follow_the_bands_own_direction():
+    """A band that flips must read as a colour change, not stay one hue
+    through both states — which is what the fixed orange did."""
+    src = _pro_src()
+    assert "dt_t1Edge = color.new(dt_t1Up ?" in src
+    assert "dt_t2Edge = color.new(dt_t2Up ?" in src
+
+
+# ── broken trendlines are deleted (2026-08-14) ──────────────────────────────
+def test_a_broken_trendline_is_deleted_by_default():
+    """Owner: "if the trend line become useless just delete it". A broken line
+    is the useless one — price has already gone through it, so it describes
+    nothing the chart is doing."""
+    import re
+    m = re.search(r'keepBroken\s*=\s*input\.int\(\s*(\d+)', _pro_src())
+    assert m and m.group(1) == "0", "broken trendlines still linger by default"
+
+
+def test_deleting_them_does_not_change_the_score():
+    """A DRAWING change only. The engine still detects every break, so the
+    Confidence Meter's trendline factor is untouched — the same distinction v2
+    had to make when Clean Mode was capping the engine instead of the drawing."""
+    src = _pro_src()
+    prune = src[src.index("f_prune_broken() =>"):]
+    prune = prune[:prune.index("starttime")]
+    assert "line.delete" in prune and "label.delete" in prune
+    for scoring in ("fTrendln", "confScore", "wTrendln"):
+        assert scoring not in prune, f"pruning touches {scoring}"
