@@ -8,6 +8,8 @@ process), and a ✅ recovery note when it comes back. If BOTH scanners die at
 once nobody is left to bark — that residual risk is accepted; the /health
 page still shows it.
 """
+import contextlib
+import fcntl
 import json
 import os
 import shutil
@@ -376,8 +378,60 @@ def _ps() -> str:
                           capture_output=True, text=True, timeout=10).stdout
 
 
+LOCK_FILE = STATE_FILE + ".lock"
+
+
+@contextlib.contextmanager
+def _tick_lock():
+    """Exclusive, non-blocking. Yields True to exactly one process at a time.
+
+    BOTH scanners call tick(), which _save_state already knew — it carries a
+    PID in its temp name because they collided there and one died with ENOENT.
+    That fixed the file-level symptom and left the transaction-level race: a
+    tick is load → probe the relays over the network (tens of seconds) → save,
+    so the process that loads first and saves last silently discards everything
+    the other one recorded in between.
+
+    What that cost: `public_fix`, the list of repair attempts, is how
+    autofix_allowed() enforces an hourly budget on `tailscale.sh rearm`. The
+    entries kept being clobbered, so the budget never accumulated — 2026-08-14
+    logged "auto-rearm #1" three times in 36 minutes when it should have read
+    #1, #2, #3. rearm runs `serve reset`, which takes the site DOWN for 30-60s,
+    and two of them racing is a good way to land in the half-registered state
+    where one relay serves and the other does not (~50% of visits fail). The
+    watchdog was, again, manufacturing a share of the outages it reported.
+
+    Non-blocking on purpose: if the other scanner is mid-tick there is nothing
+    useful to add by waiting, and a scanner sweep must never block on one.
+    """
+    try:
+        fh = open(LOCK_FILE, "w")
+    except OSError:                    # cannot lock → behave as before
+        yield True
+        return
+    try:
+        try:
+            fcntl.flock(fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:                # someone else is ticking
+            yield False
+            return
+        try:
+            yield True
+        finally:
+            fcntl.flock(fh, fcntl.LOCK_UN)
+    finally:
+        fh.close()
+
+
 def tick(self_name: str) -> list:
     """Called from a scanner sweep. Returns the names alerted this call."""
+    with _tick_lock() as mine:
+        if not mine:
+            return []
+        return _tick(self_name)
+
+
+def _tick(self_name: str) -> list:
     now = time.time()
     state = _load_state()
     if now - state.get("last_check", 0) < CHECK_SEC:

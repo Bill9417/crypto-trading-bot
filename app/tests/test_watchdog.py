@@ -280,3 +280,70 @@ def test_the_mute_command_parses_its_argument():
         assert "通知開關" in TC.handle("mute", "")
     finally:
         P.STORE_FILE = old
+
+
+# ── one ticker at a time (2026-08-14) ────────────────────────────────────────
+def test_two_processes_cannot_tick_at_once(tmp_path):
+    """BOTH scanners call watchdog.tick(). A tick is load → probe the relays
+    over the network → save, so without exclusion the process that loads first
+    and saves last discards whatever the other recorded in between.
+
+    Concretely: `public_fix` is the repair-attempt list that caps how often
+    `tailscale.sh rearm` may run, and rearm takes the public site down for
+    30-60s. On 2026-08-14 the entries kept being clobbered and the log read
+    "auto-rearm #1" three times in 36 minutes — an hourly budget that never
+    accumulated.
+
+    Real subprocesses, because flock is held per open file and an in-process
+    test would prove nothing about the case that actually happens.
+    """
+    import subprocess
+    import sys
+    import textwrap
+    import os as _os
+
+    app_dir = _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))
+    lock = str(tmp_path / "wd.lock")
+    # Drives watchdog's OWN _tick_lock, not a hand-rolled flock — the point is
+    # that this module excludes correctly, not that flock does.
+    prog = textwrap.dedent(f"""
+        import sys, time
+        sys.path.insert(0, {app_dir!r})
+        import watchdog as W
+        W.LOCK_FILE = {lock!r}
+        with W._tick_lock() as mine:
+            print("ACQUIRED" if mine else "BLOCKED", flush=True)
+            if mine:
+                time.sleep(float(sys.argv[1]))
+    """)
+    holder = subprocess.Popen([sys.executable, "-c", prog, "3"],
+                              stdout=subprocess.PIPE, text=True)
+    try:
+        assert holder.stdout.readline().strip() == "ACQUIRED"
+        second = subprocess.run([sys.executable, "-c", prog, "0"],
+                                capture_output=True, text=True, timeout=30)
+        assert second.stdout.strip() == "BLOCKED", \
+            f"a second process entered the tick while the first held it: {second.stdout!r}"
+    finally:
+        holder.kill()
+        holder.wait()
+
+
+def test_the_lock_is_released_so_the_next_tick_can_run(monkeypatch, tmp_path):
+    """A lock that is not released turns a five-minute watchdog into a
+    one-shot: strictly worse than the race it replaced."""
+    import watchdog as W
+    monkeypatch.setattr(W, "LOCK_FILE", str(tmp_path / "wd.lock"))
+    for _ in range(3):
+        with W._tick_lock() as mine:
+            assert mine is True
+
+
+def test_a_skipped_tick_reports_nothing_rather_than_lying(monkeypatch, tmp_path):
+    """The loser of the race must return "no alerts", not raise and not claim
+    someone else's."""
+    import watchdog as W
+    monkeypatch.setattr(W, "LOCK_FILE", str(tmp_path / "wd.lock"))
+    monkeypatch.setattr(W, "_tick", lambda n: ["should not run"])
+    with W._tick_lock():                      # hold it, as the other scanner would
+        assert W.tick("strategy2_scanner.py") == []
