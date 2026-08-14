@@ -253,6 +253,56 @@ def test_the_scanner_supply_actually_lets_a_signal_fire():
     assert M.compute_signal(rows).get("insufficient") is not True
 
 
+def _run_sweep(monkeypatch, candles_each, n_syms=40):
+    """Drive scan_once against a stub exchange serving fixed-length candles."""
+    import strategy2_scanner as SC
+    syms = [f"S{i}/USDT:USDT" for i in range(n_syms)]
+
+    rows, p = [], 100.0
+    for i in range(candles_each):
+        p *= 1.001
+        rows.append([1_700_000_000_000 + i * 900_000,
+                     p * 0.999, p * 1.002, p * 0.998, p, 1000 + i])
+
+    class _C:
+        def call(self, method, *a, **k):
+            if method == "fetch_tickers":
+                return {s: {"quoteVolume": 1e6, "last": rows[-1][4]} for s in syms}
+            if method == "fetch_ohlcv":
+                return list(rows)
+            return {}
+
+    monkeypatch.setattr(SC, "universe", lambda c, t=None: syms)
+    monkeypatch.setattr(SC, "_btc_regime", lambda c: "bear")
+    monkeypatch.setattr(SC, "_write", lambda *a, **k: None)
+    monkeypatch.setattr(SC, "OHLCV_CACHE_ON", False)
+    monkeypatch.setattr(SC, "_flip_scan", lambda *a, **k: None, raising=False)
+    out = []
+    monkeypatch.setattr("builtins.print", lambda *a, **k: out.append(" ".join(map(str, a))))
+    try:
+        SC.scan_once(_C(), [], {}, [])
+    finally:
+        monkeypatch.undo()
+    return "\n".join(out)
+
+
+def test_a_disarmed_scanner_says_so_instead_of_looking_quiet(monkeypatch):
+    """The three-day outage was invisible because the output file kept being
+    rewritten on schedule — every freshness check passed while the content was
+    empty. Starved of history, the sweep must SAY it cannot fire."""
+    log = _run_sweep(monkeypatch, candles_each=400)
+    assert "DISARMED" in log, \
+        "a scanner that cannot fire on ANY symbol reported nothing unusual"
+
+
+def test_a_genuinely_quiet_market_is_not_called_disarmed(monkeypatch):
+    """The counterpart, and the reason the check counts insufficient reads
+    rather than signals: a flat tape fires nothing and that is CORRECT. Warning
+    here would train the alarm to be ignored."""
+    log = _run_sweep(monkeypatch, candles_each=M.SIGNAL_MIN_CANDLES + 20)
+    assert "DISARMED" not in log
+
+
 def test_score_can_reach_both_ends_of_the_scale():
     """The trendline factor cannot be computed server-side, so it abstains out
     of the denominator. Previously its 5 weight stayed in, capping the meter at
@@ -349,7 +399,6 @@ def _rsi_pro_src():
 
 
 def _rsi_pro_default(name):
-    import re
     m = re.search(r'input\.(?:int|float)\(\s*([0-9.]+)\s*,\s*"' + re.escape(name),
                   _rsi_pro_src())
     assert m, f"could not find the input {name!r} in RSI_Divergence_PRO.pine"
@@ -389,7 +438,6 @@ def test_the_big_script_does_not_buy_history_it_never_uses():
     dozens. It was 5000 to match the maxval of three inputs whose defaults are
     360 and 600 — paying for a ceiling nobody used, in the script already
     hitting the runtime resource limit."""
-    import re
     m = re.search(r"max_bars_back=(\d+)", _pro_src())
     assert m and int(m.group(1)) <= 2000, "max_bars_back is back above the budget"
 
@@ -397,7 +445,6 @@ def test_the_big_script_does_not_buy_history_it_never_uses():
 def test_no_input_can_ask_for_more_history_than_was_allocated():
     """An input whose maxval exceeds max_bars_back promises a range the runtime
     cannot honour — the user sets it and gets a runtime error, not a warning."""
-    import re
     src = _pro_src()
     cap = int(re.search(r"max_bars_back=(\d+)", src).group(1))
     over = [(n, int(v)) for v, n in
@@ -413,7 +460,6 @@ def test_no_input_can_ask_for_more_history_than_was_allocated():
 def test_object_caps_are_sized_to_the_engines_not_to_pines_maximum():
     """Pine allocates for the ceiling it is given. 500 of each was ~3x what the
     trendline, S/R and SMC engines can actually draw at their own maxima."""
-    import re
     src = _pro_src()
     caps = {k: int(v) for k, v in re.findall(r"max_(lines|boxes|labels)_count=(\d+)", src)}
     assert caps.get("lines", 999) <= 300
@@ -431,7 +477,6 @@ def test_no_higher_timeframe_read_repaints():
     expression (last closed bar) together with lookahead_on. lookahead_on alone
     is the classic future-peek; [1] is what makes it honest.
     """
-    import re
     src = _pro_src()
     offenders = []
     for i, line in enumerate(src.split("\n"), 1):
@@ -469,7 +514,6 @@ def test_no_ta_call_sits_behind_a_short_circuit():
     is what stopped the script compiling. Same shape as the repaint bug: a
     later module copying an idiom the file had already outlawed.
     """
-    import re
     src = _pro_src()
     offenders = []
     for i, line in enumerate(src.split("\n"), 1):
@@ -488,7 +532,6 @@ def test_both_tunnels_use_one_hue_per_direction():
     """It was orange/red for Tunnel 1 and lime/gray for Tunnel 2 — four
     unrelated hues, so the chart read as 'tunnel 1 vs tunnel 2' when the
     question you need answered is 'bull vs bear'."""
-    import re
     src = _pro_src()
     fills = re.findall(r'dt_t[12](?:Bull|Bear)\s*=\s*input\.color\(color\.new\((#[0-9a-fA-F]{6})', src)
     assert len(fills) == 4, f"expected 4 tunnel fill colours, found {fills}"
@@ -500,12 +543,14 @@ def test_both_tunnels_use_one_hue_per_direction():
 def test_the_tunnels_are_told_apart_by_intensity_not_hue():
     """Inner 144/169 is the actionable band and reads stronger; the outer
     576/676 is context and sits back."""
-    import re
     src = _pro_src()
     a = re.findall(r'dt_t1(?:Bull|Bear)\s*=\s*input\.color\(color\.new\(#[0-9a-fA-F]{6},\s*(\d+)', src)
     b = re.findall(r'dt_t2(?:Bull|Bear)\s*=\s*input\.color\(color\.new\(#[0-9a-fA-F]{6},\s*(\d+)', src)
     assert a and b
-    assert all(int(x) < int(y) for x, y in zip(a, b)), \
+    # strict=True on purpose: unequal counts mean the Pine grew or lost a
+    # tunnel band, and silently zipping to the shorter list would check only
+    # the bands that still pair up.
+    assert all(int(x) < int(y) for x, y in zip(a, b, strict=True)), \
         "the outer tunnel is not fainter than the inner one"
 
 
@@ -522,7 +567,6 @@ def test_a_broken_trendline_is_deleted_by_default():
     """Owner: "if the trend line become useless just delete it". A broken line
     is the useless one — price has already gone through it, so it describes
     nothing the chart is doing."""
-    import re
     m = re.search(r'keepBroken\s*=\s*input\.int\(\s*(\d+)', _pro_src())
     assert m and m.group(1) == "0", "broken trendlines still linger by default"
 
@@ -544,13 +588,11 @@ def test_the_exit_crosses_are_off_by_default():
     """Owner: "i dont need the x on the graph". EMA7×EMA12 crosses constantly,
     so this stamped an × on a large share of all bars — the densest single
     source of clutter. Engine untouched; only the markers are hidden."""
-    import re
     m = re.search(r'syk_showExits\s*=\s*input\.bool\(\s*(true|false)', _pro_src())
     assert m and m.group(1) == "false"
 
 
 def test_the_trendline_break_marks_are_off_by_default():
-    import re
     m = re.search(r'tlBreakMarks\s*=\s*input\.bool\(\s*(true|false)', _pro_src())
     assert m and m.group(1) == "false"
 
@@ -574,7 +616,6 @@ def test_no_indicator_draws_ungated_exit_crosses():
     strictly worse than a bad default, since there was no way to turn them off.
     Repo-wide so the next file cannot reintroduce it."""
     import os
-    import re
     root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     offenders = []
     for name in os.listdir(os.path.join(root, "pine", "indicators")):

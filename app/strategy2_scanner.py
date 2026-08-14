@@ -405,6 +405,13 @@ def scan_once(client, recent: list, last_alert: dict, pending: list) -> list:
     syms = universe(client, tickers)
     total = len(syms)
     hits = 0
+    # Liveness, not freshness. This file was REWRITTEN every sweep while
+    # carrying zero signals for three days, so every mtime check called the
+    # scanner healthy. A quiet market and a disarmed scanner look identical in
+    # the signal count — but not here: a quiet market still produces USABLE
+    # reads that simply don't fire, while a disarmed one produces nothing but
+    # insufficient-history reads. Counting them separates the two.
+    unusable = 0
     for stale in [s for s in _ohlcv_cache if s not in set(syms)]:
         del _ohlcv_cache[stale]                 # delisted symbols leave the cache
     print(f"[strategy2] scanning {total} {TIMEFRAME} perps…")
@@ -424,6 +431,8 @@ def scan_once(client, recent: list, last_alert: dict, pending: list) -> list:
         except Exception as exc:  # noqa: BLE001
             print(f"[strategy2] compute error {sym}: {exc}")
             continue
+
+        unusable += bool(res.get("insufficient"))
 
         if i < HEATMAP_TOP:
             LATEST_SCORES[sym] = {
@@ -569,6 +578,14 @@ def scan_once(client, recent: list, last_alert: dict, pending: list) -> list:
     _write(recent, total, total)
     if OHLCV_CACHE_ON:
         print(f"[strategy2] candle cache: {hits} reused / {total - hits} fetched")
+    # A handful of insufficient reads is normal — newly listed perps have no
+    # history yet. Nearly ALL of them is not a market condition, it is a broken
+    # scanner, and it is the ONLY thing that separates the two from outside.
+    if total and unusable >= max(10, int(total * 0.9)):
+        print(f"[strategy2] ⚠ DISARMED: {unusable}/{total} symbols returned "
+              f"insufficient history — compute_signal cannot fire on ANY of "
+              f"them. Fetching {CANDLES} candles, meter needs "
+              f"{S2.SIGNAL_MIN_CANDLES}. This is not a quiet market.")
     return recent
 
 
