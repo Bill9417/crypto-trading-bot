@@ -334,7 +334,13 @@ maxActiveTL = input.int(4, "Max Active Lines (each side)", minval=1, maxval=10, 
 keepBroken  = input.int(0, "Keep Broken Lines", minval=0, maxval=30, group=gT, tooltip="Dashed history lines kept after a break. 0 (default) = delete the moment price breaks through, because a broken line no longer describes anything.\n\nThe break is still DETECTED either way — the Confidence Meter's trendline factor does not change with this setting.")
 touchTolPct = input.float(0.1, "Touch Tolerance %", 0.0, 2.0, 0.01, group=gT, tooltip="How close price must come to count as a touch.")
 showTLlabels = input.bool(true, "Show Touch Labels", group=gT)
-tlBreakAlerts = input.bool(true, "Break Alerts", group=gT)
+// RENAMED and defaulted OFF. It was called "Break Alerts" and controlled only
+// the × MARKERS — the alertcondition below fires either way. So switching it
+// off to stop the alerts did nothing, and leaving it on to keep them was
+// really just keeping ×'s. That is the same shape as the v3 defect where Clean
+// Mode silently killed the order-block alerts, in reverse: a name that
+// promises something the switch does not do.
+tlBreakMarks = input.bool(false, "Show break × markers", group=gT, tooltip="× where price closes through a trendline. Off by default — it marks an event that has already passed, and the line itself is deleted on break.\n\nThe 'Trendline Broken' ALERT is independent of this switch and fires either way.")
 tlBaseWidth = input.int(1, "Line Width", minval=1, maxval=4, group=gT, tooltip="Base trendline thickness. Lines thicken slightly with each touch, up to width+2.")
 utcol      = input.color(color.lime, "Up", inline="tcol", group=gT)
 dtcol      = input.color(color.red,  "Down", inline="tcol", group=gT)
@@ -755,8 +761,8 @@ if showTL and array.size(tlines) > 0
             if not na(tl.lb)
                 label.set_textcolor(tl.lb, color.new(tlCol, tlTr))
 
-plotshape(showTL and tlBreakAlerts and tlBrokeUp,   "TL Break Up",   shape.xcross, location.belowbar, color.new(utcol, 0), size=size.tiny, force_overlay=true)
-plotshape(showTL and tlBreakAlerts and tlBrokeDown, "TL Break Down", shape.xcross, location.abovebar, color.new(dtcol, 0), size=size.tiny, force_overlay=true)
+plotshape(showTL and tlBreakMarks and tlBrokeUp,   "TL Break Up",   shape.xcross, location.belowbar, color.new(utcol, 0), size=size.tiny, force_overlay=true)
+plotshape(showTL and tlBreakMarks and tlBrokeDown, "TL Break Down", shape.xcross, location.abovebar, color.new(dtcol, 0), size=size.tiny, force_overlay=true)
 // Consolidated 2 → 1 (RE10140 plot-slot budget). The ✕ markers plotted just
 // above still show WHICH side broke, on the bar it broke.
 alertcondition(tlBrokeUp or tlBrokeDown, "Trendline Broken", "Price closed through a trendline")
@@ -2167,7 +2173,11 @@ syk_filterSame  = input.bool(true,  "Block retest + entry on one bar", group=gSY
 syk_useMacd     = input.bool(true,  "Require MACD momentum", group=gSY, tooltip="MACD above/below its signal AND the histogram expanding in that direction.")
 syk_useVol      = input.bool(true,  "Require volume surge", group=gSY)
 syk_volMult     = input.float(1.2, "Volume ≥ ×average", minval=1.0, step=0.1, group=gSY)
-syk_showExits   = input.bool(true,  "Show exit crosses (EMA7 × EMA12)", group=gSY)
+// DEFAULT off (2026-08-14, owner: "i dont need the x on the graph"). EMA7×EMA12
+// crosses constantly, so this stamped an × on a large fraction of all bars —
+// the densest single source of clutter on the chart. The engine is untouched;
+// only the markers are hidden.
+syk_showExits   = input.bool(false, "Show exit crosses (EMA7 × EMA12)", group=gSY, tooltip="× marks where EMA7 crosses EMA12. Off by default: that cross is frequent, so the markers cover the candles. The BUY/SELL labels are separate and still show.")
 
 // ── tunnel direction, reusable across timeframes ────────────────────────────
 // [1] + lookahead_on — the last CLOSED higher-timeframe bar.

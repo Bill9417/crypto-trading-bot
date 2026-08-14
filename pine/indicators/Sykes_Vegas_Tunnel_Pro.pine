@@ -286,8 +286,20 @@ plot(ema7, "EMA 7 (快線)", color=color.new(color.white, 70), linewidth=1, forc
 plotshape(long_signal, "BUY", shape.labelup, location.belowbar, color.green, text="BUY", textcolor=color.white, size=size.small, force_overlay=true)
 plotshape(short_signal, "SELL", shape.labeldown, location.abovebar, color.red, text="SELL", textcolor=color.white, size=size.small, force_overlay=true)
 
-plotshape(ta.crossunder(ema7, ema12), "多單出場", shape.xcross, location.abovebar, color.new(color.orange, 50), force_overlay=true)
-plotshape(ta.crossover(ema7, ema12), "空單出場", shape.xcross, location.belowbar, color.new(color.orange, 50), force_overlay=true)
+// 出場 × markers — now switchable and OFF by default (2026-08-14). EMA7×EMA12
+// crosses constantly, so these stamped an × on a large share of all bars and
+// there was no input to turn them off at all.
+//
+// The ta.* calls are hoisted rather than left inside the plotshape argument:
+// Pine v6 short-circuits `and`, so a ta.* on the right of one does not run
+// every bar — and ta.* carries state that must advance every bar. That is the
+// same defect that stopped All-in-One_ULTIMATE_Pro compiling.
+show_exits = input.bool(false, "顯示出場 × (EMA7 × EMA12)", group=group_panel, tooltip="EMA7 穿越 EMA12 的出場記號。預設關閉：這個交叉很頻繁，記號會蓋住 K 線。BUY/SELL 標籤不受影響。")
+exit_long  = ta.crossunder(ema7, ema12)
+exit_short = ta.crossover(ema7, ema12)
+
+plotshape(show_exits and exit_long,  "多單出場", shape.xcross, location.abovebar, color.new(color.orange, 50), force_overlay=true)
+plotshape(show_exits and exit_short, "空單出場", shape.xcross, location.belowbar, color.new(color.orange, 50), force_overlay=true)
 
 if show_panel and barstate.islast
     var trend_table = table.new(get_pos(panel_pos), 2, 4, border_width=1, border_color=color.new(color.gray, 50), force_overlay=true)

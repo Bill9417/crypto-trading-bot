@@ -460,3 +460,55 @@ def test_deleting_them_does_not_change_the_score():
     assert "line.delete" in prune and "label.delete" in prune
     for scoring in ("fTrendln", "confScore", "wTrendln"):
         assert scoring not in prune, f"pruning touches {scoring}"
+
+
+# ── × markers off the candles (2026-08-14) ─────────────────────────────────
+def test_the_exit_crosses_are_off_by_default():
+    """Owner: "i dont need the x on the graph". EMA7×EMA12 crosses constantly,
+    so this stamped an × on a large share of all bars — the densest single
+    source of clutter. Engine untouched; only the markers are hidden."""
+    import re
+    m = re.search(r'syk_showExits\s*=\s*input\.bool\(\s*(true|false)', _pro_src())
+    assert m and m.group(1) == "false"
+
+
+def test_the_trendline_break_marks_are_off_by_default():
+    import re
+    m = re.search(r'tlBreakMarks\s*=\s*input\.bool\(\s*(true|false)', _pro_src())
+    assert m and m.group(1) == "false"
+
+
+def test_hiding_the_break_marks_does_not_silence_the_alert():
+    """The input used to be called "Break Alerts" while controlling only the ×
+    markers — so switching it off to stop the alerts did nothing, and leaving
+    it on to keep them was really just keeping ×'s. Same shape as the v3 defect
+    where Clean Mode silently killed the order-block alerts, in reverse: a name
+    promising something the switch does not do."""
+    src = _pro_src()
+    assert "tlBreakAlerts" not in src, "the misleading name is back"
+    alert = [l for l in src.split("\n")
+             if "alertcondition(" in l and "Trendline Broken" in l]
+    assert alert, "the trendline break alert is gone"
+    assert "tlBreakMarks" not in alert[0], "the alert is gated by a DRAWING switch"
+
+
+def test_no_indicator_draws_ungated_exit_crosses():
+    """Sykes_Vegas_Tunnel_Pro had the same × markers with NO input at all —
+    strictly worse than a bad default, since there was no way to turn them off.
+    Repo-wide so the next file cannot reintroduce it."""
+    import os
+    import re
+    root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    offenders = []
+    for name in os.listdir(os.path.join(root, "pine", "indicators")):
+        if not name.endswith(".pine"):
+            continue
+        with open(os.path.join(root, "pine", "indicators", name), encoding="utf-8") as fh:
+            for i, line in enumerate(fh, 1):
+                if "shape.xcross" not in line or line.strip().startswith("//"):
+                    continue
+                # the plotted condition must be gated by some show*/…Marks input
+                cond = line.split("plotshape(", 1)[-1].split(",", 1)[0]
+                if not re.search(r"show|Marks|Alerts", cond, re.I):
+                    offenders.append(f"{name}:{i}")
+    assert not offenders, f"× markers with no switch: {offenders}"
