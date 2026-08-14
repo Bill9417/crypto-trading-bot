@@ -44,19 +44,52 @@ def test_opposite_flag_closes_immediately_even_if_vegas_disagrees():
     assert (close, open_dir) == (False, "short")
 
 
-def test_one_entry_per_flag_no_reentry_after_stop():
+def test_a_spent_flag_does_not_re_enter_on_its_own():
+    """`consumed` still does its job: once a flag has opened, the SAME flag
+    cannot open again just because the position disappeared. Only a NEW flag
+    re-arms — otherwise a stop-out would immediately re-buy the same idea."""
     st = fresh()
     _, open_dir = S3.decide(st, "long", +1, None)
     assert open_dir == "long"
     st["consumed"] = True                       # scanner marks it on entry
-    # position later disappears (emergency SL) → flat, same flag → NO re-entry
+    # position later disappears (emergency SL) → flat, NO new flag → no re-entry
     close, open_dir = S3.decide(st, None, +1, None)
     assert (close, open_dir) == (False, None)
-    # …but a fresh flag re-arms it
-    close, open_dir = S3.decide(st, "long", +1, None)
-    assert (close, open_dir) == (False, None)   # same-direction flag ≠ new flag
-    close, open_dir = S3.decide(st, "short", -1, None)
-    assert (close, open_dir) == (False, "short")
+
+
+def test_a_repeat_flag_re_arms_when_we_hold_nothing():
+    """CHANGED 2026-08-14 on the owner's report. The rule was pure alternation:
+    a second long flag while last_flag was already "long" opened nothing, so
+    after a stop the engine sat flat waiting for a short that might be days
+    away. Replayed live it was exactly:
+
+        bar 1  flag long   -> opens long
+        bar 3  flag long   -> opens NOTHING          <- the complaint
+        bar 5  flag short  -> opens short
+
+    Once the position is gone, the next same-direction flag is a NEW signal,
+    not the spent one."""
+    st = fresh()
+    _, open_dir = S3.decide(st, "long", +1, None)
+    assert open_dir == "long"
+    st["consumed"] = True
+    close, open_dir = S3.decide(st, "long", +1, None)     # flat + repeat flag
+    assert (close, open_dir) == (False, "long")
+
+
+def test_a_repeat_flag_while_holding_still_does_nothing():
+    """The other half, and the one that protects size: re-arming must depend on
+    being FLAT. While we hold, a run of long flags must not stack position."""
+    st = {"last_flag": "long", "consumed": True}
+    for _ in range(3):
+        close, open_dir = S3.decide(st, "long", +1, "long")
+        assert (close, open_dir) == (False, None)
+
+
+def test_the_opposite_flag_still_flips():
+    st = {"last_flag": "long", "consumed": True}
+    close, open_dir = S3.decide(st, "short", -1, "long")
+    assert close is True and open_dir == "short"
 
 
 def test_same_direction_flag_while_holding_is_noop():
@@ -611,7 +644,7 @@ def test_guardian_rearms_at_breakeven_level_once_armed(monkeypatch):
     S3, _ = _be_setup(monkeypatch)
     monkeypatch.setattr(S3.X, "is_live", lambda: True)
     pos = {"side": "long", "entry": 40.0, "mark": 40.5, "sl": None}
-    monkeypatch.setattr(S3.X, "get_position", lambda sym: dict(pos))
+    monkeypatch.setattr(S3.X, "get_position", lambda sym, side=None: dict(pos))
     ensured = []
     monkeypatch.setattr(S3.X, "ensure_stop",
                         lambda sym, sl_price=None, pos=None: ensured.append(sl_price))
@@ -635,7 +668,7 @@ def test_guardian_rearms_at_breakeven_level_once_armed(monkeypatch):
 def test_position_gone_resets_breakeven(monkeypatch):
     S3, _ = _be_setup(monkeypatch)
     monkeypatch.setattr(S3.X, "is_live", lambda: True)
-    monkeypatch.setattr(S3.X, "get_position", lambda sym: None)
+    monkeypatch.setattr(S3.X, "get_position", lambda sym, side=None: None)
     st = {"pos_dir": "long", "be_armed": True, "consumed": False}
     S3.reconcile_position("HYPE/USDT:USDT", st)
     assert st["pos_dir"] is None
@@ -695,3 +728,39 @@ def test_strategy3_retry_gives_up_after_3_attempts(monkeypatch):
     assert st["open_attempts"] == 3
     assert st["consumed"] is True          # gave up — no infinite retry
     assert st["pos_dir"] is None           # and never fabricated a fake position
+
+
+def test_an_existing_position_is_adopted_as_our_own_share(monkeypatch):
+    """Any position already open when ownership tracking shipped is entirely
+    ours — manual coexistence did not exist before it.
+
+    Self-healing rather than a one-off file edit, because the edit cannot win:
+    the live engine holds this state in memory and writes it back, so patching
+    strategy3_state.json under a running process is silently overwritten. That
+    happened on 2026-08-14 and is why this lives in reconcile."""
+    st = {"pos_dir": "short", "own_qty": None, "last_flag": "short",
+          "consumed": True, "be_armed": False}
+    monkeypatch.setattr(S3.X, "is_live", lambda: True)
+    monkeypatch.setattr(S3.X, "get_position",
+                        lambda sym, side=None: {"side": "short", "qty": 0.097,
+                                                "entry": 4341.6, "mark": 4310.0,
+                                                "sl": 4406.8, "idx": 2})
+    monkeypatch.setattr(S3, "manage_breakeven", lambda *a, **k: None)
+    S3.reconcile_position("XAUT/USDT:USDT", st)
+    assert st["own_qty"] == 0.097
+
+
+def test_our_share_is_clamped_to_what_is_actually_there(monkeypatch):
+    """A partial stop leaves less than we think is ours. An oversized
+    reduce-only is REJECTED, so an unclamped exit closes nothing at all — the
+    failure looks like a stuck position, not an error."""
+    st = {"pos_dir": "long", "own_qty": 1.0, "last_flag": "long",
+          "consumed": True, "be_armed": False}
+    monkeypatch.setattr(S3.X, "is_live", lambda: True)
+    monkeypatch.setattr(S3.X, "get_position",
+                        lambda sym, side=None: {"side": "long", "qty": 0.4,
+                                                "entry": 100, "mark": 100,
+                                                "sl": 95, "idx": 1})
+    monkeypatch.setattr(S3, "manage_breakeven", lambda *a, **k: None)
+    S3.reconcile_position("XAUT/USDT:USDT", st)
+    assert st["own_qty"] == 0.4

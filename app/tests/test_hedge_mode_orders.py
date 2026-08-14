@@ -45,7 +45,7 @@ def _live(monkeypatch, sent, position=None):
     monkeypatch.setattr(X, "keys_present", lambda: True)
     monkeypatch.setattr(X, "client", lambda: _exchange(sent))
     monkeypatch.setattr(X, "_market_limits", lambda s: (0.01, 0.01, 5.0))
-    monkeypatch.setattr(X, "get_position", lambda s: position)
+    monkeypatch.setattr(X, "get_position", lambda s, side=None: position)
     monkeypatch.setattr(X, "ensure_stop", lambda *a, **k: None)
 
 
@@ -163,3 +163,94 @@ def test_mirror_retries_a_rejected_index_instead_of_losing_the_close(monkeypatch
     monkeypatch.setattr(config, "S1_BYBIT_MIRROR", True)
     assert M._reduce(SYM, "long", 5.0) == ""    # succeeded on the retry
     assert calls == [0, 1]
+
+
+# ── S3 owns only its own share (2026-08-14) ─────────────────────────────────
+# XAUT runs HEDGE, so a manual trade on the opposite side is a genuinely
+# separate position and S3 must ignore it. On the SAME side Bybit merges them
+# into one and there is no way to separate them, so S3 tracks the qty it added
+# and closes exactly that.
+def test_a_position_read_can_ask_for_one_side(monkeypatch):
+    """Unqualified, get_position returns whichever side fetch_positions lists
+    first — so a manual short could mask S3's long completely."""
+    import strategy3_exec as X
+    both = [{"side": "long", "contracts": 1.0, "entryPrice": 100,
+             "info": {"positionIdx": 1}, "markPrice": 100},
+            {"side": "short", "contracts": 2.0, "entryPrice": 100,
+             "info": {"positionIdx": 2}, "markPrice": 100}]
+
+    class _Ex:
+        def fetch_positions(self, syms):
+            return both
+
+    monkeypatch.setattr(X, "client", lambda: _Ex())
+    monkeypatch.setattr(X, "is_live", lambda: True)
+    assert X.get_position(SYM, side="long")["qty"] == 1.0
+    assert X.get_position(SYM, side="short")["qty"] == 2.0
+    assert X.get_position(SYM)["side"] == "long"        # unqualified = first
+
+
+def test_closing_our_share_leaves_a_manual_position_alone(monkeypatch):
+    """The money question. If the owner added 0.5 by hand on our side and we
+    opened 1.0, closing 1.5 would spend their position on our signal."""
+    import strategy3_exec as X
+    sent = {}
+
+    class _Ex:
+        def fetch_positions(self, syms):
+            return [{"side": "long", "contracts": 1.5, "entryPrice": 100,
+                     "info": {"positionIdx": 1}, "markPrice": 100}]
+
+        def create_order(self, sym, typ, side, qty, params=None):
+            sent.update(side=side, qty=qty, params=params or {})
+            return {"id": "1"}
+
+    monkeypatch.setattr(X, "client", lambda: _Ex())
+    monkeypatch.setattr(X, "is_live", lambda: True)
+    out = X.close_flip(SYM, qty=1.0, side="long")
+    assert out["ok"] is True
+    assert sent["qty"] == 1.0, "closed more than our own share"
+    assert sent["params"]["reduceOnly"] is True
+
+
+def test_closing_never_asks_for_more_than_exists(monkeypatch):
+    """A partial stop leaves less on the side than we think is ours. An
+    oversized reduce-only is rejected outright, so it would close NOTHING —
+    the failure looks like a stuck position rather than an error."""
+    import strategy3_exec as X
+    sent = {}
+
+    class _Ex:
+        def fetch_positions(self, syms):
+            return [{"side": "long", "contracts": 0.3, "entryPrice": 100,
+                     "info": {"positionIdx": 1}, "markPrice": 100}]
+
+        def create_order(self, sym, typ, side, qty, params=None):
+            sent.update(qty=qty)
+            return {"id": "1"}
+
+    monkeypatch.setattr(X, "client", lambda: _Ex())
+    monkeypatch.setattr(X, "is_live", lambda: True)
+    X.close_flip(SYM, qty=1.0, side="long")
+    assert sent["qty"] == 0.3
+
+
+def test_no_qty_still_closes_everything(monkeypatch):
+    """Every pre-existing caller passes no qty and must keep its old
+    behaviour — closing the whole position."""
+    import strategy3_exec as X
+    sent = {}
+
+    class _Ex:
+        def fetch_positions(self, syms):
+            return [{"side": "short", "contracts": 2.0, "entryPrice": 100,
+                     "info": {"positionIdx": 2}, "markPrice": 100}]
+
+        def create_order(self, sym, typ, side, qty, params=None):
+            sent.update(qty=qty)
+            return {"id": "1"}
+
+    monkeypatch.setattr(X, "client", lambda: _Ex())
+    monkeypatch.setattr(X, "is_live", lambda: True)
+    X.close_flip(SYM)
+    assert sent["qty"] == 2.0

@@ -128,14 +128,35 @@ def decide(state: dict, flag, vegas: int, holding) -> tuple:
     state   {'last_flag': 'long'/'short'/None, 'consumed': bool} — mutated
     flag    'long'/'short'/None — flag fired on THIS bar
     vegas   +1 green / -1 red / 0 flat
-    holding 'long'/'short'/None — OUR open position direction
+    holding 'long'/'short'/None — S3's OWN open position direction. NOT the
+            raw exchange position: a manual trade must not look like ours.
 
     Returns (close: bool, open_dir: 'long'/'short'/None). A new flag replaces
     the pending direction; an opposite flag closes at once; entry requires
-    Vegas agreement and each flag opens at most one position (consumed)."""
-    if flag and flag != state.get("last_flag"):
-        state["last_flag"] = flag
-        state["consumed"] = False
+    Vegas agreement.
+
+    ── REPEAT FLAGS RE-ARM WHEN WE ARE FLAT (2026-08-14) ──────────────────
+    The rule used to be pure alternation: `flag != last_flag`. A second long
+    flag while last_flag was already "long" did not reset `consumed`, so the
+    engine sat flat through it and waited for a short. Owner's report, and the
+    replay confirms it exactly:
+
+        bar 1  flag long   -> opens long
+        bar 3  flag long   -> opens NOTHING, still flat      <- the bug
+        bar 5  flag short  -> opens short
+
+    `consumed` exists to stop ONE flag opening twice, which is right. But once
+    the position is gone — stop hit, or closed by hand — the next flag in the
+    same direction is a NEW signal, not the spent one. So a repeat flag re-arms
+    whenever we hold nothing of our own. While we ARE holding, it is still
+    ignored, so a run of long flags cannot stack size.
+    """
+    if flag:
+        if flag != state.get("last_flag"):
+            state["last_flag"] = flag
+            state["consumed"] = False
+        elif not holding:
+            state["consumed"] = False
 
     want = state.get("last_flag")
     close = bool(holding and want and holding != want)
@@ -248,24 +269,45 @@ def open_flip(symbol: str, direction: str, price: float, score, margin: float,
     if day_halt:
         print(f"[strategy3] entry blocked by daily loss limit: {day_halt}")
         return Outcome("skip", f"當日虧損上限擋下（{day_halt}）")
+    # ── manual positions no longer block us (2026-08-14, owner's request) ──
+    # This used to refuse outright whenever ANY position existed on the symbol,
+    # which meant one manual trade disabled the engine until it was closed by
+    # hand. XAUT runs in HEDGE mode, so a manual position on the opposite side
+    # is genuinely a separate position and is simply ignored.
+    #
+    # On the SAME side Bybit merges them into one — there is no way to hold
+    # "ours" and "yours" separately — so we TOP UP to the target notional
+    # rather than adding a second full size: manual 500 + target 1500 means we
+    # add 1000, and on exit we close only the 1000 we added.
+    topup_qty = None
     if X.is_live():
         try:
-            if X.get_position(symbol):
-                print(f"[strategy3] skip {symbol}: a Bybit position already exists "
-                      f"(manual?) — not touching it")
-                _tg(f"⚠️ S3 skipped {direction.upper()} {symbol.split('/')[0]} — a position "
-                    f"already exists on Bybit (manual?). Close it or let me manage it.")
-                return Outcome("skip", "Bybit 上已經有這個標的的倉位（手動？），"
-                                       "不去動它")
+            same_side = X.get_position(symbol, side=direction)
         except Exception as exc:  # noqa: BLE001 — fail closed on an unreadable account
             print(f"[strategy3] cannot read Bybit positions ({exc}) — will retry")
             return Outcome("retry", f"讀不到 Bybit 倉位（{exc}）")
+        if same_side:
+            target_qty = (margin * leverage) / price
+            topup_qty = target_qty - same_side["qty"]
+            if topup_qty <= target_qty * 0.05:      # already at/over target
+                print(f"[strategy3] {symbol}: {direction} side already holds "
+                      f"{same_side['qty']} (target {target_qty:.6g}) — nothing to add")
+                _tg(f"ℹ️ S3 · {symbol.split('/')[0]} {direction.upper()} 已達目標倉位"
+                    f"（現有 {same_side['qty']:.6g}），不再加碼")
+                return Outcome("skip", "同方向已有倉位且已達目標，不加碼")
 
     is_long = direction == "long"
     slp = sl_pct if sl_pct is not None else config.STRATEGY3_EMERGENCY_SL_PCT
     sl = price * (1 - slp) if is_long else price * (1 + slp)
 
-    res = X.open_flip(symbol, direction, price, sl, margin, leverage)
+    # Topping up: size the order to the GAP, not the full target. margin is the
+    # lever X.open_flip sizes from, so the gap is expressed back as margin.
+    eff_margin = margin
+    if topup_qty is not None and topup_qty > 0:
+        eff_margin = topup_qty * price / max(leverage, 1)
+        print(f"[strategy3] {symbol}: topping {direction} up by {topup_qty:.6g} "
+              f"(~{eff_margin:.1f} USDT margin) to reach the target")
+    res = X.open_flip(symbol, direction, price, sl, eff_margin, leverage)
     if not res.get("ok"):
         err = res.get("error")
         print(f"[strategy3] order error {symbol}: {err}")
@@ -274,6 +316,7 @@ def open_flip(symbol: str, direction: str, price: float, score, margin: float,
         _tg(f"⚠️ S3 order error {symbol.split('/')[0]} {direction.upper()}: {err}")
         return Outcome("skip", f"下單被交易所拒絕（{str(err)[:80]}）")
     tag = "DRY-RUN " if res.get("dry") else ""
+    open_flip.last_qty = float(res.get("qty") or 0)   # what the caller records as ours
     if not res.get("dry"):
         # Recorded HERE, not inside X.open_flip — the S1 mirror calls that same
         # function, and tagging it there would file S1's trades as S3's.
@@ -294,12 +337,16 @@ def open_flip(symbol: str, direction: str, price: float, score, margin: float,
     return Outcome("opened")
 
 
-def close_flip(symbol: str, why: str) -> bool:
+def close_flip(symbol: str, why: str, own_qty: float = None,
+               side: str = None) -> bool:
     blocked = live_blocked()
     if blocked:
         print(f"[strategy3] would CLOSE {symbol} ({why}) — {blocked}")
         return False
-    res = X.close_flip(symbol)
+    # own_qty: close only what WE opened. Anything the owner added by hand on
+    # the same side stays put — closing it would be spending their money on
+    # our signal.
+    res = X.close_flip(symbol, qty=own_qty, side=side)
     if not res.get("ok"):
         print(f"[strategy3] close error {symbol}: {res.get('error')}")
         _tg(f"⚠️ S3 close FAILED {symbol.split('/')[0]}: {res.get('error')} — check Bybit!")
@@ -408,7 +455,10 @@ def reconcile_position(sym: str, st: dict) -> None:
         return
     base = sym.split("/")[0]
     try:
-        pos = X.get_position(sym)
+        # OUR side only. Unqualified, a manual position on the opposite side
+        # would satisfy this check and S3 would believe it still holds after
+        # its own position was stopped out — in hedge mode both sides exist.
+        pos = X.get_position(sym, side=st.get("pos_dir"))
     except Exception as exc:  # noqa: BLE001 — keep last known state on API blips
         print(f"[strategy3] reconcile error {sym}: {exc}")
         return
@@ -419,10 +469,34 @@ def reconcile_position(sym: str, st: dict) -> None:
         _tg(f"ℹ️ S3 · {base} position closed on Bybit (stop or manual) — "
             f"waiting for the next flag")
         st["pos_dir"] = None
+        st["own_qty"] = None
         st["consumed"] = True
         st["skip_reason"] = "倉位在 Bybit 被平掉（停損或手動）"
         st["be_armed"] = False
         return
+
+    # ADOPT a position that predates own_qty. Any position already open when
+    # this tracking shipped is entirely ours — manual coexistence did not exist
+    # before it — so the whole side is our share.
+    #
+    # Self-healing rather than a one-off migration, because a migration cannot
+    # win: the live process holds this state in memory and writes it back
+    # periodically, so editing the file under a running engine is silently
+    # overwritten. That is exactly what happened on 2026-08-14.
+    # .get, not [], throughout: reconcile runs on every poll and a position
+    # dict missing a field must not raise inside the guardian — that path also
+    # re-arms the stop, and a crash here would leave a 50x position naked.
+    live_qty = pos.get("qty")
+    if live_qty and st.get("pos_dir") and not st.get("own_qty"):
+        st["own_qty"] = live_qty
+        print(f"[strategy3] {base}: adopted existing {st['pos_dir']} "
+              f"{live_qty} as S3's own share")
+
+    # A partial stop, or the owner closing part by hand, leaves less on the
+    # side than we think is ours. Clamp — an oversized reduce-only is rejected
+    # outright, so an un-clamped exit would fail to close anything at all.
+    if live_qty and st.get("own_qty") and live_qty < st["own_qty"]:
+        st["own_qty"] = live_qty
 
     manage_breakeven(sym, st, pos)
 
@@ -623,8 +697,10 @@ def step(client, state: dict) -> None:
 
         if close:
             what = "cross" if params.get("engine") == "occ" else "flag"
-            if close_flip(sym, f"opposite {what} ({st['last_flag']})"):
+            if close_flip(sym, f"opposite {what} ({st['last_flag']})",
+                          own_qty=st.get("own_qty"), side=st.get("pos_dir")):
                 st["pos_dir"] = None
+                st["own_qty"] = None
         if open_dir and not st.get("pos_dir"):
             outcome = open_flip(sym, open_dir, snap["price"], score,
                                  params["margin"], params["leverage"],
@@ -634,6 +710,9 @@ def step(client, state: dict) -> None:
             reason = getattr(outcome, "reason", "")
             if outcome == "opened":
                 st["pos_dir"] = open_dir
+                # What WE added. The exit closes exactly this, so a manual
+                # position merged on the same side is left alone.
+                st["own_qty"] = getattr(open_flip, "last_qty", 0.0) or None
                 st["consumed"] = True
                 st["be_armed"] = False              # fresh position → fresh break-even
                 st["skip_reason"] = None

@@ -400,13 +400,24 @@ def closed_pnl_summary(limit: int = 1000) -> dict:
         return {"ok": False, "error": str(exc)[:300]}
 
 
-def get_position(symbol: str) -> dict | None:
-    """Our open Bybit position on symbol, or None.
-    {'side','qty','entry','mark','sl','idx'} — mark is None if Bybit omits it,
-    idx is the live positionIdx (0 one-way, 1/2 hedge)."""
+def get_position(symbol: str, side: str = None) -> dict | None:
+    """The open Bybit position on symbol, or None.
+
+    `side` ('long'/'short') picks ONE side, which matters in hedge mode: XAUT
+    runs hedged, so a long (positionIdx 1) and a short (positionIdx 2) can both
+    exist at once. Without it this returns whichever fetch_positions happens to
+    list first, so a manual short could mask S3's long entirely.
+
+    NOTE this is the RAW exchange position — S3's own share of it is tracked
+    separately in the state file, because on the SAME side Bybit merges a
+    manual trade and ours into one position and the exchange cannot tell them
+    apart.
+    """
     ex = client()
     for p in ex.fetch_positions([symbol]):
         qty = float(p.get("contracts") or 0)
+        if side and p.get("side") != side:
+            continue
         if qty > 0:
             info = p.get("info") or {}
             sl = str(info.get("stopLoss") or "").strip()
@@ -510,24 +521,37 @@ def open_flip(symbol: str, direction: str, price: float, sl_price: float,
     return res
 
 
-def close_flip(symbol: str) -> dict:
-    """Close the whole position at market (reduce-only). Dry-run unless live."""
-    res = {"ok": False, "dry": not is_live(), "error": None}
+def close_flip(symbol: str, qty: float = None, side: str = None) -> dict:
+    """Close a position at market (reduce-only). Dry-run unless live.
+
+    `qty` closes only that much — S3's OWN share — leaving anything the owner
+    opened by hand untouched. `side` picks which side to reduce in hedge mode.
+    Both default to the old behaviour (whole position, whichever side is
+    found), so every existing caller is unchanged.
+    """
+    res = {"ok": False, "dry": not is_live(), "error": None, "qty": 0.0}
     if not is_live():
         res["ok"] = True
-        print(f"[s3-exec][DRY-RUN] CLOSE {symbol} (no order sent)")
+        print(f"[s3-exec][DRY-RUN] CLOSE {symbol} qty={qty or 'ALL'} (no order sent)")
         return res
-    pos = get_position(symbol)
+    pos = get_position(symbol, side=side)
     if not pos:
         res["ok"] = True                              # already flat
         return res
-    side = "sell" if pos["side"] == "long" else "buy"
+    # Never try to close more than is actually there: the rest may already have
+    # been taken by a stop, and an oversized reduce-only is rejected outright.
+    close_qty = min(float(qty), pos["qty"]) if qty else pos["qty"]
+    if close_qty <= 0:
+        res["ok"] = True
+        return res
+    res["qty"] = close_qty
+    side_ = "sell" if pos["side"] == "long" else "buy"
     try:
         # pos["side"], not `side`: the index belongs to the position we are
         # reducing. Passing the order side here would aim a reduce-only sell at
         # the SHORT book in hedge mode and close nothing at all.
         bybit_mode.send_with_mode(symbol, pos["side"], lambda pidx:
-            client().create_order(symbol, "market", side, pos["qty"], params={
+            client().create_order(symbol, "market", side_, close_qty, params={
                 "positionIdx": pidx, "reduceOnly": True,
             }))
         res["ok"] = True
