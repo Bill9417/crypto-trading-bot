@@ -13,7 +13,7 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=Noto+Sans+TC:wght@400;500;700;900&display=swap" rel="stylesheet">
     <link rel="manifest" href="/manifest.webmanifest">
-    <meta name="theme-color" content="#0d1220">
+    <meta name="theme-color" content="#120c26">
     <link rel="stylesheet" href="/static/app.css?v={{ asset_ver }}">
     <style>
         /* app.css publishes --wolf-* tokens but leaves the page background to
@@ -21,7 +21,7 @@
            rendered this page white while every other page was dark. Same local
            token block the other authenticated pages declare. */
         :root {
-            --blue:#00d2ff; --slate:#0d1220; --card:rgba(33,40,62,.80);
+            --blue:#00d2ff; --slate:var(--wolf-slate); --card:rgba(33,40,62,.80);
             --border:rgba(255,255,255,.10); --muted:#93a3b8; --text:#f2f6fb;
             --ok:#34d399; --bad:#f87171; --amber:#ffb020;
         }

@@ -21,16 +21,29 @@
     --wolf-teal: #2dd4bf;
     --wolf-orange: #fb923c;
     --wolf-dark: #171a26;
-    --wolf-slate: #0b1020;
-    --wolf-bg: #0b1020;            /* alias some pages use */
-    /* Surfaces carry a faint indigo tint now rather than neutral grey, so a
-       card looks lit by the page instead of cut out of it. */
-    --wolf-card: rgba(34, 43, 71, 0.84);
-    --wolf-card-hi: rgba(44, 55, 88, 0.86);   /* hover / raised */
-    --wolf-border: rgba(255, 255, 255, 0.11);
-    --wolf-border-hi: rgba(120, 190, 255, 0.30);
-    --wolf-muted: #9dadc4;
-    --wolf-text: #f4f8ff;
+    /* ── Background, rebuilt 2026-08-14 ───────────────────────────────────
+       The old base was #0b1020 — a navy so dark it read as "black with a
+       blue cast", which is why the page felt flat no matter how bright the
+       accents got. Contrast alone does not make a surface look designed;
+       the surface needs a colour of its own.
+
+       Now a deep indigo-violet with real chroma in it, lit by four large soft
+       colour fields (a mesh gradient) rather than two small corner glows. The
+       fields are big and low-opacity on purpose: they change the hue of the
+       page as your eye travels down it, without ever competing with a number
+       for attention. This is a data screen read at night — the ambience gets
+       the colour, the content area stays calm. */
+    --wolf-slate: #120c26;
+    --wolf-bg: #120c26;            /* alias some pages use */
+    /* Surfaces sit ABOVE the mesh, so they carry a violet tint and a little
+       translucency — a card now looks lit by the page rather than cut out of
+       it, which is what makes layered dark UIs read as deliberate. */
+    --wolf-card: rgba(41, 34, 74, 0.80);
+    --wolf-card-hi: rgba(54, 45, 95, 0.86);   /* hover / raised */
+    --wolf-border: rgba(255, 255, 255, 0.10);
+    --wolf-border-hi: rgba(167, 139, 250, 0.42);
+    --wolf-muted: #a5aecb;
+    --wolf-text: #f6f4ff;
     /* Long/short: the two colours read most often and from furthest away.
        Lifted well clear of the background while keeping green/red apart for
        the ~8% of men with red-green deficiency — these differ in LIGHTNESS
@@ -39,22 +52,24 @@
     --long-bg: rgba(46, 232, 138, 0.16);
     --short: #ff4d6d;
     --short-bg: rgba(255, 77, 109, 0.16);
-    --radius: 14px;
-    --shadow: 0 16px 44px rgba(0, 0, 0, 0.46), inset 0 1px 0 rgba(255, 255, 255, 0.07);
+    --radius: 16px;
+    /* Two shadows plus an inner top highlight: the highlight is what makes a
+       dark glass card read as "lit from above" instead of a flat rectangle. */
+    --shadow: 0 2px 6px rgba(0, 0, 0, 0.30), 0 18px 48px rgba(8, 4, 20, 0.55),
+              inset 0 1px 0 rgba(255, 255, 255, 0.08);
     --page-max: 1440px;        /* ONE shared content width for every page + the nav */
-    /* Background: same structure as before (grid, vignette, corner auroras,
-       base wash) with the auroras roughly doubled and a magenta added, so the
-       page has colour of its own instead of being a dark rectangle that the
-       cards sit on. Order matters — gradients paint front-to-back. */
+    /* Mesh gradient. Order matters — these paint front-to-back, so the fine
+       grid is listed first and the base wash last. */
     --page-bg-glow:
-        repeating-linear-gradient(0deg, rgba(255, 255, 255, 0.014) 0 1px, transparent 1px 56px),
-        repeating-linear-gradient(90deg, rgba(255, 255, 255, 0.014) 0 1px, transparent 1px 56px),
-        radial-gradient(ellipse 120% 70% at 50% 120%, rgba(0, 0, 0, 0.50), transparent 60%),
-        radial-gradient(ellipse 90% 55% at 10% -10%, rgba(41, 221, 255, 0.22), transparent 62%),
-        radial-gradient(ellipse 75% 52% at 94% 4%, rgba(167, 139, 250, 0.20), transparent 60%),
-        radial-gradient(ellipse 70% 50% at 78% 98%, rgba(244, 114, 182, 0.12), transparent 58%),
-        radial-gradient(ellipse 80% 60% at 18% 92%, rgba(255, 210, 87, 0.10), transparent 58%),
-        linear-gradient(178deg, #16203a 0%, #101830 40%, #0b1020 100%);
+        repeating-linear-gradient(0deg, rgba(255, 255, 255, 0.012) 0 1px, transparent 1px 64px),
+        repeating-linear-gradient(90deg, rgba(255, 255, 255, 0.012) 0 1px, transparent 1px 64px),
+        radial-gradient(ellipse 130% 80% at 50% 130%, rgba(4, 2, 12, 0.62), transparent 62%),
+        radial-gradient(ellipse 95% 62% at 6% -12%, rgba(41, 221, 255, 0.20), transparent 64%),
+        radial-gradient(ellipse 85% 60% at 98% -4%, rgba(167, 139, 250, 0.30), transparent 62%),
+        radial-gradient(ellipse 80% 58% at 88% 62%, rgba(244, 114, 182, 0.16), transparent 60%),
+        radial-gradient(ellipse 78% 55% at 4% 78%, rgba(45, 212, 191, 0.14), transparent 60%),
+        radial-gradient(ellipse 90% 60% at 46% 40%, rgba(99, 62, 190, 0.22), transparent 66%),
+        linear-gradient(170deg, #1d1440 0%, #17102f 45%, #120c26 100%);
 }
 
 /* ── Global polish — one copy here instead of per-page duplicates ─────────── */
@@ -362,3 +377,59 @@ body.has-sidebar { padding-left: var(--wsb-w); }
 .btn-wolf:hover { filter: brightness(1.08); color: #001018; transform: translateY(-1px); box-shadow: 0 5px 18px rgba(0,210,255,.35), inset 0 1px 0 rgba(255,255,255,.35); }
 .btn-wolf:active { transform: translateY(1px) scale(.99); }
 .btn-wolf:disabled { opacity: .65; transform: none; cursor: default; filter: none; }
+
+/* ── Card polish (2026-08-14) ───────────────────────────────────────────────
+   Applied to the shared panel classes so it lands on every page at once.
+   Three things separately, because each fixes a different flatness:
+     · a hairline gradient across the TOP of each card — the single cheapest
+       way to make a dark rectangle read as a designed surface rather than a
+       div with a border
+     · blur behind the translucent surface, so the mesh gradient shows through
+       softened instead of as a hard colour patch
+     · a lift on hover, which also tells you a card is interactive           */
+.analytics-panel, .stat-card, .bcard, .panel, .entries-panel, .card {
+    position: relative;
+    backdrop-filter: blur(14px) saturate(115%);
+    -webkit-backdrop-filter: blur(14px) saturate(115%);
+    transition: transform .16s ease, border-color .16s ease, box-shadow .16s ease;
+}
+.analytics-panel::before, .panel::before, .entries-panel::before {
+    content: ""; position: absolute; inset: 0 0 auto 0; height: 1px;
+    border-radius: inherit;
+    background: linear-gradient(90deg, transparent 4%, rgba(41,221,255,.55) 22%,
+                rgba(167,139,250,.60) 50%, rgba(244,114,182,.45) 74%, transparent 96%);
+    opacity: .75; pointer-events: none;
+}
+.analytics-panel:hover, .bcard:hover, .panel:hover {
+    border-color: var(--wolf-border-hi);
+    box-shadow: 0 2px 8px rgba(0,0,0,.32), 0 22px 56px rgba(8,4,20,.60),
+                inset 0 1px 0 rgba(255,255,255,.10);
+}
+
+/* Section titles pick up the accent instead of being another grey line. */
+.analytics-title { color: #c8bcff; }
+
+/* Nav: the active item gets a real accent wash, not just a brighter grey. */
+.wsb-item.on {
+    background: linear-gradient(90deg, rgba(167,139,250,.22), rgba(167,139,250,.04));
+}
+.wsb-item.on::before { background: linear-gradient(180deg, var(--wolf-blue), var(--wolf-violet)); }
+.wsb-sidebar { backdrop-filter: blur(18px) saturate(120%);
+               -webkit-backdrop-filter: blur(18px) saturate(120%); }
+
+/* Scrollbars — the last bit of default-browser grey on the page. */
+* { scrollbar-color: rgba(167,139,250,.45) transparent; scrollbar-width: thin; }
+*::-webkit-scrollbar { height: 8px; width: 8px; }
+*::-webkit-scrollbar-track { background: transparent; }
+*::-webkit-scrollbar-thumb {
+    background: linear-gradient(180deg, rgba(41,221,255,.45), rgba(167,139,250,.45));
+    border-radius: 999px;
+}
+*::-webkit-scrollbar-thumb:hover { background: rgba(167,139,250,.75); }
+
+/* Respect the OS setting — the hover lift and transitions are decoration. */
+@media (prefers-reduced-motion: reduce) {
+    .analytics-panel, .stat-card, .bcard, .panel, .entries-panel, .card {
+        transition: none;
+    }
+}
