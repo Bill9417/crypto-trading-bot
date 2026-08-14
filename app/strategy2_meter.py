@@ -144,11 +144,23 @@ def compute_meter(ohlcv) -> dict:
         e50 = calculate_ema(closes, 50)
         e100 = calculate_ema(closes, 100)
         e200 = calculate_ema(closes, 200)
-        if None not in (e20, e50, e100, e200):
+        # ABSTAIN, never vote neutral. calculate_ema returns None when the
+        # series is shorter than the span, and `states` is initialised to 0 —
+        # so leaving `speaks` True here casts a real "neutral" vote at full
+        # weight for a reading that does not exist. That is the same
+        # fabricated-zero mistake as nz()/fillna(0): it asserts "this factor
+        # saw no bias" when the truth is "this factor saw nothing", and it
+        # drags the score toward 50 while diluting every factor that DID read.
+        # Measured: a 760-bar uptrend cut to 400 scored 82 instead of 87,
+        # purely from the tunnel voting neutral on an EMA676 it could not
+        # compute. `volume` below already did this correctly.
+        speaks["ema_stack"] = None not in (e20, e50, e100, e200)
+        if speaks["ema_stack"]:
             if e20 > e50 > e100 > e200:
                 states["ema_stack"] = 1
             elif e20 < e50 < e100 < e200:
                 states["ema_stack"] = -1
+        speaks["price_ema200"] = e200 is not None
         if e200 is not None:
             # Pine: `close > emaTrend ? 1 : close < emaTrend ? -1 : 0` — exact
             # equality is 0, not bearish.
@@ -160,10 +172,13 @@ def compute_meter(ohlcv) -> dict:
             states["smc"] = int(smc._swing_trend(np.asarray(closes), sh, sl))
         except Exception:  # noqa: BLE001 — never let SMC break the meter
             states["smc"] = 0
+            speaks["smc"] = False        # failed to read ≠ read as neutral
 
         # Vegas EMA200 slope = sign of d/dt (SMA5 of EMA200).
         vegas = pd.Series(closes).ewm(span=200, adjust=False).mean().rolling(5).mean()
-        if len(vegas) >= 2 and pd.notna(vegas.iloc[-1]) and pd.notna(vegas.iloc[-2]):
+        speaks["vegas"] = (len(vegas) >= 2 and pd.notna(vegas.iloc[-1])
+                           and pd.notna(vegas.iloc[-2]) and n >= 200)
+        if speaks["vegas"]:
             diff = float(vegas.iloc[-1] - vegas.iloc[-2])
             states["vegas"] = 1 if diff > 0 else -1 if diff < 0 else 0
 
@@ -177,7 +192,8 @@ def compute_meter(ohlcv) -> dict:
         t_in_b = calculate_ema(closes, TUNNEL_INNER_B)
         t_out_a = calculate_ema(closes, TUNNEL_OUTER_A)
         t_out_b = calculate_ema(closes, TUNNEL_OUTER_B)
-        if None not in (t_in_a, t_in_b, t_out_a, t_out_b):
+        speaks["tunnel"] = None not in (t_in_a, t_in_b, t_out_a, t_out_b)
+        if speaks["tunnel"]:
             if price > max(t_in_a, t_in_b) and price > max(t_out_a, t_out_b):
                 states["tunnel"] = 1
             elif price < min(t_in_a, t_in_b) and price < min(t_out_a, t_out_b):

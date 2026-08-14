@@ -341,7 +341,47 @@ def test_volume_abstains_until_its_window_fills():
     r = M.compute_meter(_series(100, 100.0, 0.6))
     vol = next(f for f in r["factors"] if f["key"] == "volume")
     assert vol["abstain"] is True
-    assert r["active_weight"] == 85           # 100 minus trendline (5) and volume (10)
+    # The invariant, not a fixed number. This asserted 85 — "100 minus
+    # trendline and volume" — which quietly encoded the OPPOSITE of the rule
+    # in the docstring above for every other factor: at 100 bars EMA200, the
+    # tunnel and Vegas cannot be computed either, and they were voting neutral
+    # at full weight. Pinning the sum keeps the two in step however many
+    # factors can read.
+    assert r["active_weight"] == sum(f["weight"] for f in r["factors"]
+                                     if not f["abstain"])
+
+
+def test_a_factor_that_cannot_be_computed_abstains_rather_than_voting_neutral():
+    """`states` initialises to 0 and calculate_ema returns None below its span,
+    so any factor left `speaks` on a missing reading casts a real neutral vote
+    for something it never saw — dragging the score toward 50 AND diluting the
+    factors that did read. Same fabricated-zero mistake as nz()/fillna(0).
+
+    Measured when this was found: a 760-bar uptrend cut to 400 scored 82 rather
+    than 87, entirely from the tunnel voting neutral on an EMA676 it could not
+    compute."""
+    rows, p = [], 100.0
+    for i in range(760):
+        p *= 1.002
+        rows.append([i, p * 0.999, p * 1.004, p * 0.996, p, 1000])
+
+    short = M.compute_meter(rows[-400:])           # EMA676 impossible
+    tunnel = next(f for f in short["factors"] if f["key"] == "tunnel")
+    assert tunnel["abstain"] is True, "tunnel voted on an EMA it could not compute"
+
+    full = M.compute_meter(rows)
+    assert next(f for f in full["factors"] if f["key"] == "tunnel")["abstain"] is False
+    # Abstaining must not be silently identical to voting neutral.
+    assert short["active_weight"] < full["active_weight"]
+
+
+def test_every_ema_backed_factor_abstains_on_thin_history():
+    """One list, so a factor added later is not quietly exempt."""
+    thin = M.compute_meter(_series(120, 100.0, 0.6))
+    st = {f["key"]: f["abstain"] for f in thin["factors"]}
+    for key in ("ema_stack", "price_ema200", "vegas", "tunnel", "volume"):
+        assert st[key] is True, f"{key} voted with fewer bars than it needs"
+    assert thin["score"] == 50 or thin["active_weight"] > 0
 
 
 def test_zero_volume_series_abstains_rather_than_dividing_by_zero():
