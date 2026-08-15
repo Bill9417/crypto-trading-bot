@@ -128,3 +128,70 @@ def test_timeout_setup_is_not_rendered_as_a_stop_out(monkeypatch):
     _stub(monkeypatch, view)
     html = _get().get_data(as_text=True)
     assert "到期出場" in html and "已停損" not in html
+
+
+# ── the public pages cannot see app.css (2026-08-15) ────────────────────────
+def test_public_pages_do_not_reference_tokens_they_cannot_see():
+    """/tw and /us ship SELF-CONTAINED — they include _public_style.html and
+    deliberately never link app.css, so a cold phone open is one request.
+
+    That means any `var(--token)` naming something defined only in app.css
+    resolves to NOTHING here. The site-wide restyle pointed --bg at
+    --wolf-slate and the background-image at --page-bg-glow; both evaporated,
+    `background: var(--bg)` became invalid, and the body fell back to WHITE
+    while --text stayed #f2f6fb. White page, near-white text: the title, the
+    index value and the whole watchlist were unreadable — on the only two
+    pages opened from a LINE link by someone who will not file a bug report.
+
+    Nothing failed. Every test passed. It is only visible to an eye.
+    """
+    import os
+    import re
+    here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    src = open(os.path.join(here, "templates", "_public_style.html"),
+               encoding="utf-8").read()
+    # Strip CSS and Jinja comments FIRST. Without this the scan matches the
+    # prose explaining the bug — "LITERAL, not var(--wolf-slate)" — and reports
+    # the very thing that was fixed. This repo has shipped four tests that
+    # matched their own commentary; this is the shape of that mistake.
+    src = re.sub(r"/\*.*?\*/", " ", src, flags=re.S)
+    src = re.sub(r"\{#.*?#\}", " ", src, flags=re.S)
+    defined = set(re.findall(r"^\s*(--[a-z0-9-]+)\s*:", src, re.M))
+    used = set(re.findall(r"var\(\s*(--[a-z0-9-]+)", src))
+    dangling = sorted(used - defined)
+    assert not dangling, (
+        f"_public_style.html uses {dangling} but does not define them, and "
+        f"these pages never load app.css — they will resolve to nothing")
+
+
+def test_the_public_background_still_matches_the_rest_of_the_site():
+    """The values are mirrored from app.css by hand (they must be — see
+    above), so pin the one that decides whether the page is dark. A restyle
+    that moves the site to a new base colour and forgets these two pages
+    leaves them on the old one, which is the subtler half of the same bug."""
+    import os
+    import re
+    here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    pub = open(os.path.join(here, "templates", "_public_style.html"),
+               encoding="utf-8").read()
+    css = open(os.path.join(here, "static", "app.css"), encoding="utf-8").read()
+    shared = re.search(r"--wolf-slate:\s*(#[0-9a-fA-F]{3,8})", css)
+    assert shared, "could not find --wolf-slate in app.css"
+    mine = re.search(r"--bg:\s*(#[0-9a-fA-F]{3,8})", pub)
+    assert mine, "_public_style.html no longer sets --bg to a literal colour"
+    assert mine.group(1).lower() == shared.group(1).lower(), (
+        f"public pages are on {mine.group(1)} while the site moved to "
+        f"{shared.group(1)}")
+
+
+def test_public_pages_never_link_app_css():
+    """If this ever changes the two tests above become unnecessary — and
+    keeping them would then be misleading. Fail loudly so the decision is
+    made deliberately rather than discovered."""
+    import os
+    here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    for page in ("tw.html", "us.html"):
+        html = open(os.path.join(here, "templates", page), encoding="utf-8").read()
+        assert "app.css" not in html, (
+            f"{page} now links app.css — the self-contained assumption behind "
+            f"_public_style.html's inlined tokens no longer holds")
