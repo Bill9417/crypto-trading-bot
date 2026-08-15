@@ -276,6 +276,61 @@ MEASURED = {"n": 163, "wr": 39.3, "exp": 0.081, "ci": (-0.12, 0.29), "pf": 1.14,
             "blue_n": 140, "blue_exp": 0.137, "blue_ci": (-0.08, 0.36),
             "window": "60 symbols × ~10.4 days, one regime"}
 
+# ── OUT-OF-SAMPLE re-measurement, 2026-08-15 ────────────────────────────────
+# A second, non-overlapping window: ~29 days × 68 symbols, fresh candles, same
+# detector, same plan(), same strategy4_outcomes.settle as production.
+#
+#   flip alone, production universe   n=192  WR 41.1%  +0.169R ±0.199  PF 1.30
+#
+# So the interval STILL straddles zero — the original n=163 verdict holds and
+# the pattern remains a hypothesis. Two things worth knowing before anyone
+# reads that +0.169 as encouraging:
+#
+#  · CONCENTRATION. Top 3 of 40 symbols carry 74% of the total R. Removing the
+#    single best symbol drops it to +0.122R ±0.205. An "edge" that one symbol
+#    can delete is a sample artefact until proven otherwise.
+#  · THE BLUE-SKY SPLIT DID NOT REPLICATE. Its most interesting original claim
+#    (blue sky +0.137 vs ceiling −0.261) inverts here: blue-sky-only scores
+#    +0.106R against +0.169R for all flips. Do not gate on blue_sky.
+#
+# Including TradFi perps would have read n=323 +0.170R with the CI EXCLUDING
+# zero — a false positive produced entirely by symbols production never trades
+# (EXCLUDE_TRADFI_PERPS). Any future measurement here must filter the universe
+# to what actually gets alerted.
+MEASURED_OOS = {"n": 192, "wr": 41.1, "exp": 0.169, "ci": (-0.03, 0.37),
+                "pf": 1.30, "top3_share": 0.74,
+                "drop_best_exp": 0.122, "drop_best_ci": (-0.08, 0.33),
+                "window": "68 symbols × ~29 days, 2026-07→08"}
+
+# ── OI confirmation: MEASURED, and it does NOT work ─────────────────────────
+# Asked for directly ("resistance to support and OI should have a bonus flag").
+# Tested on the sample above, where every flip carries the OI reading the crowd
+# radar would have computed for it (same SPAN_BARS, same percentile method):
+#
+#   flip alone                 n=192  +0.169R ±0.199
+#   + OI percentile >=80       n= 93  −0.072R ±0.276     WORSE than baseline
+#   + OI percentile >=90       n= 63  −0.033R ±0.339     WORSE than baseline
+#   + OI percentile >=95       n= 39  +0.221R ±0.456     n too small, CI huge
+#   + OI merely rising         n=123  +0.270R ±0.257
+#
+# The percentile ladder is NOT monotonic (−0.072 → −0.033 → +0.221 → −0.009 at
+# 98). A real effect strengthens as the gate tightens; this wanders, which is
+# the signature of noise being sliced.
+#
+# The one cut that looked alive — "OI merely rising" — fails every robustness
+# check that matters:
+#   drop best symbol   +0.213R ±0.265   straddles zero
+#   drop top-3 symbols +0.129R ±0.284   straddles zero
+#   LIFT vs the flips it REJECTS: +0.281R ±0.402 — indistinguishable from zero,
+#   and picked-minus-unpicked is the only comparison that judges a FILTER.
+#
+# Roughly eight variants were tried; one clearing p<0.05 by chance is expected.
+# So OI is attached to the alert as CONTEXT and gates nothing. If it ever earns
+# the right to be a gate, that will be because flip_outcomes scored it forward,
+# not because this table was re-sliced.
+MEASURED_OI = {"lift": 0.281, "lift_ci": (-0.12, 0.68), "verdict": "no effect",
+               "tested": "pctile 80/90/95/98, rising, radar floor"}
+
 COOLDOWN_SEC = float(os.getenv("BFLIP_COOLDOWN_SEC", "14400"))
 
 
@@ -284,6 +339,8 @@ def format_alert(sym: str, sig: dict, pl: dict) -> str:
     parse_mode='HTML' (strategy4 shipped without it and Telegram printed the
     tags as text)."""
     import tg_format as F
+    import crowd_radar as CR
+    OI_ZH = CR.READ_ZH
     base = sym.split("/")[0]
     room = ("上方無壓（前高已全部突破）" if sig["blue_sky"]
             else f"最近壓力還有 {sig['room_pct']:.1f}%")
@@ -294,7 +351,18 @@ def format_alert(sym: str, sig: dict, pl: dict) -> str:
                        f"{F.fmt_price(sig['zone_top'])}"),
             ("測試次數", f"{sig['touches']} 次"),
             ("上方空間", room)]
-    return "\n".join([
+    # OI CONTEXT — never a gate. Measured (MEASURED_OI): the lift over the
+    # flips an OI filter would have REJECTED is +0.281R ±0.402, i.e. nothing,
+    # and tightening the percentile made it worse rather than better. It is
+    # shown because it is real information about who is positioned, and it is
+    # labelled 參考 so it is not read as confirmation.
+    oi = sig.get("oi") or {}
+    if oi.get("oi_pct") is not None:
+        rows.append(("持倉量 2h", f"{oi['oi_pct']:+.1f}%"
+                                  f"{'  第%d百分位' % round(oi['pctile']) if oi.get('pctile') is not None else ''}"))
+        if oi.get("state"):
+            rows.append(("資金動向", OI_ZH.get(oi["state"], oi["state"])))
+    return "\n".join(x for x in [
         F.headline("🚀 壓力翻支撐", base, "做多 LONG"),
         F.pre_table(rows),
         f"\n突破後回踩 {sig['zone_top']:.6g} 沒破，舊壓力變新支撐。",
@@ -303,10 +371,21 @@ def format_alert(sym: str, sig: dict, pl: dict) -> str:
         f"📐 實測 {MEASURED['n']} 筆：勝率 {MEASURED['wr']:.0f}%、"
         f"期望值 {MEASURED['exp']:+.2f}R，信賴區間 "
         f"[{MEASURED['ci'][0]:+.2f}, {MEASURED['ci'][1]:+.2f}] <b>仍然包含 0</b>。",
-        "⚠️ 只測過約 10 天、一種行情 —— 這是「形態偵測」，不是已驗證的策略。"
+        # Stated because the OI row above invites exactly this inference.
+        ("📊 持倉量只是<b>參考</b>，不是加分條件 —— 實測加上 OI 條件後，"
+         "跟沒加的差距是 +0.28R ±0.40（等於沒差別），把門檻調更嚴反而更差。"
+         if (sig.get("oi") or {}).get("oi_pct") is not None else ""),
+        # Second, independent window. Reported because "we tested it again and
+        # it still straddles zero" is a stronger warning than the first alone.
+        f"🔁 另一段 29 天、68 檔的獨立重測："
+        f"{MEASURED_OOS['n']} 筆、期望值 {MEASURED_OOS['exp']:+.2f}R，"
+        f"<b>信賴區間一樣包含 0</b>；而且獲利集中在 3 檔幣"
+        f"（占 {MEASURED_OOS['top3_share']*100:.0f}%），拿掉最好的一檔就掉到 "
+        f"{MEASURED_OOS['drop_best_exp']:+.2f}R。",
+        "⚠️ 兩段行情都測不出穩定優勢 —— 這是「形態偵測」，不是已驗證的策略。"
         "本專案量過 48 組高勝率設定有 46 組在賠錢。自己判斷，不會自動下單。",
         F.bybit_line(base),
-    ])
+    ] if x)
 
 
 def consider(sym: str, ohlcv: list, state: dict, now: float) -> dict:
@@ -329,4 +408,28 @@ def consider(sym: str, ohlcv: list, state: dict, now: float) -> dict:
     if not pl:
         return {}
     state.setdefault("last", {})[sym] = now
-    return {"symbol": sym, "base": sym.split("/")[0], **sig, "plan": pl}
+    return {"symbol": sym, "base": sym.split("/")[0], **sig, "plan": pl,
+            "oi": oi_context(sym, closed)}
+
+
+def oi_context(sym: str, closed: list) -> dict:
+    """Who is positioned behind this flip. CONTEXT ONLY — see MEASURED_OI.
+
+    One extra API call, and only on a fire: flips are rare (a handful per
+    sweep), so this cannot become the rate-limit incident this repo already
+    had. Any failure returns {} — a missing reading must never cost the alert,
+    and it must never be filled with a 0 that reads as "OI did not move".
+    """
+    try:
+        import crowd_radar as CR
+        # Both series come from the SAME rows, so they cannot misalign. Pairing
+        # OI against candle closes would silently offset the two whenever the
+        # OI endpoint skips a bar.
+        oi_series, px_series = CR.oi_history(
+            sym.replace("/", "").replace(":USDT", ""))
+        if len(oi_series) < CR.SPAN_BARS + 2:
+            return {}
+        a = CR.assess(oi_series, px_series)
+        return {k: a.get(k) for k in ("oi_pct", "px_pct", "pctile", "state")}
+    except Exception:  # noqa: BLE001 — context is a bonus, never a blocker
+        return {}

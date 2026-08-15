@@ -260,3 +260,59 @@ def test_two_open_flips_on_one_symbol_collapse_to_one():
     v = F.web_view(store)
     assert len(v["open"]) == 1
     assert v["open"][0]["fired_ts"] == 9        # newest kept
+
+
+# ── OI context is context, never a gate (2026-08-15) ────────────────────────
+def test_oi_context_never_changes_which_flips_fire():
+    """Asked for as a "bonus flag". Measured on 192 production-universe flips
+    over 29 days: gating on OI percentile made it WORSE (>=80: -0.072R vs
+    +0.169R baseline), the ladder was non-monotonic, and the one live-looking
+    cut had a lift over the flips it REJECTED of +0.281R +/-0.402 — noise.
+
+    So it decorates the alert and decides nothing. This pins that: the same
+    candles must produce the same fire/no-fire verdict whatever OI says."""
+    import breakout_flip as B
+    rows, p = [], 100.0
+    for i in range(200):
+        p += 0.05
+        rows.append([i, p, p + 0.4, p - 0.4, p, 1000.0])
+    st = {}
+    with_oi = B.consider("X/USDT:USDT", rows, dict(st), 1000.0)
+    B.oi_context = lambda *a, **k: {}          # OI unavailable
+    without = B.consider("X/USDT:USDT", rows, dict(st), 1000.0)
+    assert bool(with_oi) == bool(without), "OI availability changed the verdict"
+
+
+def test_a_failed_oi_lookup_costs_the_context_not_the_alert(monkeypatch):
+    """A dead endpoint must not swallow the signal."""
+    import breakout_flip as B
+    import crowd_radar as CR
+    monkeypatch.setattr(CR, "oi_history",
+                        lambda *a, **k: (_ for _ in ()).throw(RuntimeError("down")))
+    assert B.oi_context("X/USDT:USDT", []) == {}
+
+
+def test_a_missing_oi_reading_is_absent_not_zero():
+    """A 0% OI change asserts "positioning did not move". Absent means "we did
+    not read it". Same fabricated-zero rule as everywhere else in this repo."""
+    import breakout_flip as B
+    import crowd_radar as CR
+    orig = CR.oi_history
+    CR.oi_history = lambda *a, **k: ([], [])
+    try:
+        assert B.oi_context("X/USDT:USDT", []) == {}
+    finally:
+        CR.oi_history = orig
+
+
+def test_the_alert_does_not_present_oi_as_confirmation():
+    """The row invites exactly that inference, so the measured non-result is
+    stated next to it."""
+    import breakout_flip as B
+    sig = {"blue_sky": True, "room_pct": None, "zone_top": 1.02,
+           "zone_bottom": 1.0, "touches": 3, "price": 1.05,
+           "oi": {"oi_pct": 7.2, "pctile": 99.0, "state": "longs_opening"}}
+    pl = {"entry": 1.05, "sl": 0.998, "tp": 1.15, "rr": 2.0, "stop_pct": 4.9}
+    txt = B.format_alert("X/USDT:USDT", sig, pl)
+    assert "持倉量" in txt
+    assert "參考" in txt and "不是加分條件" in txt
