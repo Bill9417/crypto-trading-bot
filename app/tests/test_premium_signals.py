@@ -65,8 +65,18 @@ def test_conviction_handles_literal_zero_score():
 
 
 # ── digest bar ───────────────────────────────────────────────────────────────
-def test_digest_drops_counter_btc_and_low_conviction():
-    assert not S2S.digest_worthy({"direction": "long", "score": 90, "against": True})
+def test_digest_drops_low_conviction_but_no_longer_hides_counter_btc():
+    """The counter-BTC half of this was reversed on 2026-08-16.
+
+    Dropping those rows combined with the ⭐ gate's alignment requirement to
+    close BOTH alert paths at once: through a BTC bear regime every long, score
+    100 included, produced no instant alert and no digest row. BOME fired LONG
+    at 100 on 08-15 21:13 and nothing was sent, 3.5h before it moved 16%.
+
+    And the suppression bought nothing measurable — 22,631 scored signals put
+    aligned at −0.074R against counter-trend's −0.103R, a lift of +0.029R
+    ±0.038. The conviction bar below is a different claim and still stands."""
+    assert S2S.digest_worthy({"direction": "long", "score": 90, "against": True})
     assert not S2S.digest_worthy({"direction": "long",
                                   "score": config.STRATEGY2_DIGEST_MIN_CONV - 1})
     assert S2S.digest_worthy({"direction": "long",

@@ -589,7 +589,14 @@ STRATEGY2_PREMIUM_ALERTS_PER_SWEEP = int(os.getenv("STRATEGY2_PREMIUM_ALERTS_PER
 # short score ≤ 100−X) AND not fighting the BTC regime. Signals below the bar
 # still show on the /strategy2 page — they just don't spam the topic.
 STRATEGY2_DIGEST_MIN_CONV = int(os.getenv("STRATEGY2_DIGEST_MIN_CONV", "75"))
-STRATEGY2_DIGEST_SKIP_COUNTER_BTC = _env_bool("STRATEGY2_DIGEST_SKIP_COUNTER_BTC", True)
+# Default flipped True→False on 2026-08-16 (owner's request, after BOME).
+# Together with the ⭐ gate's alignment requirement this closed BOTH alert paths
+# at once: through a BTC bear regime EVERY long — score 100 included — got no
+# instant alert and no digest row. Not a late notification, no notification.
+# And the suppression bought nothing measurable: over 22,631 scored signals,
+# aligned −0.074R vs counter-trend −0.103R, lift +0.029R ±0.038.
+# Set to true to go back to hiding them.
+STRATEGY2_DIGEST_SKIP_COUNTER_BTC = _env_bool("STRATEGY2_DIGEST_SKIP_COUNTER_BTC", False)
 # Minimum stop distance as a fraction of price. The replay caught USDC firing
 # 82 signals in 60 days with a 0.002%-of-price stop — fees alone were ~55R on
 # that plan. A stop tighter than this floor is a fee-burn, not a trade: the

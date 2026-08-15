@@ -330,3 +330,64 @@ def test_insufficient_free_margin_fails_open(monkeypatch):
     monkeypatch.setattr(E, "account_snapshot",
                         lambda *a, **k: {"ok": True, "balance": {"available": None}})
     assert E.insufficient_free_margin(1.5) == (False, "")
+
+
+# ── counter-trend signals are shown, not hidden (2026-08-16) ────────────────
+def test_a_counter_trend_signal_reaches_the_digest():
+    """Through a BTC bear regime every long is `against`, and the ⭐ gate's
+    alignment requirement already blocks its instant alert. With the digest
+    also dropping it, BOTH paths closed and the signal was silent — which is
+    how BOME fired LONG at score 100 on 2026-08-15 21:13 and nothing was sent,
+    3.5h before it moved 16%."""
+    import strategy2_scanner as SC
+    sig = {"direction": "long", "score": 100, "against": True, "premium": False}
+    assert SC.digest_worthy(sig) is True
+
+
+def test_counter_trend_is_a_separate_section_not_mixed_in():
+    """Sorted in beside the aligned rows it would lose the one fact that
+    distinguishes it — and these were invisible until now precisely because
+    nobody had to look at them."""
+    import strategy2_scanner as SC
+    txt = SC._digest_text([
+        {"base": "AAA", "direction": "long", "score": 90, "price": 1.0,
+         "against": False},
+        {"base": "BOME", "direction": "long", "score": 100, "price": 0.0008,
+         "against": True},
+    ])
+    assert "逆勢" in txt
+    assert txt.index("🟢 做多") < txt.index("逆勢")
+    assert "AAA" in txt and "BOME" in txt
+
+
+def test_the_counter_trend_section_states_its_measured_expectancy():
+    """It exists at the owner's request AGAINST the measurement, so the number
+    travels with it. Without that the section reads as a recommendation."""
+    import strategy2_scanner as SC
+    txt = SC._digest_text([{"base": "BOME", "direction": "long", "score": 100,
+                            "price": 0.0008, "against": True}])
+    assert "-0.10R" in txt or "−0.10R" in txt
+    assert "22,631" in txt
+
+
+def test_no_counter_trend_section_when_there_is_none():
+    """A permanent warning nobody needs is noise that trains people to skip."""
+    import strategy2_scanner as SC
+    txt = SC._digest_text([{"base": "AAA", "direction": "long", "score": 90,
+                            "price": 1.0, "against": False}])
+    assert "逆勢" not in txt
+
+
+def test_the_old_silence_is_still_one_env_var_away():
+    """The measurement says the filter bought nothing, but it is the owner's
+    call — reverting must not need a code change."""
+    import importlib
+    import os
+    import config
+    os.environ["STRATEGY2_DIGEST_SKIP_COUNTER_BTC"] = "true"
+    try:
+        importlib.reload(config)
+        assert config.STRATEGY2_DIGEST_SKIP_COUNTER_BTC is True
+    finally:
+        del os.environ["STRATEGY2_DIGEST_SKIP_COUNTER_BTC"]
+        importlib.reload(config)

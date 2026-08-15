@@ -188,6 +188,20 @@ def classify_signal(direction: str, score, adx, regime: str) -> dict:
 def digest_worthy(sig: dict) -> bool:
     """Does this signal clear the topic's digest bar? (Everything still
     shows on the /strategy2 page — this only limits Telegram noise.)"""
+    # Counter-trend signals used to be DROPPED here, and combined with the ⭐
+    # gate's alignment requirement that closed both alert paths at once: while
+    # BTC sits in a bear regime, every long — including score 100 — produced no
+    # immediate alert AND no digest row. Silence, not lateness. That is how
+    # BOME fired LONG at score 100 on 2026-08-15 21:13 and nothing was sent,
+    # three and a half hours before it moved 16%.
+    #
+    # They are now shown in their own section rather than suppressed, because
+    # the suppression was not earning anything: measured over 22,631 scored
+    # signals, aligned is -0.074R and counter-trend is -0.103R, a lift of
+    # +0.029R ±0.038 — indistinguishable from zero. A filter that removes half
+    # the output for no measurable gain is just a blindfold.
+    #
+    # Set STRATEGY2_DIGEST_SKIP_COUNTER_BTC=true to restore the old silence.
     if sig.get("against") and config.STRATEGY2_DIGEST_SKIP_COUNTER_BTC:
         return False
     return _conviction(sig.get("direction"), sig.get("score")) >= \
@@ -307,8 +321,18 @@ def _digest_text(sigs: list) -> str:
         if len(rows) > DIGEST_MAX_ROWS:
             lines.append(f"…還有 {len(rows) - DIGEST_MAX_ROWS} 個 (完整清單見網頁)")
 
-    _side("🟢 做多", longs)
-    _side("🔴 做空", shorts)
+    # Counter-trend gets its OWN section, not a merge. Sorting it in beside the
+    # aligned rows would hide the one fact that distinguishes them, and these
+    # were invisible until now precisely because nobody had to look at them.
+    _side("🟢 做多", [s for s in longs if not s.get("against")])
+    _side("🔴 做空", [s for s in shorts if not s.get("against")])
+    counter = [s for s in longs + shorts if s.get("against")]
+    if counter:
+        _side("⚠️ 逆勢 (與 BTC 方向相反)", counter)
+        # The number is stated because this section exists at the owner's
+        # request against the measurement, not because of it.
+        lines.append("逆勢訊號實測 −0.10R/筆 (22,631 筆)，跟順勢的 −0.07R "
+                     "沒有統計差異 —— 兩邊都是負的。這裡只是不再幫你隱藏。")
     lines.append("\n⭐ = 精選 (信心+BTC同向+趨勢確認) · 僅供參考，非投資建議")
     return "\n".join(lines)
 
