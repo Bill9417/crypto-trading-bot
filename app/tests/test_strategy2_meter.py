@@ -193,6 +193,12 @@ _SUPPLIERS = {
     "strategy2_scanner": "CANDLES",
     "strategy4": "CANDLES",
     "coin_analysis": "K15_CANDLES",
+    # Offline, but NOT exempt. This was excluded on the reasoning that a replay
+    # "slices its own history" — it slices to WARMUP, which was the same stale
+    # 400. A starved research tool reports zero fires and reads as "the filter
+    # finds nothing" instead of "the tool is broken", which is the more
+    # expensive failure: it produces confident wrong answers about strategy.
+    "research_s2_winrate": "WARMUP",
 }
 
 
@@ -232,7 +238,6 @@ def test_the_consumer_list_is_complete():
             if fname == "compute_signal":
                 callers.add(fn[:-3])
     callers -= {"strategy2_meter"}          # the definition itself
-    callers -= {"research_s2_winrate"}      # offline replay, slices its own history
     missing = callers - set(_SUPPLIERS)
     assert not missing, (
         f"modules call compute_signal but declare no candle supply: "

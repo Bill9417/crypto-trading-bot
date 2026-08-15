@@ -58,7 +58,16 @@ STATE_FILE = os.path.join(_DIR, "crowd_radar_state.json")
 
 BASE = "https://fapi.binance.com"
 PERIOD = "15m"
-HIST = 500                       # max the endpoint allows: 5.2 days at 15m
+# 500 bars = 5.2 days at 15m. NOT the endpoint's limit — that claim was wrong
+# and it mattered. Measured 2026-08-15: limit=1000 is served (1500 returns
+# empty), and a startTime/endTime window reaches ~30 days back (45 returns
+# empty). So OI history CAN be replayed for about a month, and the belief that
+# it could not is why no OI signal here has ever been backtested. Left at 500
+# because widening the percentile window changes live alerting and there is
+# still no measured outcome to justify a direction — see the
+# rank-is-not-a-p-value note above. Raise it deliberately, with a measurement,
+# not as a side effect.
+HIST = 500
 SPAN_BARS = int(os.getenv("CROWD_SPAN_BARS", "8"))        # 8 × 15m = 2h
 
 # Top 2% of this symbol's own 2h OI moves. Deliberately not "tuned": there is

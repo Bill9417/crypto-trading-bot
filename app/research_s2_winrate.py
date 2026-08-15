@@ -52,7 +52,15 @@ BASELINE_FILE = os.path.join(CACHE_DIR, "baseline_results.json")
 
 DAYS = int(os.getenv("RS2_DAYS", "60"))
 TOP_N = int(os.getenv("RS2_TOP_N", "60"))
-WARMUP = 400                      # candles the meter needs
+# DERIVED, not a literal. This said 400 "candles the meter needs" and was wrong
+# from 2026-08-11, when the outer tunnel moved to EMA676 and the meter began
+# needing 688 — the same drift that silently disarmed the live scanner for
+# three days. A replay window below the requirement makes compute_signal take
+# its insufficient-history early return on every bar, so the harness reports
+# ZERO fires and reads as "this filter finds nothing" rather than "this tool is
+# broken". A research tool that fails that way is worse than no tool.
+import strategy2_meter as _M
+WARMUP = max(400, _M.SIGNAL_MIN_CANDLES + 20)
 TF_SEC = 900                      # 15m
 EVAL_BARS = 48 * 4                # 48h of 15m bars
 COOLDOWN_SEC = 14400              # scanner's 4h per symbol+direction
