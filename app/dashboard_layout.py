@@ -88,6 +88,19 @@ def normalise(saved: dict) -> dict:
     return {"order": order, "hidden": sorted(set(hidden), key=CARD_IDS.index)}
 
 
+# The site-wide layout an admin publishes for everyone who cannot edit one.
+#
+# Only admins may edit (owner's decision, 2026-08-14), which left non-admins
+# permanently on the built-in order with no way to change it and no way to
+# benefit from the owner's arrangement — the curation reached nobody. An admin
+# save now also writes here, and anyone without a personal layout reads it.
+#
+# Safe as a reserved key because _key() derives from flask_login's get_id(),
+# which is "<integer id>|<token>" — a numeric id can never collide with this.
+# Pinned by test_the_site_default_key_cannot_collide_with_a_real_user.
+DEFAULT_KEY = "__site_default__"
+
+
 def _key(user_id) -> str:
     """The stable half of a user identity.
 
@@ -119,33 +132,68 @@ def _read_all() -> dict:
     return out
 
 
+def _write_all(allof: dict) -> None:
+    tmp = f"{STORE_FILE}.{os.getpid()}.tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(allof, f)
+    os.replace(tmp, STORE_FILE)
+
+
 def load(user_id) -> dict:
-    """One user's layout, always valid."""
-    return normalise(_read_all().get(_key(user_id)) or {})
+    """One user's layout: their own if they have one, else what the admin
+    published, else the built-in order.
+
+    The fallback is what makes admin-only editing coherent. Without it a
+    non-admin could never see anything but CARDS order, no matter what the
+    owner arranged.
+    """
+    allof = _read_all()
+    mine = allof.get(_key(user_id))
+    if mine:
+        return normalise(mine)
+    return normalise(allof.get(DEFAULT_KEY) or {})
 
 
-def save(user_id, layout: dict) -> dict:
-    """Persist and return what was actually stored (normalised)."""
+def save(user_id, layout: dict, is_admin: bool = False) -> dict:
+    """Persist and return what was actually stored (normalised).
+
+    An admin save writes TWICE: to their own slot, and to the site default that
+    everyone without a personal layout reads. Both, not just the shared one —
+    an admin who later stops being one must not lose their arrangement, and
+    keeping the personal copy means the two can diverge later without a
+    migration.
+    """
     clean = normalise(layout)
     with _lock:
         allof = _read_all()
         allof[_key(user_id)] = clean
-        tmp = f"{STORE_FILE}.{os.getpid()}.tmp"
-        with open(tmp, "w", encoding="utf-8") as f:
-            json.dump(allof, f)
-        os.replace(tmp, STORE_FILE)
+        if is_admin:
+            allof[DEFAULT_KEY] = clean
+        _write_all(allof)
     return clean
 
 
-def reset(user_id) -> dict:
+def reset(user_id, is_admin: bool = False) -> dict:
+    """Back to the built-in order.
+
+    For an admin this clears the published default too. Clearing only the
+    personal copy would leave every other user still looking at the layout the
+    admin just abandoned, with no control that removes it — "回預設" has to mean
+    the same thing to the person pressing it as it does to everyone reading the
+    page.
+    """
     with _lock:
         allof = _read_all()
         allof.pop(_key(user_id), None)
-        tmp = f"{STORE_FILE}.{os.getpid()}.tmp"
-        with open(tmp, "w", encoding="utf-8") as f:
-            json.dump(allof, f)
-        os.replace(tmp, STORE_FILE)
+        if is_admin:
+            allof.pop(DEFAULT_KEY, None)
+        _write_all(allof)
     return default_layout()
+
+
+def site_default() -> dict:
+    """What a user with no layout of their own currently sees."""
+    return normalise(_read_all().get(DEFAULT_KEY) or {})
 
 
 def style_block(layout: dict) -> str:

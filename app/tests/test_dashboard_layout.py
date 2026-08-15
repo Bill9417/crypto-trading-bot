@@ -439,3 +439,64 @@ def test_the_route_is_guarded_by_the_shared_admin_decorator():
     head = block[:block.index("def api_dashboard_layout")]
     assert "@admin_required" in head
     assert "@login_required" not in head
+
+
+# ── the admin publishes one layout for everyone (2026-08-15) ────────────────
+def test_an_admin_save_becomes_the_layout_everyone_else_sees(tmp_path, monkeypatch):
+    """Only admins may edit. Without this the owner's arrangement reached
+    nobody: every non-admin sat on the built-in order permanently, with no
+    editor and no route access to change it."""
+    monkeypatch.setattr(L, "STORE_FILE", str(tmp_path / "l.json"))
+    L.save("4|tok", {"order": ["oi", "flips"], "hidden": ["news"]}, is_admin=True)
+    theirs = L.load("99|other")                    # never saved anything
+    assert theirs["order"][:2] == ["oi", "flips"]
+    assert theirs["hidden"] == ["news"]
+
+
+def test_a_non_admin_save_changes_nothing_for_anyone_else(tmp_path, monkeypatch):
+    """is_admin comes from the session; a non-admin write must stay private
+    even if it somehow reaches save()."""
+    monkeypatch.setattr(L, "STORE_FILE", str(tmp_path / "l.json"))
+    L.save("5|tok", {"order": ["news"], "hidden": []}, is_admin=False)
+    assert L.load("99|other")["order"] == list(L.CARD_IDS)   # untouched default
+
+
+def test_a_personal_layout_beats_the_published_one(tmp_path, monkeypatch):
+    """Other admins keep their own — the site default is a FALLBACK, not an
+    override, or publishing would silently overwrite colleagues' choices."""
+    monkeypatch.setattr(L, "STORE_FILE", str(tmp_path / "l.json"))
+    L.save("4|a", {"order": ["oi"], "hidden": []}, is_admin=True)
+    L.save("6|b", {"order": ["news"], "hidden": []}, is_admin=False)
+    assert L.load("6|b")["order"][0] == "news"
+    assert L.load("7|c")["order"][0] == "oi"
+
+
+def test_an_admin_reset_also_withdraws_the_published_layout(tmp_path, monkeypatch):
+    """Clearing only the personal copy would leave everyone else looking at a
+    layout the admin just abandoned, with no control that removes it."""
+    monkeypatch.setattr(L, "STORE_FILE", str(tmp_path / "l.json"))
+    L.save("4|a", {"order": ["oi"], "hidden": []}, is_admin=True)
+    assert L.load("99|x")["order"][0] == "oi"
+    L.reset("4|a", is_admin=True)
+    assert L.load("99|x")["order"] == list(L.CARD_IDS)
+
+
+def test_the_site_default_key_cannot_collide_with_a_real_user(tmp_path, monkeypatch):
+    """The reserved key is only safe while user ids stay numeric. get_id() is
+    "<int>|<token>", so _key() yields digits — but if that ever changes, a user
+    whose id keyed to the reserved string would silently become the site
+    default for everyone."""
+    monkeypatch.setattr(L, "STORE_FILE", str(tmp_path / "l.json"))
+    assert not L.DEFAULT_KEY.isdigit()
+    assert L._key(f"{L.DEFAULT_KEY}|tok") == L.DEFAULT_KEY, \
+        "a crafted id maps onto the reserved key — ids are no longer numeric"
+
+
+def test_the_published_layout_still_absorbs_new_cards(tmp_path, monkeypatch):
+    """normalise's append rule has to survive the fallback path too, or adding
+    a panel makes it invisible to every non-admin at once."""
+    monkeypatch.setattr(L, "STORE_FILE", str(tmp_path / "l.json"))
+    L.save("4|a", {"order": ["oi", "flips"], "hidden": []}, is_admin=True)
+    got = L.load("99|x")
+    assert set(got["order"]) == set(L.CARD_IDS)
+    assert len(got["order"]) == len(L.CARD_IDS)

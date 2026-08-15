@@ -2111,11 +2111,16 @@ def api_dashboard_layout():
     """
     import dashboard_layout
     uid = current_user.get_id()
+    # An admin's save also publishes the site default that every non-admin
+    # reads (owner's decision, 2026-08-15). Taken from the SESSION, never from
+    # the request body — the same rule as uid above.
+    is_admin = bool(getattr(current_user, "is_admin", False))
     try:
         if request.method == "DELETE":
-            lay = dashboard_layout.reset(uid)
+            lay = dashboard_layout.reset(uid, is_admin=is_admin)
         elif request.method == "POST":
-            lay = dashboard_layout.save(uid, request.get_json(silent=True) or {})
+            lay = dashboard_layout.save(uid, request.get_json(silent=True) or {},
+                                        is_admin=is_admin)
         else:
             lay = dashboard_layout.load(uid)
         return jsonify({"ok": True, **lay,

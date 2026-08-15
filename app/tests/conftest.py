@@ -222,6 +222,15 @@ def _no_live_side_effects(request, monkeypatch, tmp_path):
     monkeypatch.delenv("LINE_WEBHOOK_BASE", raising=False)
     monkeypatch.setattr(watchdog, "STATE_FILE", str(tmp_path / "watchdog.json"))
     monkeypatch.setattr(watchdog, "LOG_DIR", str(tmp_path / "logs"))
+    # LOCK_FILE too, and it is not merely tidiness. tick() now takes an
+    # exclusive flock so the two scanners cannot clobber each other's state
+    # (2026-08-15). Left pointing at the real path, a test calling tick()
+    # COMPETES WITH THE LIVE SCANNERS for it: whenever one is mid-sweep the
+    # test loses the race, tick() correctly returns [] having done nothing, and
+    # the assertion fails. That is a suite whose result depends on what the
+    # machine happens to be running — it passed for me and failed inside
+    # run_all.sh's preflight, which runs while the stack is still up.
+    monkeypatch.setattr(watchdog, "LOCK_FILE", str(tmp_path / "watchdog.lock"))
     # the signal scorecard is months of accumulated measurement — a test that
     # calls tick()/_save_state() must never be able to overwrite the real one
     import signal_outcomes

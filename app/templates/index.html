@@ -81,6 +81,10 @@
         .layout-btn:hover { color:var(--wolf-text); border-color:rgba(0,210,255,.35); }
         .layout-btn.on { background:var(--wolf-blue); color:#000; border-color:transparent; }
         .layout-hint { font-size:.66rem; color:var(--wolf-muted); }
+        /* Only while the editor is open — it is advice about the button you
+           are about to press, not a permanent notice on the dashboard. */
+        .layout-scope { display:none; font-size:.66rem; color:var(--wolf-amber,#f59e0b); }
+        body.layout-editing .layout-scope { display:inline; }
         .layout-list { display:none; flex-direction:column; gap:6px; width:100%;
                        background:var(--wolf-card); border:1px solid var(--wolf-border);
                        border-radius:12px; padding:10px; margin-bottom:12px; }
@@ -1565,6 +1569,11 @@
             <button class="layout-btn" id="layout-save" type="button" hidden>💾 儲存版面</button>
             <button class="layout-btn" id="layout-reset" type="button" hidden>↺ 回預設</button>
             <span class="layout-hint" id="layout-hint"></span>
+            <!-- The blast radius, stated where the button is. An admin save
+                 also publishes the layout every non-admin sees, and an editor
+                 that looks private while changing what other people's pages
+                 look like is how someone rearranges the site by accident. -->
+            <span class="layout-scope">👥 儲存後，所有一般使用者也會看到這個版面</span>
         </div>
         <div class="layout-list" id="layout-list"></div>
         {% endif %}
