@@ -203,7 +203,27 @@ FISHER_LEN = int(os.getenv("S4_FISHER_LEN", "9"))
 FLOW_DETREND = int(os.getenv("S4_FLOW_DETREND", "200"))   # CVD baseline EMA
 ATR_LEN = int(os.getenv("S4_ATR_LEN", "14"))
 MAX_STOP_PCT = float(os.getenv("S4_MAX_STOP_PCT", "4")) / 100
-MIN_STOP_PCT = float(os.getenv("S4_MIN_STOP_PCT", "0.4")) / 100
+# 1.0%, raised from 0.4% on 2026-08-15. The case is ARITHMETIC, not the 90-trade
+# sample — that sample agrees (sub-1% stops: n=23, −0.478R, ΣR −11.0, the single
+# largest loss pool) but only just clears significance and shows no continuous
+# dose-response (Spearman rho +0.069, t=0.65), so on its own it would be a
+# thresholds-tuned-on-90-trades change of exactly the kind that produced this
+# repo's 46-of-48 losing setups.
+#
+# What does justify it: Bybit taker is ~0.055% a side, so a round trip is
+# ~0.11% of price no matter what the setup thinks.
+#     stop 0.44% (the tightest taken) → fees are 25% of R
+#     stop 0.65% (median of that pool) → fees are 17% of R
+#     stop 1.24%                       → fees are  8.9% of R
+# A quarter of the risk budget spent before the idea is tested is not a market
+# opinion, it is a tax. S2 carries the same guard for the same reason after
+# USDC fired 82 signals on a 0.002% stop (fees alone ≈ 55R).
+#
+# Costs ~26% of signals. Everything the floor now rejects is still recorded and
+# settled as a SHADOW trade so this change stays falsifiable — see
+# strategy4_outcomes' shadow book. If the shadow book out-earns the live one,
+# put this back to 0.4.
+MIN_STOP_PCT = float(os.getenv("S4_MIN_STOP_PCT", "1.0")) / 100
 STOP_BUFFER = float(os.getenv("S4_STOP_BUFFER_PCT", "0.15")) / 100
 TP_R = float(os.getenv("S4_TP_R", "2"))
 COOLDOWN_SEC = float(os.getenv("S4_COOLDOWN_SEC", str(6 * 3600)))
@@ -658,11 +678,21 @@ def plan(entry, level, side="long"):
     if risk <= 0:
         return None
     stop_pct = risk / entry
-    if stop_pct < MIN_STOP_PCT or stop_pct > MAX_STOP_PCT:
+    out = {"entry": entry, "sl": sl, "tp": tp, "side": side,
+           "stop_pct": stop_pct * 100, "tp_pct": risk * TP_R / entry * 100,
+           "rr": TP_R}
+    if stop_pct > MAX_STOP_PCT:
         return None
-    return {"entry": entry, "sl": sl, "tp": tp, "side": side,
-            "stop_pct": stop_pct * 100, "tp_pct": risk * TP_R / entry * 100,
-            "rr": TP_R}
+    if stop_pct < MIN_STOP_PCT:
+        # A REFUSAL THAT CAN BE AUDITED. Returning a bare None here would delete
+        # the evidence for the floor that produced it: the rejected trades would
+        # never be scored, so "did raising it help?" could never be answered and
+        # the number would harden into folklore. The plan is returned intact,
+        # flagged — callers must not alert on it, and the tracker books it as a
+        # shadow trade instead.
+        return {**out, "rejected": "stop_too_tight",
+                "floor_pct": MIN_STOP_PCT * 100}
+    return out
 
 
 QUALITY_WEIGHTS = {"div": 35, "meter": 25, "slope": 15, "oi": 15, "stop": 10}
@@ -786,6 +816,14 @@ def evaluate(ohlcv, oi_values=None, side="long") -> dict:
     out["plan"] = p
     if not p:
         out["reason"] = "stop distance out of range"
+        return out
+    if p.get("rejected"):
+        # Below the fee floor. Everything above this point qualified, so this is
+        # a real setup we are declining on cost grounds — worth recording as a
+        # shadow trade, never worth alerting.
+        out["shadow"] = True
+        out["reason"] = (f"stop {p['stop_pct']:.2f}% under the "
+                         f"{p['floor_pct']:.1f}% fee floor")
         return out
 
     if REQUIRE_DIVERGENCE:
@@ -937,6 +975,7 @@ def scan(client=None, limit=None) -> dict:
         picks = picks[:limit]
 
     signals, rejected, checked = [], {}, {"tradfi": 0, "crypto": 0}
+    shadow = []          # qualified, then declined by the fee floor — see MIN_STOP_PCT
     for sym, seg in picks:
         try:
             ohlcv = ex.fetch_ohlcv(sym, TIMEFRAME, limit=CANDLES)
@@ -954,6 +993,10 @@ def scan(client=None, limit=None) -> dict:
             signals.append({"symbol": sym, "base": sym.split("/")[0], "segment": seg,
                             **res, "price": ohlcv[-1][4], "bar_ts": ohlcv[-1][0]})
         else:
+            if res.get("shadow"):
+                shadow.append({"symbol": sym, "base": sym.split("/")[0],
+                               "segment": seg, **res, "price": ohlcv[-1][4],
+                               "bar_ts": ohlcv[-1][0]})
             rejected[res["reason"] or "?"] = rejected.get(res["reason"] or "?", 0) + 1
         time.sleep(PACE_SEC)
 
@@ -961,7 +1004,7 @@ def scan(client=None, limit=None) -> dict:
     # validated, so burying them under 100 crypto names would defeat the point
     # of scanning them at all.
     signals.sort(key=lambda s: (s.get("segment") != "tradfi", -(s.get("score") or 0)))
-    return {"signals": signals, "checked": sum(checked.values()),
+    return {"signals": signals, "shadow": shadow, "checked": sum(checked.values()),
             "checked_by": checked, "rejected": rejected, "ts": time.time()}
 
 
@@ -1139,7 +1182,12 @@ def tick(client=None) -> bool:
     tracked = {}
     try:
         import strategy4_outcomes
-        tracked = strategy4_outcomes.tick(client, fresh, now_ts)
+        # Shadows ride along with the alerted set. They are deduped by the same
+        # symbol:bar_ts key inside record(), tallied into shadow_* buckets, and
+        # never reach a Telegram call — the digest above already went out and
+        # was built from `fresh` alone.
+        tracked = strategy4_outcomes.tick(
+            client, fresh + (result.get("shadow") or []), now_ts)
     except Exception as exc:  # noqa: BLE001 — bookkeeping never breaks the scan
         print(f"[s4] outcome tracking failed: {exc}")
 

@@ -131,6 +131,10 @@ def record(signals: list, store: dict = None, now_ts: float = None) -> int:
             "quality": s.get("quality"), "score": s.get("score"),
             "div_sources": s.get("div_sources") or [],
             "bar_ts": s.get("bar_ts"), "fired_ts": now_ts,
+            # Qualified on every gate, then declined by the fee floor. Scored
+            # exactly like a live trade and tallied apart, so raising
+            # S4_MIN_STOP_PCT stays answerable instead of becoming folklore.
+            "shadow": bool(s.get("shadow")),
         }
         added += 1
     return added
@@ -228,7 +232,15 @@ def accumulate(store: dict, closed: dict) -> None:
     # not a guess. Both must default identically or the record would disagree
     # with the maths that produced it.
     side = _side_key(closed.get("side") or "long")
-    for name in ("all", seg, side):
+    # A shadow trade was never alerted and never taken, so it must NOT enter
+    # "all" — that is the live track record and mixing declined trades into it
+    # would describe a strategy nobody ran. It gets its own buckets, which is
+    # the whole point: shadow_all vs all is the verdict on the fee floor.
+    if closed.get("shadow"):
+        names = ("shadow_all", f"shadow_{seg}", f"shadow_{side}")
+    else:
+        names = ("all", seg, side)
+    for name in names:
         b = store.setdefault("tally", {}).setdefault(name, _bucket())
         for k, v in _bucket().items():                 # heal older shapes
             b.setdefault(k, v)

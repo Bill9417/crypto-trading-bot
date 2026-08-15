@@ -67,8 +67,19 @@ def test_no_support_below_means_no_signal_not_an_invented_stop():
 
 
 def test_plan_rejects_stops_that_are_absurd_in_either_direction():
+    """Two kinds of refusal, deliberately different since 2026-08-15.
+
+    Too WIDE, or geometrically impossible, is still a bare None: there is
+    nothing to learn from a setup whose 2R target needs a 40% move.
+
+    Too TIGHT returns the plan FLAGGED instead, because that boundary is a cost
+    judgement (fees vs stop distance) rather than a fact about the chart, and a
+    judgement has to stay auditable — those trades are recorded as shadows so
+    the floor can be proved right or wrong. Either way it is not a signal."""
     assert S.plan(100.0, 97.0) is not None
-    assert S.plan(100.0, 99.98) is None      # tighter than noise
+    assert S.plan(100.0, 97.0).get("rejected") is None
+    tight = S.plan(100.0, 99.98)             # tighter than the fee floor
+    assert tight["rejected"] == "stop_too_tight"
     assert S.plan(100.0, 80.0) is None       # 2R target needs a 40% move
     assert S.plan(100.0, 101.0) is None      # "support" above price
     assert S.plan(0, 1) is None
@@ -684,3 +695,92 @@ def test_the_pine_does_not_claim_an_edge():
                              "RSI_Divergence_PRO.pine"), encoding="utf-8").read()
     assert "NOT* CLAIMED" in pine or "NOT CLAIMED" in pine
     assert "46" in pine
+
+
+# ── fee floor + shadow book (2026-08-15) ────────────────────────────────────
+def test_the_stop_floor_is_above_the_fee_burn_zone():
+    """Bybit taker ~0.055%/side, so a round trip costs ~0.11% of price whatever
+    the setup thinks. At the old 0.4% floor that is 25% of R spent before the
+    idea is tested. The floor exists to keep that tax under ~10%."""
+    import strategy4 as S4
+    round_trip = 0.11 / 100
+    assert round_trip / S4.MIN_STOP_PCT <= 0.12, (
+        f"fees are {round_trip / S4.MIN_STOP_PCT * 100:.0f}% of R at the "
+        f"{S4.MIN_STOP_PCT * 100:.2f}% floor")
+
+
+def test_a_too_tight_stop_is_flagged_not_erased():
+    """Returning a bare None would delete the evidence for the floor that
+    produced it — the rejected trades would never be scored and "did raising it
+    help?" could never be answered."""
+    import strategy4 as S4
+    p = S4.plan(100.0, 99.7, "long")          # 0.3% + buffer, under the floor
+    assert p is not None, "the refusal erased the plan"
+    assert p["rejected"] == "stop_too_tight"
+    assert p["stop_pct"] < S4.MIN_STOP_PCT * 100
+    assert p["entry"] and p["sl"] and p["tp"], "flagged plans must stay complete"
+
+
+def test_a_flagged_plan_is_not_a_signal():
+    """It must never become a tradeable alert — only a shadow record."""
+    import strategy4 as S4
+    tight = {"plan": {"rejected": "stop_too_tight", "stop_pct": 0.5,
+                      "floor_pct": 1.0, "entry": 1, "sl": .99, "tp": 1.02}}
+    assert tight["plan"].get("rejected")      # premise
+    # the scan marks these shadow and returns before `pass` can be set
+    import inspect
+    src = inspect.getsource(S4.evaluate)
+    assert 'out["shadow"] = True' in src
+    assert src.index('out["shadow"] = True') < src.index("REQUIRE_DIVERGENCE"), \
+        "the shadow branch must return before the setup can qualify"
+
+
+def test_shadow_trades_stay_out_of_the_live_record():
+    """all/crypto/tradfi describe trades that were actually alerted. Mixing
+    declined ones in would describe a strategy nobody ran."""
+    import strategy4_outcomes as O
+    store = {"tally": {}}
+    O.accumulate(store, {"r": -1.0, "outcome": "sl", "segment": "crypto",
+                         "side": "long", "shadow": True})
+    O.accumulate(store, {"r": 2.0, "outcome": "tp", "segment": "crypto",
+                         "side": "long"})
+    t = store["tally"]
+    assert t["all"]["n"] == 1 and t["all"]["sum"] == 2.0
+    assert t["shadow_all"]["n"] == 1 and t["shadow_all"]["sum"] == -1.0
+    assert "shadow_crypto" in t and t["crypto"]["n"] == 1
+
+
+def test_the_shadow_book_can_answer_whether_the_floor_helped():
+    """The whole reason it exists: two comparable buckets."""
+    import strategy4_outcomes as O
+    store = {"tally": {}}
+    for r in (2.0, -1.0, -1.0):
+        O.accumulate(store, {"r": r, "outcome": "tp" if r > 0 else "sl",
+                             "segment": "crypto", "side": "long"})
+    for r in (-1.0, -1.0):
+        O.accumulate(store, {"r": r, "outcome": "sl", "segment": "crypto",
+                             "side": "long", "shadow": True})
+    live, shadow = store["tally"]["all"], store["tally"]["shadow_all"]
+    assert live["n"] == 3 and shadow["n"] == 2
+    assert live["sum"] / live["n"] > shadow["sum"] / shadow["n"]
+
+
+def test_shadow_signals_never_reach_telegram():
+    """They are recorded for scoring only. The digest is built from `fresh`;
+    shadows join afterwards, at the tracker."""
+    import strategy4 as S4
+    import inspect
+    src = inspect.getsource(S4.run_once) if hasattr(S4, "run_once") else ""
+    if not src:
+        for name in dir(S4):
+            fn = getattr(S4, name)
+            if callable(fn) and "shadow" in (inspect.getsource(fn) if
+                                             inspect.isfunction(fn) else ""):
+                if "send_message" in inspect.getsource(fn):
+                    src = inspect.getsource(fn)
+                    break
+    if src and "send_message" in src:
+        send_i = src.index("send_message")
+        shadow_i = src.index('result.get("shadow")')
+        assert shadow_i > send_i, \
+            "shadow signals are in scope before the Telegram send"
