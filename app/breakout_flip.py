@@ -125,7 +125,7 @@ def cluster_zones(pivots: list, tol_pct: float = ZONE_TOL_PCT) -> list:
 
 def overhead_room(highs: list, price: float, upto: int,
                   left: int = PIVOT_LEFT, right: int = PIVOT_RIGHT,
-                  before: int = None) -> dict:
+                  before: int = None, since: int = 0) -> dict:
     """How much clear air is above `price`.
 
     {'blue_sky': bool, 'nearest': float|None, 'room_pct': float|None}
@@ -141,8 +141,18 @@ def overhead_room(highs: list, price: float, upto: int,
     retest price — so without this the move's own spike counts as the ceiling
     blocking it and essentially every genuine flip is disqualified by itself.
     Overhead resistance means resistance that existed BEFORE the break.
+
+    `since` is the SAME window the zone search uses, and passing it is not
+    optional either. Without it this scanned from bar 0 while detect() limited
+    zones to `at - LOOKBACK`, so a swing high from outside the detector's own
+    lookback could veto a flip — and whether it existed depended entirely on
+    how many candles the caller happened to pass in. Same bar, same lookback,
+    different verdict: Q/USDT fired on a 400-bar array and was silent on the
+    750-bar array production actually uses (2026-08-16). Three call sites meant
+    three different detectors sharing one set of measured numbers.
     """
     pivots = swing_highs(highs[:upto + 1], left, right, known_by=upto)
+    pivots = [(i, p) for i, p in pivots if i >= since]
     if before is not None:
         pivots = [(i, p) for i, p in pivots if i < before]
     above = [p for _, p in pivots if p > price]
@@ -219,7 +229,7 @@ def detect(ohlcv: list, at: int = None, **kw) -> dict:
         # `before=brk`: prior structure only. The break's own spike high is
         # part of this move, not a wall in front of it.
         room = overhead_room(highs, price, at, p["pivot_left"], p["pivot_right"],
-                             before=brk)
+                             before=brk, since=lo_i)
         clear = room["blue_sky"] or (room["room_pct"] or 0) >= p["clear_overhead"]
         if not clear:
             continue
@@ -297,10 +307,17 @@ MEASURED = {"n": 163, "wr": 39.3, "exp": 0.081, "ci": (-0.12, 0.29), "pf": 1.14,
 # zero — a false positive produced entirely by symbols production never trades
 # (EXCLUDE_TRADFI_PERPS). Any future measurement here must filter the universe
 # to what actually gets alerted.
-MEASURED_OOS = {"n": 192, "wr": 41.1, "exp": 0.169, "ci": (-0.03, 0.37),
-                "pf": 1.30, "top3_share": 0.74,
-                "drop_best_exp": 0.122, "drop_best_ci": (-0.08, 0.33),
-                "window": "68 symbols × ~29 days, 2026-07→08"}
+# RE-MEASURED 2026-08-16 after the overhead_room window bug. Every number
+# above described a detector that vetoed a flip whenever a swing high from
+# OUTSIDE its own lookback sat overhead — which silently killed 47% of the
+# fires (192 -> 359 on the identical window and universe). The old figures are
+# left in place because they are what the shipped alerts were scored against,
+# but they do not describe what runs now.
+MEASURED_OOS = {"n": 359, "wr": 38.7, "exp": 0.116, "ci": (-0.03, 0.26),
+                "pf": 1.20, "top3_share": 0.82,
+                "drop_best_exp": 0.080, "drop_best_ci": (-0.07, 0.23),
+                "window": "68 symbols × ~29 days, 2026-07→08, post-fix",
+                "pre_fix": {"n": 192, "exp": 0.169}}
 
 # ── OI confirmation: MEASURED, and it does NOT work ─────────────────────────
 # Asked for directly ("resistance to support and OI should have a bonus flag").

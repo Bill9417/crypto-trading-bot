@@ -316,3 +316,70 @@ def test_the_alert_does_not_present_oi_as_confirmation():
     txt = B.format_alert("X/USDT:USDT", sig, pl)
     assert "持倉量" in txt
     assert "參考" in txt and "不是加分條件" in txt
+
+
+# ── the detector must not depend on how much history it is handed ───────────
+def test_the_same_bar_gives_the_same_verdict_whatever_the_array_length():
+    """detect() limits ZONES to `at - LOOKBACK`, but overhead_room scanned from
+    bar 0, so a swing high from outside the detector's own lookback could veto
+    a flip — and whether it existed depended purely on how many candles the
+    caller passed in.
+
+    That made three different detectors out of one function: the backtest fed
+    it one window, the live scanner another (750), the re-measurement a third
+    (~2800). They shared one set of MEASURED numbers. Live, Q/USDT fired on a
+    400-bar array and was silent on the 750-bar array production actually uses,
+    so the flip that preceded a +17% move was never alerted.
+    """
+    import breakout_flip as B
+    rows = []
+
+    def bar(o, h, l, c):
+        rows.append([len(rows) * 900_000, o, h, l, c, 1000.0])
+
+    # An ancient CONFIRMED pivot, clear of index 0 (swing_highs starts at
+    # PIVOT_LEFT, so a spike at bar 0 is never a pivot and proves nothing —
+    # that is how the first version of this fixture passed against the bug),
+    # and only ~2% above the retest so it lands UNDER the 4% CLEAR gate and
+    # actually vetoes. A spike far overhead clears on room_pct and proves
+    # nothing either.
+    for _ in range(6):
+        bar(100, 100.4, 99.6, 100)
+    bar(100, 107.0, 99.0, 100)                    # the ceiling
+    for _ in range(340):
+        bar(100, 100.4, 99.6, 100)
+    for i in range(20):                           # two rejections at 104
+        bar(101, 104 if i in (5, 13) else 101, 100.5, 101)
+    for _ in range(4):                            # break, staying ABOVE the
+        bar(105.5, 106.4, 105.2, 106.0)           # retest tolerance
+    bar(106, 106.2, 104.5, 104.9)                 # the retest: dips in, closes above
+    bar(104.9, 105.3, 104.7, 105.1)               # and holds
+
+    at = len(rows) - 1
+    highs = [r[2] for r in rows]
+    assert any(i == 6 for i, _ in B.swing_highs(highs, known_by=at)), \
+        "fixture is broken: the ancient ceiling is not a confirmed pivot"
+
+    full = B.detect(rows, at=at)
+    cut = rows[-320:]                             # ceiling now outside the array
+    trimmed = B.detect(cut, at=len(cut) - 1)
+    assert bool(full) == bool(trimmed), (
+        "the verdict changed with array length — overhead_room is reading "
+        "outside the lookback window again")
+    assert full, "the flip itself stopped being detected"
+
+
+def test_overhead_room_honours_the_window_it_is_given():
+    """The direct unit: a confirmed pivot before `since` is not a ceiling."""
+    import breakout_flip as B
+    # index 6 is a real pivot (needs PIVOT_LEFT bars to its left), 20 is another
+    highs = [10.0] * 6 + [500.0] + [10.0] * 13 + [12.0] + [10.0] * 10
+    upto = len(highs) - 1
+    assert any(i == 6 for i, _ in B.swing_highs(highs, known_by=upto)), \
+        "fixture is broken: 500 is not a confirmed pivot"
+    wide = B.overhead_room(highs, price=11.0, upto=upto, since=0)
+    narrow = B.overhead_room(highs, price=11.0, upto=upto, since=10)
+    assert wide["nearest"] == 12.0 and wide["blue_sky"] is False
+    assert narrow["nearest"] == 12.0, "a pivot before `since` was still consulted"
+    # and with the 12.0 pivot also excluded there is nothing overhead at all
+    assert B.overhead_room(highs, price=11.0, upto=upto, since=25)["blue_sky"] is True
