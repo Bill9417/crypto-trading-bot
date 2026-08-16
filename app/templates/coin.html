@@ -100,6 +100,23 @@ body { background: var(--wolf-slate); background-image: var(--page-bg-glow);
           padding:6px 4px 6px 10px; }
 .row-tv:hover { opacity:1; }
 </style>
+    <style>
+        /* Chart panel. Height in vh so a phone gets a usable picture without
+           pushing the analysis below the fold on a desktop. */
+        .chart-card .hd { display:flex; align-items:center; justify-content:space-between; }
+        .tv-out { font-size:.7rem; color:var(--wolf-muted,#8a99ad); text-decoration:none; }
+        .tv-out:hover { color:#22d3ee; }
+        .lwc-box { position:relative; width:100%; height:min(46vh,380px); }
+        #coin-lwc { width:100%; height:100%; }
+        .lwc-fallback { display:flex; align-items:center; justify-content:center;
+                        height:100%; font-size:.78rem; color:var(--wolf-muted,#8a99ad); }
+        .lwc-legend { display:flex; flex-wrap:wrap; gap:8px 12px; margin-top:8px;
+                      font-size:.66rem; color:var(--wolf-muted,#8a99ad); }
+        .lwc-legend .lg { display:inline-flex; align-items:center; gap:4px; }
+        .lwc-legend .sw { width:11px; height:3px; border-radius:2px; display:inline-block; }
+    </style>
+    <script src="https://unpkg.com/lightweight-charts@4.2.3/dist/lightweight-charts.standalone.production.js"></script>
+    <script src="/static/wolf_chart.js?v={{ asset_ver }}"></script>
 </head>
 <body>
 <div class="wrap">
@@ -180,6 +197,20 @@ body { background: var(--wolf-slate); background-image: var(--page-bg-glow);
                 (d.chg_24h>=0?'+':'') + Number(d.chg_24h).toFixed(2) + '% <span class="muted" style="font-size:.7rem">24h</span></span>' +
              '</div>' + sparkline(d.spark) + '</div>';
 
+        // 📈 The chart, in the page. Same engine as /strategy2
+        // (static/wolf_chart.js), same EMA periods, same meter-score pane — so
+        // "how it looks with my indicator" is answered here instead of by a
+        // round trip to TradingView. Mounted after the HTML lands, below.
+        h += '<div class="card chart-card">' +
+             '<div class="hd" style="margin-bottom:6px">' +
+               '<span class="sym" style="font-size:.85rem">📈 圖表 · 1h</span>' +
+               '<a class="tv-out" href="https://www.tradingview.com/chart/?symbol=BINANCE:' +
+                 esc(d.base) + 'USDT.P" target="_blank" rel="noopener">TradingView ↗</a>' +
+             '</div>' +
+             '<div class="lwc-box"><div id="coin-lwc"></div></div>' +
+             '<div class="lwc-legend" id="coin-legend"></div>' +
+             '</div>';
+
         h += '<div class="lean ' + leanCls + '">' +
              '<div><div style="font-size:.9rem;font-weight:800;">綜合傾向 · ' + esc(d.lean) + '</div>' +
              '<div class="lean-l">八項因子的方向統計 —— 不是加權分數，也不是預測</div></div>' +
@@ -220,6 +251,35 @@ body { background: var(--wolf-slate); background-image: var(--page-bg-glow);
         }
         OUT.innerHTML = h;
         if (d.disclaimer) document.getElementById('disc').textContent = d.disclaimer;
+        mountChart(d.symbol || (d.base + 'USDT'));
+    }
+
+    // The chart is rebuilt per symbol because render() replaces the container
+    // it lives in — holding a stale instance would draw into a detached node
+    // and the panel would silently stay empty.
+    var _chart = null;
+    function mountChart(sym) {
+        if (!window.WolfChart || !window.LightweightCharts) {
+            var box = document.getElementById('coin-lwc');
+            if (box) box.innerHTML = '<div class="lwc-fallback">圖表元件載入失敗</div>';
+            return;
+        }
+        _chart = new window.WolfChart('coin-lwc', {
+            onLegend: function (defs, up, dn) {
+                var box = document.getElementById('coin-legend');
+                if (!box) return;
+                box.innerHTML = defs.map(function (x) {
+                    return '<span class="lg"><span class="sw" style="background:' +
+                           x.color + '"></span>' + x.label + '</span>';
+                }).join('') +
+                '<span class="lg"><span class="sw" style="background:linear-gradient(90deg,' +
+                  up + ',' + dn + ')"></span>Vegas EMA200</span>' +
+                '<span class="lg"><span class="sw" style="background:#22d3ee"></span>信心分數 0–100</span>';
+            }
+        });
+        // ccxt-style symbol, which is what /api/strategy2_ohlcv expects.
+        _chart.load(sym.indexOf('/') >= 0 ? sym
+                    : sym.replace(/USDT$/, '') + '/USDT:USDT');
     }
 
     // ── default view: the OI-flagged coins plus BTC/ETH ──────────────────

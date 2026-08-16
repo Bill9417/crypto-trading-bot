@@ -675,3 +675,41 @@ def test_no_indicator_draws_ungated_exit_crosses():
                 if not re.search(r"show|Marks|Alerts", cond, re.I):
                     offenders.append(f"{name}:{i}")
     assert not offenders, f"× markers with no switch: {offenders}"
+
+
+# ── the chart must draw what the score is actually made of (2026-08-16) ─────
+def test_the_chart_serves_the_meter_s_own_tunnel_periods():
+    """The page hardcoded Tunnel 288/338 and kept drawing them after the outer
+    tunnel moved to 576/676 on 2026-08-11 — five days of a chart showing a
+    tunnel the score did not use, under a legend promising "the on-chart EMAs
+    line up exactly with the confidence factors". Serving the periods from the
+    meter (which is itself pinned to the .pine) chains the whole thing."""
+    import app as A
+    lens = {d["len"] for d in A.chart_ema_defs()}
+    for p in (M.TUNNEL_INNER_A, M.TUNNEL_INNER_B, M.TUNNEL_OUTER_A, M.TUNNEL_OUTER_B):
+        assert p in lens, f"chart does not draw the meter's {p}-period tunnel"
+    labels = {d["label"] for d in A.chart_ema_defs()}
+    assert f"Tunnel {M.TUNNEL_OUTER_B}" in labels
+
+
+def test_the_chart_window_can_actually_produce_a_score_line():
+    """The meter needs MIN_CANDLES before it can score ONE bar, so the score
+    pane only ever has (window − MIN_CANDLES) points. At 750 that was a
+    65-point stub on a month-long chart. Keep enough room for a readable line
+    rather than a technically-present one."""
+    import app as A
+    pts = A.chart_candles() - M.MIN_CANDLES
+    assert pts >= 300, (
+        f"only {pts} score points fit in a {A.chart_candles()}-bar window "
+        f"(meter needs {M.MIN_CANDLES}) — the line is a stub")
+
+
+def test_the_shared_chart_engine_has_no_hardcoded_tunnel_periods():
+    """static/wolf_chart.js is shared by /strategy2 and /coin. A period baked
+    in there is the bug above, restored, in a file two pages read."""
+    import os
+    here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    js = open(os.path.join(here, "static", "wolf_chart.js"), encoding="utf-8").read()
+    for stale in ("288", "338", str(M.TUNNEL_OUTER_A), str(M.TUNNEL_OUTER_B)):
+        assert f"len: {stale}" not in js, \
+            f"wolf_chart.js hardcodes a tunnel period ({stale}) instead of using the server's"

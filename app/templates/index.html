@@ -1979,12 +1979,15 @@
             function chip(f) {
                 var blue = f.blue_sky;
                 var col = blue ? 'var(--long, #4ade80)' : '#fbbf24';
-                // TradingView, not the exchange: tapping a card is "show me
-                // the chart", and the perp chart is where the zone and the OI
-                // panel actually are. The order ticket is one tap further on
-                // and is the wrong default for a scanner card.
-                return '<a href="https://www.tradingview.com/chart/?symbol=BINANCE:' + f.base + 'USDT.P"' +
-                    ' target="_blank" rel="noopener" style="flex:0 0 auto; min-width:138px;' +
+                // /coin, not TradingView (2026-08-16). Tapping a card is "show
+                // me the chart" — but the chart worth showing is THIS one: the
+                // same EMA periods the score uses, the meter history under it,
+                // and the eight-factor read beside it. TradingView shows a
+                // chart that knows nothing about why the card fired, and it
+                // leaves the app to do it. The ↗ to TradingView is still on
+                // the coin page for anyone who wants it.
+                return '<a href="/coin/' + encodeURIComponent(f.base) + '"' +
+                    ' style="flex:0 0 auto; min-width:138px;' +
                     'text-decoration:none; color:inherit; background:rgba(255,255,255,.03);' +
                     'border:1px solid ' + col + '; border-radius:12px; padding:8px 11px; display:block;">' +
                     '<div style="font-weight:800; font-size:.82rem;">' + f.base + (blue ? ' 🚀' : ' ⚠️') + '</div>' +
@@ -2101,8 +2104,8 @@
                 var col = meta.bull ? 'var(--long, #4ade80)' : 'var(--short, #f87171)';
                 var base = (r.symbol || '').replace(/USDT$/, '');
                 var rare = Math.max(0.1, 100 - (r.pctile || 0));
-                return '<a href="https://www.tradingview.com/chart/?symbol=BINANCE:' + base + 'USDT.P"' +
-                    ' target="_blank" rel="noopener" style="' +
+                // /coin — see the note on the flip strip above.
+                return '<a href="/coin/' + encodeURIComponent(base) + '" style="' +
                     'flex:0 0 auto; min-width:132px; text-decoration:none; color:inherit;' +
                     'background:rgba(255,255,255,.03); border:1px solid ' + col + ';' +
                     'border-radius:12px; padding:8px 11px; display:block;">' +

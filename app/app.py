@@ -2226,7 +2226,10 @@ def api_main_coins():
     coins = []
     for sym in ("BTC/USDT:USDT", "ETH/USDT:USDT"):
         try:
-            ohlcv = rest_client.call("fetch_ohlcv", sym, "1h", None, 750)
+            # Derived too: this feeds compute_meter, so a literal here is the
+            # same stale-threshold trap that disarmed the S2 scanner for three
+            # days. Two symbols, so the extra bars cost nothing.
+            ohlcv = rest_client.call("fetch_ohlcv", sym, "1h", None, chart_candles())
             t = rest_client.call("fetch_ticker", sym)
             meter = strategy2_meter.compute_meter(ohlcv)
             funding = None
@@ -3316,7 +3319,7 @@ def api_strategy2(symbol="BTC/USDT:USDT"):
     strategy2_meter.py. 750 1h candles cover the outer tunnel EMA676 + Vegas SMA5."""
     import strategy2_meter
     try:
-        ohlcv = rest_client.call("fetch_ohlcv", symbol, "1h", None, 750)
+        ohlcv = rest_client.call("fetch_ohlcv", symbol, "1h", None, chart_candles())
     except RateLimitCooldownError as exc:
         return jsonify({"symbol": symbol, "error": str(exc)}), 200
     except Exception as exc:  # noqa: BLE001 — never 500 the dashboard
@@ -3336,14 +3339,57 @@ def api_strategy2_ohlcv(symbol="BTC/USDT:USDT"):
     the confidence factors. Distinct path so it never collides with the <path:symbol>
     meter route. Volume is dropped to keep the payload small."""
     try:
-        ohlcv = rest_client.call("fetch_ohlcv", symbol, "1h", None, 750)
+        ohlcv = rest_client.call("fetch_ohlcv", symbol, "1h", None, chart_candles())
     except RateLimitCooldownError as exc:
         return jsonify({"symbol": symbol, "error": str(exc), "candles": []}), 200
     except Exception as exc:  # noqa: BLE001 — never 500 the dashboard
         return jsonify({"symbol": symbol, "error": f"fetch failed: {exc}", "candles": []}), 200
     candles = [[int(c[0]), float(c[1]), float(c[2]), float(c[3]), float(c[4])]
                for c in (ohlcv or [])]
-    return jsonify({"symbol": symbol, "timeframe": "1h", "candles": candles})
+    return jsonify({"symbol": symbol, "timeframe": "1h", "candles": candles,
+                    "ema_defs": chart_ema_defs()})
+
+
+# Candles behind the chart panes. 1000 is what Binance actually serves for 1h
+# (asking 1500 returns 1000), and the meter needs MIN_CANDLES before it can
+# score a single bar — so at the old 750 the score line was a 65-point stub,
+# 2.7 days, most of it off the left of a 31-day chart. At 1000 it is 315
+# points / 13 days, and the 676 tunnel gets 324 bars instead of 74.
+# Costs 0.7s to recompute, behind a 5-minute cache. Derived, not a literal:
+# a rise in the meter's requirement must not silently shrink the line again.
+def chart_candles():
+    import strategy2_meter as M
+    return max(1000, M.MIN_CANDLES + 314)
+
+
+def chart_ema_defs():
+    """The lines the chart draws, with the tunnel periods taken FROM THE METER.
+
+    They were hardcoded in the page as 288/338 and stayed there when the outer
+    tunnel moved to 576/676 on 2026-08-11, so for five days the chart drew a
+    tunnel the score was not using while the legend promised "the on-chart EMAs
+    line up exactly with the confidence factors". Nothing failed; the picture
+    was just answering a faster question than the number beside it.
+
+    strategy2_meter's periods are themselves pinned to the .pine by
+    test_tunnel_periods_match_the_pine_indicator, so serving them from here
+    chains chart → meter → chart indicator with no hand-copied number left.
+    """
+    import strategy2_meter as M
+    return [
+        {"key": "e20",  "len": 20,  "color": "#FFEB3B", "width": 1, "label": "EMA 20"},
+        {"key": "e50",  "len": 50,  "color": "#FF9800", "width": 1, "label": "EMA 50"},
+        {"key": "e100", "len": 100, "color": "#E040FB", "width": 1, "label": "EMA 100"},
+        {"key": "e200", "len": 200, "color": "#2962FF", "width": 2, "label": "EMA 200"},
+        {"key": "tia", "len": M.TUNNEL_INNER_A, "color": "#FFB74D", "width": 1,
+         "label": f"Tunnel {M.TUNNEL_INNER_A}"},
+        {"key": "tib", "len": M.TUNNEL_INNER_B, "color": "#FB8C00", "width": 1,
+         "label": f"Tunnel {M.TUNNEL_INNER_B}"},
+        {"key": "toa", "len": M.TUNNEL_OUTER_A, "color": "#9CCC65", "width": 1,
+         "label": f"Tunnel {M.TUNNEL_OUTER_A}"},
+        {"key": "tob", "len": M.TUNNEL_OUTER_B, "color": "#66BB6A", "width": 1,
+         "label": f"Tunnel {M.TUNNEL_OUTER_B}"},
+    ]
 
 
 # Historical meter scores are pure recompute over the same candles → cache the
@@ -3364,7 +3410,7 @@ def api_strategy2_score_history(symbol="BTC/USDT:USDT"):
     if hit and now - hit[0] < 300:
         return jsonify(hit[1])
     try:
-        ohlcv = rest_client.call("fetch_ohlcv", symbol, "1h", None, 750)
+        ohlcv = rest_client.call("fetch_ohlcv", symbol, "1h", None, chart_candles())
     except RateLimitCooldownError as exc:
         return jsonify({"symbol": symbol, "error": str(exc), "points": []}), 200
     except Exception as exc:  # noqa: BLE001 — never 500 the dashboard
