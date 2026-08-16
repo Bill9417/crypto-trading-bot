@@ -471,7 +471,17 @@ def scan_once(client, recent: list, last_alert: dict, pending: list) -> list:
         # breakout_flip.MEASURED and every interval straddles zero.
         try:
             import breakout_flip
-            _bf = breakout_flip.consider(sym, ohlcv, _BFLIP_STATE, time.time())
+            # Did this symbol fire a LONG triangle recently? `recent` already
+            # holds every fired signal with its timestamp, so the sequence the
+            # owner trades costs one list scan rather than ~24 extra
+            # compute_signal calls per flip.
+            _now = time.time()
+            _tri = max((s["ts"] for s in recent
+                        if s.get("symbol") == sym and s.get("direction") == "long"
+                        and _now - s["ts"] <= breakout_flip.TRIANGLE_WINDOW_SEC),
+                       default=None)
+            _bf = breakout_flip.consider(sym, ohlcv, _BFLIP_STATE, _now,
+                                         recent_long_ts=_tri)
             if _bf:
                 LATEST_FLIPS[sym] = {**_bf, "tv_url": _tv_url(sym)}
                 # Written to disk BEFORE the alert: a Telegram failure must not
@@ -483,7 +493,8 @@ def scan_once(client, recent: list, last_alert: dict, pending: list) -> list:
                     breakout_flip.format_alert(sym, _bf, _bf["plan"]),
                     parse_mode="HTML", force=True, channel="signals")
                 print(f"[flip] {sym} zone {_bf['zone_top']:.6g} held · "
-                      f"{'blue sky' if _bf['blue_sky'] else 'room %.1f%%' % (_bf['room_pct'] or 0)}")
+                      f"{'blue sky' if _bf['blue_sky'] else 'room %.1f%%' % (_bf['room_pct'] or 0)}"
+                      + (" · ⭐ 完整型態 (三角→翻轉→無壓)" if _bf.get("full_setup") else ""))
         except Exception as exc:  # noqa: BLE001 — detection never kills the sweep
             print(f"[flip] {sym} error: {exc}")
 

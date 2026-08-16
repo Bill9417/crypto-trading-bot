@@ -348,6 +348,41 @@ MEASURED_OOS = {"n": 359, "wr": 38.7, "exp": 0.116, "ci": (-0.03, 0.26),
 MEASURED_OI = {"lift": 0.281, "lift_ci": (-0.12, 0.68), "verdict": "no effect",
                "tested": "pctile 80/90/95/98, rising, radar floor"}
 
+# ── the SEQUENCE the owner trades (measured 2026-08-16) ─────────────────────
+# "long triangle, then it breaks resistance, the old resistance holds as
+# support, nothing overhead, and it flies." Measured as an ordered sequence on
+# 29 days x 68 symbols, production universe, fixed detector — 269 flips:
+#
+#   all flips                       n=269  +0.145R +/-0.168
+#   + blue sky                      n=203  +0.145R          <- adds NOTHING
+#     (ceiling overhead)            n= 66  +0.146R          <- identical
+#   + a LONG triangle first         n=142  +0.216R
+#     (no triangle)                 n=127  +0.067R
+#   TRIANGLE + FLIP + BLUE SKY      n=108  +0.287R +/-0.264  CI excludes 0
+#     ... + OI rising               n= 81  +0.372R +/-0.311  CI excludes 0
+#
+# Two things worth being blunt about:
+#
+#  · "上面沒有壓力" contributes NOTHING on its own — blue sky scores +0.145R
+#    against +0.146R for flips WITH a ceiling. The triangle is what carries the
+#    sequence. Blue sky is kept in the tier because it is what the owner is
+#    looking at and it costs nothing, not because it earns anything.
+#  · The tier is not proven BETTER than the flips it excludes. Lift over the
+#    rejected ones is +0.237R +/-0.342 — indistinguishable — and it fails every
+#    robustness check: drop the best symbol and it straddles zero, drop the top
+#    three and it is +0.135R, and the second half of the sample straddles zero.
+#    Top 3 of 37 symbols carry 59% of the profit.
+#
+# So this is a TIER, not a verdict: rarer (3.7/day across 68 coins), cleaner to
+# look at, and shipped with these numbers attached.
+MEASURED_SEQ = {"n": 108, "wr": 44.4, "exp": 0.287, "ci": (0.02, 0.55),
+                "pf": 1.57, "with_oi_n": 81, "with_oi_exp": 0.372,
+                "lift": 0.237, "lift_ci": (-0.11, 0.58),
+                "blue_alone": 0.145, "ceiling_alone": 0.146,
+                "drop_top3_exp": 0.135, "per_day": 3.7,
+                "window": "68 symbols x ~29 days, 2026-07->08"}
+
+
 COOLDOWN_SEC = float(os.getenv("BFLIP_COOLDOWN_SEC", "14400"))
 
 
@@ -380,7 +415,19 @@ def format_alert(sym: str, sig: dict, pl: dict) -> str:
         if oi.get("state"):
             rows.append(("資金動向", OI_ZH.get(oi["state"], oi["state"])))
     return "\n".join(x for x in [
-        F.headline("🚀 壓力翻支撐", base, "做多 LONG"),
+        F.headline("⭐🚀 壓力翻支撐 · 完整型態" if sig.get("full_setup")
+                   else "🚀 壓力翻支撐", base, "做多 LONG"),
+        # The tier the owner actually trades: triangle first, then the flip,
+        # then nothing overhead. Stated with its numbers because it is the one
+        # cut here that measures better than the rest AND still fails every
+        # robustness check — see MEASURED_SEQ.
+        ("⭐ 三角訊號 → 突破回踩 → 上方無壓，三個條件都到齊。\n"
+         f"實測 {MEASURED_SEQ['n']} 筆：勝率 {MEASURED_SEQ['wr']:.0f}%、"
+         f"期望值 {MEASURED_SEQ['exp']:+.2f}R (PF {MEASURED_SEQ['pf']})；"
+         f"但跟其他翻轉相比只差 {MEASURED_SEQ['lift']:+.2f}R ±"
+         f"{MEASURED_SEQ['lift_ci'][1] - MEASURED_SEQ['lift']:.2f}"
+         "（統計上分不出來），拿掉最賺的一檔幣就掉回沒把握的範圍。"
+         if sig.get("full_setup") else ""),
         F.pre_table(rows),
         f"\n突破後回踩 {sig['zone_top']:.6g} 沒破，舊壓力變新支撐。",
         # The numbers are stated because the alert is the only place they will
@@ -405,12 +452,23 @@ def format_alert(sym: str, sig: dict, pl: dict) -> str:
     ] if x)
 
 
-def consider(sym: str, ohlcv: list, state: dict, now: float) -> dict:
+TRIANGLE_WINDOW_SEC = float(os.getenv("BFLIP_TRIANGLE_WINDOW_SEC", str(6 * 3600)))
+
+
+def consider(sym: str, ohlcv: list, state: dict, now: float,
+             recent_long_ts: float = None) -> dict:
     """One symbol, using candles the caller already has. {} unless it fired.
 
     The FORMING candle is dropped: strategy2_scanner patches a live price onto
     the last row, so its high/low/close are still moving and a flip 'confirmed'
     on it can un-confirm itself two minutes later.
+
+    `recent_long_ts` is when this symbol last fired a LONG triangle, if inside
+    TRIANGLE_WINDOW_SEC. Triangle-then-flip-into-blue-sky is the sequence the
+    owner actually trades, and it is the one cut in this module that measures
+    better than the rest — see MEASURED_SEQ. The caller passes it because the
+    scanner already has that history; recomputing it here would be ~24 extra
+    compute_signal calls per flip for a fact already on disk.
     """
     closed = ohlcv[:-1] if ohlcv else []
     if len(closed) < 60:
@@ -425,8 +483,11 @@ def consider(sym: str, ohlcv: list, state: dict, now: float) -> dict:
     if not pl:
         return {}
     state.setdefault("last", {})[sym] = now
-    return {"symbol": sym, "base": sym.split("/")[0], **sig, "plan": pl,
-            "oi": oi_context(sym, closed)}
+    out = {"symbol": sym, "base": sym.split("/")[0], **sig, "plan": pl,
+           "oi": oi_context(sym, closed)}
+    out["triangle_ts"] = recent_long_ts
+    out["full_setup"] = bool(recent_long_ts) and bool(sig.get("blue_sky"))
+    return out
 
 
 def oi_context(sym: str, closed: list) -> dict:

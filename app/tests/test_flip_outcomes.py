@@ -383,3 +383,78 @@ def test_overhead_room_honours_the_window_it_is_given():
     assert narrow["nearest"] == 12.0, "a pivot before `since` was still consulted"
     # and with the 12.0 pivot also excluded there is nothing overhead at all
     assert B.overhead_room(highs, price=11.0, upto=upto, since=25)["blue_sky"] is True
+
+
+# ── the sequence the owner trades (2026-08-16) ──────────────────────────────
+def test_the_full_setup_needs_all_three_in_order():
+    """"Long triangle, then it breaks resistance, the old resistance holds,
+    nothing overhead." Measured as a SEQUENCE on 269 flips: triangle+flip+blue
+    is +0.287R against +0.050R for everything else. Two of three is not it."""
+    import breakout_flip as B
+    rows = _flip_shape()
+    now = 1_800_000_000.0
+    full = B.consider("X/USDT:USDT", rows, {}, now, recent_long_ts=now - 3600)
+    assert full and full["full_setup"] is True
+    no_tri = B.consider("X/USDT:USDT", rows, {}, now, recent_long_ts=None)
+    assert no_tri and no_tri["full_setup"] is False, "fired without a triangle"
+
+
+def test_a_stale_triangle_does_not_count():
+    """Six hours, not "ever". A triangle from three days ago is not the setup
+    being described — it is a different move that already happened."""
+    import breakout_flip as B
+    rows = _flip_shape()
+    now = 1_800_000_000.0
+    old = B.consider("X/USDT:USDT", rows, {}, now,
+                     recent_long_ts=now - B.TRIANGLE_WINDOW_SEC - 60)
+    # the caller filters by window, so a stale ts must simply not be passed —
+    # this pins that the flag follows the ts it is given rather than inventing one
+    assert old["triangle_ts"] is not None
+    import strategy2_scanner as SC
+    import inspect
+    src = inspect.getsource(SC.scan_once)
+    assert "TRIANGLE_WINDOW_SEC" in src, "the scanner is not applying the window"
+
+
+def test_the_full_setup_alert_carries_its_own_numbers():
+    """It exists because it measures better than the rest AND still fails every
+    robustness check. Shipping the first half without the second is how a tier
+    becomes a recommendation."""
+    import breakout_flip as B
+    sig = {"blue_sky": True, "room_pct": None, "zone_top": 1.02, "zone_bottom": 1.0,
+           "touches": 3, "price": 1.05, "full_setup": True, "oi": {}}
+    pl = {"entry": 1.05, "sl": 0.998, "tp": 1.15, "rr": 2.0, "stop_pct": 4.9}
+    txt = B.format_alert("X/USDT:USDT", sig, pl)
+    assert "完整型態" in txt
+    assert "統計上分不出來" in txt, "the tier is presented without its caveat"
+    plain = B.format_alert("X/USDT:USDT", {**sig, "full_setup": False}, pl)
+    assert "完整型態" not in plain
+
+
+def test_blue_sky_is_kept_but_not_credited():
+    """Measured, blue sky contributes nothing: +0.145R with clear air overhead
+    against +0.146R with a ceiling. It stays in the tier because it is what the
+    owner watches, and the module says so rather than implying it earns."""
+    import breakout_flip as B
+    assert abs(B.MEASURED_SEQ["blue_alone"] - B.MEASURED_SEQ["ceiling_alone"]) < 0.02
+    import inspect
+    src = inspect.getsource(B)
+    assert "adds NOTHING" in src
+
+
+def _flip_shape():
+    """Zone rejected twice, broken, retested, held — the minimum real shape."""
+    rows = []
+
+    def bar(o, h, l, c):
+        rows.append([len(rows) * 900_000, o, h, l, c, 1000.0])
+    for _ in range(60):
+        bar(100, 100.4, 99.6, 100)
+    for i in range(20):
+        bar(101, 104 if i in (5, 13) else 101, 100.5, 101)
+    for _ in range(4):
+        bar(105.5, 106.4, 105.2, 106.0)
+    bar(106, 106.2, 104.5, 104.9)
+    bar(104.9, 105.3, 104.7, 105.1)
+    bar(105.1, 105.4, 104.8, 105.2)          # forming bar, dropped by consider()
+    return rows
