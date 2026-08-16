@@ -500,3 +500,46 @@ def test_the_published_layout_still_absorbs_new_cards(tmp_path, monkeypatch):
     got = L.load("99|x")
     assert set(got["order"]) == set(L.CARD_IDS)
     assert len(got["order"]) == len(L.CARD_IDS)
+
+
+# ── 幣種 pop-out (2026-08-16) ────────────────────────────────────────────────
+def test_embed_mode_drops_the_chrome_the_modal_supplies(client):
+    """The pop-out shows /coin in an iframe rather than a second copy of the
+    analysis — ~200 lines of JS plus its own card CSS, which is the fourth
+    duplication this repo would be maintaining. An iframe cannot drift from
+    the page it embeds; it just must not bring the nav and search with it."""
+    full = client.get("/coin/BOME").get_data(as_text=True)
+    emb = client.get("/coin/BOME?embed=1").get_data(as_text=True)
+    assert "nav-standalone" in full, "the standalone page lost its nav"
+    assert "nav-standalone" not in emb, "the pop-out is showing a nav inside a modal"
+    assert 'class="wrap embed"' in emb
+    # the analysis itself must still be there — that is the whole point
+    for marker in ("coin-lwc", "wolf_chart.js", "/api/coin"):
+        assert marker in emb, f"embed lost {marker}"
+
+
+def test_the_dashboard_opens_coins_in_the_pop_out_not_a_new_page(client):
+    """Cards link to /coin/<base>; the delegated handler turns that into the
+    modal. Keeping a real href means middle-click and 'open in new tab' still
+    work, and the page degrades to a normal navigation if the JS fails."""
+    h = client.get("/").get_data(as_text=True)
+    assert 'id="coin-modal"' in h
+    assert "'/coin/' + encodeURIComponent" in h
+    assert 'a[href^="/coin/"]' in h, "nothing binds the cards to the pop-out"
+
+
+def test_the_pop_out_can_be_closed_every_way_a_phone_expects(client):
+    """Back gesture, tap-outside, Esc, and the explicit button. The history
+    entry is what makes the phone's BACK close the modal instead of throwing
+    the user off the dashboard they were reading."""
+    h = client.get("/").get_data(as_text=True)
+    assert "history.pushState" in h and "popstate" in h
+    assert "data-close" in h
+    assert "Escape" in h
+
+
+def test_the_pop_out_unloads_its_iframe_on_close(client):
+    """An iframe left loaded keeps a second page's timers and fetches running
+    behind the dashboard."""
+    h = client.get("/").get_data(as_text=True)
+    assert "about:blank" in h

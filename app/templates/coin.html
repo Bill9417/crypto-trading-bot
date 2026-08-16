@@ -114,15 +114,23 @@ body { background: var(--wolf-slate); background-image: var(--page-bg-glow);
                       font-size:.66rem; color:var(--wolf-muted,#8a99ad); }
         .lwc-legend .lg { display:inline-flex; align-items:center; gap:4px; }
         .lwc-legend .sw { width:11px; height:3px; border-radius:2px; display:inline-block; }
+        /* Embedded in the dashboard pop-out: the modal supplies the frame, the
+           padding and the scroll, so the page must not add a second set. The
+           background goes transparent so the modal's surface shows through
+           instead of a dark rectangle inside a dark rectangle. */
+        .wrap.embed { padding-top:6px; max-width:none; }
+        body:has(.wrap.embed) { background:transparent; }
     </style>
     <script src="https://unpkg.com/lightweight-charts@4.2.3/dist/lightweight-charts.standalone.production.js"></script>
     <script src="/static/wolf_chart.js?v={{ asset_ver }}"></script>
 </head>
 <body>
-<div class="wrap">
+<div class="wrap{% if embed %} embed{% endif %}">
+    {% if not embed %}
     <div class="nav-standalone">{% include '_nav.html' %}</div>
+    {% endif %}
 
-    <div class="searchbar">
+    <div class="searchbar"{% if embed %} hidden{% endif %}>
         <input id="q" type="search" autocomplete="off" autocapitalize="off"
                spellcheck="false" placeholder="搜尋幣種代號，例如 BEAT、SOL、MYX…"
                value="{{ initial }}">
@@ -381,8 +389,10 @@ body { background: var(--wolf-slate); background-image: var(--page-bg-glow);
     document.addEventListener('click', function (e) {
         if (!SUGG.contains(e.target) && e.target !== Q) SUGG.classList.remove('on');
     });
-    loadDefault();
-    if (Q.value.trim()) go();
+    // The default list is the EMPTY state, so skip it entirely when we already
+    // know the coin — go() hides it immediately anyway, and fetching it would
+    // cost an /api/coin_overview call on every single pop-out.
+    if (Q.value.trim()) { go(); } else { loadDefault(); }
     // The default list is live data; refresh it while it is the visible thing.
     setInterval(function () {
         if (!document.hidden && DEF.style.display !== 'none') loadDefault();

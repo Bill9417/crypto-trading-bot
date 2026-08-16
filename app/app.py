@@ -3777,8 +3777,16 @@ def market():
 @login_required
 def coin_page(base=None):
     """🔍 One-coin analysis. Server-renders nothing but the shell — the search
-    box drives /api/coin, so a slow exchange cannot block the page."""
-    return render_template("coin.html", user=current_user, initial=(base or ""))
+    box drives /api/coin, so a slow exchange cannot block the page.
+
+    ?embed=1 drops the nav and the search bar for the dashboard's pop-out. The
+    pop-out shows THIS page in an iframe rather than a second implementation:
+    the analysis is ~200 lines of JS plus its own card CSS, and a copy of that
+    on the dashboard is the fourth duplication this repo would be maintaining.
+    An iframe cannot drift from the page it embeds.
+    """
+    return render_template("coin.html", user=current_user, initial=(base or ""),
+                           embed=request.args.get("embed") == "1")
 
 
 @app.route("/api/coin_search")

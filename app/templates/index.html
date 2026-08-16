@@ -83,6 +83,34 @@
         .layout-hint { font-size:.66rem; color:var(--wolf-muted); }
         /* Only while the editor is open — it is advice about the button you
            are about to press, not a permanent notice on the dashboard. */
+        /* ── 幣種 pop-out ───────────────────────────────────────────────
+           Shows /coin?embed=1 in an iframe. An iframe, not a re-render: the
+           analysis is ~200 lines of JS plus its own card CSS, and a second
+           copy on the dashboard is the same drift this repo has already paid
+           for four times. */
+        .coin-modal { position:fixed; inset:0; z-index:9000; display:none; }
+        .coin-modal.on { display:block; }
+        .coin-modal .cm-back { position:absolute; inset:0; background:rgba(6,3,18,.72);
+                               backdrop-filter:blur(4px); }
+        .coin-modal .cm-win {
+            position:absolute; left:50%; transform:translateX(-50%);
+            top:2vh; height:96vh; width:min(760px, 96vw);
+            background:var(--wolf-slate,#120c26); border:1px solid rgba(255,255,255,.10);
+            border-radius:16px; overflow:hidden; display:flex; flex-direction:column;
+            box-shadow:0 24px 70px rgba(0,0,0,.55);
+        }
+        .coin-modal .cm-bar { display:flex; align-items:center; gap:10px;
+            padding:10px 12px; border-bottom:1px solid rgba(255,255,255,.08); flex:0 0 auto; }
+        .coin-modal .cm-title { font-weight:800; font-size:.9rem; }
+        .coin-modal .cm-sp { flex:1 1 auto; }
+        .coin-modal .cm-btn { background:rgba(255,255,255,.06); color:inherit;
+            border:1px solid rgba(255,255,255,.12); border-radius:10px;
+            padding:6px 12px; font-size:.78rem; font-weight:700; cursor:pointer; }
+        .coin-modal .cm-btn:hover { background:rgba(255,255,255,.12); }
+        .coin-modal iframe { flex:1 1 auto; width:100%; border:0; background:transparent; }
+        @media (max-width:560px) {
+            .coin-modal .cm-win { top:0; height:100%; width:100%; border-radius:0; border:0; }
+        }
         .layout-scope { display:none; font-size:.66rem; color:var(--wolf-amber,#f59e0b); }
         body.layout-editing .layout-scope { display:inline; }
         .layout-list { display:none; flex-direction:column; gap:6px; width:100%;
@@ -4445,5 +4473,75 @@
         paintStyle();
     })();
     </script>
+<!-- 幣種 pop-out. Markup lives here; the strips only need to link to /coin. -->
+<div class="coin-modal" id="coin-modal" role="dialog" aria-modal="true" aria-label="幣種分析">
+    <div class="cm-back" data-close></div>
+    <div class="cm-win">
+        <div class="cm-bar">
+            <button class="cm-btn" type="button" data-close>← 返回</button>
+            <span class="cm-title" id="cm-title"></span>
+            <span class="cm-sp"></span>
+            <a class="cm-btn" id="cm-full" href="#" title="開整頁">整頁 ↗</a>
+        </div>
+        <iframe id="cm-frame" title="幣種分析" referrerpolicy="same-origin"></iframe>
+    </div>
+</div>
+<script>
+(function () {
+    var M = document.getElementById('coin-modal'),
+        F = document.getElementById('cm-frame'),
+        T = document.getElementById('cm-title'),
+        FULL = document.getElementById('cm-full');
+    var open = false;
+
+    function show(base) {
+        T.textContent = base;
+        FULL.href = '/coin/' + encodeURIComponent(base);
+        // src is set on OPEN, cleared on close: an iframe left loaded keeps a
+        // second page's timers and fetches running behind the dashboard.
+        F.src = '/coin/' + encodeURIComponent(base) + '?embed=1';
+        M.classList.add('on');
+        document.body.style.overflow = 'hidden';
+        open = true;
+        // A history entry so the phone's BACK gesture closes the pop-out
+        // instead of leaving the dashboard — on a phone that is the control
+        // people actually reach for, and without this it throws them off the
+        // page they were reading.
+        try { history.pushState({ coin: base }, '', '#coin-' + base); } catch (e) { }
+    }
+
+    function hide(viaPop) {
+        if (!open) return;
+        M.classList.remove('on');
+        F.src = 'about:blank';
+        document.body.style.overflow = '';
+        open = false;
+        // Only unwind history when we closed it ourselves; if popstate is what
+        // closed it, the entry is already gone and going back again would take
+        // the user off the dashboard.
+        if (!viaPop) { try { history.back(); } catch (e) { } }
+    }
+
+    // Any link into /coin opens the pop-out instead of navigating. Delegated,
+    // so the OI and flip strips can keep re-rendering their cards without
+    // rebinding anything. Modifier-clicks and middle-clicks fall through to
+    // the browser, because "open in a new tab" must keep working.
+    document.addEventListener('click', function (e) {
+        var a = e.target.closest && e.target.closest('a[href^="/coin/"]');
+        if (!a || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button) return;
+        if (a.target === '_blank') return;
+        e.preventDefault();
+        show(decodeURIComponent(a.getAttribute('href').split('/coin/')[1] || ''));
+    });
+
+    M.addEventListener('click', function (e) {
+        if (e.target.hasAttribute && e.target.hasAttribute('data-close')) hide();
+    });
+    document.addEventListener('keydown', function (e) {
+        if (e.key === 'Escape' && open) hide();
+    });
+    window.addEventListener('popstate', function () { if (open) hide(true); });
+})();
+</script>
 </body>
 </html>
