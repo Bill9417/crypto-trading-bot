@@ -902,21 +902,20 @@ def test_the_shadow_book_can_answer_whether_the_floor_helped():
 
 
 def test_shadow_signals_never_reach_telegram():
-    """They are recorded for scoring only. The digest is built from `fresh`;
-    shadows join afterwards, at the tracker."""
-    import strategy4 as S4
-    import inspect
-    src = inspect.getsource(S4.run_once) if hasattr(S4, "run_once") else ""
-    if not src:
-        for name in dir(S4):
-            fn = getattr(S4, name)
-            if callable(fn) and "shadow" in (inspect.getsource(fn) if
-                                             inspect.isfunction(fn) else ""):
-                if "send_message" in inspect.getsource(fn):
-                    src = inspect.getsource(fn)
-                    break
-    if src and "send_message" in src:
-        send_i = src.index("send_message")
-        shadow_i = src.index('result.get("shadow")')
-        assert shadow_i > send_i, \
-            "shadow signals are in scope before the Telegram send"
+    """Recorded for scoring only. The digest is built from `fresh`, which is
+    the ALERTED set — shadows join afterwards, at the tracker."""
+    import ast
+    import os
+    here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    tree = ast.parse(open(os.path.join(here, "strategy4.py"), encoding="utf-8").read())
+    digest = [n for n in ast.walk(tree) if isinstance(n, ast.Call)
+              and getattr(n.func, "id", None) == "build_digest"]
+    assert digest, "build_digest is no longer called — did the alert path move?"
+    for call in digest:
+        src = ast.dump(call)
+        assert "shadow" not in src, "a shadow signal is inside the digest payload"
+    # and the tracker IS where they go
+    ticks = [n for n in ast.walk(tree) if isinstance(n, ast.Call)
+             and getattr(n.func, "attr", None) == "tick"]
+    assert any("shadow" in ast.dump(t) for t in ticks), \
+        "shadows are no longer recorded at all"

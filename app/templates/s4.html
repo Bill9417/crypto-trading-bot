@@ -265,6 +265,37 @@
         </div>
         {% endif %}
 
+        {# 影子單 — DECLINED by the fee floor. These used to render in the table
+           above with nothing to distinguish them, so a row appeared on the page
+           with entry/SL/TP while Telegram stayed silent and Bybit did nothing.
+           That reads as three broken systems instead of one working rule, so
+           they get their own box saying exactly what they are. #}
+        {% if rec.shadow_open %}
+        <div class="s4-card" style="border-color:rgba(245,158,11,.35)">
+            <div class="s4-rechd" style="font-size:.8rem; color:#f59e0b">
+                🚫 影子單（沒下單、沒通知）· {{ rec.shadow_open|length }} 筆</div>
+            <div class="s4-verd" style="opacity:.85; margin-bottom:6px">
+                {{ rec.shadow_note }}</div>
+            <div class="s4-tbl"><table class="s4-t">
+                <thead><tr><th class="l">標的</th><th>進場</th><th class="hs">停損</th>
+                    <th class="hs">停利</th><th>停損幅度</th><th>時間</th></tr></thead>
+                <tbody>
+                {% for t in rec.shadow_open %}
+                <tr style="opacity:.7">
+                    <td class="l"><b>{{ t.base }}</b>
+                        <span style="color:{{ '#86efac' if (t.side or 'long') == 'long' else '#fca5a5' }};font-size:.68rem">{{ '多' if (t.side or 'long') == 'long' else '空' }}</span>
+                        <span style="opacity:.55;font-size:.68rem">{{ '美股' if t.segment == 'tradfi' else '加密' }}</span></td>
+                    <td>{{ '%.4f'|format(t.entry) }}</td>
+                    <td class="hs" style="color:#fca5a5">{{ '%.4f'|format(t.sl) }}</td>
+                    <td class="hs" style="color:#86efac">{{ '%.4f'|format(t.tp) }}</td>
+                    <td style="color:#f59e0b">{{ '%.2f'|format(t.stop_pct or 0) }}%</td>
+                    <td class="s4-ago" data-ts="{{ t.fired_ts or 0 }}">—</td>
+                </tr>
+                {% endfor %}
+            </tbody></table></div>
+        </div>
+        {% endif %}
+
         {% if rec.closed %}
         <div class="s4-card">
             <div class="s4-rechd" style="font-size:.8rem">已結算 · 最近 {{ rec.closed|length }} 筆</div>

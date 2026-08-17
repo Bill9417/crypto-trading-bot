@@ -1083,14 +1083,22 @@ def build_digest(result: dict, now=None) -> str:
             f"\n\n{body}{more}\n\n{DISCLAIMER}")
 
 
-def due_signals(result: dict, state: dict, now_ts: float) -> list:
+def due_signals(result: dict, state: dict, now_ts: float,
+                key: str = "signals", clock: str = "sent") -> list:
     """Drop anything alerted for the same symbol inside the cooldown. Without
     this a setup that stays valid for two hours pays out eight identical
-    messages and the topic becomes unreadable."""
-    sent = state.get("sent") or {}
+    messages and the topic becomes unreadable.
+
+    Shadows need the SAME treatment under their own clock. They skip the alert
+    path entirely, so they were never cooled down: TRUMP booked three shadow
+    rows in 42 minutes for one setup, and the shadow book exists precisely to
+    be compared against the live one — inflating its n with copies of the same
+    trade corrupts the comparison the fee floor is being judged by.
+    """
+    seen = state.get(clock) or {}
     out = []
-    for s in result.get("signals") or []:
-        last = float(sent.get(s["symbol"]) or 0)
+    for s in result.get(key) or []:
+        last = float(seen.get(s["symbol"]) or 0)
         if now_ts - last >= COOLDOWN_SEC:
             out.append(s)
     return out
@@ -1198,8 +1206,15 @@ def tick(client=None) -> bool:
         # symbol:bar_ts key inside record(), tallied into shadow_* buckets, and
         # never reach a Telegram call — the digest above already went out and
         # was built from `fresh` alone.
-        tracked = strategy4_outcomes.tick(
-            client, fresh + (result.get("shadow") or []), now_ts)
+        fresh_shadow = due_signals(result, state, now_ts,
+                                   key="shadow", clock="shadow_sent")
+        if fresh_shadow:
+            sh = state.get("shadow_sent") or {}
+            for s in fresh_shadow:
+                sh[s["symbol"]] = now_ts
+            state["shadow_sent"] = sh
+            _save(state)
+        tracked = strategy4_outcomes.tick(client, fresh + fresh_shadow, now_ts)
     except Exception as exc:  # noqa: BLE001 — bookkeeping never breaks the scan
         print(f"[s4] outcome tracking failed: {exc}")
 

@@ -47,6 +47,9 @@ STORE_FILE = os.path.join(os.path.dirname(__file__), "strategy4_outcomes.json")
 # 192 bars — the same window signal_outcomes uses, so the two records are
 # comparable rather than accidentally different.
 TRACK_HOURS = float(os.getenv("S4_TRACK_HOURS", "48"))
+# Read from strategy4 rather than restated, so the page can never advertise a
+# floor the scanner is not using.
+MIN_STOP_PCT_DISPLAY = float(os.getenv("S4_MIN_STOP_PCT", "1.0"))
 # Raised 6→12 on 2026-08-12. The scan that calls this already fetches candles
 # for ~140 symbols on the same tick, so a dozen more is not what threatens the
 # rate limit — but a cap of 6 was small enough to be smaller than the open book,
@@ -414,11 +417,26 @@ def web_view(store: dict = None) -> dict:
                     key=lambda c: c.get("exit_ts") or 0, reverse=True)
     segs = [s for s in ("all", "crypto", "tradfi") + SIDE_KEYS
             if (store.get("tally") or {}).get(s)]
+    # SHADOWS ARE NOT SETUPS. They are trades the fee floor DECLINED — never
+    # alerted, never ordered — and they were rendering on /s4 beside real ones
+    # with nothing to tell them apart. TRUMP showed there with entry/SL/TP and
+    # a "8 分鐘前" stamp while Telegram stayed silent and Bybit did nothing,
+    # which reads as three broken systems instead of one working rule.
+    # Split out, so the page can show the record without pretending it is a
+    # list of things you could have taken.
+    all_open = list((store.get("open") or {}).values())
+    live_open = [t for t in all_open if not t.get("shadow")]
+    shadow_open = [t for t in all_open if t.get("shadow")]
+    by_ts = lambda rows: sorted(rows, key=lambda t: t.get("fired_ts") or 0,
+                                reverse=True)
     return {
-        "tracked": len(store.get("open") or {}) + len(closed),
-        "open": sorted((store.get("open") or {}).values(),
-                       key=lambda t: t.get("fired_ts") or 0, reverse=True),
-        "closed": closed[:60],
+        "tracked": len(live_open) + len([c for c in closed if not c.get("shadow")]),
+        "open": by_ts(live_open),
+        "shadow_open": by_ts(shadow_open),
+        "shadow_note": (f"低於 {MIN_STOP_PCT_DISPLAY:.1f}% 手續費地板，"
+                        f"只記錄不通知、不下單 —— 用來驗證這條地板是不是對的"),
+        "closed": [c for c in closed if not c.get("shadow")][:60],
+        "shadow_closed": [c for c in closed if c.get("shadow")][:30],
         "stats": {s: stats(store, s) for s in segs},
         "track_hours": TRACK_HOURS,
         "tie_rule": "a candle spanning both stop and target is scored as a stop",
