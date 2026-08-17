@@ -1179,6 +1179,18 @@ def tick(client=None) -> bool:
     # scan records every signal it fires so that test has data to work with"),
     # which was not true until now: SIGNALS_FILE is overwritten every scan, so
     # a setup that stopped qualifying left no trace that it had ever fired.
+    # ⚙️ Execution. `fresh` only — the alerted set, already deduped by the
+    # per-symbol cooldown, so a setup that stays valid for two hours cannot
+    # send eight orders. OFF unless S4_EXEC=bybit AND LIVE_TRADING=true; the
+    # module logs which mode it is in either way.
+    if fresh:
+        try:
+            import strategy4_exec
+            for _s in fresh:
+                strategy4_exec.open_trade(_s)
+        except Exception as exc:  # noqa: BLE001 — execution never kills the scan
+            print(f"[s4] execution error: {exc}")
+
     tracked = {}
     try:
         import strategy4_outcomes

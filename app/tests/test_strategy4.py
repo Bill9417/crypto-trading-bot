@@ -236,13 +236,149 @@ def test_alerts_never_carry_account_information():
         assert banned not in src, f"{banned} must not be reachable from an S4 alert"
 
 
-def test_the_scan_is_alert_only():
-    """No order path. The universe is weeks old and nothing is validated —
-    this must not be one refactor away from placing trades."""
+def test_the_scan_itself_still_has_no_order_path():
+    """strategy4 detects; strategy4_exec spends. Keeping the exchange calls out
+    of the scanner means a refactor here cannot start placing trades, and the
+    one file that can is small enough to read in full.
+
+    (Execution was added 2026-08-17 at the owner's request, OFF by default —
+    see test_execution_is_off_unless_two_switches_are_set.)"""
     import inspect
     src = inspect.getsource(S)
     for banned in ("create_order", "open_flip", "place_order", "createOrder"):
         assert banned not in src
+
+
+def test_execution_is_off_unless_two_switches_are_set(monkeypatch):
+    """S4_EXEC=bybit alone is not enough, and neither is LIVE_TRADING. Arming
+    real money takes a deliberate act, not one stray env var."""
+    import config
+    import strategy4_exec as E
+    monkeypatch.delenv("S4_EXEC", raising=False)
+    monkeypatch.setattr(config, "LIVE_TRADING", True, raising=False)
+    assert E.enabled() is False, "no S4_EXEC but enabled"
+    monkeypatch.setenv("S4_EXEC", "bybit")
+    monkeypatch.setattr(config, "LIVE_TRADING", False, raising=False)
+    assert E.enabled() is False, "LIVE_TRADING off but enabled"
+    monkeypatch.setattr(config, "LIVE_TRADING", True, raising=False)
+    assert E.enabled() is True
+
+
+def test_a_disabled_run_sends_nothing_and_says_so(monkeypatch, capsys):
+    import strategy4_exec as E
+    monkeypatch.delenv("S4_EXEC", raising=False)
+    sig = {"symbol": "X/USDT:USDT", "side": "long",
+           "plan": {"entry": 100.0, "sl": 98.0, "tp": 104.0}}
+    out = E.open_trade(sig)
+    assert out["ok"] is False and out["reason"] == "disabled"
+    assert "would long" in capsys.readouterr().out
+
+
+def test_an_open_position_is_skipped_and_reported(monkeypatch):
+    """Asked for explicitly. One-Way mode MERGES, so a second order on a symbol
+    that already has a manual or S3 position would put our stop in charge of
+    theirs."""
+    import config
+    import strategy4_exec as E
+    monkeypatch.setenv("S4_EXEC", "bybit")
+    monkeypatch.setattr(config, "LIVE_TRADING", True, raising=False)
+    monkeypatch.setattr(E, "bybit_symbol", lambda s: s)
+    monkeypatch.setattr(E.X, "get_position", lambda s, side=None: {"qty": 1.0})
+    sent = []
+    monkeypatch.setattr(E, "_tg_owner", lambda m: sent.append(m))
+    monkeypatch.setattr(E, "_send", lambda *a, **k: (_ for _ in ()).throw(
+        AssertionError("an order was sent onto an existing position")))
+    out = E.open_trade({"symbol": "X/USDT:USDT", "side": "long",
+                        "plan": {"entry": 100.0, "sl": 98.0, "tp": 104.0}})
+    assert out["skipped"] and out["reason"] == "position_open"
+    assert sent and "已有持倉" in sent[0]
+
+
+def test_a_coin_bybit_does_not_list_is_skipped(monkeypatch):
+    import config
+    import strategy4_exec as E
+    monkeypatch.setenv("S4_EXEC", "bybit")
+    monkeypatch.setattr(config, "LIVE_TRADING", True, raising=False)
+    monkeypatch.setattr(E, "bybit_symbol", lambda s: None)
+    monkeypatch.setattr(E, "_send", lambda *a, **k: (_ for _ in ()).throw(
+        AssertionError("ordered a symbol Bybit does not list")))
+    out = E.open_trade({"symbol": "NOPE/USDT:USDT", "side": "long",
+                        "plan": {"entry": 1.0, "sl": 0.9, "tp": 1.2}})
+    assert out["skipped"] and out["reason"] == "not_listed"
+
+
+def test_a_ticker_collision_is_caught_before_the_order(monkeypatch):
+    """Binance ON was $0.2458 while Bybit's ON — a different token — was
+    $84.52. Sizing from the wrong price asked for $17k of notional."""
+    import config
+    import strategy4_exec as E
+
+    class _Ex:
+        def fetch_ticker(self, s): return {"last": 84.52}
+    monkeypatch.setenv("S4_EXEC", "bybit")
+    monkeypatch.setattr(config, "LIVE_TRADING", True, raising=False)
+    monkeypatch.setattr(E, "bybit_symbol", lambda s: s)
+    monkeypatch.setattr(E.X, "get_position", lambda s, side=None: None)
+    monkeypatch.setattr(E.X, "client", lambda: _Ex())
+    sent = []
+    monkeypatch.setattr(E, "_tg_owner", lambda m: sent.append(m))
+    monkeypatch.setattr(E, "_send", lambda *a, **k: (_ for _ in ()).throw(
+        AssertionError("ordered through a ticker collision")))
+    out = E.open_trade({"symbol": "ON/USDT:USDT", "side": "long",
+                        "plan": {"entry": 0.2458, "sl": 0.24, "tp": 0.26}})
+    assert out["skipped"] and out["reason"].startswith("price_divergence")
+    assert sent and "同代號不同幣" in sent[0]
+
+
+def test_an_unreadable_position_is_treated_as_occupied(monkeypatch):
+    """Cannot read = cannot be sure = do not trade. The opposite default puts
+    an order on top of a position we failed to see."""
+    import strategy4_exec as E
+    monkeypatch.setattr(E, "bybit_symbol", lambda s: s)
+    monkeypatch.setattr(E.X, "get_position",
+                        lambda s, side=None: (_ for _ in ()).throw(RuntimeError("api down")))
+    ok, reason = E.preflight("X/USDT:USDT", 100.0)
+    assert ok is False and reason.startswith("position_check_failed")
+
+
+def test_a_plan_with_the_stop_on_the_wrong_side_is_refused():
+    """Arms an instant loss and makes every R meaningless."""
+    import strategy4_exec as E
+    bad = E.open_trade({"symbol": "X/USDT:USDT", "side": "long",
+                        "plan": {"entry": 100.0, "sl": 104.0, "tp": 98.0}})
+    assert bad["skipped"] and bad["reason"] == "bad_geometry"
+    bad_s = E.open_trade({"symbol": "X/USDT:USDT", "side": "short",
+                          "plan": {"entry": 100.0, "sl": 98.0, "tp": 104.0}})
+    assert bad_s["skipped"] and bad_s["reason"] == "bad_geometry"
+
+
+def test_tp_and_sl_ride_on_the_entry_order():
+    """A TP sent afterwards leaves a window where a fast move exits at neither
+    level, and a separate conditional can be rejected while the position is
+    already open — which is how this repo produced naked positions."""
+    import inspect
+    import strategy4_exec as E
+    src = inspect.getsource(E._send)
+    i = src.index("create_order")
+    assert "stopLoss" in src[i:] and "takeProfit" in src[i:], \
+        "brackets are not attached to the entry order"
+    assert "ensure_stop" in src, "no post-fill verification that the stop landed"
+
+
+def test_order_details_never_reach_a_public_channel():
+    """send_message defaults to the PUBLIC alerts topic. Size, margin and
+    position state belong in the private feed."""
+    import ast
+    import os
+    here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    tree = ast.parse(open(os.path.join(here, "strategy4_exec.py"), encoding="utf-8").read())
+    calls = [n for n in ast.walk(tree) if isinstance(n, ast.Call)
+             and getattr(n.func, "attr", None) == "send_message"]
+    assert calls, "no sender found — did the module stop reporting?"
+    for c in calls:
+        ch = next((k.value for k in c.keywords if k.arg == "channel"), None)
+        assert isinstance(ch, ast.Constant) and ch.value == "trades", \
+            "a send_message without channel='trades' defaults to the PUBLIC topic"
 
 
 # ── universe selection ──────────────────────────────────────────────────────

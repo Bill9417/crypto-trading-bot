@@ -636,6 +636,13 @@ def main() -> None:
         mode = "ALERT-ONLY: no orders are ever placed (set STRATEGY2_LIVE=true to trade)."
     print(f"[strategy2] 15m signal scanner starting — interval {INTERVAL_SEC}s, "
           f"cooldown {ALERT_COOLDOWN_SEC}s. {mode}")
+    # Whether S4 is spending money must be readable in the log, not inferred
+    # from whether orders appear.
+    try:
+        import strategy4_exec
+        print(f"[s4-exec] {strategy4_exec.status_line()}")
+    except Exception as exc:  # noqa: BLE001
+        print(f"[s4-exec] status unavailable: {exc}")
     # 📱 LINE 開機通知 + webhook 自動註冊(quick-tunnel 網址每次重啟都會換,
     # 由程式打 LINE API 重新指向,不必手動改 console)。
     try:
@@ -777,10 +784,11 @@ def main() -> None:
             us_stocks.tick()
         except Exception as exc:  # noqa: BLE001 — a watch-only scan never kills the loop
             print(f"[strategy2] us stocks error: {exc}")
-        # 📊 S4 — Bybit TradFi perp scan (stock/commodity perps). Self-paced:
-        # a no-op until a 15m bar closes, then ~60 kline calls. Alert-only, and
-        # deliberately so — the universe is weeks old and nothing here has been
-        # validated (see the strategy4 docstring).
+        # 📊 S4 — Bybit perp scan. Self-paced: a no-op until a 15m bar closes,
+        # then ~60 kline calls. Alert-only UNLESS S4_EXEC=bybit and
+        # LIVE_TRADING=true, in which case each freshly alerted setup is sent
+        # to Bybit at S4_BYBIT_ORDER_USDT with TP and SL attached — see
+        # strategy4_exec, which prints its mode on startup.
         try:
             import strategy4
             strategy4.tick()
