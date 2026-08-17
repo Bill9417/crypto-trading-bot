@@ -201,6 +201,34 @@ RSI_LEN = int(os.getenv("S4_RSI_LEN", "14"))              # Wilder, TradingView 
 MIN_DIV_SOURCES = int(os.getenv("S4_MIN_DIV_SOURCES", "1"))
 FISHER_LEN = int(os.getenv("S4_FISHER_LEN", "9"))
 FLOW_DETREND = int(os.getenv("S4_FLOW_DETREND", "200"))   # CVD baseline EMA
+# ── VOLUME AND MACD: TESTED, NOT ADDED (2026-08-17) ─────────────────────────
+# Asked directly: "volume plus the MACD movement is so important — would adding
+# these two make more money?" Measured on the REAL S4 record, with both factors
+# computed from the candles that existed AT THE SIGNAL BAR (no lookahead) and
+# scored against the outcomes already recorded.
+#
+# Lift over the trades each filter would have EXCLUDED — the only comparison
+# that judges a filter — on the alerted book (n=123):
+#     MACD histogram with the trade   +0.205R +/-0.631   indistinguishable
+#     MACD histogram rising           -0.014R +/-0.491   indistinguishable
+#     volume >= 1.5x its 24h average  -0.010R +/-0.565   indistinguishable
+#     both together                   -0.102R +/-0.563   indistinguishable (worse)
+# Pooled with the shadow book (n=226) nothing changes: +0.278, +0.072, -0.031,
+# -0.047, every interval still spanning zero. The volume ladder is also
+# non-monotonic (0-0.8x +0.109, 0.8-1.5x -0.060, 1.5-3x +0.274), which is what
+# noise looks like when it is sliced.
+#
+# THE HONEST LIMIT, which matters more than the null itself: per-trade R here
+# has a standard deviation of 1.373, so a 123-trade sample split in two can
+# only detect a lift LARGER THAN ~0.69R. Nothing realistic is that big. This
+# does not show the factors are useless — it shows this sample cannot see an
+# effect of a believable size, and proving a +0.15R edge would take ~1,300
+# trades. Adding a filter on evidence this thin is exactly how the 46-of-48
+# losing setups in this repo were built.
+#
+# So: not added. If they are ever added it should be because a forward sample
+# large enough to see them says so, not because they are plausible.
+
 ATR_LEN = int(os.getenv("S4_ATR_LEN", "14"))
 MAX_STOP_PCT = float(os.getenv("S4_MAX_STOP_PCT", "4")) / 100
 # 1.0%, raised from 0.4% on 2026-08-15. The case is ARITHMETIC, not the 90-trade
