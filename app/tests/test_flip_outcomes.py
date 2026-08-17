@@ -458,3 +458,25 @@ def _flip_shape():
     bar(104.9, 105.3, 104.7, 105.1)
     bar(105.1, 105.4, 104.8, 105.2)          # forming bar, dropped by consider()
     return rows
+
+
+def test_the_page_and_the_alert_quote_the_same_measurements():
+    """The alert carried the out-of-sample re-measurement and the ⭐ tier while
+    the page quoted only the original 163-trade backtest, so the two surfaces
+    disagreed about what had been measured. Both read the same module."""
+    import breakout_flip as B
+    import flip_outcomes as F
+    v = F.web_view(F._blank())
+    for key, src in (("measured", B.MEASURED),
+                     ("measured_oos", B.MEASURED_OOS),
+                     ("measured_seq", B.MEASURED_SEQ)):
+        assert v[key]["n"] == src["n"], f"{key} is not the module's own number"
+    txt = B.format_alert("X/USDT:USDT",
+                         {"blue_sky": True, "room_pct": None, "zone_top": 1.0,
+                          "zone_bottom": .99, "touches": 3, "price": 1.05,
+                          "full_setup": True, "oi": {}},
+                         {"entry": 1.05, "sl": 1.0, "tp": 1.15, "rr": 2.0,
+                          "stop_pct": 4.8})
+    assert str(B.MEASURED["n"]) in txt
+    assert str(B.MEASURED_OOS["n"]) in txt
+    assert str(B.MEASURED_SEQ["n"]) in txt

@@ -201,4 +201,10 @@ def web_view(store: dict = None, limit: int = 20) -> dict:
         # claim being tested, and a live sample of 12 next to a hidden 163
         # invites reading the small number as the answer.
         "measured": B.MEASURED,
+        # The Telegram alert carries the out-of-sample re-measurement and the
+        # ⭐ tier; the page carried only the original 163-trade backtest, so the
+        # two disagreed about what has been measured. Same module, same numbers,
+        # both surfaces.
+        "measured_oos": B.MEASURED_OOS,
+        "measured_seq": B.MEASURED_SEQ,
     }

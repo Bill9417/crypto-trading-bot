@@ -2080,6 +2080,21 @@
                     (m.exp>=0?'+':'') + (m.exp||0).toFixed(3) + 'R，信賴區間 [' +
                     (m.ci?m.ci[0].toFixed(2):'?') + ', ' + (m.ci?m.ci[1].toFixed(2):'?') + '] <b>包含 0</b>。' +
                     '只測過 ' + (m.window||'') + ' —— 形態偵測，不是已驗證的策略。</div>';
+                // The re-measurement and the ⭐ tier, so the page says exactly
+                // what the Telegram alert says. Showing only the first backtest
+                // left the page a version behind its own alerts.
+                var o = d.measured_oos || {}, q = d.measured_seq || {};
+                if (o.n) back += '<div style="font-size:.64rem;opacity:.55;line-height:1.6;">' +
+                    '🔁 修正偵測器後獨立重測 ' + o.n + ' 筆：期望值 ' +
+                    (o.exp>=0?'+':'') + (o.exp||0).toFixed(3) + 'R，<b>信賴區間一樣包含 0</b>；' +
+                    '獲利集中在 3 檔幣（占 ' + Math.round((o.top3_share||0)*100) + '%），' +
+                    '拿掉最好的一檔剩 ' + (o.drop_best_exp>=0?'+':'') +
+                    (o.drop_best_exp||0).toFixed(3) + 'R。</div>';
+                if (q.n) back += '<div style="font-size:.64rem;opacity:.55;line-height:1.6;">' +
+                    '⭐ 完整型態（三角→翻轉→無壓）' + q.n + ' 筆：期望值 ' +
+                    (q.exp>=0?'+':'') + (q.exp||0).toFixed(3) + 'R (PF ' + (q.pf||0) + ')，' +
+                    '但跟其他翻轉的差距 ' + (q.lift>=0?'+':'') + (q.lift||0).toFixed(2) +
+                    'R ±' + (((q.lift_ci||[0,0])[1]-(q.lift||0))).toFixed(2) + '（分不出來）。</div>';
                 if (!st || !st.n) {
                     box.innerHTML = '<div class="analytics-subtitle">還沒有結算完成的紀錄 —— ' +
                         '通知過的形態會在這裡累積成績。</div>' + back;
