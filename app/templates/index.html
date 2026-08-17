@@ -336,7 +336,9 @@
             font-weight: 800;
             letter-spacing: 0.08em;
             text-transform: uppercase;
-            color: var(--wolf-muted);
+            /* Gold, not muted grey — this local rule overrode app.css and was
+               why every panel heading on the busiest page stayed grey. */
+            color: var(--wolf-gold);
         }
         .analytics-subtitle {
             font-size: 0.7rem;

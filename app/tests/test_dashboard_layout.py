@@ -579,3 +579,51 @@ def test_the_api_supplies_the_base_it_renders():
          "tradeable": True, "trade_queued": True, "effective_lights": 7}]})
     rows = out.get("entries") or []
     assert rows and rows[0].get("base") == "MUBARAK"
+
+
+# ── gold accents (2026-08-17) ───────────────────────────────────────────────
+def test_the_cache_bust_moved_with_the_stylesheet():
+    """app.css is served as ?v=ASSET_VER. Editing the stylesheet without
+    bumping it ships the new markup against the old CSS, which is how this
+    project once served an unstyled page."""
+    import os
+    import re
+    import app as A
+    here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    css = os.path.join(here, "static", "app.css")
+    # the version is a date; it must not predate the stylesheet's own mtime
+    import datetime as dt
+    ver = dt.datetime.strptime(A.ASSET_VER, "%Y%m%d").date()
+    mtime = dt.date.fromtimestamp(os.path.getmtime(css))
+    assert ver >= mtime, (
+        f"app.css changed on {mtime} but ASSET_VER is still {A.ASSET_VER} — "
+        f"browsers will keep the old stylesheet")
+    assert re.search(r"--wolf-gold:\s*#", open(css, encoding="utf-8").read())
+
+
+def test_gold_marks_structure_and_never_direction(client):
+    """Green and red already mean direction and P&L. A third semantic colour on
+    the same figures would make a red number in gold ambiguous, so gold is kept
+    to headings, key figures and earned tiers."""
+    import os
+    here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    css = open(os.path.join(here, "static", "app.css"), encoding="utf-8").read()
+    block = css[css.index("GOLD (2026-08-17)"):]
+    block = block[:block.index("/* Scrollbars")] if "/* Scrollbars" in block else block
+    for banned in (".up", ".dn", ".profit", ".loss", ".pnl"):
+        assert f"{banned} " not in block and f"{banned}," not in block, \
+            f"gold was applied to {banned}, which already means direction"
+
+
+def test_the_dashboard_heading_override_did_not_get_left_grey(client):
+    """index.html redeclares .analytics-title locally, so the site-wide rule
+    never reached the busiest page — the headings stayed muted grey while every
+    other page went gold."""
+    h = client.get("/").get_data(as_text=True)
+    i = h.index(".analytics-title {")
+    # to the end of the rule, not a fixed char count — a comment inside the
+    # block pushed the declaration past a 320-char window and failed a
+    # correctly-gold page.
+    block = h[i:h.index("}", i)]
+    assert "var(--wolf-gold)" in block, \
+        "the dashboard's local .analytics-title is not using the gold token"

@@ -396,9 +396,10 @@ body.has-sidebar { padding-left: var(--wsb-w); }
 .analytics-panel::before, .panel::before, .entries-panel::before {
     content: ""; position: absolute; inset: 0 0 auto 0; height: 1px;
     border-radius: inherit;
-    background: linear-gradient(90deg, transparent 4%, rgba(41,221,255,.55) 22%,
-                rgba(167,139,250,.60) 50%, rgba(244,114,182,.45) 74%, transparent 96%);
-    opacity: .75; pointer-events: none;
+    background: linear-gradient(90deg, transparent 4%, rgba(41,221,255,.55) 20%,
+                rgba(167,139,250,.60) 44%, rgba(244,114,182,.42) 64%,
+                rgba(255,210,87,.62) 84%, transparent 97%);
+    opacity: .78; pointer-events: none;
 }
 .analytics-panel:hover, .bcard:hover, .panel:hover {
     border-color: var(--wolf-border-hi);
@@ -406,14 +407,41 @@ body.has-sidebar { padding-left: var(--wsb-w); }
                 inset 0 1px 0 rgba(255,255,255,.10);
 }
 
-/* Section titles pick up the accent instead of being another grey line. */
-.analytics-title { color: #c8bcff; }
+/* ── GOLD (2026-08-17) ───────────────────────────────────────────────────────
+   Gold marks STRUCTURE AND VALUE — headings, key figures, earned tiers. It is
+   deliberately kept off DATA: green/red already mean direction and P&L, and a
+   third semantic colour on the same numbers would make a red figure in gold
+   ambiguous. Cyan stays the interactive colour. So gold says "this is worth
+   your eye", never "this is good news".                                      */
+.analytics-title, .entries-title, .section-title, .card-section-title {
+    color: var(--wolf-gold);
+    letter-spacing: .01em;
+}
+/* The big figures. Champagne rather than the full gold: at 1.4rem+ the
+   saturated tone vibrates against the violet ground. */
+.stat-value, .kpi b, .s4-kpi b, .bcard .big, .analytics-kpi b {
+    color: var(--wolf-champagne);
+}
+/* An earned badge — ⭐ tiers, READY setups — gets the real gold. */
+.badge-gold, .pill-gold, .chip.gold {
+    color: var(--wolf-gold);
+    background: rgba(255,210,87,.12);
+    border: 1px solid rgba(255,210,87,.38);
+}
+/* Panel headings sit on a short gold rule, so a long page reads as sections
+   rather than one continuous scroll. */
+.analytics-panel > h2::after, .entries-panel .entries-title::after {
+    content: ""; display: block; height: 2px; width: 34px; margin-top: 6px;
+    border-radius: 2px;
+    background: linear-gradient(90deg, var(--wolf-gold), rgba(255,210,87,0));
+}
 
 /* Nav: the active item gets a real accent wash, not just a brighter grey. */
 .wsb-item.on {
-    background: linear-gradient(90deg, rgba(167,139,250,.22), rgba(167,139,250,.04));
+    background: linear-gradient(90deg, rgba(255,210,87,.16), rgba(255,210,87,.03));
 }
-.wsb-item.on::before { background: linear-gradient(180deg, var(--wolf-blue), var(--wolf-violet)); }
+.wsb-item.on::before { background: linear-gradient(180deg, var(--wolf-gold), var(--wolf-champagne)); }
+.wsb-item.on { color: var(--wolf-champagne); }
 .wsb-sidebar { backdrop-filter: blur(18px) saturate(120%);
                -webkit-backdrop-filter: blur(18px) saturate(120%); }
 
