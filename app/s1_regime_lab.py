@@ -27,6 +27,37 @@ a forward track record in paper_tracker before it goes anywhere near real
 money.
 
     python s1_regime_lab.py [days] [n_folds] [n_candidates] [top_n_per_fold]
+
+VOLUME AND MACD, ASKED 2026-08-17 — MEASURED HERE
+─────────────────────────────────────────────────
+360 days, 6 folds, 135 trades, both features captured as-of the entry bar.
+
+    baseline (no gate)        n=135  -0.044R  3/6 folds profitable
+    MACD with the trade       n= 86  +0.065R  4/6
+    MACD against the trade    n= 49  -0.234R  3/6
+    volume >= 1.2x            n=132  -0.070R  2/6
+    volume >= 1.5x            n=106  -0.002R  2/6
+    volume >= 2.0x            n= 56  -0.176R  1/6
+    volume < 1.0x             n=  0
+
+VOLUME IS ALREADY IN S1 AND CANNOT BE ADDED AGAIN. Zero of 135 entries fired
+on a below-average-volume bar: the minimum vol_mult observed is 1.18 and the
+median is 1.88, because check_volume_gate(VOLUME_GATE_MULTIPLIER) is already a
+condition. A volume filter has nothing left to filter, which is a MECHANICAL
+explanation rather than a statistical one — no larger sample will change it.
+
+MACD SEPARATES, BUT NOT PROVABLY. +0.065R with the trade against -0.234R
+against it is a 0.30R spread across 86 vs 49 trades, and it improves 4 of 6
+folds. The interval is +0.299R +/-0.361, which still contains zero. 29 gates
+were compared here; the docstring above explains why that alone is enough to
+produce a good-looking cell by chance.
+
+The honest reading is that MACD-against looks like the informative half: it is
+the worst non-trivial cell in the whole table (-0.234R, SumR -11.5 over 49
+trades) and it drags the baseline down. Dropping counter-MACD entries is a
+smaller claim than "add MACD", and it is the one the data leans toward.
+
+NOT WIRED IN. It goes to paper_tracker first, like every other candidate here.
 """
 import json
 import os
@@ -63,6 +94,45 @@ def atr_pct_series(ohlcv, period=14):
     return out
 
 
+def macd_hist_series(ohlcv):
+    """[(ts, histogram)] — MACD(12,26,9) minus its signal line, per bar.
+
+    Returned as a ts-keyed series so BT.as_of() can do the point-in-time
+    lookup: the value used for a trade is the one that existed at its ENTRY
+    bar, never a later one.
+    """
+    closes = [float(c[4]) for c in ohlcv]
+    if len(closes) < 40:
+        return []
+
+    def ema(v, n):
+        k = 2.0 / (n + 1)
+        out = [v[0]]
+        for x in v[1:]:
+            out.append(x * k + out[-1] * (1 - k))
+        return out
+
+    macd = [a - b for a, b in zip(ema(closes, 12), ema(closes, 26), strict=True)]
+    sig = ema(macd, 9)
+    return [(ohlcv[i][0], macd[i] - sig[i]) for i in range(len(closes))]
+
+
+def vol_mult_series(ohlcv, window=24):
+    """[(ts, this bar's volume / its trailing average)]. 1.0 = a normal bar."""
+    vols = [float(c[5]) for c in ohlcv]
+    out = []
+    run = 0.0
+    for i, v in enumerate(vols):
+        run += v
+        if i >= window:
+            run -= vols[i - window]
+            avg = run / window
+            out.append((ohlcv[i][0], (v / avg) if avg > 0 else None))
+        else:
+            out.append((ohlcv[i][0], None))
+    return out
+
+
 def collect_trades(days, n_folds, n_candidates, top_n, progress=print):
     """Same walk-forward as walk_forward.py, but every trade is tagged with
     the regime features present at its ENTRY bar."""
@@ -91,6 +161,8 @@ def collect_trades(days, n_folds, n_candidates, top_n, progress=print):
             d = data[sym]
             oh1h, ema4h = d["oh1h"], d["ema4h"]
             sym_vol = atr_pct_series(oh1h)
+            macd_h = macd_hist_series(oh1h)
+            vol_x = vol_mult_series(oh1h)
             i = max(WF._ts_index(oh1h, lo_ts), BT.WINDOW)
             n = WF._ts_index(oh1h, hi_ts)
             while i < n - 1:
@@ -115,6 +187,11 @@ def collect_trades(days, n_folds, n_candidates, top_n, progress=print):
                             "btc_regime": BT.as_of(btc_reg, ts, "neutral"),
                             "btc_vol": BT.as_of(btc_vol, ts, None),
                             "sym_vol": BT.as_of(sym_vol, ts, None),
+                            # ── the two factors asked about (2026-08-17) ──
+                            # as_of, so each is the value at THIS trade's entry
+                            # bar and cannot see the bar that resolved it.
+                            "macd_hist": BT.as_of(macd_h, ts, None),
+                            "vol_mult": BT.as_of(vol_x, ts, None),
                         })
                         i = close_bar + 1
                         continue
@@ -145,6 +222,25 @@ GATES = [
     ("sym vol >= 2%", lambda t: _vol_ok(t, "sym_vol", 2.0, 99.0)),
     ("LONG + BTC bull", lambda t: t["dir"] == "LONG" and t["btc_regime"] == "bull"),
     ("LONG + BTC vol < 0.7%", lambda t: t["dir"] == "LONG" and _vol_ok(t, "btc_vol", 0.0, 0.7)),
+    # ── volume + MACD, asked about 2026-08-17 ─────────────────────────────
+    # Both as a PLATEAU sweep, not a single value: one working threshold is
+    # curve-fit, a run of neighbouring ones that all work is a relationship.
+    # "with the trade" = histogram positive for a long, negative for a short,
+    # which is the directional reading rather than a raw sign.
+    ("MACD with the trade", lambda t: t.get("macd_hist") is not None and (
+        t["macd_hist"] > 0 if t["dir"] == "LONG" else t["macd_hist"] < 0)),
+    ("MACD against the trade", lambda t: t.get("macd_hist") is not None and (
+        t["macd_hist"] < 0 if t["dir"] == "LONG" else t["macd_hist"] > 0)),
+    ("volume >= 1.2x", lambda t: _vol_ok(t, "vol_mult", 1.2, 99.0)),
+    ("volume >= 1.5x", lambda t: _vol_ok(t, "vol_mult", 1.5, 99.0)),
+    ("volume >= 2.0x", lambda t: _vol_ok(t, "vol_mult", 2.0, 99.0)),
+    ("volume < 1.0x (quiet bar)", lambda t: _vol_ok(t, "vol_mult", 0.0, 1.0)),
+    ("MACD with + volume >= 1.5x", lambda t: (
+        t.get("macd_hist") is not None and _vol_ok(t, "vol_mult", 1.5, 99.0)
+        and (t["macd_hist"] > 0 if t["dir"] == "LONG" else t["macd_hist"] < 0))),
+    ("MACD with + sym vol < 1.0%", lambda t: (
+        t.get("macd_hist") is not None and _vol_ok(t, "sym_vol", 0.0, 1.0)
+        and (t["macd_hist"] > 0 if t["dir"] == "LONG" else t["macd_hist"] < 0))),
     # ── threshold sweep around the one gate that survived the first pass ──
     # A single working value is curve-fit; a PLATEAU across neighbours is a
     # real relationship. Same discipline applied to the BTC .pine strategy.
