@@ -426,7 +426,11 @@ def test_a_member_still_gets_a_valid_layout(as_member):
     """The order is rendered server-side and never fetched, so a member gets
     the default ordering rather than an unstyled pile."""
     html = as_member.get("/").data.decode()
-    assert '[data-card="pulse"]{order:1}' in html
+    # Derived from CARDS, not a named card: this asserted pulse was first and
+    # broke the moment a new panel was added ahead of it, which is a change to
+    # the default order rather than a defect in it.
+    assert f'[data-card="{L.CARD_IDS[0]}"]{{order:1}}' in html
+    assert f'[data-card="{L.CARD_IDS[-1]}"]{{order:{len(L.CARD_IDS)}}}' in html
 
 
 def test_the_route_is_guarded_by_the_shared_admin_decorator():

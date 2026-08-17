@@ -34,6 +34,7 @@ STORE_FILE = os.path.join(os.path.dirname(__file__), "dashboard_layout.json")
 # indistinguishable from a deletion, so every saved layout would silently drop
 # that row to the bottom.
 CARDS = (
+    ("picks", "🏆 綜合前三名 買/賣"),
     ("pulse", "⚡ Market Pulse"),
     ("breadth", "📊 Market Breadth"),
     ("s4", "📊 S4 · Perp Setups"),

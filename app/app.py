@@ -3802,6 +3802,22 @@ def api_coin_search():
         return jsonify({"matches": [], "error": str(e)[:120]}), 200
 
 
+@app.route("/api/top_picks")
+@login_required
+def api_top_picks():
+    """🏆 Top 3 buy / sell across every engine, with reasons.
+
+    Reads the state files the scanners already write — no exchange calls, so
+    this cannot slow the dashboard or add to the rate budget.
+    """
+    import top_picks
+    try:
+        return jsonify({"ok": True, **top_picks.rank()})
+    except Exception as e:  # noqa: BLE001 — a ranking must never 500 the page
+        print(f"Top picks error: {e}")
+        return jsonify({"ok": False, "buy": [], "sell": [], "error": str(e)[:150]}), 200
+
+
 @app.route("/api/coin_overview")
 @login_required
 def api_coin_overview():

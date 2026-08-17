@@ -111,6 +111,25 @@
         @media (max-width:560px) {
             .coin-modal .cm-win { top:0; height:100%; width:100%; border-radius:0; border:0; }
         }
+        /* 🏆 Top picks */
+        .picks-grid { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
+        @media (max-width:760px){ .picks-grid { grid-template-columns:1fr; } }
+        .picks-col h3 { margin:0 0 8px; font-size:.78rem; font-weight:800; }
+        .pick { border:1px solid rgba(255,255,255,.09); border-radius:12px;
+                padding:9px 11px; margin-bottom:8px; background:rgba(255,255,255,.03);
+                text-decoration:none; color:inherit; display:block; }
+        .pick:hover { background:rgba(255,255,255,.06); }
+        .pick.buy  { border-left:3px solid var(--long,#4ade80); }
+        .pick.sell { border-left:3px solid var(--short,#f87171); }
+        .pick-hd { display:flex; align-items:baseline; gap:7px; flex-wrap:wrap; }
+        .pick-sym { font-weight:800; font-size:.9rem; }
+        .pick-agree { font-size:.66rem; font-weight:700; color:#22d3ee; }
+        .pick-conflict { font-size:.64rem; color:var(--wolf-amber,#f59e0b); }
+        .pick-why { font-size:.68rem; color:var(--wolf-muted,#8a99ad); margin-top:3px; }
+        .pick-rec { font-size:.62rem; color:#8a99ad; opacity:.75; margin-top:3px;
+                    font-style:italic; }
+        .picks-note { grid-column:1/-1; font-size:.64rem; color:var(--wolf-muted,#8a99ad);
+                      border-top:1px solid rgba(255,255,255,.07); padding-top:8px; }
         .layout-scope { display:none; font-size:.66rem; color:var(--wolf-amber,#f59e0b); }
         body.layout-editing .layout-scope { display:inline; }
         .layout-list { display:none; flex-direction:column; gap:6px; width:100%;
@@ -1656,6 +1675,20 @@
              zeroes) any input it could not fetch and reports the resulting
              confidence, so a partial read is visible as a partial read.
              ══════════════════════════════════════════════════════════════════ -->
+        <!-- 🏆 Top 3 買/賣 across every engine. Ranked by AGREEMENT COUNT, not
+             by a weighted score: no engine here has a confirmed edge, so
+             multiplying their numbers into a "confidence" would manufacture a
+             precision none of them have. Reasons and each engine's measured
+             record travel with every row. -->
+        <section class="analytics-panel" data-card="picks">
+            <h2 class="section-title">🏆 綜合前三名 · 買 / 賣
+                <span class="muted" style="font-size:.66rem; font-weight:500;">
+                    幾個獨立訊號同時指向同一邊</span></h2>
+            <div id="picks-body" class="picks-grid">
+                <div class="muted" style="font-size:.8rem">載入中…</div>
+            </div>
+        </section>
+
         <section class="bento bento-hero" data-card="pulse">
 
             <!-- ── 1. The composite ───────────────────────────────────────── -->
@@ -4473,6 +4506,49 @@
         paintStyle();
     })();
     </script>
+<script>
+(function () {
+    var BOX = document.getElementById('picks-body');
+    if (!BOX) return;
+    function esc(s){ return String(s==null?'':s).replace(/&/g,'&amp;')
+        .replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+    function col(title, rows, cls) {
+        var h = '<div class="picks-col"><h3>' + title + '</h3>';
+        if (!rows.length) h += '<div class="muted" style="font-size:.72rem">目前沒有訊號</div>';
+        rows.forEach(function (r) {
+            // Links into /coin, so the pop-out opens with the chart + analysis.
+            h += '<a class="pick ' + cls + '" href="/coin/' + encodeURIComponent(r.base) + '">' +
+                 '<div class="pick-hd"><span class="pick-sym">' + esc(r.base) + '</span>' +
+                 '<span class="pick-agree">' + r.agree + ' 個訊號同向</span>' +
+                 (r.conflict ? '<span class="pick-conflict">⚠️ ' + r.conflict + ' 個反向</span>' : '') +
+                 '</div>';
+            r.reasons.forEach(function (x) {
+                h += '<div class="pick-why">· ' + esc(x.why) + '</div>';
+            });
+            (r.records || []).forEach(function (rec) {
+                h += '<div class="pick-rec">' + esc(rec) + '</div>';
+            });
+            h += '</a>';
+        });
+        return h + '</div>';
+    }
+    function paint(d) {
+        if (!d || !d.ok) { BOX.innerHTML = '<div class="muted">排名載入失敗</div>'; return; }
+        BOX.innerHTML = col('🟢 買進候選', d.buy || [], 'buy') +
+                        col('🔴 放空候選', d.sell || [], 'sell') +
+                        '<div class="picks-note">' + esc(d.basis) +
+                        '。每個引擎的實測數字附在各列下方 —— 沒有一個有確定的優勢。<br>' +
+                        esc(d.mover_short_note) + '</div>';
+    }
+    function load() {
+        if (document.hidden) return;
+        fetch('/api/top_picks').then(function(r){return r.ok?r.json():null;})
+            .then(paint).catch(function(){});
+    }
+    load();
+    setInterval(load, 120000);
+})();
+</script>
 <!-- 幣種 pop-out. Markup lives here; the strips only need to link to /coin. -->
 <div class="coin-modal" id="coin-modal" role="dialog" aria-modal="true" aria-label="幣種分析">
     <div class="cm-back" data-close></div>

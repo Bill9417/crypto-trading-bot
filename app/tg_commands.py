@@ -480,6 +480,9 @@ def handle(cmd: str, args: str = "", owner: bool = False) -> str:
         return GUIDE
     if cmd in ("price", "p"):
         return handle_price(args)
+    if cmd in ("picks", "top", "top3"):
+        import top_picks
+        return top_picks.as_text()
     if cmd in ("winrate", "stats", "wr"):
         import executor
         import strategy3_exec
