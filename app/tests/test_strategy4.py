@@ -919,3 +919,68 @@ def test_shadow_signals_never_reach_telegram():
              and getattr(n.func, "attr", None) == "tick"]
     assert any("shadow" in ast.dump(t) for t in ticks), \
         "shadows are no longer recorded at all"
+
+
+# ── a product that needs an account agreement (2026-08-17) ──────────────────
+def test_an_agreement_error_blocks_the_symbol_instead_of_retrying(monkeypatch, tmp_path):
+    """Bybit gates some contracts behind terms the ACCOUNT must accept:
+    110125 "You must agree to the Crude Oil Trading Terms". No retry fixes
+    that, so S4 would re-attempt CL on every signal forever."""
+    import config
+    import strategy4_exec as E
+    monkeypatch.setattr(E, "STATE_FILE", str(tmp_path / "s4x.json"))
+    monkeypatch.setenv("S4_EXEC", "bybit")
+    monkeypatch.setattr(config, "LIVE_TRADING", True, raising=False)
+    monkeypatch.setattr(E, "preflight", lambda s, p: (True, "ok"))
+    real = ('bybit {"retCode":110125,"retMsg":"You must agree to the Crude Oil '
+            'Trading Terms before trading this contract."}')
+    monkeypatch.setattr(E, "_send",
+                        lambda *a, **k: (_ for _ in ()).throw(Exception(real)))
+    sent = []
+    monkeypatch.setattr(E, "_tg_owner", lambda m: sent.append(m))
+    sig = {"symbol": "CL/USDT:USDT", "side": "long",
+           "plan": {"entry": 60.0, "sl": 59.0, "tp": 62.0}}
+    out = E.open_trade(sig)
+    assert out["reason"] == "needs_agreement"
+    assert "CL/USDT:USDT" in E._blocked()
+    assert sent and "同意" in sent[0], "the owner was not told what to do"
+    # the "never retried" half is test_a_blocked_symbol_is_refused_... below
+
+
+def test_a_blocked_symbol_is_refused_before_any_network_call(monkeypatch, tmp_path):
+    import strategy4_exec as E
+    monkeypatch.setattr(E, "STATE_FILE", str(tmp_path / "s4x.json"))
+    monkeypatch.setattr(E, "bybit_symbol",
+                        lambda s: (_ for _ in ()).throw(
+                            AssertionError("hit the network for a blocked symbol")))
+    E._block("CL/USDT:USDT", "110125")
+    ok, why = E.preflight("CL/USDT:USDT", 60.0)
+    assert ok is False and why == "needs_agreement"
+
+
+def test_unblock_clears_it_so_it_can_be_retried(monkeypatch, tmp_path):
+    """After the terms are accepted the symbol must be reachable again without
+    editing a file by hand."""
+    import strategy4_exec as E
+    monkeypatch.setattr(E, "STATE_FILE", str(tmp_path / "s4x.json"))
+    E._block("CL/USDT:USDT", "110125")
+    assert E.unblock("CL/USDT:USDT") == 1
+    assert E._blocked() == {}
+
+
+def test_other_failures_are_not_blocked_permanently(monkeypatch, tmp_path):
+    """A transient rejection must stay retryable — blocking on everything would
+    silently shrink the universe one network blip at a time."""
+    import config
+    import strategy4_exec as E
+    monkeypatch.setattr(E, "STATE_FILE", str(tmp_path / "s4x.json"))
+    monkeypatch.setenv("S4_EXEC", "bybit")
+    monkeypatch.setattr(config, "LIVE_TRADING", True, raising=False)
+    monkeypatch.setattr(E, "preflight", lambda s, p: (True, "ok"))
+    monkeypatch.setattr(E, "_send", lambda *a, **k: (_ for _ in ()).throw(
+        Exception("bybit timeout")))
+    monkeypatch.setattr(E, "_tg_owner", lambda m: None)
+    out = E.open_trade({"symbol": "X/USDT:USDT", "side": "long",
+                        "plan": {"entry": 1.0, "sl": .9, "tp": 1.2}})
+    assert out["reason"].startswith("order_failed")
+    assert E._blocked() == {}, "a transient error was blocked permanently"

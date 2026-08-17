@@ -34,6 +34,7 @@ THE FOUR WAYS THIS CAN GO WRONG, all of them already paid for once:
      order, which used to fail deep inside open_flip with a misleading error.
      Checked up front against BYBIT's own price and limits.
 """
+import json
 import os
 import time
 
@@ -48,6 +49,61 @@ LEVERAGE = int(os.getenv("S4_BYBIT_LEVERAGE", "5"))
 # ticker collision, not a market.
 MAX_PRICE_DIVERGENCE = float(os.getenv("S4_MAX_PRICE_DIVERGENCE", "0.05"))
 MARGIN_BUFFER = 1.15
+
+
+# Bybit gates some contracts behind a per-product agreement the ACCOUNT must
+# accept in the app — 110125 "You must agree to the Crude Oil Trading Terms".
+# No amount of retrying fixes that, and S4 would re-attempt CL on every signal
+# forever, so the symbol is remembered and skipped until the owner clears it.
+# Matched on the retCode AND on the wording, because the code differs per
+# product (crude oil, precious metals, index futures) while the sentence does
+# not.
+AGREEMENT_MARKERS = ("110125", "must agree", "trading terms", "agreement")
+
+
+def _blocked() -> dict:
+    try:
+        with open(STATE_FILE, encoding="utf-8") as f:
+            return (json.load(f) or {}).get("blocked") or {}
+    except (OSError, ValueError):
+        return {}
+
+
+def _block(sym: str, why: str) -> None:
+    """Remember a permanent refusal so it is not retried every sweep."""
+    try:
+        try:
+            with open(STATE_FILE, encoding="utf-8") as f:
+                state = json.load(f) or {}
+        except (OSError, ValueError):
+            state = {}
+        state.setdefault("blocked", {})[sym] = {"why": why[:200],
+                                                "ts": time.time()}
+        tmp = f"{STATE_FILE}.{os.getpid()}.tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(state, f)
+        os.replace(tmp, STATE_FILE)
+    except Exception as exc:  # noqa: BLE001 — a bookkeeping failure never blocks
+        print(f"[s4-exec] could not persist block for {sym}: {exc}")
+
+
+def unblock(sym: str = None) -> int:
+    """Clear one symbol, or all of them. For after the terms are accepted."""
+    try:
+        with open(STATE_FILE, encoding="utf-8") as f:
+            state = json.load(f) or {}
+    except (OSError, ValueError):
+        return 0
+    blocked = state.get("blocked") or {}
+    n = len(blocked) if sym is None else (1 if blocked.pop(sym, None) else 0)
+    if sym is None:
+        blocked = {}
+    state["blocked"] = blocked
+    tmp = f"{STATE_FILE}.{os.getpid()}.tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(state, f)
+    os.replace(tmp, STATE_FILE)
+    return n
 
 
 def mode() -> str:
@@ -89,6 +145,8 @@ def bybit_symbol(sym: str):
 
 def preflight(sym: str, price: float) -> tuple:
     """(ok, reason). Everything that must be true before an order is sent."""
+    if sym in _blocked():
+        return False, "needs_agreement"
     if not bybit_symbol(sym):
         return False, "not_listed"
 
@@ -173,9 +231,24 @@ def open_trade(sig: dict) -> dict:
     try:
         res = _send(sym, side, entry, sl, tp, margin)
     except Exception as exc:  # noqa: BLE001
-        out.update(reason=f"order_failed:{str(exc)[:120]}")
+        msg = str(exc)
+        low = msg.lower()
+        base = sym.split("/")[0]
+        if any(m in low for m in AGREEMENT_MARKERS):
+            # Permanent until the OWNER accepts the product terms in the Bybit
+            # app. Retrying is pure noise, so remember it and say once what to
+            # do — an error nobody can act on is worse than silence.
+            _block(sym, msg)
+            out.update(skipped=True, reason="needs_agreement")
+            print(f"[s4-exec] {sym} blocked — needs a Bybit product agreement")
+            _tg_owner(
+                f"🚫 S4 已停用 {base} — Bybit 要求先同意這個商品的交易條款\n"
+                f"要交易它：Bybit App → 該合約 → 同意條款，然後跟我說一聲我把它解鎖。\n"
+                f"不處理也沒關係，S4 之後不會再試 {base}，其他幣照常。")
+            return out
+        out.update(reason=f"order_failed:{msg[:120]}")
         print(f"[s4-exec] order failed {sym}: {exc}")
-        _tg_owner(f"❌ S4 {sym.split('/')[0]} 下單失敗：{str(exc)[:120]}")
+        _tg_owner(f"❌ S4 {base} 下單失敗：{msg[:120]}")
         return out
     out.update(res)
     return out
@@ -233,5 +306,7 @@ def status_line() -> str:
         return "S4 執行：關閉（只發訊號）"
     if not getattr(config, "LIVE_TRADING", False):
         return "S4 執行：S4_EXEC=bybit 但 LIVE_TRADING=false → 仍然不會下單"
+    blocked = _blocked()
+    tail = (f" · 已停用 {len(blocked)} 檔（需同意條款）" if blocked else "")
     return (f"S4 執行：⚠️ BYBIT 實單 · {ORDER_USDT:g} USDT × {LEVERAGE}x · "
-            f"附停損停利 · 已有持倉的幣會跳過")
+            f"附停損停利 · 已有持倉的幣會跳過{tail}")

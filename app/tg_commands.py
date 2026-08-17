@@ -480,6 +480,12 @@ def handle(cmd: str, args: str = "", owner: bool = False) -> str:
         return GUIDE
     if cmd in ("price", "p"):
         return handle_price(args)
+    if cmd in ("s4unblock", "unblock"):
+        import strategy4_exec
+        n = strategy4_exec.unblock(args.strip().upper() + "/USDT:USDT"
+                                   if args.strip() else None)
+        return (f"✅ 已解鎖 {n} 檔，S4 下次遇到會重新嘗試下單。"
+                if n else "沒有被停用的幣種。")
     if cmd in ("picks", "top", "top3"):
         import top_picks
         return top_picks.as_text()
