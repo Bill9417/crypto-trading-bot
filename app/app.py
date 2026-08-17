@@ -377,6 +377,11 @@ def build_top_entries(data: dict, n: int = 5) -> dict:
                     if p.strip()] if (not queued and "rejected" in reason) else []
         cands.append({
             "symbol": s.get("symbol", "?"),
+            # What the card SHOWS. "MUBARAK/USDT:USDT" is 17 unbreakable
+            # characters in a fifth of a row, which is what pushed one card's
+            # name across its neighbour. Every other strip already shows the
+            # base, so this makes them consistent too.
+            "base": (s.get("base") or str(s.get("symbol", "?")).split("/")[0]),
             "direction": (s.get("direction") or "").upper(),
             "lights": lights,
             "conviction": s.get("conviction"),

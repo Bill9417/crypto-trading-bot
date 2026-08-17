@@ -270,7 +270,11 @@
         .entries-regime.bear { background: rgba(239,68,68,.16); color: #f87171; }
         .entries-regime.bull { background: rgba(34,197,94,.16); color: #4ade80; }
         .entries-regime.neutral, .entries-regime.unknown, .entries-regime.off { background: rgba(245,158,11,.16); color: #fbbf24; }
-        .entries-row { display: grid; grid-template-columns: repeat(5, minmax(0,1fr)); gap: 10px; }
+        /* auto-fit, not repeat(5): five hard columns keep their width no matter
+           how narrow the panel gets, so the cards stop fitting long before the
+           grid admits it. This reflows to 4/3/2 instead of cramming. */
+        .entries-row { display: grid; gap: 10px;
+                       grid-template-columns: repeat(auto-fit, minmax(160px,1fr)); }
         .entry-card {
             background: rgba(255,255,255,.025); border: 1px solid var(--wolf-border);
             border-radius: 12px; padding: 12px 13px; text-decoration: none; color: inherit;
@@ -278,8 +282,17 @@
         }
         .entry-card:hover { transform: translateY(-2px); border-color: rgba(52,211,153,.35); box-shadow: 0 10px 24px rgba(0,0,0,.28); }
         .entry-card.ready { border-color: rgba(255,207,75,.4); background: rgba(255,207,75,.05); }
-        .entry-top { display: flex; align-items: center; justify-content: space-between; gap: 6px; }
-        .entry-sym { font-size: .92rem; font-weight: 800; color: var(--wolf-blue); }
+        .entry-top { display: flex; align-items: center; justify-content: space-between;
+                     gap: 6px; min-width: 0; }
+        /* THE OVERLAP. A flex item defaults to min-width:auto, so a long
+           unbreakable name like MUBARAK/USDT:USDT refuses to shrink below its
+           own text and spills across the next card — the grid track shrank,
+           the text did not. min-width:0 lets it shrink; the ellipsis gives it
+           somewhere to go. */
+        .entry-sym { font-size: .92rem; font-weight: 800; color: var(--wolf-blue);
+                     min-width: 0; overflow: hidden; text-overflow: ellipsis;
+                     white-space: nowrap; }
+        .entry-dir { flex: 0 0 auto; }
         .entry-dir { font-size: .64rem; font-weight: 900; padding: 3px 8px; border-radius: 999px; letter-spacing: .5px; }
         .entry-dir.LONG { background: rgba(34,197,94,.16); color: #4ade80; }
         .entry-dir.SHORT { background: rgba(239,68,68,.16); color: #f87171; }
@@ -3696,7 +3709,7 @@
                     ? `<div class="entry-needs">${e.blockers.map(b => `<span class="entry-need">${escTop(b)}</span>`).join('')}</div>` : '';
                 const href = e.tv_url ? `href="${escTop(e.tv_url)}" target="_blank" rel="noopener"` : '';
                 return `<a class="entry-card ${ready ? 'ready' : ''}" ${href}>
-                    <div class="entry-top"><span class="entry-sym">${escTop(e.symbol)}</span><span class="entry-dir ${dir}">${dir || '—'}</span></div>
+                    <div class="entry-top"><span class="entry-sym" title="${escTop(e.symbol)}">${escTop(e.base || e.symbol)}</span><span class="entry-dir ${dir}">${dir || '—'}</span></div>
                     ${status}
                     <div class="entry-conv ${convClass(e.lights || 0)}" title="${e.lights ?? 0} of 7 strategy lights passed">
                         <div class="conv-top"><span class="conv-n">${e.lights ?? '—'}/7</span><span class="conv-tier">${convTier(e.lights || 0)}</span></div>

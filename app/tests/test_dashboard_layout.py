@@ -547,3 +547,35 @@ def test_the_pop_out_unloads_its_iframe_on_close(client):
     behind the dashboard."""
     h = client.get("/").get_data(as_text=True)
     assert "about:blank" in h
+
+
+# ── entry cards must not overlap each other (2026-08-17) ────────────────────
+def test_entry_cards_can_shrink_instead_of_spilling_over_each_other(client):
+    """A flex item defaults to min-width:auto, so a long unbreakable name like
+    MUBARAK/USDT:USDT refused to shrink below its own text and spilled across
+    the next card: the grid track shrank, the text did not. Live it rendered
+    five names on top of one another."""
+    h = client.get("/").get_data(as_text=True)
+    css = h[h.index(".entry-sym"):h.index(".entry-sym") + 400]
+    assert "min-width: 0" in css, ".entry-sym can still refuse to shrink"
+    assert "text-overflow: ellipsis" in css, "no ellipsis, so it will clip mid-word"
+    assert "repeat(auto-fit" in h, \
+        "the row still forces a fixed column count regardless of width"
+
+
+def test_the_entry_card_shows_the_base_not_the_full_pair(client):
+    """17 unbreakable characters in a fifth of a row is what created the
+    collision, and every other strip in the app already shows the base."""
+    h = client.get("/").get_data(as_text=True)
+    assert "e.base || e.symbol" in h, "the card is back to rendering the full pair"
+
+
+def test_the_api_supplies_the_base_it_renders():
+    """The template falls back to the full symbol, so a missing base would look
+    fine in review and overlap again in production."""
+    import app as A
+    out = A.build_top_entries({"signals": [
+        {"symbol": "MUBARAK/USDT:USDT", "direction": "long",
+         "tradeable": True, "trade_queued": True, "effective_lights": 7}]})
+    rows = out.get("entries") or []
+    assert rows and rows[0].get("base") == "MUBARAK"
