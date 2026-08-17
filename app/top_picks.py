@@ -47,16 +47,23 @@ MAX_AGE = {
 TOP_N = int(os.getenv("PICKS_TOP_N", "3"))
 
 # The measured record of each voter, shown next to whatever it claims.
+# The engine's NAME is not in here — SRC_ZH supplies it, and the legend prints
+# the two together. Carrying it in both produced "動能 動能實測 −0.054R…".
 RECORD = {
-    "s2": "S2 實測 −0.081R/筆 (22,631 筆，信賴區間不含 0 → 確定為負)",
-    "flip": "翻轉實測 +0.145R/筆 (269 筆，信賴區間含 0)",
-    "flip_full": "完整型態實測 +0.287R/筆 (108 筆，但拿掉最賺的幣就失效)",
-    "s4": "S4 實測 −0.022R/筆 (90 筆，信賴區間含 0)",
-    "oi": "OI 當篩選條件實測沒有效果 (+0.28R ±0.40)",
-    "mover": "動能實測 −0.054R/筆；做空 −0.211R (確定為負)",
+    "s2": "實測 −0.081R/筆 (22,631 筆，信賴區間不含 0 → 確定為負)",
+    "flip": "實測 +0.145R/筆 (269 筆，信賴區間含 0)",
+    "flip_full": "實測 +0.287R/筆 (108 筆，但拿掉最賺的一檔幣就失效)",
+    "s4": "實測 −0.022R/筆 (90 筆，信賴區間含 0)",
+    "oi": "當篩選條件實測沒有效果 (+0.28R ±0.40)",
+    "mover": "實測 −0.054R/筆；做空 −0.211R (確定為負)",
 }
 MOVER_SHORT_NOTE = ("動能做空是本專案唯一「確定會賠」的訊號 "
                     "(−0.211R，信賴區間不含 0)，所以只列出、不計票。")
+
+# Short chip labels — the row shows WHICH engines voted at a glance; the full
+# sentence for each lives once in the legend.
+SRC_ZH = {"s2": "S2", "flip": "翻轉", "oi": "OI", "s4": "S4", "mover": "動能",
+          "flip_full": "⭐ 完整型態"}
 
 OI_BULL = {"longs_opening": "新多單進場", "shorts_closing": "空單回補"}
 OI_BEAR = {"shorts_opening": "新空單進場", "longs_closing": "多單平倉"}
@@ -181,6 +188,19 @@ def rank(votes: dict = None, now: float = None, top_n: int = None) -> dict:
             other = len([x for x in v["long" if side == "short" else "short"]
                          if x["counts"]])
             newest = max((x["ts"] or 0) for x in mine)
+            # ONE line per engine. Two S2 signals on a coin is one engine
+            # saying the same thing twice, and printing both made a row look
+            # like it had more behind it than it did (WET and CTSI each showed
+            # "S2 三角訊號" twice while the agree count correctly said 1).
+            # Newest wins; the rest collapse into a ×N marker.
+            per_src, extra = {}, {}
+            for x in sorted(mine, key=lambda x: -(x["ts"] or 0)):
+                if x["src"] in per_src:
+                    extra[x["src"]] = extra.get(x["src"], 1) + 1
+                else:
+                    per_src[x["src"]] = x
+            for s, n in extra.items():
+                per_src[s] = {**per_src[s], "repeats": n}
             rows.append({
                 "base": base, "side": side,
                 "agree": len({x["src"] for x in counted}),
@@ -189,7 +209,8 @@ def rank(votes: dict = None, now: float = None, top_n: int = None) -> dict:
                 # different situation from one nobody contradicts, and hiding
                 # that would make the list look cleaner than the data is.
                 "conflict": other,
-                "reasons": sorted(mine, key=lambda x: -(x["ts"] or 0)),
+                "reasons": sorted(per_src.values(), key=lambda x: -(x["ts"] or 0)),
+                "srcs": sorted({x["src"] for x in counted}),
                 "plan": next((x["plan"] for x in counted if x["plan"]), None),
                 "newest_ts": newest,
                 "age_min": (now - newest) / 60 if newest else None,
@@ -204,8 +225,25 @@ def rank(votes: dict = None, now: float = None, top_n: int = None) -> dict:
                                  -(r["newest_ts"] or 0)))
         return rows[:top_n]
 
-    return {"buy": build("long"), "sell": build("short"),
+    buy, sell = build("long"), build("short")
+    # The records move to ONE legend instead of repeating under every row. Six
+    # identical italic lines is how a caveat becomes wallpaper: the reader stops
+    # seeing it, which is the opposite of why it is there. Stated once, keyed to
+    # the chip on each row, it stays readable AND stays attached.
+    used = []
+    for r in buy + sell:
+        for s in r["srcs"]:
+            if s not in used:
+                used.append(s)
+        # The ⭐ tier has its OWN numbers (+0.287R over 108, and failing every
+        # robustness check). A starred row under the plain flip record would be
+        # quoting the wrong figure at the row most likely to be acted on.
+        if r["starred"] and "flip_full" not in used:
+            used.append("flip_full")
+    return {"buy": buy, "sell": sell,
             "ts": now, "mover_short_note": MOVER_SHORT_NOTE,
+            "legend": [{"src": s, "label": SRC_ZH.get(s, s), "record": RECORD[s]}
+                       for s in used if s in RECORD],
             "basis": "依「幾個獨立訊號同時指向同一邊」排序，不是預測機率"}
 
 
@@ -223,9 +261,12 @@ def as_text(picks: dict = None) -> str:
             out.append(f"{i}. <b>{r['base']}</b> · {r['agree']} 個訊號同時指向"
                        + (f" · ⚠️ 另有 {r['conflict']} 個反向" if r["conflict"] else ""))
             for why in r["reasons"]:
-                out.append(f"   · {why['why']}")
-            for rec in r["records"]:
-                out.append(f"   <i>{rec}</i>")
+                rep = f" ×{why['repeats']}" if why.get("repeats") else ""
+                out.append(f"   · {why['why']}{rep}")
+    if p.get("legend"):
+        out.append("\n📐 各引擎實測（每次都一樣，所以只列一次）")
+        for lg in p["legend"]:
+            out.append(f"   {lg['label']}：{lg['record']}")
     out.append("\n⚠️ 排序=幾個訊號同時同向，不是勝率也不是預測。"
                "本專案每一個引擎實測都沒有確定的優勢，數字附在各列下方。")
     return "\n".join(out)

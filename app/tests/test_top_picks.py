@@ -114,3 +114,73 @@ def test_it_reads_no_network():
     src = inspect.getsource(T)
     for banned in ("fetch_ohlcv", "requests.", "ccxt", "fetch_ticker"):
         assert banned not in src, f"top_picks reaches the network via {banned}"
+
+
+# ── tidy, without dropping the caveats (2026-08-17) ─────────────────────────
+def test_one_line_per_engine_not_one_per_signal():
+    """Two S2 signals on a coin is one engine saying the same thing twice.
+    Printing both made a row look like it had more behind it than it did —
+    WET and CTSI each showed "S2 三角訊號" twice while the agree count
+    correctly said 1."""
+    v = {"AAA": {"long": [{"src": "s2", "why": "a", "record": "r", "ts": 1,
+                           "counts": True, "plan": None},
+                          {"src": "s2", "why": "b", "record": "r", "ts": 2,
+                           "counts": True, "plan": None},
+                          {"src": "oi", "why": "c", "record": "r2", "ts": 3,
+                           "counts": True, "plan": None}], "short": []}}
+    row = T.rank(v, now=10)["buy"][0]
+    assert len(row["reasons"]) == 2, "a repeated engine printed twice"
+    s2 = next(x for x in row["reasons"] if x["src"] == "s2")
+    assert s2["why"] == "b", "the newest signal should be the one shown"
+    assert s2["repeats"] == 2, "the collapsed duplicates are not counted"
+
+
+def test_the_records_move_to_one_legend_but_do_not_disappear():
+    """Six identical italic lines is how a caveat becomes wallpaper — the
+    reader stops seeing it, which is the opposite of why it is there. Once,
+    keyed to the chip on each row, it stays readable AND stays attached."""
+    v = {"AAA": {"long": [{"src": "s2", "why": "a", "record": T.RECORD["s2"],
+                           "ts": 1, "counts": True, "plan": None}], "short": []}}
+    out = T.rank(v, now=10)
+    srcs = [x["src"] for x in out["legend"]]
+    assert "s2" in srcs
+    assert any(x["record"] == T.RECORD["s2"] for x in out["legend"])
+    assert out["legend"][0]["label"] == "S2"
+
+
+def test_the_legend_only_lists_engines_actually_on_the_board():
+    """A legend for engines nobody voted with is noise pretending to be rigour."""
+    v = {"AAA": {"long": [{"src": "flip", "why": "a", "record": T.RECORD["flip"],
+                           "ts": 1, "counts": True, "plan": None}], "short": []}}
+    srcs = [x["src"] for x in T.rank(v, now=10)["legend"]]
+    assert srcs == ["flip"]
+
+
+def test_each_row_says_which_engines_voted():
+    """The chips replace the repeated prose — without them the row would be
+    tidy and unattributable."""
+    v = {"AAA": {"long": [{"src": "s2", "why": "a", "record": "r", "ts": 1,
+                           "counts": True, "plan": None},
+                          {"src": "oi", "why": "b", "record": "r", "ts": 2,
+                           "counts": True, "plan": None}], "short": []}}
+    assert T.rank(v, now=10)["buy"][0]["srcs"] == ["oi", "s2"]
+
+
+def test_a_starred_row_gets_the_tier_s_own_numbers_in_the_legend():
+    """The ⭐ tier is +0.287R over 108 and fails every robustness check —
+    different figures from the plain flip. Quoting the plain one under the row
+    most likely to be acted on is the wrong number in the worst place."""
+    v = {"AAA": {"long": [{"src": "flip", "why": "⭐ 完整型態", "record": T.RECORD["flip_full"],
+                           "ts": 1, "counts": True, "plan": None}], "short": []}}
+    srcs = [x["src"] for x in T.rank(v, now=10)["legend"]]
+    assert "flip_full" in srcs, "a starred row quoted only the plain flip record"
+
+
+def test_the_legend_label_is_not_repeated_inside_the_record():
+    """SRC_ZH supplies the name and the legend prints the two together;
+    carrying it in both produced "動能 動能實測 −0.054R…"."""
+    for src, rec in T.RECORD.items():
+        label = (T.SRC_ZH.get(src, "") or "").replace("⭐ ", "")
+        assert label, f"{src} has no legend label"
+        assert not rec.startswith(label), \
+            f"{src}: record repeats the label '{label}'"

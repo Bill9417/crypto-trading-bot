@@ -111,25 +111,38 @@
         @media (max-width:560px) {
             .coin-modal .cm-win { top:0; height:100%; width:100%; border-radius:0; border:0; }
         }
-        /* 🏆 Top picks */
-        .picks-grid { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
+        /* 🏆 Top picks — compact. One line per engine, records in ONE legend. */
+        .picks-grid { display:grid; grid-template-columns:1fr 1fr; gap:10px 18px;
+                      align-items:start; }
         @media (max-width:760px){ .picks-grid { grid-template-columns:1fr; } }
-        .picks-col h3 { margin:0 0 8px; font-size:.78rem; font-weight:800; }
-        .pick { border:1px solid rgba(255,255,255,.09); border-radius:12px;
-                padding:9px 11px; margin-bottom:8px; background:rgba(255,255,255,.03);
-                text-decoration:none; color:inherit; display:block; }
+        .picks-col h3 { margin:0 0 7px; font-size:.72rem; font-weight:800;
+                        letter-spacing:.04em; opacity:.9; }
+        .pick { display:block; text-decoration:none; color:inherit;
+                border-radius:10px; padding:7px 10px; margin-bottom:6px;
+                background:rgba(255,255,255,.025);
+                border:1px solid rgba(255,255,255,.07); border-left-width:3px; }
         .pick:hover { background:rgba(255,255,255,.06); }
-        .pick.buy  { border-left:3px solid var(--long,#4ade80); }
-        .pick.sell { border-left:3px solid var(--short,#f87171); }
-        .pick-hd { display:flex; align-items:baseline; gap:7px; flex-wrap:wrap; }
-        .pick-sym { font-weight:800; font-size:.9rem; }
-        .pick-agree { font-size:.66rem; font-weight:700; color:#22d3ee; }
-        .pick-conflict { font-size:.64rem; color:var(--wolf-amber,#f59e0b); }
-        .pick-why { font-size:.68rem; color:var(--wolf-muted,#8a99ad); margin-top:3px; }
-        .pick-rec { font-size:.62rem; color:#8a99ad; opacity:.75; margin-top:3px;
-                    font-style:italic; }
-        .picks-note { grid-column:1/-1; font-size:.64rem; color:var(--wolf-muted,#8a99ad);
-                      border-top:1px solid rgba(255,255,255,.07); padding-top:8px; }
+        .pick.buy  { border-left-color:var(--long,#4ade80); }
+        .pick.sell { border-left-color:var(--short,#f87171); }
+        .pick-hd { display:flex; align-items:center; gap:6px; flex-wrap:wrap; }
+        .pick-sym { font-weight:800; font-size:.82rem; letter-spacing:.02em; }
+        /* Which engines voted, at a glance. The full record for each is in the
+           legend once, instead of six identical italic lines down the card. */
+        .pick-chip { font-size:.58rem; font-weight:700; padding:1px 5px;
+                     border-radius:999px; background:rgba(34,211,238,.13);
+                     color:#22d3ee; border:1px solid rgba(34,211,238,.28); }
+        .pick-chip.star { background:rgba(255,207,75,.14); color:#ffcf4b;
+                          border-color:rgba(255,207,75,.35); }
+        .pick-chip.warn { background:rgba(245,158,11,.13); color:#f59e0b;
+                          border-color:rgba(245,158,11,.32); }
+        .pick-why { font-size:.64rem; color:var(--wolf-muted,#8a99ad);
+                    margin-top:2px; line-height:1.45; }
+        .picks-legend { grid-column:1/-1; margin-top:2px; padding-top:8px;
+                        border-top:1px solid rgba(255,255,255,.07);
+                        font-size:.6rem; color:var(--wolf-muted,#8a99ad);
+                        line-height:1.6; }
+        .picks-legend b { color:#22d3ee; font-weight:700; }
+        .picks-legend .hd { display:block; margin-bottom:3px; opacity:.85; }
         .layout-scope { display:none; font-size:.66rem; color:var(--wolf-amber,#f59e0b); }
         body.layout-editing .layout-scope { display:inline; }
         .layout-list { display:none; flex-direction:column; gap:6px; width:100%;
@@ -4512,21 +4525,23 @@
     if (!BOX) return;
     function esc(s){ return String(s==null?'':s).replace(/&/g,'&amp;')
         .replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+    var ZH = {s2:'S2', flip:'翻轉', oi:'OI', s4:'S4', mover:'動能'};
     function col(title, rows, cls) {
         var h = '<div class="picks-col"><h3>' + title + '</h3>';
-        if (!rows.length) h += '<div class="muted" style="font-size:.72rem">目前沒有訊號</div>';
+        if (!rows.length) h += '<div class="muted" style="font-size:.68rem">目前沒有訊號</div>';
         rows.forEach(function (r) {
             // Links into /coin, so the pop-out opens with the chart + analysis.
             h += '<a class="pick ' + cls + '" href="/coin/' + encodeURIComponent(r.base) + '">' +
-                 '<div class="pick-hd"><span class="pick-sym">' + esc(r.base) + '</span>' +
-                 '<span class="pick-agree">' + r.agree + ' 個訊號同向</span>' +
-                 (r.conflict ? '<span class="pick-conflict">⚠️ ' + r.conflict + ' 個反向</span>' : '') +
-                 '</div>';
-            r.reasons.forEach(function (x) {
-                h += '<div class="pick-why">· ' + esc(x.why) + '</div>';
+                 '<div class="pick-hd"><span class="pick-sym">' + esc(r.base) + '</span>';
+            (r.srcs || []).forEach(function (s) {
+                h += '<span class="pick-chip">' + esc(ZH[s] || s) + '</span>';
             });
-            (r.records || []).forEach(function (rec) {
-                h += '<div class="pick-rec">' + esc(rec) + '</div>';
+            if (r.starred) h += '<span class="pick-chip star">⭐ 完整型態</span>';
+            if (r.conflict) h += '<span class="pick-chip warn">' + r.conflict + ' 反向</span>';
+            h += '</div>';
+            r.reasons.forEach(function (x) {
+                h += '<div class="pick-why">' + esc(x.why) +
+                     (x.repeats ? ' ×' + x.repeats : '') + '</div>';
             });
             h += '</a>';
         });
@@ -4534,11 +4549,13 @@
     }
     function paint(d) {
         if (!d || !d.ok) { BOX.innerHTML = '<div class="muted">排名載入失敗</div>'; return; }
+        var lg = '<div class="picks-legend"><span class="hd">📐 各引擎實測（每次都一樣，只列一次）</span>';
+        (d.legend || []).forEach(function (x) {
+            lg += '<b>' + esc(x.label) + '</b> ' + esc(x.record) + '<br>';
+        });
+        lg += esc(d.basis) + '。' + esc(d.mover_short_note) + '</div>';
         BOX.innerHTML = col('🟢 買進候選', d.buy || [], 'buy') +
-                        col('🔴 放空候選', d.sell || [], 'sell') +
-                        '<div class="picks-note">' + esc(d.basis) +
-                        '。每個引擎的實測數字附在各列下方 —— 沒有一個有確定的優勢。<br>' +
-                        esc(d.mover_short_note) + '</div>';
+                        col('🔴 放空候選', d.sell || [], 'sell') + lg;
     }
     function load() {
         if (document.hidden) return;
