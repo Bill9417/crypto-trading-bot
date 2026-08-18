@@ -16,10 +16,16 @@ cd "$DIR"
 
 [ -f .stack_stopped ] && exit 0
 
+# Detection reads ps, NOT pgrep. run_all.sh documents pgrep answering "not
+# running" for a demonstrably live process on this machine, always in the same
+# direction — it reports absence, never a phantom. Here that direction is the
+# expensive one: a false "down" restarts a HEALTHY live trading stack, killing
+# an engine mid-cycle for nothing. ps walks the process table directly and has
+# not been caught doing it, so both scripts now use the same source of truth.
 REQUIRED=("app.py" "bot.py" "strategy2_scanner.py" "strategy3_scanner.py")
 MISSING=()
 for p in "${REQUIRED[@]}"; do
-    pgrep -f "[p]ython.*$p" >/dev/null || MISSING+=("$p")
+    ps -Ao command= | grep -qE "[p]ython.*$p" || MISSING+=("$p")
 done
 [ ${#MISSING[@]} -eq 0 ] && exit 0
 

@@ -16,6 +16,8 @@ import shutil
 import subprocess
 import time
 
+import proc_util
+
 EXPECTED = {
     "app.py": "web dashboard",
     "bot.py": "S1 bot",
@@ -327,9 +329,13 @@ def run_autofix(spawn=None) -> bool:
         print(f"[watchdog] autofix log unavailable ({exc}) — running anyway")
     try:
         runner = spawn or subprocess.Popen
-        runner(["/bin/bash", script, "rearm"], cwd=REPO_ROOT,
-               stdout=log, stderr=subprocess.STDOUT,
-               stdin=subprocess.DEVNULL, start_new_session=True)
+        # Reaped, unlike the restart path's child: this parent ALWAYS survives
+        # the repair, so every rearm would otherwise leave a <defunct> child
+        # until some later subprocess call in this process happened to sweep it.
+        proc_util.reap(
+            runner(["/bin/bash", script, "rearm"], cwd=REPO_ROOT,
+                   stdout=log, stderr=subprocess.STDOUT,
+                   stdin=subprocess.DEVNULL, start_new_session=True))
         return True
     except Exception as exc:  # noqa: BLE001 — a failed repair must not kill the sweep
         print(f"[watchdog] autofix failed to start: {exc}")

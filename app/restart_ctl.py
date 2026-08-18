@@ -32,6 +32,8 @@ import re
 import subprocess
 import time
 
+import proc_util
+
 APP = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(APP)
 STATE_FILE = os.path.join(APP, "restart_state.json")
@@ -244,9 +246,17 @@ def request(reason: str = "manual", *, spawn=None) -> tuple:
         runner = spawn or subprocess.Popen
         # start_new_session: the caller is about to be pkill'd by run_all.sh.
         # Its own session/process group dies with it; this must not.
-        runner(["/bin/bash", RUNNER, reason], cwd=ROOT,
-               stdout=log, stderr=subprocess.STDOUT,
-               stdin=subprocess.DEVNULL, start_new_session=True)
+        #
+        # reap() because the caller is only USUALLY killed. When preflight goes
+        # red, or another launch already holds the lock, run_all.sh returns
+        # without touching anything — restart.sh then exits under a parent that
+        # is still alive and never waited for it, leaving a <defunct> entry for
+        # the life of that process. The failure path is exactly the path that
+        # repeats.
+        proc_util.reap(
+            runner(["/bin/bash", RUNNER, reason], cwd=ROOT,
+                   stdout=log, stderr=subprocess.STDOUT,
+                   stdin=subprocess.DEVNULL, start_new_session=True))
     except Exception as exc:  # noqa: BLE001 — a failed spawn must clear the flag
         _save({"started_at": 0, "reason": reason, "finished_at": time.time()})
         return False, f"⚠️ 重啟啟動失敗: {str(exc)[:200]}"
