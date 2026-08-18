@@ -1,0 +1,47 @@
+{# 🎯 立即可進場 Top 5 — shared by /tw and /us.
+   ONE copy: the two pages already share _public_style.html, and a second copy
+   of this block is how the flip page ended up a version behind its own alerts.
+   Expects `picks` from stock_picks.picks()["tw"|"us"]. #}
+{% if picks %}
+<div class="picks-card">
+    <div class="picks-hd">🎯 立即可進場 <span class="picks-sub">Top {{ picks.ready|length or 5 }}</span></div>
+
+    {% if picks.blind %}
+    {# Market closed and no live quotes. Said explicitly, because an empty list
+       here would read as "no opportunities" when the truth is "we cannot see
+       prices" — two very different things that look identical. #}
+    <div class="picks-none">🌙 {{ picks.hours }}休市中，沒有即時報價<br>
+        <span class="picks-dim">追蹤中 {{ picks.open_count }} 檔，開盤後才知道有沒有到價</span></div>
+
+    {% elif picks.ready %}
+    {% for r in picks.ready %}
+    <div class="pick-row in">
+        <div class="pick-name"><b>{{ r.name }}</b> <span class="picks-dim">{{ r.code }}</span>
+            <span class="pick-tag">現在到價</span></div>
+        <div class="pick-lv">
+            <span>現價 <b>{{ r.price_s or '—' }}</b></span>
+            <span>進場 {{ r.ref_s or '—' }}</span>
+            <span class="dn">停損 {{ r.sl_s or '—' }}</span>
+            <span class="up">目標 {{ r.tp_s or '—' }}</span>
+        </div>
+        {% if r.why %}<div class="picks-dim">{{ r.why }}</div>{% endif %}
+    </div>
+    {% endfor %}
+
+    {% else %}
+    {# The honest default. A pullback strategy waits; most days nothing is at
+       its price, and padding this to five would make the page lie. #}
+    <div class="picks-none">今天沒有任何一檔在進場價附近<br>
+        <span class="picks-dim">追蹤中 {{ picks.open_count }} 檔 —— 等它跌到價位才有意義，不是每天都有</span></div>
+    {% endif %}
+
+    {% if picks.watching %}
+    <div class="picks-watch">接近中：
+        {% for w in picks.watching %}<span>{{ w.name }} <i>{{ '%+.1f'|format(w.dist_pct) }}%</i></span>{% endfor %}
+    </div>
+    {% endif %}
+
+    {% if picks.edge %}<div class="picks-edge">📐 {{ picks.edge }}</div>{% endif %}
+    {% if picks.rule %}<div class="picks-dim" style="margin-top:2px">規則：{{ picks.rule }}</div>{% endif %}
+</div>
+{% endif %}

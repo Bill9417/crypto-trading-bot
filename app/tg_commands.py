@@ -480,6 +480,9 @@ def handle(cmd: str, args: str = "", owner: bool = False) -> str:
         return GUIDE
     if cmd in ("price", "p"):
         return handle_price(args)
+    if cmd in ("twbuy", "usbuy", "buy"):
+        import stock_picks
+        return stock_picks.as_text({"twbuy": "tw", "usbuy": "us"}.get(cmd))
     if cmd in ("s4unblock", "unblock"):
         import strategy4_exec
         n = strategy4_exec.unblock(args.strip().upper() + "/USDT:USDT"

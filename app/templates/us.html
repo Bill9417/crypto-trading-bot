@@ -79,6 +79,8 @@
         <div class="idx">紐約時間 <b>{{ us.market.now_ny }}</b> · 交易時段 {{ us.market.hours }}</div>
     </div>
 
+    {% include '_stock_picks.html' %}
+
     {% if us.error and not us.indices %}
     <div class="empty">暫時取不到美股報價，請稍後再重新整理。</div>
     {% endif %}

@@ -54,6 +54,28 @@
             linear-gradient(170deg, #1d1440 0%, #17102f 45%, #120c26 100%);
         background-attachment: fixed;
     }
+
+    /* 🎯 立即可進場 — gold, because it is the one actionable block on the page */
+    .picks-card { border-radius:16px; padding:14px 16px; margin:4px 0 16px;
+                  border:1px solid rgba(255,207,75,.30);
+                  background:linear-gradient(160deg, rgba(255,207,75,.09), rgba(255,207,75,.02)); }
+    .picks-hd { font-size:.95rem; font-weight:900; color:var(--gold); margin-bottom:8px; }
+    .picks-sub { font-size:.68rem; font-weight:700; opacity:.7; }
+    .picks-none { font-size:.82rem; line-height:1.8; padding:6px 0; }
+    .picks-dim { color:var(--muted); font-size:.72rem; }
+    .pick-row { padding:9px 0; border-top:1px solid rgba(255,255,255,.07); }
+    .pick-row:first-of-type { border-top:0; }
+    .pick-name { font-size:.9rem; }
+    .pick-tag { font-size:.62rem; font-weight:800; padding:2px 7px; border-radius:999px;
+                background:rgba(34,197,94,.18); color:var(--green); margin-left:6px; }
+    .pick-lv { display:flex; flex-wrap:wrap; gap:4px 14px; margin-top:4px;
+               font-size:.76rem; font-variant-numeric:tabular-nums; }
+    .pick-lv .up { color:var(--green); } .pick-lv .dn { color:var(--red); }
+    .picks-watch { margin-top:9px; padding-top:8px; font-size:.74rem;
+                   border-top:1px solid rgba(255,255,255,.07); color:var(--muted); }
+    .picks-watch span { margin-right:10px; }
+    .picks-watch i { font-style:normal; color:var(--gold); }
+    .picks-edge { margin-top:9px; font-size:.7rem; color:var(--muted); line-height:1.6; }
     .num { font-variant-numeric: tabular-nums; }
     .wrap { max-width: 620px; margin: 0 auto; padding: 18px 15px calc(40px + env(safe-area-inset-bottom)); }
 

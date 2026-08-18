@@ -4636,7 +4636,16 @@ def tw_page():
         print(f"TW page error: {e}")
         data = {"setups": [], "regime": {}, "regime_ok": False,
                 "as_of": None, "error": str(e)}
-    return render_template("tw.html", tw=data, invite_url=_invite_url())
+    # 🎯 立即可進場 Top 5. Ranks the setups already in `data` — no second scan
+    # and no extra quote fetch.
+    try:
+        import stock_picks
+        picks = stock_picks.picks()["tw"]
+    except Exception as e:  # noqa: BLE001 — the ranking never breaks dad's page
+        print(f"TW picks error: {e}")
+        picks = None
+    return render_template("tw.html", tw=data, picks=picks,
+                           invite_url=_invite_url())
 
 
 @app.route("/markets")
@@ -4714,7 +4723,14 @@ def us_page():
     except Exception as e:  # noqa: BLE001 — the close digest must still render
         print(f"[us] setup view failed: {e}")
         setups = None
+    try:
+        import stock_picks
+        us_picks = stock_picks.picks()["us"]
+    except Exception as e:  # noqa: BLE001
+        print(f"US picks error: {e}")
+        us_picks = None
     return render_template("us.html", us=us_market.web_view(), setups=setups,
+                           picks=us_picks,
                            invite_url=_invite_url())
 
 

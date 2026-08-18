@@ -39,6 +39,8 @@
     <div class="regime {{ 'ok' if tw.regime_ok else 'off' }}">
         {% if tw.regime_ok %}
             <div class="verdict">✅ 今天可以進場</div>
+
+    {% include '_stock_picks.html' %}
             <div class="why">
                 大盤多頭 — 加權指數站上 100 日均線且趨勢向上。<br>
                 策略只在這種盤勢出手。
