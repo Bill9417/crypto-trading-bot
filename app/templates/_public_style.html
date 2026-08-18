@@ -56,10 +56,13 @@
     }
 
     /* 🎯 立即可進場 — gold, because it is the one actionable block on the page */
-    .picks-card { border-radius:16px; padding:14px 16px; margin:4px 0 16px;
+    /* text-align is set explicitly: this block sat inside .regime (centred)
+       on both pages and inherited it, which reads wrong for a data list. */
+    .picks-card { text-align:left; border-radius:16px; padding:14px 16px; margin:4px 0 16px;
                   border:1px solid rgba(255,207,75,.30);
                   background:linear-gradient(160deg, rgba(255,207,75,.09), rgba(255,207,75,.02)); }
-    .picks-hd { font-size:.95rem; font-weight:900; color:var(--gold); margin-bottom:8px; }
+    .picks-hd { font-size:.95rem; font-weight:900; color:var(--gold); margin-bottom:8px;
+                text-align:left; }
     .picks-sub { font-size:.68rem; font-weight:700; opacity:.7; }
     .picks-none { font-size:.82rem; line-height:1.8; padding:6px 0; }
     .picks-dim { color:var(--muted); font-size:.72rem; }
