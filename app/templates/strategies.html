@@ -72,7 +72,9 @@
         .btn:hover, .btn:active { border-color: rgba(0,210,255,.4); color: var(--text); background: rgba(255,255,255,.07); }
 
         /* ── Tab strip (page-specific, blue-accent to match) ── */
-        .tabs { display: grid; grid-template-columns: repeat(3,1fr); gap: 9px; margin-bottom: 16px; }
+        .tabs { display: grid; grid-template-columns: repeat(4,1fr); gap: 9px; margin-bottom: 16px; }
+        .tabs.tabs-3 { grid-template-columns: repeat(3,1fr); }
+        @media (max-width: 980px) { .tabs { grid-template-columns: repeat(2,1fr); } }
         @media (max-width: 620px) { .tabs { grid-template-columns: 1fr; } }
         .tab {
             cursor: pointer; text-align: left; font: inherit; color: var(--text);
@@ -158,7 +160,7 @@
             <div class="brand-icon">📊</div>
             <div style="min-width:0">
                 <h1>Wolf <span>Strategies</span></h1>
-                <div class="brand-sub"><span class="dot"></span>三大策略 · 規則與即時狀況</div>
+                <div class="brand-sub"><span class="dot"></span>四大策略 · 規則與即時狀況</div>
             </div>
         </div>
         <div class="actions">
@@ -169,7 +171,13 @@
     <div class="nav-standalone">{% include '_nav.html' %}</div>
 
     {% set p = params %}
-    <div class="tabs" id="tabs">
+    {# p.s4 arrives from _strategies_params(), which lives in app.py — and
+       app.py does NOT hot-reload while templates do. Without this guard the
+       whole page 500s on 'dict object has no attribute s4' for the minutes
+       between deploying and restarting, which is exactly what happened when
+       this panel was added. The tab simply is not there until the restart. #}
+    {% set s4 = p.s4 if p.s4 is defined and p.s4 else none %}
+    <div class="tabs{% if not s4 %} tabs-3{% endif %}" id="tabs">
         <button class="tab active" data-tab="s1">
             <div class="tnum">Strategy 1</div>
             <div class="tname"><span class="tdot" id="dot-s1"></span>多重共振</div>
@@ -185,6 +193,13 @@
             <div class="tname"><span class="tdot" id="dot-s3"></span>旗標翻轉</div>
             <div class="tsub">Flag-Flip · Bybit</div>
         </button>
+        {% if s4 %}
+        <button class="tab" data-tab="s4">
+            <div class="tnum">Strategy 4</div>
+            <div class="tname"><span class="tdot" id="dot-s4"></span>永續掃描</div>
+            <div class="tsub">Perp Scanner · Bybit</div>
+        </button>
+        {% endif %}
     </div>
 
     <!-- ══════════════ STRATEGY 1 ══════════════ -->
@@ -285,6 +300,48 @@
             </div>
         </div>
     </section>
+
+    <!-- ══════════════ STRATEGY 4 ══════════════ -->
+    {% if s4 %}
+    <section class="panel" id="panel-s4">
+        <div class="shead">
+            <h2>策略四 · 永續掃描</h2>
+            <span class="sbadge tf">{{ s4.tf }}</span>
+            {% if s4.exec_on %}<span class="sbadge venue">Bybit 實盤</span>
+            {% else %}<span class="sbadge alert">僅發訊號</span>{% endif %}
+        </div>
+        <div class="grid">
+            <div class="card">
+                <div class="card-h"><span class="ic">📋</span><h2>規則</h2><span class="scope">Rules</span></div>
+                <ul class="rules">
+                    <li>掃描範圍：Bybit <b>美股 / 商品永續</b>（最多 <code class="k">{{ s4.max_tradfi }}</code> 檔）+ <b>加密永續</b>（最多 <code class="k">{{ s4.max_crypto }}</code> 檔），24h 成交額需 <code class="k">≥${{ '{:,}'.format(s4.min_turnover) }}</code>。</li>
+                    <li>五道關卡，<b>由便宜到昂貴</b>依序檢查（每根收盤的 {{ s4.tf }} K）：
+                        <b>①</b> 流動性 → <b>②</b> S2 三角訊號 → <b>③</b> EMA200 必須<b>上升</b>（不只是價格在上面）→
+                        <b>④</b> 附近要有確認過的結構（<b>停損就放在它外面</b>，沒有就不做）→
+                        <b>⑤</b> 近 <code class="k">{{ s4.div_lookback }}</code> 根內出現背離{% if s4.require_oi %} 且未平倉沒有反向{% endif %}。</li>
+                    <li>背離來源 <span class="muted">{{ s4.div_sources }}</span>，至少 <code class="k">{{ s4.min_div }}</code> 個成立。</li>
+                    <li>停損距離必須落在 <code class="k">{{ s4.min_stop }}%–{{ s4.max_stop }}%</code>：太窄會被手續費吃掉（低於下限的<b>只記錄不下單</b>，當作對照組），太寬則 {{ s4.tp_r }}R 的目標不切實際。</li>
+                    <li>停利 <code class="k">{{ s4.tp_r }}R</code>；同一檔 <code class="k">{{ s4.cooldown_h }}</code> 小時內不重複發訊。</li>
+                    {% if s4.exec_on %}
+                    <li>下單：每筆 <code class="k">{{ s4.order_usdt }}</code> USDT × <code class="k">{{ s4.leverage }}x</code>（保證金 {{ s4.margin }}U），最多同時 <code class="k">{{ s4.max_concurrent }}</code> 筆
+                        —— 全部同時打到最大停損也只有 <b>{{ s4.worst_case }}U</b>。已有持倉的幣<b>直接跳過</b>，不會併倉。</li>
+                    {% endif %}
+                </ul>
+                <!-- Stated on the rules card, not hidden in a tooltip: this is
+                     the newest engine and the only one whose book was reset. -->
+                <p class="muted" style="font-size:.7rem;line-height:1.6;margin:8px 0 0">
+                    ⚠️ 這是最新、也最沒有把握的一套。多數美股永續上市不到兩個月，資料量根本不夠做前向測試。
+                    本專案量過 48 組高勝率設定有 46 組在賠錢 —— 圖上看起來對，不等於有優勢。
+                </p>
+            </div>
+            <div class="card">
+                <div class="card-h"><span class="ic">📡</span><h2>即時狀況</h2><span class="scope">Live now</span></div>
+                <div id="live-s4"></div>
+                <a class="detail-link" href="/s4">看完整 S4 掃描結果 →</a>
+            </div>
+        </div>
+    </section>
+    {% endif %}
 </div>
 
 <script>
@@ -390,7 +447,100 @@ function renderS3(d) {
     var dot = document.getElementById('dot-s3'); if (dot) dot.className = 'tdot' + (anyPos ? ' on' : '');
 }
 
-function renderAll(x) { renderS1(x.s1); renderS2(x.s2); renderS3(x.s3); }
+/* The scanner names its rejections in English for the logs. This page is in
+   中文, and "no short triangle" next to 四大策略 reads as a leak rather than a
+   reason. Unknown keys pass through unchanged — a new gate should show up as
+   itself, not vanish. */
+var S4_REJ = {
+    'no long triangle': '沒有做多三角', 'no short triangle': '沒有做空三角',
+    'EMA200 not rising': 'EMA200 沒上升', 'EMA200 not falling': 'EMA200 沒下降',
+    'no support below': '下方沒有支撐', 'no resistance above': '上方沒有壓力',
+    'stop distance out of range': '停損距離不合格',
+    'not enough history': 'K 線不足', 'no OI data': '沒有未平倉資料',
+    'OI not supportive': '未平倉方向相反', 'no side enabled': '多空都關閉'
+};
+function rejZH(k) {
+    if (S4_REJ[k]) return S4_REJ[k];
+    var m = /^no recent (bullish|bearish) divergence$/.exec(k);
+    if (m) return m[1] === 'bullish' ? '沒有多頭背離' : '沒有空頭背離';
+    m = /^only (\d+) of (\d+) divergence sources$/.exec(k);
+    if (m) return '背離只有 ' + m[1] + '/' + m[2] + ' 個';
+    m = /^stop ([\d.]+)% under the ([\d.]+)% fee floor$/.exec(k);
+    if (m) return '停損 ' + m[1] + '% 低於手續費下限';
+    return k;
+}
+
+function renderS4(d) {
+    var el = document.getElementById('live-s4'); if (!el) return;
+    if (!d || d.error) { el.innerHTML = '<div class="empty">S4 掃描器尚未運行或無資料。</div>'; return; }
+    var h = '';
+    if (!d.enabled) h += '<div class="empty">S4 已關閉（S4_ENABLED=false）。</div>';
+
+    var by = d.checked_by || {};
+    h += '<div class="srow"><span class="b">上次掃描</span>' +
+         '<span class="eng">' + (d.checked || 0) + ' 檔' +
+           (by.tradfi ? '（美股 ' + by.tradfi + ' · 加密 ' + (by.crypto || 0) + '）' : '') + '</span>' +
+         '<span class="st">' + (d.fresh
+            ? '<span class="dir long">運行中</span>'
+            : '<span class="muted">已超過 1 小時沒更新</span>') + '</span></div>';
+
+    // Signals and shadows are counted apart on purpose: a shadow qualified on
+    // every gate and was declined on COST, so folding it in would report
+    // trades nobody took.
+    h += '<div class="srow"><span class="b">符合條件</span>' +
+         '<span class="eng">追蹤中 ' + (d.open || 0) + ' 筆' +
+           (d.shadow_open ? ' · 對照組 ' + d.shadow_open + ' 筆' : '') + '</span>' +
+         '<span class="st">' + (d.count
+            ? '<span class="dir long">' + d.count + ' 檔</span>'
+            : '<span class="muted">這一輪沒有</span>') + '</span></div>';
+
+    if (d.signals && d.signals.length) {
+        d.signals.forEach(function (s) {
+            h += '<div class="swhy"><b>' + esc(s.base) + '</b> ' +
+                 (s.side === 'short' ? '<span class="dir short">做空</span>'
+                                     : '<span class="dir long">做多</span>') +
+                 (s.stop_pct != null ? ' <span class="muted">停損 ' + (+s.stop_pct).toFixed(2) + '%</span>' : '') +
+                 (s.div && s.div.length ? ' <span class="muted">背離 ' + esc(s.div.join('+')) + '</span>' : '') +
+                 '</div>';
+        });
+    } else if (d.rejected) {
+        // WHY nothing fired. "0 signals" and "the scan is broken" look
+        // identical without this, and that ambiguity has cost this repo three
+        // days of silence before.
+        var top = Object.keys(d.rejected).sort(function (a, b) {
+            return d.rejected[b] - d.rejected[a];
+        }).slice(0, 3);
+        if (top.length) {
+            h += '<div class="swhy"><span class="muted">卡在：' + top.map(function (k) {
+                return esc(rejZH(k)) + ' ' + d.rejected[k];
+            }).join(' · ') + '</span></div>';
+        }
+    }
+
+    var r = d.record || {};
+    h += '<div class="srow"><span class="b">實盤紀錄</span>' +
+         '<span class="eng">' + (r.n ? r.n + ' 筆已結算' : '2026-08-19 重新開始計算') + '</span>' +
+         '<span class="st">' + (r.n && r.exp != null
+            ? '<span class="' + (r.exp > 0 ? 'dir long' : 'dir short') + '">' +
+              (r.exp > 0 ? '+' : '') + (+r.exp).toFixed(3) + 'R</span>'
+            : '<span class="muted">尚無</span>') + '</span></div>';
+    if (r.verdict) h += '<div class="swhy"><span class="muted">' + esc(r.verdict) + '</span></div>';
+
+    if (d.exec_on) {
+        h += '<div class="srow"><span class="b">自動下單</span>' +
+             '<span class="eng">Bybit 實單</span>' +
+             '<span class="st"><span class="dir long">開啟</span></span></div>';
+    }
+    if (d.blocked && d.blocked.length) {
+        h += '<div class="swhy"><span class="muted">已停用：' + esc(d.blocked.join('、')) +
+             '（需先在 Bybit App 同意該商品條款）</span></div>';
+    }
+    el.innerHTML = h;
+    var dot = document.getElementById('dot-s4');
+    if (dot) dot.className = 'tdot' + (d.count ? ' on' : (d.fresh ? '' : ' alert'));
+}
+
+function renderAll(x) { renderS1(x.s1); renderS2(x.s2); renderS3(x.s3); renderS4(x.s4); }
 renderAll(S);
 
 function load(btn) {

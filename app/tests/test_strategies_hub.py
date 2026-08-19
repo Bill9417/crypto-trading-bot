@@ -25,12 +25,16 @@ def test_params_mirror_live_config():
         assert s["engine"] in ("flagflip", "occ") and s["tf"]
 
 
-def test_status_has_all_three_and_is_failsafe():
+def test_status_has_every_strategy_and_is_failsafe():
+    """S4 joined the hub 2026-08-19. The exact-set assertion is kept exact on
+    purpose — it is what caught the addition, and a strategy silently missing
+    from the page that documents them is the failure worth catching."""
     st = app.build_strategies_status()
-    assert set(st.keys()) == {"s1", "s2", "s3"}
+    assert set(st.keys()) == {"s1", "s2", "s3", "s4"}
     # each branch is a dict (never a bare exception bubbling up)
     assert isinstance(st["s1"], dict) and isinstance(st["s2"], dict)
     assert isinstance(st["s3"].get("symbols"), list)
+    assert isinstance(st["s4"], dict)
     # must be JSON-serialisable for |tojson / the API
     import json
     json.dumps(app._json_safe(st))

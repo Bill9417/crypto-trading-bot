@@ -3559,6 +3559,40 @@ def _strategies_params() -> dict:
             "be_trigger": round(config.STRATEGY3_BE_TRIGGER_PCT * 100, 2),
             "symbols": s3syms,
         },
+        # S4 reads its numbers from the MODULES, not from a second copy here.
+        # Its thresholds are env-driven and several were retuned this month; a
+        # rules page quoting a literal is a rules page that lies the first time
+        # one moves.
+        "s4": _s4_params(),
+    }
+
+
+def _s4_params() -> dict:
+    """S4's rule numbers, straight off the modules that enforce them."""
+    try:
+        import strategy4 as S4
+        import strategy4_exec as X
+    except Exception as exc:  # noqa: BLE001 — the hub must still render
+        return {"error": str(exc)[:120]}
+    return {
+        "tf": S4.TIMEFRAME,
+        "min_turnover": int(S4.MIN_TURNOVER),
+        "max_tradfi": S4.MAX_TRADFI, "max_crypto": S4.MAX_CRYPTO,
+        "div_sources": "MACD / KD / Fisher / RSI / CVD",
+        "min_div": S4.MIN_DIV_SOURCES,
+        "div_lookback": S4.DIV_LOOKBACK,
+        "require_oi": S4.REQUIRE_OI,
+        "min_stop": round(S4.MIN_STOP_PCT * 100, 2),
+        "max_stop": round(S4.MAX_STOP_PCT * 100, 1),
+        "tp_r": S4.TP_R,
+        "cooldown_h": round(S4.COOLDOWN_SEC / 3600, 1),
+        "long": S4.ENABLE_LONG, "short": S4.ENABLE_SHORT,
+        # Execution — the half that spends money.
+        "exec_on": X.enabled(),
+        "order_usdt": X.ORDER_USDT, "leverage": X.LEVERAGE,
+        "margin": round(X.ORDER_USDT / max(X.LEVERAGE, 1), 1),
+        "max_concurrent": X.MAX_CONCURRENT,
+        "worst_case": round(X.MAX_CONCURRENT * X.ORDER_USDT * S4.MAX_STOP_PCT, 1),
     }
 
 
@@ -3567,7 +3601,7 @@ def build_strategies_status() -> dict:
     branch is failure-safe — one strategy's data source being down must not blank
     the others or 500 the page."""
     import config
-    out = {"s1": {}, "s2": {}, "s3": {}}
+    out = {"s1": {}, "s2": {}, "s3": {}, "s4": {}}
 
     # ── S1 — latest scan funnel + best armed/queued setup ──
     try:
@@ -3642,7 +3676,64 @@ def build_strategies_status() -> dict:
     except Exception as exc:  # noqa: BLE001
         out["s3"] = {"error": str(exc), "symbols": []}
 
+    # ── S4 — last sweep, what it is tracking, and what it has actually done ──
+    try:
+        out["s4"] = _s4_status()
+    except Exception as exc:  # noqa: BLE001
+        out["s4"] = {"error": str(exc)}
+
     return out
+
+
+def _s4_status() -> dict:
+    """S4's live situation. The track record is included and is allowed to be
+    EMPTY: it was reset 2026-08-19, and a hub that quietly showed the archived
+    numbers would be reporting a book that is no longer being run."""
+    import strategy4 as S4
+    import strategy4_exec as X
+    import strategy4_outcomes as O
+    path = os.path.join(os.path.dirname(__file__), "strategy4_signals.json")
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            sd = json.load(f) or {}
+    except Exception:  # noqa: BLE001
+        sd = {}
+    sigs = sd.get("signals") or []
+    view = O.web_view() or {}
+    stats = (view.get("stats") or {}).get("all") or {}
+    blocked = []
+    try:
+        blocked = sorted(k.split("/")[0] for k in (X._blocked() or {}))
+    except Exception:  # noqa: BLE001
+        pass
+    ts = float(sd.get("ts") or 0)
+    return {
+        "enabled": S4.ENABLED,
+        "exec_on": X.enabled(),
+        "fresh": bool(ts) and (time.time() - ts) < 3600,
+        "last_scan": sd.get("ts"),
+        "checked": sd.get("checked") or 0,
+        "checked_by": sd.get("checked_by") or {},
+        "count": len(sigs),
+        "shadow_count": len(sd.get("shadow") or []),
+        "rejected": sd.get("rejected") or {},
+        "signals": [{
+            "base": s.get("base"), "side": s.get("side"), "segment": s.get("segment"),
+            "score": s.get("score"), "quality": s.get("quality"),
+            "div": s.get("div_sources") or [],
+            "entry": (s.get("plan") or {}).get("entry"),
+            "sl": (s.get("plan") or {}).get("sl"),
+            "tp": (s.get("plan") or {}).get("tp"),
+            "stop_pct": (s.get("plan") or {}).get("stop_pct"),
+        } for s in sigs[:5]],
+        "open": len(view.get("open") or []),
+        "shadow_open": len(view.get("shadow_open") or []),
+        # n=0 after the reset is the honest answer, not a missing one.
+        "record": {"n": stats.get("n", 0), "exp": stats.get("exp"),
+                   "wr": stats.get("wr"), "pf": stats.get("pf"),
+                   "verdict": stats.get("verdict_zh") or stats.get("verdict")},
+        "blocked": blocked,
+    }
 
 
 @app.route("/strategies")
