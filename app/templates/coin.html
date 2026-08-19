@@ -114,6 +114,20 @@ body { background: var(--wolf-slate); background-image: var(--page-bg-glow);
                       font-size:.66rem; color:var(--wolf-muted,#8a99ad); }
         .lwc-legend .lg { display:inline-flex; align-items:center; gap:4px; }
         .lwc-legend .sw { width:11px; height:3px; border-radius:2px; display:inline-block; }
+        /* The legend has to agree with the chart: leaving 壓力/支撐 lit while
+           the lines are hidden would describe something that is not drawn. */
+        .lwc-legend.lv-off .lg-lv { opacity:.3; text-decoration:line-through; }
+        .lv-btn {
+            margin-left:auto; margin-right:10px; cursor:pointer;
+            font-family:inherit; font-size:.66rem; font-weight:700; letter-spacing:.02em;
+            padding:4px 9px; border-radius:8px; color:var(--wolf-text);
+            border:1px solid rgba(240,212,154,.3);
+            background:linear-gradient(180deg, rgba(240,212,154,.16), rgba(240,212,154,.05));
+        }
+        .lv-btn[aria-pressed="false"] {
+            color:var(--wolf-muted); border-color:var(--wolf-border);
+            background:rgba(255,255,255,.04);
+        }
         /* Embedded in the dashboard pop-out: the modal supplies the frame, the
            padding and the scroll, so the page must not add a second set. The
            background goes transparent so the modal's surface shows through
@@ -212,6 +226,8 @@ body { background: var(--wolf-slate); background-image: var(--page-bg-glow);
         h += '<div class="card chart-card">' +
              '<div class="hd" style="margin-bottom:6px">' +
                '<span class="sym" style="font-size:.85rem">📈 圖表 · 1h</span>' +
+               '<button type="button" class="lv-btn" id="lv-toggle" ' +
+                 'aria-pressed="true" title="顯示/隱藏壓力支撐線">壓力支撐</button>' +
                '<a class="tv-out" href="https://www.tradingview.com/chart/?symbol=BINANCE:' +
                  esc(d.base) + 'USDT.P" target="_blank" rel="noopener">TradingView ↗</a>' +
              '</div>' +
@@ -266,12 +282,43 @@ body { background: var(--wolf-slate); background-image: var(--page-bg-glow);
     // it lives in — holding a stale instance would draw into a detached node
     // and the panel would silently stay empty.
     var _chart = null;
+
+    /* 壓力/支撐 visibility. Remembered in localStorage because the chart is
+       rebuilt on every symbol — without persistence the toggle would reset
+       each time you looked at a different coin, which is the one thing that
+       makes a preference feel broken. A refusing localStorage (private mode,
+       storage full) falls back to "shown", never to a crash. */
+    var LV_KEY = 'wolfCoinLevels';
+    var _levelsOn = true;
+    try { _levelsOn = localStorage.getItem(LV_KEY) !== '0'; } catch (e) { }
+
+    function syncLevelBtn() {
+        var b = document.getElementById('lv-toggle');
+        if (!b) return;
+        b.setAttribute('aria-pressed', _levelsOn ? 'true' : 'false');
+        b.textContent = _levelsOn ? '壓力支撐' : '壓力支撐（隱藏）';
+    }
+
+    // Delegated: the button is re-created with the card on every render, so
+    // binding it directly would leave the listener on a detached node.
+    document.addEventListener('click', function (e) {
+        var b = e.target.closest && e.target.closest('#lv-toggle');
+        if (!b) return;
+        _levelsOn = !_levelsOn;
+        try { localStorage.setItem(LV_KEY, _levelsOn ? '1' : '0'); } catch (err) { }
+        syncLevelBtn();
+        var box = document.getElementById('coin-legend');
+        if (box) box.classList.toggle('lv-off', !_levelsOn);
+        if (_chart) _chart.showLevels(_levelsOn);
+    });
+
     function mountChart(sym) {
         if (!window.WolfChart || !window.LightweightCharts) {
             var box = document.getElementById('coin-lwc');
             if (box) box.innerHTML = '<div class="lwc-fallback">圖表元件載入失敗</div>';
             return;
         }
+        syncLevelBtn();
         _chart = new window.WolfChart('coin-lwc', {
             onLegend: function (defs, up, dn) {
                 var box = document.getElementById('coin-legend');
@@ -287,12 +334,14 @@ body { background: var(--wolf-slate); background-image: var(--page-bg-glow);
                     html += '<span class="lg"><span class="sw" style="background:linear-gradient(90deg,' +
                             up + ',' + dn + ')"></span>Vegas EMA200</span>';
                 }
-                html += '<span class="lg"><span class="sw" style="background:rgba(248,113,113,.75)"></span>壓力</span>' +
-                        '<span class="lg"><span class="sw" style="background:rgba(74,222,128,.75)"></span>支撐</span>' +
+                html += '<span class="lg lg-lv"><span class="sw" style="background:rgba(248,113,113,.75)"></span>壓力</span>' +
+                        '<span class="lg lg-lv"><span class="sw" style="background:rgba(74,222,128,.75)"></span>支撐</span>' +
                         '<span class="lg"><span class="sw" style="background:#22d3ee"></span>信心分數 0–100</span>';
                 box.innerHTML = html;
+                box.classList.toggle('lv-off', _levelsOn === false);
             }
         });
+        _chart.levelsOn = _levelsOn;      // before the first draw, not after
         // ccxt-style symbol, which is what /api/strategy2_ohlcv expects.
         // lines=tunnel: the double tunnel plus the support/resistance levels,
         // and nothing else. This page is for reading a coin at a glance, and

@@ -180,12 +180,17 @@
      * pivots, so a line here means what 壓力翻支撐 means — a second definition
      * in JS is how the chart and the alerts would start disagreeing. */
     WolfChart.prototype.setLevels = function (levels) {
+        // Called with a list when new data lands, and with NOTHING when only
+        // the visibility changed. Remembering the set is what lets the toggle
+        // put the lines back without a refetch — and what keeps the choice
+        // applied when the next symbol's levels arrive.
+        if (levels !== undefined) this.levels = levels || [];
         var c = this.ensure();
         if (!c || !c.candle) return;
         (c.levelLines || []).forEach(function (l) {
             try { c.candle.removePriceLine(l); } catch (e) { /* already gone */ }
         });
-        c.levelLines = (levels || []).map(function (L) {
+        c.levelLines = (this.levelsOn === false ? [] : (this.levels || [])).map(function (L) {
             var up = L.kind === 'resistance';
             return c.candle.createPriceLine({
                 price: L.price,
@@ -224,6 +229,15 @@
             .then(function (r) { return r.ok ? r.json() : null; })
             .then(function (d) { if (d && d.points && d.points.length) self.setScore(d.points); })
             .catch(function () { });
+    };
+
+    /* Show or hide the support/resistance lines. Returns the new state so a
+     * caller can label its own button from the single source of truth rather
+     * than tracking a second copy of it. */
+    WolfChart.prototype.showLevels = function (on) {
+        this.levelsOn = !!on;
+        this.setLevels();
+        return this.levelsOn;
     };
 
     WolfChart.VEGAS_UP = VEGAS_UP;
