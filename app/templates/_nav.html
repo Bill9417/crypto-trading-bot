@@ -92,9 +92,39 @@
   </div>
 </aside>
 
-<button type="button" class="wsb-burger" id="wsb-burger" aria-label="Menu" aria-expanded="false">
-  <span></span><span></span><span></span>
-</button>
+{# ── Mobile top bar ────────────────────────────────────────────────────────
+   On a phone the sidebar is off-canvas, and until 2026-08-19 the ONLY thing
+   left on screen was a bare unlabelled ☰ on a dark background — no bar behind
+   it, no page name, no way home. body.has-sidebar already reserved 52px for a
+   bar that nothing painted. Reported from the 幣種分析 page: "I can't go back
+   to dashboard, no buttons or settings."
+
+   Three things, because one icon was not enough: where you ARE (the title),
+   how to get OUT (首頁), and how to get everywhere else (the drawer). #}
+{% set _wsb_titles = {
+    'index': 'Overview', 'market': 'Market Pulse', 'coin_page': '幣種分析',
+    'universe_page': '3D Universe', 'strategies': 'Strategies',
+    'strategy2': 'Strategies', 'funnel': 'Signal Funnel',
+    'performance': 'Performance', 's4_page': 'S4 Radar',
+    'reality_page': 'Reality Check', 'tw_page': 'TW Stocks',
+    'us_page': 'US Stocks', 'stocks_page': 'Market Board',
+    'copy_page': 'Copy Trading', 'account': 'Binance', 'bybit_page': 'Bybit',
+    'admin_users': 'Users', 'health_page': 'Health',
+} %}
+<header class="wsb-top">
+  <button type="button" class="wsb-burger" id="wsb-burger" aria-label="Menu" aria-expanded="false">
+    <span></span><span></span><span></span>
+  </button>
+  <span class="wsb-top-title">{{ _wsb_titles.get(request.endpoint, 'Wolf Scanner') }}</span>
+  {# Not shown on the dashboard itself — a link to the page you are on is
+     noise, and it would be the one control people learn to ignore. #}
+  {% if request.endpoint != 'index' %}
+  <a class="wsb-top-home" href="{{ url_for('index') }}" aria-label="Dashboard">
+    <svg class="wsb-ico" viewBox="0 0 24 24" aria-hidden="true"><use href="#wi-grid"/></svg>
+    <span>首頁</span>
+  </a>
+  {% endif %}
+</header>
 <div class="wsb-scrim" id="wsb-scrim" hidden></div>
 
 <script src="{{ url_for('static', filename='i18n.js') }}?v={{ asset_ver }}"></script>

@@ -191,20 +191,49 @@ body.has-sidebar { padding-left: var(--wsb-w); }
 /* the wrapper divs pages put around the include are no longer a visible box */
 .nav-standalone { display: contents; }
 
-/* burger + scrim: desktop-hidden, the only way in on a phone */
+/* top bar + burger + scrim: desktop-hidden, the only way around on a phone */
+.wsb-top { display: none; }
 .wsb-burger { display: none; }
 .wsb-scrim { display: none; }
 
 @media (max-width: 1020px) {
     body.has-sidebar { padding-left: 0; padding-top: 52px; }
-    .wsb { transform: translateX(-100%); transition: transform .24s cubic-bezier(.4, 0, .2, 1); }
+    /* Below the bar, not under it — the drawer carries the brand at its top
+       and a fixed bar over it hid exactly that. */
+    .wsb { top: 52px; transform: translateX(-100%); transition: transform .24s cubic-bezier(.4, 0, .2, 1); }
     .wsb.open { transform: none; }
+
+    /* The bar body.has-sidebar has been reserving 52px for since the sidebar
+       redesign, and which never existed: the burger simply floated on the
+       page background. One unlabelled icon is not navigation — you cannot
+       tell where you are or how to leave. */
+    .wsb-top {
+        display: flex; align-items: center; gap: 10px;
+        position: fixed; top: 0; left: 0; right: 0; height: 52px; z-index: 950;
+        padding: 0 10px; padding-left: max(10px, env(safe-area-inset-left));
+        padding-right: max(10px, env(safe-area-inset-right));
+        background: linear-gradient(180deg, rgba(20, 25, 40, .97), rgba(13, 18, 32, .95));
+        border-bottom: 1px solid var(--wolf-border);
+        backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
+    }
+    .wsb-top-title {
+        font-size: .84rem; font-weight: 800; letter-spacing: .01em;
+        color: var(--wolf-text); white-space: nowrap; overflow: hidden;
+        text-overflow: ellipsis; min-width: 0; flex: 1 1 auto;
+    }
+    /* 44px tall: the smallest thing a thumb hits reliably. */
+    .wsb-top-home {
+        display: inline-flex; align-items: center; gap: 6px; flex: 0 0 auto;
+        height: 34px; padding: 0 11px; border-radius: 9px; text-decoration: none;
+        font-size: .74rem; font-weight: 700; color: var(--wolf-text);
+        border: 1px solid var(--wolf-border); background: rgba(255, 255, 255, .05);
+    }
+    .wsb-top-home .wsb-ico { width: 15px; height: 15px; }
     .wsb-burger {
-        display: flex; position: fixed; top: 9px; left: 10px; z-index: 950;
+        display: flex; position: static; flex: 0 0 auto; z-index: 1;
         width: 38px; height: 34px; flex-direction: column; justify-content: center;
         align-items: center; gap: 4px; cursor: pointer; border-radius: 9px;
-        border: 1px solid var(--wolf-border); background: rgba(20, 25, 40, .92);
-        backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+        border: 1px solid var(--wolf-border); background: rgba(255, 255, 255, .05);
     }
     .wsb-burger span {
         display: block; width: 16px; height: 1.6px; border-radius: 2px;
@@ -214,7 +243,8 @@ body.has-sidebar { padding-left: var(--wsb-w); }
     .wsb-burger.open span:nth-child(2) { opacity: 0; }
     .wsb-burger.open span:nth-child(3) { transform: translateY(-5.6px) rotate(-45deg); }
     .wsb-scrim {
-        display: block; position: fixed; inset: 0; z-index: 880;
+        /* Starts BELOW the bar so the ☰→✕ stays tappable while open. */
+        display: block; position: fixed; inset: 52px 0 0 0; z-index: 880;
         background: rgba(4, 8, 16, .6);
         backdrop-filter: blur(2px); -webkit-backdrop-filter: blur(2px);
     }
