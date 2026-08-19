@@ -105,7 +105,16 @@ html { scrollbar-width: thin; scrollbar-color: rgba(255, 255, 255, 0.18) transpa
    partial. Content is offset by ONE rule — body.has-sidebar — set from JS in
    the partial, so public pages (login / welcome / tw / us) that never include
    it stay full-width. */
-:root { --wsb-w: 228px; }
+:root {
+    --wsb-w: 228px;
+    /* viewport-fit=cover is set site-wide, so a fixed bar at top:0 renders
+       UNDERNEATH the iOS status bar — the burger landed on top of the clock.
+       env() is 0px everywhere without a notch, so this is safe on desktop.
+       Every consumer of the bar's height reads THIS, so the bar, the body
+       offset, the drawer and the scrim cannot disagree about where it ends. */
+    --wsb-safe-t: env(safe-area-inset-top, 0px);
+    --wsb-top-h: calc(52px + var(--wsb-safe-t));
+}
 
 .wsb {
     position: fixed; top: 0; left: 0; bottom: 0; width: var(--wsb-w); z-index: 900;
@@ -197,10 +206,10 @@ body.has-sidebar { padding-left: var(--wsb-w); }
 .wsb-scrim { display: none; }
 
 @media (max-width: 1020px) {
-    body.has-sidebar { padding-left: 0; padding-top: 52px; }
+    body.has-sidebar { padding-left: 0; padding-top: var(--wsb-top-h); }
     /* Below the bar, not under it — the drawer carries the brand at its top
        and a fixed bar over it hid exactly that. */
-    .wsb { top: 52px; transform: translateX(-100%); transition: transform .24s cubic-bezier(.4, 0, .2, 1); }
+    .wsb { top: var(--wsb-top-h); transform: translateX(-100%); transition: transform .24s cubic-bezier(.4, 0, .2, 1); }
     .wsb.open { transform: none; }
 
     /* The bar body.has-sidebar has been reserving 52px for since the sidebar
@@ -208,33 +217,65 @@ body.has-sidebar { padding-left: var(--wsb-w); }
        page background. One unlabelled icon is not navigation — you cannot
        tell where you are or how to leave. */
     .wsb-top {
-        display: flex; align-items: center; gap: 10px;
-        position: fixed; top: 0; left: 0; right: 0; height: 52px; z-index: 950;
-        padding: 0 10px; padding-left: max(10px, env(safe-area-inset-left));
-        padding-right: max(10px, env(safe-area-inset-right));
-        background: linear-gradient(180deg, rgba(20, 25, 40, .97), rgba(13, 18, 32, .95));
-        border-bottom: 1px solid var(--wolf-border);
-        backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
+        display: flex; align-items: center; gap: 9px;
+        position: fixed; top: 0; left: 0; right: 0; z-index: 950;
+        height: var(--wsb-top-h); padding-top: var(--wsb-safe-t);
+        padding-left: max(9px, env(safe-area-inset-left));
+        padding-right: max(9px, env(safe-area-inset-right));
+        /* Same surface as the drawer it belongs to, so the two read as one
+           piece of chrome rather than two panels that happen to touch. */
+        background: linear-gradient(180deg, rgba(24, 29, 46, .96), rgba(15, 20, 34, .94));
+        backdrop-filter: blur(18px) saturate(140%);
+        -webkit-backdrop-filter: blur(18px) saturate(140%);
+        box-shadow: 0 1px 0 rgba(255, 255, 255, .05),
+                    0 10px 28px -12px rgba(0, 0, 0, .7);
+    }
+    /* The champagne hairline the rest of the site uses on STRUCTURE. It is
+       the one warm line on the page and it reads as an edge, not decoration. */
+    .wsb-top::after {
+        content: ""; position: absolute; left: 0; right: 0; bottom: 0; height: 1px;
+        background: linear-gradient(90deg, transparent,
+                    rgba(240, 212, 154, .38) 22%, rgba(240, 212, 154, .5) 50%,
+                    rgba(240, 212, 154, .38) 78%, transparent);
+    }
+    /* Icon + name. The icon is the page's OWN sidebar glyph, so the bar and
+       the drawer identify the page the same way. */
+    .wsb-top-id {
+        display: flex; align-items: center; gap: 8px;
+        min-width: 0; flex: 1 1 auto;
+    }
+    .wsb-top-id .wsb-ico {
+        width: 17px; height: 17px; flex: 0 0 auto; color: var(--wolf-champagne);
+        filter: drop-shadow(0 0 6px rgba(240, 212, 154, .3));
     }
     .wsb-top-title {
-        font-size: .84rem; font-weight: 800; letter-spacing: .01em;
+        font-size: .9rem; font-weight: 800; letter-spacing: .012em;
         color: var(--wolf-text); white-space: nowrap; overflow: hidden;
-        text-overflow: ellipsis; min-width: 0; flex: 1 1 auto;
+        text-overflow: ellipsis; min-width: 0;
     }
-    /* 44px tall: the smallest thing a thumb hits reliably. */
     .wsb-top-home {
         display: inline-flex; align-items: center; gap: 6px; flex: 0 0 auto;
-        height: 34px; padding: 0 11px; border-radius: 9px; text-decoration: none;
-        font-size: .74rem; font-weight: 700; color: var(--wolf-text);
-        border: 1px solid var(--wolf-border); background: rgba(255, 255, 255, .05);
+        height: 36px; padding: 0 13px; border-radius: 11px; text-decoration: none;
+        font-size: .76rem; font-weight: 700; color: var(--wolf-text);
+        border: 1px solid rgba(240, 212, 154, .22);
+        background: linear-gradient(180deg, rgba(240, 212, 154, .14),
+                                            rgba(240, 212, 154, .05));
+        box-shadow: inset 0 1px 0 rgba(255, 255, 255, .07);
+        -webkit-tap-highlight-color: transparent;
     }
-    .wsb-top-home .wsb-ico { width: 15px; height: 15px; }
+    .wsb-top-home .wsb-ico { width: 15px; height: 15px; color: var(--wolf-champagne); }
+    .wsb-top-home:active { transform: scale(.96); }
     .wsb-burger {
         display: flex; position: static; flex: 0 0 auto; z-index: 1;
-        width: 38px; height: 34px; flex-direction: column; justify-content: center;
-        align-items: center; gap: 4px; cursor: pointer; border-radius: 9px;
-        border: 1px solid var(--wolf-border); background: rgba(255, 255, 255, .05);
+        width: 40px; height: 36px; flex-direction: column; justify-content: center;
+        align-items: center; gap: 4.5px; cursor: pointer; border-radius: 11px;
+        border: 1px solid var(--wolf-border);
+        background: linear-gradient(180deg, rgba(255, 255, 255, .09),
+                                            rgba(255, 255, 255, .035));
+        box-shadow: inset 0 1px 0 rgba(255, 255, 255, .08);
+        -webkit-tap-highlight-color: transparent;
     }
+    .wsb-burger:active { transform: scale(.94); }
     .wsb-burger span {
         display: block; width: 16px; height: 1.6px; border-radius: 2px;
         background: var(--wolf-text); transition: transform .2s, opacity .2s;
@@ -244,7 +285,7 @@ body.has-sidebar { padding-left: var(--wsb-w); }
     .wsb-burger.open span:nth-child(3) { transform: translateY(-5.6px) rotate(-45deg); }
     .wsb-scrim {
         /* Starts BELOW the bar so the ☰→✕ stays tappable while open. */
-        display: block; position: fixed; inset: 52px 0 0 0; z-index: 880;
+        display: block; position: fixed; inset: var(--wsb-top-h) 0 0 0; z-index: 880;
         background: rgba(4, 8, 16, .6);
         backdrop-filter: blur(2px); -webkit-backdrop-filter: blur(2px);
     }

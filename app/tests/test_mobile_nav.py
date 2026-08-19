@@ -90,7 +90,22 @@ def test_the_css_only_shows_the_bar_on_small_screens():
     mobile = css[css.index("@media (max-width: 1020px)"):]
     mobile = mobile[:mobile.index("@media (prefers-reduced-motion")]
     assert ".wsb-top {" in mobile and "display: flex" in mobile
-    # The drawer must sit BELOW the bar, or the bar covers its brand…
-    assert re.search(r"\.wsb\s*\{\s*top:\s*52px", mobile)
-    # …and the scrim must not cover the bar, or ☰→✕ becomes untappable.
-    assert re.search(r"\.wsb-scrim\s*\{[^}]*inset:\s*52px", mobile, re.S)
+
+    # ONE height, read by all four consumers. Asserting a literal 52px in each
+    # place is what let them drift apart in the first place: the bar, the body
+    # offset, the drawer top and the scrim top must agree by construction, not
+    # by four numbers that happen to match today.
+    assert re.search(r"--wsb-top-h:\s*calc\(52px \+ var\(--wsb-safe-t\)\)", css), \
+        "the bar height is not derived from one token"
+    for sel, pat in ((".wsb-top height", r"\.wsb-top\s*\{[^}]*height:\s*var\(--wsb-top-h\)"),
+                     ("body offset", r"body\.has-sidebar\s*\{[^}]*padding-top:\s*var\(--wsb-top-h\)"),
+                     ("drawer top", r"\.wsb\s*\{\s*top:\s*var\(--wsb-top-h\)"),
+                     ("scrim inset", r"\.wsb-scrim\s*\{[^}]*inset:\s*var\(--wsb-top-h\)")):
+        assert re.search(pat, mobile, re.S), f"{sel} does not use --wsb-top-h"
+
+    # THE NOTCH. viewport-fit=cover is set site-wide, so a bar at top:0 renders
+    # under the iOS status bar — the burger landed on the clock. env() is 0px
+    # without a notch, so this costs nothing on desktop.
+    assert re.search(r"--wsb-safe-t:\s*env\(safe-area-inset-top", css), \
+        "the bar does not clear the iOS status bar"
+    assert re.search(r"\.wsb-top\s*\{[^}]*padding-top:\s*var\(--wsb-safe-t\)", mobile, re.S)
