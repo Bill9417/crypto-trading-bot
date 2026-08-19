@@ -11,7 +11,7 @@
     <title>Wolf Scanner - Dashboard</title>
     <!-- PWA: installable on phone home screen -->
     <link rel="manifest" href="/manifest.webmanifest">
-    <meta name="theme-color" content="#120c26">
+    <meta name="theme-color" content="#0a0b0f">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <meta name="apple-mobile-web-app-title" content="Wolf">
@@ -95,7 +95,7 @@
         .coin-modal .cm-win {
             position:absolute; left:50%; transform:translateX(-50%);
             top:2vh; height:96vh; width:min(760px, 96vw);
-            background:var(--wolf-slate,#120c26); border:1px solid rgba(255,255,255,.10);
+            background:var(--wolf-slate,#0a0b0f); border:1px solid rgba(255,255,255,.10);
             border-radius:16px; overflow:hidden; display:flex; flex-direction:column;
             box-shadow:0 24px 70px rgba(0,0,0,.55);
         }
@@ -128,20 +128,44 @@
         .pick-sym { font-weight:800; font-size:.82rem; letter-spacing:.02em; }
         /* Which engines voted, at a glance. The full record for each is in the
            legend once, instead of six identical italic lines down the card. */
+        /* Neutral on purpose. These name WHICH engine voted; the row's meaning
+           is carried by the meter (how many) and the star (which tier), and a
+           bright third colour competing with those made the row read as three
+           signals instead of one. */
         .pick-chip { font-size:.58rem; font-weight:700; padding:1px 5px;
-                     border-radius:999px; background:rgba(34,211,238,.13);
-                     color:#22d3ee; border:1px solid rgba(34,211,238,.28); }
+                     border-radius:999px; background:rgba(255,255,255,.06);
+                     color:var(--wolf-muted,#8b93a7); border:1px solid rgba(255,255,255,.12); }
         .pick-chip.star { background:rgba(255,207,75,.14); color:#ffcf4b;
                           border-color:rgba(255,207,75,.35); }
         .pick-chip.warn { background:rgba(245,158,11,.13); color:#f59e0b;
                           border-color:rgba(245,158,11,.32); }
         .pick-why { font-size:.64rem; color:var(--wolf-muted,#8a99ad);
                     margin-top:2px; line-height:1.45; }
+        /* ── Row layout ────────────────────────────────────────────────────
+           A recommendation list is a table: the eye should be able to run
+           DOWN one column and compare, which prose rows do not allow. Symbol,
+           the level it is actionable at, and how many independent engines
+           agree — the last is the only thing that ranks these, so it gets the
+           meter rather than being buried in the chip row. */
+        .pick-row { display:grid; grid-template-columns:1fr auto auto;
+                    align-items:center; gap:10px; }
+        .pick-entry { font-size:.72rem; font-weight:700; letter-spacing:.01em;
+                      font-variant-numeric:tabular-nums; color:var(--wolf-text); }
+        .pick-entry i { font-style:normal; font-size:.56rem; font-weight:600;
+                        color:var(--wolf-muted,#8a99ad); margin-right:3px; }
+        .pick-meter { display:inline-flex; align-items:center; gap:5px; }
+        .pick-bars { display:inline-flex; gap:2px; }
+        .pick-bars span { width:5px; height:11px; border-radius:1.5px;
+                          background:rgba(255,255,255,.13); }
+        .pick.buy  .pick-bars span.on { background:var(--long,#2ee88a); }
+        .pick.sell .pick-bars span.on { background:var(--short,#ff4d6d); }
+        .pick-n { font-size:.6rem; font-weight:800; color:var(--wolf-muted,#8a99ad);
+                  min-width:1.1em; text-align:right; }
         .picks-legend { grid-column:1/-1; margin-top:2px; padding-top:8px;
                         border-top:1px solid rgba(255,255,255,.07);
                         font-size:.6rem; color:var(--wolf-muted,#8a99ad);
                         line-height:1.6; }
-        .picks-legend b { color:#22d3ee; font-weight:700; }
+        .picks-legend b { color:var(--wolf-champagne,#f0d49a); font-weight:700; }
         .picks-legend .hd { display:block; margin-bottom:3px; opacity:.85; }
         .layout-scope { display:none; font-size:.66rem; color:var(--wolf-amber,#f59e0b); }
         body.layout-editing .layout-scope { display:inline; }
@@ -211,17 +235,20 @@
         .cb-stat b.up { color: var(--long); }
         .cb-stat b.down { color: var(--short); }
 
+        /* Gold, like every other primary action since the 2026-08-19 reground.
+           This inline copy overrode the shared rule in app.css, so changing
+           the token there left the one button people press most still cyan. */
         .btn-wolf {
-            background: var(--wolf-blue);
+            background: linear-gradient(180deg, #ffdf7a, #e8b53a);
             border: none;
-            color: #000;
+            color: #1a1405;
             font-weight: 700;
             font-size: 0.8rem;
             padding: 8px 16px;
             border-radius: 10px;
             transition: transform .15s, box-shadow .15s;
         }
-        .btn-wolf:hover { background: #00b8e6; color: #000; transform: translateY(-1px); box-shadow: 0 4px 14px rgba(0,210,255,.3); }
+        .btn-wolf:hover { filter: brightness(1.06); color: #1a1405; transform: translateY(-1px); box-shadow: 0 4px 14px rgba(255,210,87,.28); }
         .btn-wolf:disabled { opacity: .65; transform: none; }
 
         .btn-ghost {
@@ -895,7 +922,7 @@
             white-space: nowrap;
         }
         .dash-filter-btn:hover { color: var(--wolf-text); border-color: rgba(255,255,255,0.22); background: rgba(255,255,255,0.04); }
-        .dash-filter-btn.active { background: var(--wolf-blue); color: #000; font-weight: 700; border-color: var(--wolf-blue); box-shadow: 0 0 8px rgba(0,210,255,.2); }
+        .dash-filter-btn.active { background: var(--wolf-gold); color: #1a1405; font-weight: 700; border-color: var(--wolf-gold); box-shadow: 0 0 8px rgba(255,210,87,.22); }
         .dash-filter-btn.active-long { background: var(--long); color: #000; border-color: var(--long); box-shadow: 0 0 8px rgba(16,185,129,.25); }
         .dash-filter-btn.active-short { background: var(--short); color: #fff; border-color: var(--short); box-shadow: 0 0 8px rgba(239,68,68,.25); }
         .dash-search {
@@ -1319,11 +1346,11 @@
         ::-webkit-scrollbar { width: 9px; height: 9px; }
         ::-webkit-scrollbar-track { background: rgba(255,255,255,0.02); }
         ::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.14); border-radius: 999px; }
-        ::-webkit-scrollbar-thumb:hover { background: rgba(0,210,255,0.45); }
+        ::-webkit-scrollbar-thumb:hover { background: rgba(255,210,87,0.42); }
         * { scrollbar-width: thin; scrollbar-color: rgba(255,255,255,0.18) transparent; }
         a, button, input, select { -webkit-tap-highlight-color: transparent; }
         :focus-visible { outline: 2px solid var(--wolf-blue); outline-offset: 2px; border-radius: 8px; }
-        ::selection { background: rgba(0,210,255,0.32); color: #fff; }
+        ::selection { background: rgba(255,210,87,0.30); color: #fff; }
         .btn, .btn-wolf, .btn-ghost, .nav-pill, .stat-card[data-href] { transition: transform .14s ease, box-shadow .14s ease, background .14s, border-color .14s, color .14s; }
         .btn:active, .btn-wolf:active, .btn-ghost:active, .nav-pill:active { transform: translateY(1px) scale(0.98); }
         /* ── Hero: main-coin heatmap tiles + admin account/strategy column ──
@@ -4621,19 +4648,41 @@
     function esc(s){ return String(s==null?'':s).replace(/&/g,'&amp;')
         .replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
     var ZH = {s2:'S2', flip:'翻轉', oi:'OI', s4:'S4', mover:'動能'};
+    /* Significant digits, not fixed decimals: this universe spans 64000 and
+       0.0000012, and either a fixed 2 or a fixed 8 makes one of them useless. */
+    function fmtPx(v) {
+        var n = Number(v);
+        if (!isFinite(n) || n <= 0) return null;
+        var d = n >= 1000 ? 0 : n >= 1 ? 3 : n >= 0.01 ? 5 : 8;
+        return n.toLocaleString('en-US', {minimumFractionDigits: 0, maximumFractionDigits: d});
+    }
     function col(title, rows, cls) {
         var h = '<div class="picks-col"><h3>' + title + '</h3>';
         if (!rows.length) h += '<div class="muted" style="font-size:.68rem">目前沒有訊號</div>';
         rows.forEach(function (r) {
             // Links into /coin, so the pop-out opens with the chart + analysis.
+            var srcs = r.srcs || [];
+            // 推薦指數 = how many INDEPENDENT engines point the same way. It is
+            // what the ranking is, so it is drawn rather than described — and
+            // capped at five bars because a sixth agreeing engine does not
+            // make a sixth kind of evidence.
+            var n = Math.min(srcs.length, 5), bars = '';
+            for (var i = 0; i < 5; i++) bars += '<span' + (i < n ? ' class="on"' : '') + '></span>';
+            var entry = (r.plan && r.plan.entry != null) ? fmtPx(r.plan.entry) : null;
             h += '<a class="pick ' + cls + '" href="/coin/' + encodeURIComponent(r.base) + '">' +
-                 '<div class="pick-hd"><span class="pick-sym">' + esc(r.base) + '</span>';
-            (r.srcs || []).forEach(function (s) {
+                 '<div class="pick-row">' +
+                   '<div class="pick-hd"><span class="pick-sym">' + esc(r.base) + '</span>';
+            srcs.forEach(function (s) {
                 h += '<span class="pick-chip">' + esc(ZH[s] || s) + '</span>';
             });
             if (r.starred) h += '<span class="pick-chip star">⭐ 完整型態</span>';
             if (r.conflict) h += '<span class="pick-chip warn">' + r.conflict + ' 反向</span>';
-            h += '</div>';
+            h += '</div>' +
+                 (entry ? '<span class="pick-entry"><i>進場</i>' + entry + '</span>' : '<span></span>') +
+                 '<span class="pick-meter" title="幾個獨立引擎同時指向這一邊">' +
+                   '<span class="pick-bars">' + bars + '</span>' +
+                   '<span class="pick-n">' + srcs.length + '</span></span>' +
+                 '</div>';
             r.reasons.forEach(function (x) {
                 h += '<div class="pick-why">' + esc(x.why) +
                      (x.repeats ? ' ×' + x.repeats : '') + '</div>';
