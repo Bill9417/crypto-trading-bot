@@ -414,6 +414,15 @@ def format_alert(sym: str, sig: dict, pl: dict) -> str:
                                   f"{'  第%d百分位' % round(oi['pctile']) if oi.get('pctile') is not None else ''}"))
         if oi.get("state"):
             rows.append(("資金動向", OI_ZH.get(oi["state"], oi["state"])))
+    # The two readings the owner reads off the chart anyway. Shown so the alert
+    # answers the question instead of prompting a trip to TradingView; NOT a
+    # gate, and the line below says so with the numbers.
+    ctx = sig.get("context") or {}
+    if ctx:
+        rows.append(("MACD", ("在訊號線上方" if ctx.get("macd_above") else "在訊號線下方")
+                             + ("・柱狀轉強" if ctx.get("macd_rising") else "・柱狀轉弱")))
+        if ctx.get("vol_mult") is not None:
+            rows.append(("成交量", f"{ctx['vol_mult']:.1f}× 近24h均量"))
     return "\n".join(x for x in [
         F.headline("⭐🚀 壓力翻支撐 · 完整型態" if sig.get("full_setup")
                    else "🚀 壓力翻支撐", base, "做多 LONG"),
@@ -435,6 +444,13 @@ def format_alert(sym: str, sig: dict, pl: dict) -> str:
         f"📐 實測 {MEASURED['n']} 筆：勝率 {MEASURED['wr']:.0f}%、"
         f"期望值 {MEASURED['exp']:+.2f}R，信賴區間 "
         f"[{MEASURED['ci'][0]:+.2f}, {MEASURED['ci'][1]:+.2f}] <b>仍然包含 0</b>。",
+        # Same reason as the OI note: showing a number invites reading it as
+        # confirmation, and here the measurement says the opposite.
+        ("📉 MACD 跟成交量也只是<b>參考</b>。實測 348 筆：MACD 在訊號線上方的有 329 筆"
+         "（等於這個型態本來就會成立，不是第二個意見）；成交量 ≥3× 的反而更差 "
+         "−0.26R；三個條件<b>全部到齊</b>的最差 −0.35R（差距 −0.29R ±0.15，"
+         "統計上確定更差）。爆量的那根通常是高潮棒。"
+         if sig.get("context") else ""),
         # Stated because the OI row above invites exactly this inference.
         ("📊 持倉量只是<b>參考</b>，不是加分條件 —— 實測加上 OI 條件後，"
          "跟沒加的差距是 +0.28R ±0.40（等於沒差別），把門檻調更嚴反而更差。"
@@ -487,7 +503,51 @@ def consider(sym: str, ohlcv: list, state: dict, now: float,
            "oi": oi_context(sym, closed)}
     out["triangle_ts"] = recent_long_ts
     out["full_setup"] = bool(recent_long_ts) and bool(sig.get("blue_sky"))
+    out["context"] = confirm_context(closed)
     return out
+
+
+def confirm_context(closed: list) -> dict:
+    """MACD and volume AT the confirming bar. CONTEXT, not a gate.
+
+    Asked for on 2026-08-19 off a TRIA chart that ran +19% ("MACD plus volume
+    is up"). Both were then measured on the live flip record — 348 replayable
+    alerts, 08-13→18 — and neither helps:
+
+        MACD above signal      -0.147R (n=329)   lift +0.063 ±0.320
+        MACD histogram rising  -0.183R (n=264)   lift -0.135 ±0.172
+        volume >= 3x average   -0.255R (n=133)   lift -0.168 ±0.144
+        all three together     -0.354R (n=107)   lift -0.293 ±0.145  ← excludes 0
+
+    Requiring all three makes it significantly WORSE, and the reason is
+    mechanical rather than statistical: a flip is a close above resistance, so
+    MACD is above its signal on 329 of 348 of them — it is very nearly a
+    restatement of the setup, not a second opinion. Volume tells the other half
+    of the story: a flip on 3x volume is the climax bar, which is where
+    breakouts fail. TRIA fired on 9.86x against a 2.20x median, which is why it
+    is memorable and also why it is not evidence.
+
+    So these are SHOWN and STORED, never required. The alert already carried
+    the shape; now it carries the readings the owner reads anyway, and the
+    record can settle the question on the next few hundred instead of on one
+    chart.
+    """
+    if len(closed) < 120:
+        return {}                       # not measured — never a neutral default
+    closes = [c[4] for c in closed]
+    vols = [c[5] for c in closed]
+    try:
+        import strategy4
+        macd_line, sig_line = strategy4.macd_series(closes)
+    except Exception:  # noqa: BLE001 — context must never cost the alert
+        return {}
+    if not macd_line or len(macd_line) < 3:
+        return {}
+    hist = [a - b for a, b in zip(macd_line, sig_line, strict=False)]
+    base = sum(vols[-97:-1]) / 96 if len(vols) > 97 else 0
+    return {"macd_above": macd_line[-1] > sig_line[-1],
+            "macd_rising": hist[-1] > hist[-2],
+            "vol_mult": round(vols[-1] / base, 2) if base > 0 else None}
 
 
 def oi_context(sym: str, closed: list) -> dict:

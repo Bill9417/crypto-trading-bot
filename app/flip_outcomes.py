@@ -86,6 +86,14 @@ def record(sig: dict, store: dict = None, now_ts: float = None) -> bool:
         "zone_top": sig.get("zone_top"), "zone_bottom": sig.get("zone_bottom"),
         "touches": sig.get("touches"), "stop_pct": pl.get("stop_pct"),
         "rr": pl.get("rr"),
+        # The ⭐ tier was printed in the log and shown in the alert but never
+        # STORED, so the one cut this module claims is its best (MEASURED_SEQ,
+        # +0.287R) had no live record at all — unfalsifiable by construction.
+        "full_setup": bool(sig.get("full_setup")),
+        "triangle_ts": sig.get("triangle_ts"),
+        # MACD/volume as they stood at the confirming bar. Shown and stored,
+        # never required — see breakout_flip.confirm_context().
+        "context": sig.get("context") or {},
         # settle() measures from the bar AFTER this one.
         "bar_ts": int(sig.get("ts") or 0), "fired_ts": now_ts,
     }
