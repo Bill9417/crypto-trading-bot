@@ -48,6 +48,15 @@ LEVERAGE = int(os.getenv("S4_BYBIT_LEVERAGE", "5"))
 # Any real cross-exchange basis on the same asset is well under 1%. 5% is a
 # ticker collision, not a market.
 MAX_PRICE_DIVERGENCE = float(os.getenv("S4_MAX_PRICE_DIVERGENCE", "0.05"))
+# How many S4 positions may be open at once. NOT a tuned number — derived from
+# what the account can lose if every one of them is wrong at the same time,
+# which is the realistic case: the meter is regime-driven, so S4's signals
+# arrive same-side in clusters rather than independently. Worst case per trade
+# is ORDER_USDT x MAX_STOP_PCT = 40 x 4% = 1.6 USDT, so 8 concurrent risks
+# ~12.8 USDT — under 3% of the ~458 USDT this sub-account holds. Raise it by
+# raising the account, not by hoping the correlation is lower than it looks.
+MAX_CONCURRENT = int(os.getenv("S4_MAX_CONCURRENT", "8"))
+STRAT = "s4"
 MARGIN_BUFFER = 1.15
 
 
@@ -143,12 +152,53 @@ def bybit_symbol(sym: str):
     return None
 
 
+def s4_open_count() -> int:
+    """How many S4 positions are open, counted FROM THE EXCHANGE.
+
+    The ledger says which symbols are S4's; the exchange says which still
+    exist. Counting ledger rows alone would repeat a bug this repo has already
+    paid for — hand-closing a mirrored position left a row nothing ever cleared,
+    and it silently blocked that symbol forever. A position that is gone from
+    the exchange cannot occupy a slot, however stale the bookkeeping is.
+
+    Returns -1 when the count cannot be made, which the caller treats as
+    "cannot be sure" rather than "zero".
+    """
+    try:
+        live = {p["symbol"] for p in X.client().fetch_positions()
+                if float(p.get("contracts") or 0)}
+    except Exception as exc:  # noqa: BLE001
+        print(f"[s4-exec] position count failed: {exc}")
+        return -1
+    try:
+        import strategy_ledger
+        rows = strategy_ledger._load().get("rows") or []
+        mine = {strategy_ledger.norm(r["symbol"]) for r in rows
+                if r.get("strategy") == STRAT and not r.get("closed")}
+        return sum(1 for sym in live if strategy_ledger.norm(sym) in mine)
+    except Exception:  # noqa: BLE001 — no ledger: count everything, which
+        return len(live)                   # binds sooner. Safe direction.
+
+
 def preflight(sym: str, price: float) -> tuple:
     """(ok, reason). Everything that must be true before an order is sent."""
     if sym in _blocked():
         return False, "needs_agreement"
     if not bybit_symbol(sym):
         return False, "not_listed"
+
+    # 🛑 The account-wide daily loss brake. S3, the S1 mirror and the copy
+    # engine have all consulted this since it was written; S4 was the one live
+    # engine that did not, so a day bad enough to halt every other engine left
+    # S4 opening new positions into it. OFF unless MAX_DAILY_LOSS_USDT is set.
+    try:
+        import daily_risk
+        halted = daily_risk.entry_blocked()
+        if halted:
+            return False, f"daily_loss_limit:{halted}"
+    except Exception as exc:  # noqa: BLE001 — a brake that breaks must not
+        print(f"[s4-exec] daily_risk unavailable: {exc}")   # stop trading
+
 
     # 2. Never merge into a manual / S3 / earlier-S4 position.
     try:
@@ -176,6 +226,19 @@ def preflight(sym: str, price: float) -> tuple:
             return False, f"min_notional:{need:.0f}USDT"
     except Exception:  # noqa: BLE001 — open_flip checks properly too
         pass
+
+    # LAST, deliberately. This is the only gate that needs the WHOLE position
+    # book, and putting it first made it answer for gates that had not run yet:
+    # a symbol with a position already open reported "position_count_failed"
+    # instead of "position_open", so the specific, actionable reason was
+    # replaced by a generic one. Cheapest and most specific first; the
+    # portfolio-wide ceiling is neither.
+    if MAX_CONCURRENT > 0:
+        n = s4_open_count()
+        if n < 0:
+            return False, "position_count_failed"
+        if n >= MAX_CONCURRENT:
+            return False, f"max_concurrent:{n}/{MAX_CONCURRENT}"
     return True, "ok"
 
 
@@ -251,6 +314,17 @@ def open_trade(sig: dict) -> dict:
         _tg_owner(f"❌ S4 {base} 下單失敗：{msg[:120]}")
         return out
     out.update(res)
+    # Ownership, recorded AT OPEN. S4 was placing real Bybit orders without
+    # ever registering them, so its trades fell through to the ledger's
+    # notional-based infer() — the same blind spot that once reported an 80%
+    # win rate for a book that was ~90% manual. Bookkeeping never blocks a
+    # fill, so this sits after the order and cannot fail it.
+    if res.get("ok"):
+        try:
+            import strategy_ledger
+            strategy_ledger.record_open(STRAT, sym, side)
+        except Exception as exc:  # noqa: BLE001
+            print(f"[s4-exec] ledger record_open failed {sym}: {exc}")
     return out
 
 
