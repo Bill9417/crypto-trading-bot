@@ -9,7 +9,7 @@ WHAT THE RECORD ACTUALLY SAYS, because this is the module that spends money on
 it. S4's alerted book at the time of writing: n=121, +0.081R, CI
 [-0.164, +0.327], PF 1.14 over 6.5 days — and the top 3 symbols carry 127% of
 the profit, meaning everything else combined loses. That is not a proven edge,
-it is a positive-looking sample whose interval contains zero. At 60 USDT
+it is a positive-looking sample whose interval contains zero. At 40 USDT
 notional and a ~1.5% median stop that is ~0.9 USDT of risk per trade, which is
 the right size for finding out and the wrong size for expecting anything.
 
@@ -43,7 +43,7 @@ import strategy3_exec as X
 
 STATE_FILE = os.path.join(os.path.dirname(__file__), "strategy4_exec_state.json")
 
-ORDER_USDT = float(os.getenv("S4_BYBIT_ORDER_USDT", "60"))
+ORDER_USDT = float(os.getenv("S4_BYBIT_ORDER_USDT", "40"))
 LEVERAGE = int(os.getenv("S4_BYBIT_LEVERAGE", "5"))
 # Any real cross-exchange basis on the same asset is well under 1%. 5% is a
 # ticker collision, not a market.

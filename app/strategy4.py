@@ -410,6 +410,45 @@ def cvd_series(ohlcv):
     return out
 
 
+def cvd_flow(ohlcv):
+    """The CVD reading at the signal bar, as a RECORD — never as a gate.
+
+    Distinct from the CVD entry in divergence_scan(): that asks "did selling
+    exhaust?", this asks "is aggressive buying happening right now?". They
+    routinely disagree, and the second one was the obvious thing to add as a
+    sixth gate. It was measured against the real S4 book (n=136 live closes,
+    2026-08-10→19) and it does NOT survive:
+
+        CVD rising at entry     -0.171R (n=62)   vs  +0.326R not-rising
+        binary lift             -0.475R ± 0.233
+        Spearman(slope, R)      rho -0.037, permutation p = 0.77
+
+    The binary lift clears 2 s.e. and the quintile ladder looks monotonic, so
+    this nearly shipped. Two checks killed it. Spearman on the same data is
+    zero — the ladder is a handful of large-R trades sitting in one bucket, not
+    a rank effect. And the split is confounded: mean S2 score is 56.0 when CVD
+    is rising versus 37.2 when it is not, so "CVD rising" is largely a restatement
+    of "high meter score", which this repo has already measured as negative-EV.
+    Controlled for score the sign FLIPS between bands (+0.97R low, -0.86R high) —
+    an interaction fitted on 12 trades in one cell. The sample's 95% MDE is
+    0.467R; almost nothing measured here is bigger than that.
+
+    So it is stored, not applied. Every signal from now on carries its flow
+    reading, which is what makes the question answerable on the NEXT few
+    hundred trades instead of arguable forever. Scale-free by construction —
+    detrended CVD is in volume units, so both numbers are divided by the
+    series' own recent spread and can be compared across symbols.
+    """
+    det = detrend(cvd_series(ohlcv))
+    if len(det) < 96:
+        return {}                      # not measured — say so, do not send 0
+    win = det[-96:]
+    spread = (max(win) - min(win)) or 1.0
+    return {"norm": round(det[-1] / spread, 4),
+            "slope": round((det[-1] - det[-5]) / spread, 4),
+            "rising": det[-1] > det[-5]}
+
+
 def atr_series(highs, lows, closes, period=ATR_LEN):
     """True-range EMA. Used to ask whether a pivot is a real swing or a wiggle,
     measured AT THE PIVOT BAR — the volatility at the event, not at the moment
@@ -850,6 +889,15 @@ def evaluate(ohlcv, oi_values=None, side="long") -> dict:
         # a real setup we are declining on cost grounds — worth recording as a
         # shadow trade, never worth alerting.
         out["shadow"] = True
+        # Measure the divergence gate anyway — WITHOUT gating on it, so what
+        # counts as a shadow is unchanged. This branch used to return the
+        # initialised div_sources=[], and the outcome store wrote that down as
+        # a reading: 178 shadow trades on record all said "no divergence
+        # fired" for a scan that never ran. A perfect 178/178-vs-136/136 split
+        # is what gave it away. Asking whether divergence helps is exactly what
+        # the shadow book exists for, and the answer was being fabricated.
+        out["div_sources"] = sorted(divergence_scan(ohlcv, highs, lows, closes, side))
+        out["cvd"] = cvd_flow(ohlcv)
         out["reason"] = (f"stop {p['stop_pct']:.2f}% under the "
                          f"{p['floor_pct']:.1f}% fee floor")
         return out
@@ -870,6 +918,7 @@ def evaluate(ohlcv, oi_values=None, side="long") -> dict:
         out["reason"] = "OI not supportive" if st else "no OI data"
         return out
 
+    out["cvd"] = cvd_flow(ohlcv)
     out["quality"] = quality(out)
     out["pass"] = True
     return out
@@ -1086,10 +1135,25 @@ def format_signal(sig: dict) -> str:
               if sig.get("support") else "—"),
              ("背離", (f"{sig['div_ago']} 根前 · " + "+".join(srcs)) if srcs
               else (f"{sig['div_ago']} 根前" if sig.get("div_ago") is not None else "—")),
+             # Shown, deliberately NOT gated on — cvd_flow() carries the
+             # measurement that says why. "—" here means the series was too
+             # short to read, never that flow was flat.
+             ("主動買賣", cvd_text(sig.get("cvd"))),
              ("未平倉", OI_TEXT.get(sig.get("oi_state"), "—"))]
     bits.append(F.pre_table(rows))
     bits.append(F.bybit_line(base, sig.get("price")))
     return "\n".join(b for b in bits if b)
+
+
+def cvd_text(cvd) -> str:
+    """The flow reading in words. Says what it is — an estimate — because
+    without intrabar data cvd_series() infers each bar's delta from where it
+    closed in its own range."""
+    if not cvd:
+        return "—"
+    n = cvd.get("norm")
+    lvl = "買方佔優" if (n or 0) > 0 else "賣方佔優"
+    return f"{lvl} · {'轉強' if cvd.get('rising') else '轉弱'}（估算）"
 
 
 DISCLAIMER = ("⚠️ S4 是「掃描通知」，不是已驗證的策略。這些美股永續大多 30 天內才上市"

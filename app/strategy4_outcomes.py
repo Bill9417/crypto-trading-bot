@@ -133,6 +133,9 @@ def record(signals: list, store: dict = None, now_ts: float = None) -> int:
             "rr": plan.get("rr"), "stop_pct": plan.get("stop_pct"),
             "quality": s.get("quality"), "score": s.get("score"),
             "div_sources": s.get("div_sources") or [],
+            # Recorded, never acted on — see strategy4.cvd_flow(). {} means the
+            # series was too short to read, which is not the same as flat.
+            "cvd": s.get("cvd") or {},
             "bar_ts": s.get("bar_ts"), "fired_ts": now_ts,
             # Qualified on every gate, then declined by the fee floor. Scored
             # exactly like a live trade and tallied apart, so raising
