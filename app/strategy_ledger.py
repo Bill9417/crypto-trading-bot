@@ -23,7 +23,10 @@ LEDGER_FILE = os.path.join(os.path.dirname(__file__), "strategy_ledger.json")
 RETAIN_D = 400                  # keep ~a year of attribution history
 GRACE_S = 900                   # exchange close time vs our own can differ
 
-STRATEGIES = ("S1", "S3")
+# S4 joined 2026-08-19. Until then it placed real Bybit orders without
+# registering, so infer() filed every one of them as 手動交易 — the exact
+# misattribution this module was written to stop, on a live-money engine.
+STRATEGIES = ("S1", "S3", "S4")
 MANUAL = "manual"
 UNKNOWN = "unknown"
 
@@ -71,9 +74,26 @@ def record_open(strategy: str, symbol: str, side: str = "",
             return
         state = _load()
         rows = _prune(state.get("rows") or [], now)
-        for r in rows:                       # already open → leave it alone
-            if r.get("symbol") == sym and not r.get("closed"):
+        # Per (strategy, symbol). Deduping on the symbol ALONE is stricter
+        # than "safe to call twice" and loses data: one stale row from another
+        # engine — the failure this repo has already had, where a hand-closed
+        # position left a row nothing cleared — made this a silent no-op, so
+        # the second engine's real position was never registered, its trades
+        # fell through to infer() as 手動交易, and any per-strategy count of
+        # open positions undercounted.
+        for r in rows:
+            if r.get("symbol") == sym and r.get("strategy") == strategy \
+                    and not r.get("closed"):
                 return
+        # A name nothing matches is a row nothing reads. S4 spent its first
+        # day writing "s4" while STRATEGIES, _LABEL and report() all match
+        # "S4" exactly — the record existed and was invisible. Warn, never
+        # block: refusing the write would lose the attribution outright, which
+        # is strictly worse than an odd name that can be migrated later.
+        if strategy not in STRATEGIES and strategy != MANUAL:
+            print(f"[ledger] ⚠ unknown strategy {strategy!r} for {sym} — "
+                  f"known: {STRATEGIES}. The per-strategy report will not "
+                  f"show it until the name is added.")
         rows.append({"strategy": strategy, "symbol": sym, "side": side or "",
                      "opened": round(now, 3), "closed": None})
         state["rows"] = rows
@@ -101,11 +121,24 @@ def record_close(strategy: str, symbol: str, ts: float = None,
             return
         state = _load()
         rows = _prune(state.get("rows") or [], now)
-        for r in reversed(rows):
-            if r.get("symbol") == sym and not r.get("closed"):
+        # This strategy's own row first. Matching on the symbol alone would
+        # let one engine close another's record — now genuinely reachable,
+        # because record_open() above can legitimately hold two open rows for
+        # one symbol. The symbol-only pass is kept as a FALLBACK so a
+        # reconciler that does not know the owner still closes something,
+        # which is the behaviour every existing caller relies on.
+        for match_strategy in (True, False):
+            for r in reversed(rows):
+                if r.get("symbol") != sym or r.get("closed"):
+                    continue
+                if match_strategy and r.get("strategy") != strategy:
+                    continue
                 r["closed"] = round(now, 3)
                 r["closed_by"] = by or strategy
                 break
+            else:
+                continue
+            break
         state["rows"] = rows
         _save(state)
     except Exception as exc:  # noqa: BLE001
@@ -347,7 +380,8 @@ def fee_report(trades: list, title: str = "🧾 手續費侵蝕") -> str:
     return "\n".join(lines)
 
 
-_LABEL = {"S1": "S1 訊號跟單", "S3": "S3 翻轉引擎", MANUAL: "手動交易"}
+_LABEL = {"S1": "S1 訊號跟單", "S3": "S3 翻轉引擎",
+          "S4": "S4 TradFi 掃描", MANUAL: "手動交易"}
 
 
 def report(trades: list, title: str = "📒 各策略實際損益（Bybit）") -> str:
@@ -357,7 +391,7 @@ def report(trades: list, title: str = "📒 各策略實際損益（Bybit）") -
     if not stats:
         return f"{title}\n尚無已平倉的紀錄。"
     import tg_format
-    order = [k for k in ("S1", "S3", MANUAL) if k in stats]
+    order = [k for k in ("S1", "S3", "S4", MANUAL) if k in stats]
     order += [k for k in stats if k not in order]
     rows = [("策略", "筆數", "淨損益", "勝率", "PF")]
     for k in order:
@@ -379,7 +413,7 @@ def report(trades: list, title: str = "📒 各策略實際損益（Bybit）") -
     # A strategy's P&L only measures the STRATEGY when the strategy also chose
     # the exit. Hand-closing a mirrored trade files the operator's decision
     # under the bot's name, so the mix has to be stated next to the number.
-    for strat in ("S1", "S3"):
+    for strat in ("S1", "S3", "S4"):
         iv = intervention_stats(strat)
         if iv["manual"]:
             lines.append(

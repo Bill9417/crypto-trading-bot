@@ -85,9 +85,9 @@ def test_count_ignores_ledger_rows_with_no_live_position(monkeypatch):
     monkeypatch.setattr(E.X, "client",
                         lambda: _Client([_pos("ETH/USDT:USDT")]))
     monkeypatch.setattr(strategy_ledger, "_load", lambda: {"rows": [
-        {"strategy": "s4", "symbol": "ETH/USDT:USDT", "closed": None},
-        {"strategy": "s4", "symbol": "GONE/USDT:USDT", "closed": None},
-        {"strategy": "s3", "symbol": "XAUT/USDT:USDT", "closed": None},
+        {"strategy": E.STRAT, "symbol": "ETH/USDT:USDT", "closed": None},
+        {"strategy": E.STRAT, "symbol": "GONE/USDT:USDT", "closed": None},
+        {"strategy": "S3", "symbol": "XAUT/USDT:USDT", "closed": None},
     ]})
     assert E.s4_open_count() == 1, "stale rows and other engines must not occupy S4 slots"
 
@@ -102,5 +102,7 @@ def test_a_fill_records_ownership(monkeypatch):
     out = E.open_trade({"symbol": "ETH/USDT:USDT", "side": "long",
                         "plan": {"entry": 100.0, "sl": 98.0, "tp": 104.0}})
     assert out.get("ok") is True
-    assert seen and seen[0][0] == "s4" and seen[0][1] == "ETH/USDT:USDT", \
+    # E.STRAT, not a literal: the name has to be the one the ledger matches
+    # on, and hardcoding it here is how it drifted to lowercase unnoticed.
+    assert seen and seen[0][0] == E.STRAT and seen[0][1] == "ETH/USDT:USDT", \
         "S4 opened a real position without registering it — /winrate cannot attribute it"

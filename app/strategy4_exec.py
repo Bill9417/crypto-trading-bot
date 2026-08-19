@@ -56,7 +56,10 @@ MAX_PRICE_DIVERGENCE = float(os.getenv("S4_MAX_PRICE_DIVERGENCE", "0.05"))
 # ~12.8 USDT — under 3% of the ~458 USDT this sub-account holds. Raise it by
 # raising the account, not by hoping the correlation is lower than it looks.
 MAX_CONCURRENT = int(os.getenv("S4_MAX_CONCURRENT", "8"))
-STRAT = "s4"
+# Uppercase, like S1 and S3. Lowercase "s4" wrote rows that STRATEGIES,
+# _LABEL and report() all match on exactly and none of them recognise —
+# a record kept under a name nothing reads.
+STRAT = "S4"
 MARGIN_BUFFER = 1.15
 
 
