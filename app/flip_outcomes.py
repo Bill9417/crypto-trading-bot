@@ -89,11 +89,27 @@ def record(sig: dict, store: dict = None, now_ts: float = None) -> bool:
         # The ⭐ tier was printed in the log and shown in the alert but never
         # STORED, so the one cut this module claims is its best (MEASURED_SEQ,
         # +0.287R) had no live record at all — unfalsifiable by construction.
-        "full_setup": bool(sig.get("full_setup")),
-        "triangle_ts": sig.get("triangle_ts"),
-        # MACD/volume as they stood at the confirming bar. Shown and stored,
-        # never required — see breakout_flip.confirm_context().
+        #
+        # NOT bool(): record() is a public entry point, so a sig from a
+        # backfill or an older caller has no such field, and bool(None) would
+        # write "this was NOT a full setup" for something never evaluated.
+        # Those rows would then land in the plain half of the very ⭐-vs-rest
+        # comparison this field exists to enable.
+        "full_setup": sig.get("full_setup"),
+        # _s because bar_ts on the line above is MILLISECONDS and this is
+        # SECONDS (it comes from time.time() via the scanner's `recent` list).
+        # Unmarked, the obvious "how long after the triangle" subtraction is
+        # wrong by 1000x and produces a plausible-looking nonsense rather than
+        # an error.
+        "triangle_ts_s": sig.get("triangle_ts"),
+        # MACD/volume at the decision bar. Shown and stored, never required —
+        # see breakout_flip.confirm_context().
         "context": sig.get("context") or {},
+        # Same argument as full_setup, applied to the reading this commit
+        # nearly left behind: oi is computed on every fire and recited in
+        # every alert with its own MEASURED_OI claim, and was equally
+        # unfalsifiable for want of two lines here.
+        "oi": sig.get("oi") or {},
         # settle() measures from the bar AFTER this one.
         "bar_ts": int(sig.get("ts") or 0), "fired_ts": now_ts,
     }

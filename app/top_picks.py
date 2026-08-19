@@ -51,8 +51,14 @@ TOP_N = int(os.getenv("PICKS_TOP_N", "3"))
 # the two together. Carrying it in both produced "動能 動能實測 −0.054R…".
 RECORD = {
     "s2": "實測 −0.081R/筆 (22,631 筆，信賴區間不含 0 → 確定為負)",
-    "flip": "實測 +0.145R/筆 (269 筆，信賴區間含 0)",
-    "flip_full": "實測 +0.287R/筆 (108 筆，但拿掉最賺的一檔幣就失效)",
+    "flip": "實盤 −0.18R/筆 (397 筆已結算，目前是虧的)",
+    # Both flip lines lead with the LIVE settled record, which is NEGATIVE.
+    # Storing full_setup (2026-08-19) woke a branch that had been dead since
+    # it was written, so ⭐ rows silently began advertising a +0.287R backtest
+    # cut that the module itself says fails every robustness check — roughly
+    # double the claim, in the wrong direction, as a side effect of a
+    # storage fix.
+    "flip_full": "實盤 −0.18R/筆 (397 筆)；⭐ 這一段回測 +0.287R 但 108 筆、拿掉最賺的一檔就失效",
     "s4": "實測 −0.022R/筆 (90 筆，信賴區間含 0)",
     "oi": "當篩選條件實測沒有效果 (+0.28R ±0.40)",
     "mover": "實測 −0.054R/筆；做空 −0.211R (確定為負)",

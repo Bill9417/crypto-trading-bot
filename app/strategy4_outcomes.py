@@ -246,6 +246,15 @@ def accumulate(store: dict, closed: dict) -> None:
         names = ("shadow_all", f"shadow_{seg}", f"shadow_{side}")
     else:
         names = ("all", seg, side)
+    # The ⭐ cut, in the UNPRUNED tally. Recording full_setup on the row was
+    # only half the fix: `closed` is trimmed to KEEP_CLOSED, so at the flip
+    # book's own rate that record covers about a month and then rolls over —
+    # the question it was stored to answer would go unanswerable again, just
+    # more slowly. None means "never evaluated" and deliberately buckets to
+    # neither side; a row that was never asked is not a plain row.
+    star = closed.get("full_setup")
+    if star is not None:
+        names = (*names, "star" if star else "plain")
     for name in names:
         b = store.setdefault("tally", {}).setdefault(name, _bucket())
         for k, v in _bucket().items():                 # heal older shapes

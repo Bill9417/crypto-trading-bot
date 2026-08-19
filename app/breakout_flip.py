@@ -418,11 +418,24 @@ def format_alert(sym: str, sig: dict, pl: dict) -> str:
     # answers the question instead of prompting a trip to TradingView; NOT a
     # gate, and the line below says so with the numbers.
     ctx = sig.get("context") or {}
-    if ctx:
-        rows.append(("MACD", ("在訊號線上方" if ctx.get("macd_above") else "在訊號線下方")
-                             + ("・柱狀轉強" if ctx.get("macd_rising") else "・柱狀轉弱")))
-        if ctx.get("vol_mult") is not None:
-            rows.append(("成交量", f"{ctx['vol_mult']:.1f}× 近24h均量"))
+    # `is not None`, not truthiness. Bare .get() cannot tell False from absent,
+    # so a context dict missing these keys rendered "在訊號線下方・柱狀轉弱" —
+    # an unmade measurement printed as an assertion, which is the exact
+    # anti-pattern the comment above this block was written to avoid.
+    if ctx.get("macd_above") is not None:
+        macd = "在訊號線上方" if ctx["macd_above"] else "在訊號線下方"
+        if ctx.get("macd_rising") is not None:
+            macd += "・柱狀轉強" if ctx["macd_rising"] else "・柱狀轉弱"
+        rows.append(("MACD", macd))
+    if ctx.get("vol_bar_mult") is not None:
+        rows.append(("本根量", f"{ctx['vol_bar_mult']:.1f}× "
+                               f"（前 {ctx.get('vol_base_bars', VOL_BASE_BARS)} 根均量）"))
+    # Which bar the readings describe. A flip up to MAX_BARS_SINCE_FLIP bars
+    # old still alerts, so "9.9×" can belong to a bar an hour after the
+    # breakout — and the climax-bar reasoning below only applies to the
+    # breakout candle itself.
+    if sig.get("bars_since_flip"):
+        rows.append(("距翻轉", f"{sig['bars_since_flip']} 根前翻轉，上面數字是最新那根"))
     return "\n".join(x for x in [
         F.headline("⭐🚀 壓力翻支撐 · 完整型態" if sig.get("full_setup")
                    else "🚀 壓力翻支撐", base, "做多 LONG"),
@@ -441,15 +454,29 @@ def format_alert(sym: str, sig: dict, pl: dict) -> str:
         f"\n突破後回踩 {sig['zone_top']:.6g} 沒破，舊壓力變新支撐。",
         # The numbers are stated because the alert is the only place they will
         # be read, and an unqualified setup alert reads as a recommendation.
-        f"📐 實測 {MEASURED['n']} 筆：勝率 {MEASURED['wr']:.0f}%、"
+        # STATED FIRST and stated plainly. The message used to recite a +0.08R
+        # backtest and a +0.12R re-test and never mention that the live
+        # forward book — the only number here that is not a replay — is
+        # negative. Three neutral-to-positive headline expectancies and no
+        # baseline is not an honest summary of what this pattern has done.
+        (f"🔴 <b>實盤紀錄（唯一非回測的數字）</b>：{MEASURED_LIVE['n']} 筆已結算，"
+         f"期望值 <b>{MEASURED_LIVE['exp']:+.2f}R</b> ±{MEASURED_LIVE['se']:.2f}、"
+         f"勝率 {MEASURED_LIVE['wr']:.0f}%、獲利因子 {MEASURED_LIVE['pf']:.2f} —— "
+         f"目前<b>是虧的</b>，而且「上方無壓」那半邊更差（{MEASURED_LIVE['blue_exp']:+.2f}R "
+         f"vs 有壓 {MEASURED_LIVE['ceiling_exp']:+.2f}R）。截至 {MEASURED_LIVE['asof']}。"),
+        f"📐 以下是回測。實測 {MEASURED['n']} 筆：勝率 {MEASURED['wr']:.0f}%、"
         f"期望值 {MEASURED['exp']:+.2f}R，信賴區間 "
         f"[{MEASURED['ci'][0]:+.2f}, {MEASURED['ci'][1]:+.2f}] <b>仍然包含 0</b>。",
         # Same reason as the OI note: showing a number invites reading it as
         # confirmation, and here the measurement says the opposite.
-        ("📉 MACD 跟成交量也只是<b>參考</b>。實測 348 筆：MACD 在訊號線上方的有 329 筆"
+        (f"📉 MACD 跟成交量也只是<b>參考</b>。實測 {MEASURED_CONTEXT['n']} 筆："
+         f"MACD 在訊號線上方的有 {MEASURED_CONTEXT['macd_above']['n']} 筆"
          "（等於這個型態本來就會成立，不是第二個意見）；成交量 ≥3× 的反而更差 "
-         "−0.26R；三個條件<b>全部到齊</b>的最差 −0.35R（差距 −0.29R ±0.15，"
-         "統計上確定更差）。爆量的那根通常是高潮棒。"
+         f"{MEASURED_CONTEXT['vol_3x']['exp']:+.2f}R；三個條件<b>全部到齊</b>的最差 "
+         f"{MEASURED_CONTEXT['all_three']['exp']:+.2f}R"
+         f"（差距 {MEASURED_CONTEXT['all_three']['lift']:+.2f}R "
+         f"±{MEASURED_CONTEXT['all_three']['lift_se']:.2f}，統計上確定更差）。"
+         "爆量的那根通常是高潮棒。"
          if sig.get("context") else ""),
         # Stated because the OI row above invites exactly this inference.
         ("📊 持倉量只是<b>參考</b>，不是加分條件 —— 實測加上 OI 條件後，"
@@ -507,47 +534,97 @@ def consider(sym: str, ohlcv: list, state: dict, now: float,
     return out
 
 
-def confirm_context(closed: list) -> dict:
-    """MACD and volume AT the confirming bar. CONTEXT, not a gate.
+# The volume baseline window, as ONE number. It was two independent literals
+# (a 97-slice and a /96) for a single quantity, which is how a window change
+# breaks an average silently. 96 bars only means "24h" on 15m candles, so the
+# timeframe is named here rather than assumed by the label.
+VOL_BASE_BARS = int(os.getenv("BFLIP_VOL_BASE_BARS", "96"))
+VOL_BASE_LABEL = "24h"
+
+# Measured 2026-08-19 on the live flip record, 348 replayable alerts 08-13→18.
+# A dict rather than literals in the alert string: every other measured claim
+# here is one (MEASURED, MEASURED_OOS, MEASURED_OI, MEASURED_SEQ) precisely so
+# the alert and the dashboard cannot quote different numbers.
+MEASURED_CONTEXT = {
+    "n": 348,
+    "macd_above": {"n": 329, "exp": -0.147, "lift": 0.063, "lift_se": 0.320},
+    "macd_rising": {"n": 264, "exp": -0.183, "lift": -0.135, "lift_se": 0.172},
+    "vol_3x": {"n": 133, "exp": -0.255, "lift": -0.168, "lift_se": 0.144},
+    "all_three": {"n": 107, "exp": -0.354, "lift": -0.293, "lift_se": 0.145},
+}
+
+# The LIVE forward record for the flip itself, as of 2026-08-19 — 397 settled
+# alerts. Stated because it is the only non-replayed number the alert has, and
+# without it the message recited a +0.08R backtest and a +0.12R re-test while
+# the actual forward book was negative.
+MEASURED_LIVE = {"n": 397, "exp": -0.180, "se": 0.066, "wr": 27.7, "pf": 0.75,
+                 "blue_exp": -0.219, "ceiling_exp": -0.070, "asof": "2026-08-19"}
+
+
+def confirm_context(closed: list, at: int = None) -> dict:
+    """MACD and volume AT THE DECISION BAR. CONTEXT, not a gate.
+
+    `at` mirrors detect()'s parameter and exists for the same reason: this
+    module's whole header is about lookahead, and a replay that paired
+    detect(hist, at=i) with a context read from hist[-1] would compute the
+    reading from bars that had not printed at decision time. The volume ratio
+    is the flattering one on a runner, so that mistake would make any
+    re-measurement look far better than reality. Defaults to the last CLOSED
+    bar, which is what consider() decides on.
+
+    NOTE ON WHICH BAR. This is the bar the signal is stamped at, not
+    necessarily the breakout candle — detect() accepts a flip up to
+    MAX_BARS_SINCE_FLIP bars old, so they can be up to an hour apart on 15m.
+    The alert prints 距翻轉 alongside, because "9.9x volume" means something
+    different if it is not the breakout bar.
 
     Asked for on 2026-08-19 off a TRIA chart that ran +19% ("MACD plus volume
     is up"). Both were then measured on the live flip record — 348 replayable
-    alerts, 08-13→18 — and neither helps:
+    alerts — and neither helps; requiring all three is significantly WORSE.
+    See MEASURED_CONTEXT. The reason is mechanical rather than statistical: a
+    flip is a close above resistance, so MACD is above its signal on 329 of
+    348 of them — a restatement of the setup, not a second opinion. And a
+    3x-volume flip is the climax bar. TRIA fired on 9.86x against a 2.20x
+    median, which is why it is memorable and also why it is not evidence.
 
-        MACD above signal      -0.147R (n=329)   lift +0.063 ±0.320
-        MACD histogram rising  -0.183R (n=264)   lift -0.135 ±0.172
-        volume >= 3x average   -0.255R (n=133)   lift -0.168 ±0.144
-        all three together     -0.354R (n=107)   lift -0.293 ±0.145  ← excludes 0
-
-    Requiring all three makes it significantly WORSE, and the reason is
-    mechanical rather than statistical: a flip is a close above resistance, so
-    MACD is above its signal on 329 of 348 of them — it is very nearly a
-    restatement of the setup, not a second opinion. Volume tells the other half
-    of the story: a flip on 3x volume is the climax bar, which is where
-    breakouts fail. TRIA fired on 9.86x against a 2.20x median, which is why it
-    is memorable and also why it is not evidence.
-
-    So these are SHOWN and STORED, never required. The alert already carried
-    the shape; now it carries the readings the owner reads anyway, and the
-    record can settle the question on the next few hundred instead of on one
-    chart.
+    So these are SHOWN and STORED, never required.
     """
-    if len(closed) < 120:
-        return {}                       # not measured — never a neutral default
-    closes = [c[4] for c in closed]
-    vols = [c[5] for c in closed]
+    # The WHOLE body is guarded, like oi_context(). Only the macd_series call
+    # used to be, which left the volume arithmetic exposed: one candle with a
+    # null volume raised out of here, out of consider(), and into the
+    # scanner's blanket handler — but consider() has ALREADY stamped the
+    # cooldown by then, so the alert was lost and the symbol stayed suppressed
+    # for COOLDOWN_SEC. A context read must never be able to cost the alert it
+    # annotates, which is what the old comment claimed and the old scope did
+    # not deliver.
     try:
+        end = len(closed) - 1 if at is None else int(at)
+        window = closed[:end + 1]
+        if len(window) < 120 or len(window) < VOL_BASE_BARS + 2:
+            return {}                   # not measured — never a neutral default
+        closes = [float(c[4]) for c in window]
+        vols = [float(c[5]) for c in window]
         import strategy4
         macd_line, sig_line = strategy4.macd_series(closes)
-    except Exception:  # noqa: BLE001 — context must never cost the alert
+        if not macd_line or len(macd_line) < 3:
+            return {}
+        hist = [a - b for a, b in zip(macd_line, sig_line, strict=False)]
+        base_win = vols[-(VOL_BASE_BARS + 1):-1]
+        base = sum(base_win) / len(base_win) if len(base_win) == VOL_BASE_BARS else 0
+        return {"macd_above": macd_line[-1] > sig_line[-1],
+                "macd_rising": hist[-1] > hist[-2],
+                # NOT the same quantity as the Pump Radar's vol_mult, which is
+                # last-HOUR volume over an hourly average. Same 3x figure, ~4x
+                # apart in scale; distinct name so nothing ever joins them.
+                "vol_bar_mult": round(vols[-1] / base, 2) if base > 0 else None,
+                "vol_base_bars": VOL_BASE_BARS}
+    except Exception as exc:  # noqa: BLE001 — annotation must not cost the alert
+        # Printed because this can only fire on a genuine defect now. Silent
+        # abstention here would drop both rows and the whole caveat paragraph,
+        # and the only symptom would be a slightly shorter alert — the same
+        # shape as the drift that once produced three days of zero signals.
+        print(f"[flip] confirm_context failed: {exc}")
         return {}
-    if not macd_line or len(macd_line) < 3:
-        return {}
-    hist = [a - b for a, b in zip(macd_line, sig_line, strict=False)]
-    base = sum(vols[-97:-1]) / 96 if len(vols) > 97 else 0
-    return {"macd_above": macd_line[-1] > sig_line[-1],
-            "macd_rising": hist[-1] > hist[-2],
-            "vol_mult": round(vols[-1] / base, 2) if base > 0 else None}
 
 
 def oi_context(sym: str, closed: list) -> dict:
