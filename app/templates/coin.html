@@ -276,18 +276,30 @@ body { background: var(--wolf-slate); background-image: var(--page-bg-glow);
             onLegend: function (defs, up, dn) {
                 var box = document.getElementById('coin-legend');
                 if (!box) return;
-                box.innerHTML = defs.map(function (x) {
+                // The legend describes what is DRAWN. It used to state Vegas
+                // unconditionally, which becomes a false claim the moment a
+                // preset turns that series off.
+                var html = defs.map(function (x) {
                     return '<span class="lg"><span class="sw" style="background:' +
                            x.color + '"></span>' + x.label + '</span>';
-                }).join('') +
-                '<span class="lg"><span class="sw" style="background:linear-gradient(90deg,' +
-                  up + ',' + dn + ')"></span>Vegas EMA200</span>' +
-                '<span class="lg"><span class="sw" style="background:#22d3ee"></span>信心分數 0–100</span>';
+                }).join('');
+                if (!_chart || _chart.vegasOn !== false) {
+                    html += '<span class="lg"><span class="sw" style="background:linear-gradient(90deg,' +
+                            up + ',' + dn + ')"></span>Vegas EMA200</span>';
+                }
+                html += '<span class="lg"><span class="sw" style="background:rgba(248,113,113,.75)"></span>壓力</span>' +
+                        '<span class="lg"><span class="sw" style="background:rgba(74,222,128,.75)"></span>支撐</span>' +
+                        '<span class="lg"><span class="sw" style="background:#22d3ee"></span>信心分數 0–100</span>';
+                box.innerHTML = html;
             }
         });
         // ccxt-style symbol, which is what /api/strategy2_ohlcv expects.
+        // lines=tunnel: the double tunnel plus the support/resistance levels,
+        // and nothing else. This page is for reading a coin at a glance, and
+        // ten overlapping averages is not a glance. /strategy2 still asks for
+        // the full stack — it exists to mirror the .pine indicator.
         _chart.load(sym.indexOf('/') >= 0 ? sym
-                    : sym.replace(/USDT$/, '') + '/USDT:USDT');
+                    : sym.replace(/USDT$/, '') + '/USDT:USDT', {lines: 'tunnel'});
     }
 
     // ── default view: the OI-flagged coins plus BTC/ETH ──────────────────

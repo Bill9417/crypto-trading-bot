@@ -158,7 +158,9 @@
             var col = (i > 0 && vg[i - 1] != null && vg[i] < vg[i - 1]) ? VEGAS_DN : VEGAS_UP;
             vdata.push({ time: times[i], value: vg[i], color: col });
         }
-        c.vegas.setData(vdata);
+        // Off in the tunnel preset: Vegas is a THIRD moving-average opinion on
+        // a chart being cut back to the tunnel and the levels.
+        c.vegas.setData(this.vegasOn === false ? [] : vdata);
         c.chart.timeScale().fitContent();
     };
 
@@ -173,19 +175,48 @@
     /* One symbol: candles + EMA defs first, score history after. The candles
      * never wait for the score — the first call recomputes ~100 bars server
      * side and blocking the picture on it makes the page feel broken. */
-    WolfChart.prototype.load = function (sym) {
+    /* Support / resistance, drawn as price lines on the candle series.
+     * The levels come from the SERVER, computed with breakout_flip's own
+     * pivots, so a line here means what 壓力翻支撐 means — a second definition
+     * in JS is how the chart and the alerts would start disagreeing. */
+    WolfChart.prototype.setLevels = function (levels) {
+        var c = this.ensure();
+        if (!c || !c.candle) return;
+        (c.levelLines || []).forEach(function (l) {
+            try { c.candle.removePriceLine(l); } catch (e) { /* already gone */ }
+        });
+        c.levelLines = (levels || []).map(function (L) {
+            var up = L.kind === 'resistance';
+            return c.candle.createPriceLine({
+                price: L.price,
+                color: up ? 'rgba(248,113,113,.75)' : 'rgba(74,222,128,.75)',
+                // Touch count is the only thing separating a wall from a
+                // wiggle, so it sets the weight rather than being hidden in a
+                // tooltip nobody opens.
+                lineWidth: (L.touches || 0) >= 5 ? 2 : 1,
+                lineStyle: 2,
+                axisLabelVisible: true,
+                title: (up ? '壓力' : '支撐') + ' ×' + (L.touches || 1)
+            });
+        });
+    };
+
+    WolfChart.prototype.load = function (sym, opts) {
         var self = this;
         var el = document.getElementById(this.elId);
         if (!global.LightweightCharts) {
             if (el) el.innerHTML = '<div class="lwc-fallback">Chart library didn’t load.</div>';
             return;
         }
-        fetch('/api/strategy2_ohlcv/' + sym)
+        var q = (opts && opts.lines) ? '?lines=' + encodeURIComponent(opts.lines) : '';
+        fetch('/api/strategy2_ohlcv/' + sym + q)
             .then(function (r) { return r.ok ? r.json() : null; })
             .then(function (d) {
                 if (!d) return;
+                self.vegasOn = d.vegas !== false;
                 self.applyDefs(d.ema_defs);
                 if (d.candles && d.candles.length) self.draw(d.candles);
+                self.setLevels(d.levels);
             })
             .catch(function () { });
         this.setScore([]);

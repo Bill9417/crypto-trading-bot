@@ -1455,11 +1455,65 @@
             padding: 4px 2px 16px; margin-bottom: 16px;
             border-bottom: 1px solid var(--wolf-border);
         }
-        .pg-head-l { min-width: 0; }
+        .pg-head-l { min-width: 0; flex: 0 1 auto; }
         .pg-title { margin: 0; font-size: 1.45rem; font-weight: 800; letter-spacing: -.02em; color: var(--wolf-text); }
-        .pg-sub { margin-top: 4px; font-size: .74rem; color: var(--wolf-muted); }
+        /* Truncates instead of being sliced by whatever sits next to it —
+           the search box crowded this line and the username lost its tail. */
+        .pg-sub { margin-top: 4px; font-size: .74rem; color: var(--wolf-muted);
+                  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
         .pg-sub b { color: var(--wolf-text); font-weight: 700; }
-        .pg-head-r { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-left: auto; }
+        .pg-head-r { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+
+        /* 🔍 幣種分析 search — sits between the title and the actions, and is
+           the first thing that takes the full width when the header stacks. */
+        /* 0 1: takes its width but yields it first, so the header's own
+           identity line is never the thing that gets cut. */
+        .pg-search { position: relative; flex: 0 1 330px; min-width: 0; margin-left: auto; }
+        .pg-search input {
+            width: 100%; height: 38px; padding: 0 34px 0 34px;
+            background: linear-gradient(180deg, rgba(255,255,255,.055), rgba(255,255,255,.02));
+            border: 1px solid var(--wolf-border); border-radius: 11px;
+            color: var(--wolf-text); font-size: .82rem; font-weight: 600;
+            font-family: inherit; outline: none; transition: border-color .18s, box-shadow .18s;
+        }
+        .pg-search input::placeholder { color: var(--wolf-muted); font-weight: 500; }
+        .pg-search input:focus {
+            border-color: rgba(240,212,154,.5);
+            box-shadow: 0 0 0 3px rgba(240,212,154,.12);
+        }
+        /* Safari paints its own clear button on type=search; we have our own. */
+        .pg-search input::-webkit-search-cancel-button { display: none; }
+        .pgs-ico { position: absolute; left: 11px; top: 50%; transform: translateY(-50%);
+                   font-size: .78rem; opacity: .55; pointer-events: none; }
+        .pgs-clear {
+            position: absolute; right: 7px; top: 50%; transform: translateY(-50%);
+            width: 22px; height: 22px; border-radius: 6px; cursor: pointer;
+            border: 0; background: rgba(255,255,255,.07); color: var(--wolf-muted);
+            font-size: .7rem; line-height: 1; display: grid; place-items: center;
+        }
+        .pgs-clear:hover { color: var(--wolf-text); }
+        .pgs-sugg {
+            position: absolute; z-index: 60; left: 0; right: 0; top: 42px; display: none;
+            background: var(--wolf-card); border: 1px solid var(--wolf-border);
+            border-radius: 11px; overflow: hidden; box-shadow: 0 18px 44px -14px rgba(0,0,0,.75);
+        }
+        .pgs-sugg.on { display: block; }
+        .pgs-sugg div {
+            padding: 9px 13px; cursor: pointer; font-size: .8rem; font-weight: 700;
+            display: flex; align-items: center; gap: 8px;
+        }
+        .pgs-sugg div .pgs-hint { margin-left: auto; font-size: .64rem; font-weight: 600;
+                                  color: var(--wolf-muted); letter-spacing: .04em; }
+        .pgs-sugg div:hover, .pgs-sugg div.sel { background: rgba(240,212,154,.12); }
+        /* Stacked header: the search is the thing you came to use, so it sits
+           directly under the title rather than below the buttons. flex-basis
+           would size the wrong axis here — the header is a COLUMN at this
+           width, where basis means height. */
+        @media (max-width: 1080px) {
+            .pg-search { width: 100%; flex: 0 0 auto; margin-left: 0; order: 2; }
+            .pg-head-l { order: 1; max-width: 100%; }
+            .pg-head-r { order: 3; }
+        }
         .pg-time { font-size: .7rem; color: var(--wolf-muted); }
         .pg-time b { color: var(--wolf-text); }
 
@@ -1660,6 +1714,17 @@
             <div class="pg-head-l">
                 <h1 class="pg-title">Market Overview</h1>
                 <div class="pg-sub">Scanning top {{ scan_limit }} · trading top {{ trade_limit }} · 1h timeframe · <b>{{ user.username|upper }}</b></div>
+            </div>
+            <!-- 🔍 幣種分析 search. Types a ticker, opens the SAME pop-out the
+                 OI/flip cards use — no new analysis code, no second window
+                 implementation. -->
+            <div class="pg-search" id="pg-search">
+                <span class="pgs-ico" aria-hidden="true">🔍</span>
+                <input id="pgs-q" type="search" autocomplete="off" spellcheck="false"
+                       enterkeyhint="search" aria-label="分析幣種"
+                       placeholder="分析幣種… BTC / SOL / PENGU">
+                <button type="button" class="pgs-clear" id="pgs-clear" hidden aria-label="Clear">✕</button>
+                <div class="pgs-sugg" id="pgs-sugg" role="listbox"></div>
             </div>
             <div class="pg-head-r">
                 <span id="bot-status-badge">
@@ -4664,6 +4729,99 @@
         if (e.key === 'Escape' && open) hide();
     });
     window.addEventListener('popstate', function () { if (open) hide(true); });
+
+    // The ONE way to open the pop-out. The header search calls this rather
+    // than synthesising a click on a fake <a href="/coin/…">, and nothing
+    // else needs a second copy of the modal.
+    window.wolfCoinPopout = show;
+})();
+
+/* 🔍 幣種分析 search in the page header ─────────────────────────────────────
+   Types a ticker, opens the pop-out. Deliberately thin: suggestions come from
+   /api/coin_search (the same endpoint the /coin page uses) and the analysis
+   itself is the existing iframe, so there is no second implementation of
+   either to drift. */
+(function () {
+    var Q = document.getElementById('pgs-q'),
+        S = document.getElementById('pgs-sugg'),
+        X = document.getElementById('pgs-clear');
+    if (!Q) return;
+    var timer = null, sel = -1, items = [];
+
+    function esc(t) { return String(t == null ? '' : t).replace(/[&<>"']/g,
+        function (c) { return ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]); }); }
+    function close() { S.classList.remove('on'); sel = -1; }
+
+    function paint(list) {
+        items = list;
+        if (!list.length) { close(); return; }
+        S.innerHTML = list.map(function (b, i) {
+            return '<div role="option" data-b="' + esc(b) + '" data-i="' + i + '">' +
+                   esc(b) + (i === 0 ? '<span class="pgs-hint">ENTER</span>' : '') + '</div>';
+        }).join('');
+        S.classList.add('on');
+        sel = 0;
+        mark();
+    }
+    function mark() {
+        Array.prototype.forEach.call(S.children, function (el, i) {
+            el.classList.toggle('sel', i === sel);
+        });
+    }
+    function suggest() {
+        var v = Q.value.trim();
+        if (!v) { close(); return; }
+        fetch('/api/coin_search?q=' + encodeURIComponent(v))
+            .then(function (r) { return r.ok ? r.json() : null; })
+            .then(function (d) { paint((d && d.matches) || []); })
+            .catch(function () { close(); });
+    }
+    function go(base) {
+        // Fall back to whatever was typed when nothing is highlighted, so a
+        // ticker the search index has not caught up with still opens.
+        var b = (base || (sel >= 0 && items[sel]) || Q.value.trim()).toUpperCase();
+        if (!b) return;
+        close();
+        Q.blur();
+        if (typeof window.wolfCoinPopout === 'function') { window.wolfCoinPopout(b); }
+        else { window.location.href = '/coin/' + encodeURIComponent(b); }
+    }
+
+    Q.addEventListener('input', function () {
+        X.hidden = !Q.value;
+        clearTimeout(timer);
+        timer = setTimeout(suggest, 160);
+    });
+    Q.addEventListener('keydown', function (e) {
+        if (e.key === 'Enter') { e.preventDefault(); go(); return; }
+        if (e.key === 'Escape') { close(); Q.blur(); return; }
+        if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+            if (!items.length) return;
+            e.preventDefault();
+            sel = (sel + (e.key === 'ArrowDown' ? 1 : items.length - 1)) % items.length;
+            mark();
+        }
+    });
+    S.addEventListener('click', function (e) {
+        var d = e.target.closest && e.target.closest('div[data-b]');
+        if (d) go(d.dataset.b);
+    });
+    X.addEventListener('click', function () {
+        Q.value = ''; X.hidden = true; close(); Q.focus();
+    });
+    document.addEventListener('click', function (e) {
+        if (!S.contains(e.target) && e.target !== Q) close();
+    });
+    // "/" focuses it, the way every search box on the web does — but never
+    // while the user is typing into something else.
+    document.addEventListener('keydown', function (e) {
+        if (e.key !== '/' || e.metaKey || e.ctrlKey || e.altKey) return;
+        var t = e.target, tag = t && t.tagName;
+        if (tag === 'INPUT' || tag === 'TEXTAREA' || (t && t.isContentEditable)) return;
+        e.preventDefault();
+        Q.focus();
+        Q.select();
+    });
 })();
 </script>
 </body>

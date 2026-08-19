@@ -3351,8 +3351,13 @@ def api_strategy2_ohlcv(symbol="BTC/USDT:USDT"):
         return jsonify({"symbol": symbol, "error": f"fetch failed: {exc}", "candles": []}), 200
     candles = [[int(c[0]), float(c[1]), float(c[2]), float(c[3]), float(c[4])]
                for c in (ohlcv or [])]
+    preset = request.args.get("lines") or "full"
+    if preset not in CHART_PRESETS:
+        preset = "full"
     return jsonify({"symbol": symbol, "timeframe": "1h", "candles": candles,
-                    "ema_defs": chart_ema_defs()})
+                    "ema_defs": chart_ema_defs(preset),
+                    "vegas": preset == "full",
+                    "levels": chart_levels(ohlcv)})
 
 
 # Candles behind the chart panes. 1000 is what Binance actually serves for 1h
@@ -3367,7 +3372,53 @@ def chart_candles():
     return max(1000, M.MIN_CANDLES + 314)
 
 
-def chart_ema_defs():
+# Which overlay stack a chart asks for. /strategy2 exists to mirror the
+# TV.pine indicator, so it needs the whole EMA stack; the 幣種分析 chart is for
+# reading a coin at a glance and ten overlapping lines is not a glance. Same
+# endpoint, different preset — not a second endpoint that can drift.
+CHART_PRESETS = ("full", "tunnel")
+
+
+def chart_levels(ohlcv, max_each: int = 2) -> list:
+    """Support and resistance for the chart, from the SAME pivots the
+    壓力翻支撐 alerts use — so a level drawn here means what the alert means.
+
+    Nearest-first on each side of price, because a wall 40% away is true and
+    useless. `touches` rides along so the chart can weight a level that has
+    rejected price five times differently from one that did it twice.
+
+    Two a side, not three: each line carries an axis label, and at three the
+    labels started sitting on top of the price scale's own readings — the
+    chart was being decorated past the point where it could be read.
+    """
+    import breakout_flip as B
+    closed = (ohlcv or [])[:-1]
+    if len(closed) < 60:
+        return []
+    highs = [float(c[2]) for c in closed]
+    lows = [float(c[3]) for c in closed]
+    price = float(closed[-1][4])
+    if price <= 0:
+        return []
+    # Lows are found by the identical pivot rule, negated. Reusing the tested
+    # comparison beats a second near-copy of it — but the sign has to come back
+    # BEFORE clustering, whose tolerance divides by the price and would treat
+    # every negative level as one zone.
+    low_pivots = [(i, -v) for i, v in B.swing_highs([-x for x in lows])]
+    out = []
+    for kind, zones, keep in (("resistance", B.cluster_zones(B.swing_highs(highs)),
+                               lambda z: z["price"] > price),
+                              ("support", B.cluster_zones(low_pivots),
+                               lambda z: z["price"] < price)):
+        near = sorted((z for z in zones if keep(z)),
+                      key=lambda z: abs(z["price"] - price))[:max_each]
+        out += [{"price": round(z["price"], 10), "kind": kind,
+                 "touches": z["touches"],
+                 "pct": round((z["price"] - price) / price * 100, 2)} for z in near]
+    return out
+
+
+def chart_ema_defs(preset: str = "full"):
     """The lines the chart draws, with the tunnel periods taken FROM THE METER.
 
     They were hardcoded in the page as 288/338 and stayed there when the outer
@@ -3381,7 +3432,7 @@ def chart_ema_defs():
     chains chart → meter → chart indicator with no hand-copied number left.
     """
     import strategy2_meter as M
-    return [
+    defs = [
         {"key": "e20",  "len": 20,  "color": "#FFEB3B", "width": 1, "label": "EMA 20"},
         {"key": "e50",  "len": 50,  "color": "#FF9800", "width": 1, "label": "EMA 50"},
         {"key": "e100", "len": 100, "color": "#E040FB", "width": 1, "label": "EMA 100"},
@@ -3395,6 +3446,11 @@ def chart_ema_defs():
         {"key": "tob", "len": M.TUNNEL_OUTER_B, "color": "#66BB6A", "width": 1,
          "label": f"Tunnel {M.TUNNEL_OUTER_B}"},
     ]
+    if preset == "tunnel":
+        # The double tunnel only — inner pair + outer pair. Everything else is
+        # a different question asked on the same picture.
+        return [d for d in defs if d["key"].startswith("t")]
+    return defs
 
 
 # Historical meter scores are pure recompute over the same candles → cache the
