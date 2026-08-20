@@ -2168,8 +2168,8 @@
         <section class="analytics-panel" data-card="zones">
             <div class="analytics-head">
                 <div>
-                    <div class="analytics-title">📦 供需區進場 <span style="text-transform:none;letter-spacing:0;font-weight:600;opacity:.7;">價格回到還沒被吃掉的區間</span></div>
-                    <div class="analytics-subtitle" id="zone-sub">壓力區賣、支撐區買 —— 收盤穿過的區間就不算了</div>
+                    <div class="analytics-title">📦 供需區進場 <span style="text-transform:none;letter-spacing:0;font-weight:600;opacity:.7;">5m + 15m 都在區間 · 賽克斯</span></div>
+                    <div class="analytics-subtitle" id="zone-sub">壓力區賣、支撐區買 —— 收盤穿過的區間就不算了。<b>5m✓</b> = 5 分線也判斷在同一個區間</div>
                 </div>
             </div>
             <div id="zone-row" style="display:flex; gap:8px; overflow-x:auto; padding:2px 0 6px; -webkit-overflow-scrolling:touch;">
@@ -2187,6 +2187,13 @@
                 var row=document.getElementById('zone-row'), rec=document.getElementById('zone-record');
                 if(!row) return;
                 var live=(d && d.recent)||[];
+                // Confirmed on BOTH timeframes first. The owner reads this
+                // setup on 5m AND 15m, so a 15m entry the 5m does not also
+                // place at supply/demand is a different thing wearing the same
+                // label — it stays on the board, but below the ones that agree.
+                live = live.slice().sort(function(a,b){
+                    return (b.tf5==='agree') - (a.tf5==='agree');
+                });
                 row.innerHTML = live.length ? live.slice(0,14).map(function(z){
                     var sell = z.side==='short';
                     var col = sell ? 'var(--short)' : 'var(--long)';
@@ -2198,7 +2205,12 @@
                           (sell?'SELL':'LONG')+'</span></div>'+
                       '<div class="analytics-subtitle" style="margin-top:3px">'+
                         (z.touches?('測試 '+z.touches+' 次'):'') +
-                        (z.with_trend===undefined?'':(z.with_trend?' · 順勢':' · 逆勢'))+'</div>'+
+                        (z.with_trend==null?'':(z.with_trend?' · 順勢':' · 逆勢'))+
+                        // null = never asked. Printing "5m✗" for a reading
+                        // nobody took would assert the timeframes disagreed.
+                        (z.tf5==null?'':(z.tf5==='agree'
+                            ? ' · <b style="color:var(--wolf-gold)">5m✓</b>'
+                            : ' · <span style="opacity:.6">5m✗</span>'))+'</div>'+
                       '<div class="analytics-subtitle">進 '+px(z.entry)+' · 損 '+px(z.sl)+'</div>'+
                       '</a>';
                 }).join('') : '<div class="analytics-subtitle">目前沒有價格回到區間</div>';

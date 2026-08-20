@@ -150,6 +150,28 @@ def signal(ohlcv: list, at: int = None) -> dict:
     return {}
 
 
+def at_zone(ohlcv: list, side: str, at: int = None) -> bool:
+    """Is price sitting INSIDE a fresh zone that agrees with `side`?
+
+    Looser than signal() on purpose. signal() needs the bar that crossed IN,
+    and a 5m bar rarely crosses on the same close as the 15m one — demanding
+    both would reject almost everything for a reason that is about candle
+    alignment rather than about the market. The confirming timeframe is asked
+    the weaker, honest question: do you also think we are at supply/demand?
+    """
+    if not ohlcv:
+        return False
+    end = (len(ohlcv) - 1) if at is None else int(at)
+    if end < 1:
+        return False
+    px = float(ohlcv[end][4])
+    want = "supply" if side == "short" else "demand"
+    for z in build(ohlcv, end):
+        if z["fresh"] and z["kind"] == want and z["bottom"] <= px <= z["top"]:
+            return True
+    return False
+
+
 # ── the scan-facing entry point ──────────────────────────────────────────────
 COOLDOWN_SEC = float(os.getenv("ZONE_COOLDOWN_SEC", str(6 * 3600)))
 STOP_BUFFER = float(os.getenv("ZONE_STOP_BUFFER_PCT", "0.15")) / 100
@@ -184,7 +206,20 @@ def plan(entry: float, zone: dict, side: str) -> dict:
             "stop_pct": round(stop_pct * 100, 2)}
 
 
-def consider(sym: str, ohlcv: list, state: dict, now: float) -> dict:
+# The confirming timeframe. The owner's 賽克斯 setup is read on 5m AND 15m, so
+# a 15m entry that the 5m does not also place at supply/demand is a different
+# thing wearing the same label.
+CONFIRM_TF = os.getenv("ZONE_CONFIRM_TF", "5m")
+CONFIRM_CANDLES = int(os.getenv("ZONE_CONFIRM_CANDLES", "400"))
+# Off by default: the agreement is RECORDED on every signal so the forward book
+# can price it, and the board sorts confirmed ones first. Making it a hard gate
+# before the book has anything in it would leave nothing to compare against —
+# the same reason REQUIRE_TREND is off.
+REQUIRE_CONFIRM = os.getenv("ZONE_REQUIRE_CONFIRM", "false").strip().lower() in ("1", "true", "yes")
+
+
+def consider(sym: str, ohlcv: list, state: dict, now: float,
+             fetch_tf=None) -> dict:
     """One symbol, on candles the caller already has. {} unless it fired.
 
     The FORMING candle is dropped — strategy2_scanner patches a live price onto
@@ -206,9 +241,24 @@ def consider(sym: str, ohlcv: list, state: dict, now: float) -> dict:
     t = sig["trend"]
     with_trend = (t["res_slope"] is not None and
                   ((t["res_slope"] < 0) if sig["side"] == "short" else (t["res_slope"] > 0)))
+    # 5m confirmation, asked ONLY now — after a 15m entry has already passed
+    # every free check. Fires a handful of times a sweep instead of 300, which
+    # is the same cheapest-gate-first order S4 uses.
+    tf5 = "unknown"
+    if fetch_tf is not None:
+        try:
+            rows = fetch_tf(sym, CONFIRM_TF, CONFIRM_CANDLES)
+            if rows and len(rows) > 260:
+                tf5 = "agree" if at_zone(rows[:-1], sig["side"]) else "no"
+        except Exception as exc:  # noqa: BLE001 — confirmation must not cost the signal
+            print(f"[zone] {sym} {CONFIRM_TF} check failed: {exc}")
+    if REQUIRE_CONFIRM and tf5 != "agree":
+        return {}
+
     state.setdefault("last", {})[sym] = now
     z = sig["zone"]
     return {"symbol": sym, "base": sym.split("/")[0], "side": sig["side"],
+            "tf": "15m", "confirm_tf": CONFIRM_TF, "tf5": tf5,
             "kind": z["kind"], "zone_top": z["top"], "zone_bottom": z["bottom"],
             "touches": z["touches"], "with_trend": with_trend,
             "res_slope": t["res_slope"], "sup_slope": t["sup_slope"],

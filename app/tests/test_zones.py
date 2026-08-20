@@ -118,3 +118,96 @@ def test_the_caveats_travel_with_the_numbers():
 def test_the_book_is_separate_from_the_flip_book():
     import flip_outcomes as F
     assert Z.STORE_FILE != F.STORE_FILE
+
+
+def test_the_confirming_timeframe_is_asked_a_looser_question():
+    """signal() needs the bar that crossed IN. A 5m bar rarely crosses on the
+    same close as the 15m one, so demanding signal() on both would reject
+    almost everything for a reason about candle alignment, not the market."""
+    bars = _bars()
+    # at_zone is true whenever price SITS in a fresh matching zone…
+    inside = any(zones.at_zone(bars, s) for s in ("short", "long"))
+    assert isinstance(inside, bool)
+    src = open(zones.__file__, encoding="utf-8").read()
+    fn = src[src.index("def consider("):]
+    assert "at_zone(rows[:-1]" in fn, "the 5m is not asked the looser question"
+    assert "signal(rows" not in fn, "the 5m is being asked to cross on the same bar"
+
+
+def _tradeable(n=600, base=100.0):
+    """Like _bars, but the swing extremes VARY, so the clustered zone has real
+    width and the resulting stop lands inside plan()'s 0.5-6% band.
+
+    The flat fixture produced zones ~0.15% wide, so consider() declined every
+    signal on stop distance — which reads exactly like "the code is broken"
+    and is in fact the cost gate doing its job.
+    """
+    out, t = [], 1_700_000_000_000
+    for i in range(n):
+        ph, cyc = i % 40, i // 40
+        wob = ((cyc * 7) % 5 - 2) * 0.45          # extremes drift ~±1%
+        px = base + (6.0 + wob if ph < 8 else -6.0 + wob if ph < 16 else (ph - 20) * 0.4)
+        out.append([t + i * 900_000, px, px + 1.2, px - 1.2, px, 1000.0])
+    return out
+
+
+def _first_fire(bars):
+    for i in range(300, len(bars) - 1):
+        if zones.signal(bars, i) and zones.consider("Q/USDT:USDT", bars[:i + 2], {}, 1.0):
+            return i
+    return None
+
+
+def test_the_5m_check_costs_one_call_and_only_after_the_free_ones(monkeypatch):
+    """Asked AFTER a 15m entry has passed everything free — a handful of calls
+    a sweep, not one per symbol."""
+    calls = []
+    bars = _tradeable()
+    i = _first_fire(bars)
+    assert i, "fixture produced no tradeable 15m entry"
+
+    def fetch(sym, tf, n):
+        calls.append((sym, tf, n))
+        return bars
+
+    # A symbol that does NOT fire must not cost a call. Flat, so there are no
+    # pivots, no zones and nothing to enter — truncating the wavy fixture does
+    # not work, because 280 bars of it still produce an entry.
+    flat = [[1_700_000_000_000 + i * 900_000, 100.0, 100.0, 100.0, 100.0, 1.0]
+            for i in range(600)]
+    assert not zones.signal(flat), "the flat fixture is not actually quiet"
+    zones.consider("Q/USDT:USDT", flat, {}, 1.0, fetch_tf=fetch)
+    assert calls == [], "the 5m was fetched for a symbol with no 15m entry"
+    zones.consider("Q/USDT:USDT", bars[:i + 2], {}, 1.0, fetch_tf=fetch)
+    assert len(calls) == 1 and calls[0][1] == zones.CONFIRM_TF
+
+
+def test_an_unasked_timeframe_is_unknown_not_a_disagreement():
+    """No fetcher, or a failing one, must record 'unknown'. Storing 'no' would
+    assert the 5m disagreed when nobody asked it."""
+    bars = _tradeable()
+    i = _first_fire(bars)
+    assert i, "fixture produced no tradeable 15m entry"
+    r = zones.consider("Q/USDT:USDT", bars[:i + 2], {}, 1.0)
+    assert r and r["tf5"] == "unknown"
+
+    def boom(*a, **k):
+        raise RuntimeError("exchange down")
+
+    r2 = zones.consider("Q/USDT:USDT", bars[:i + 2], {}, 2.0, fetch_tf=boom)
+    assert r2 and r2["tf5"] == "unknown", "a failed check was recorded as disagreement"
+
+
+def test_confirmation_is_recorded_not_required():
+    assert zones.REQUIRE_CONFIRM is False
+    dash = open(os.path.join(os.path.dirname(os.path.abspath(zones.__file__)),
+                             "templates/index.html"), encoding="utf-8").read()
+    card = dash[dash.index('data-card="zones"'):]
+    card = card[:card.index("</script>")]
+    # The COMPARATOR, not the string — tf5==='agree' also appears in the
+    # badge, so a bare substring check passes with the sort gutted.
+    assert "live.slice().sort(" in card, "the board does not sort at all"
+    cmp = card[card.index("live.slice().sort("):]
+    cmp = cmp[:cmp.index("});")]
+    assert "tf5==='agree'" in cmp, "the board does not sort confirmed first"
+    assert "z.tf5==null?''" in card, "an unasked 5m would render as ✗"

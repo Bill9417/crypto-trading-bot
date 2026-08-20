@@ -110,6 +110,11 @@ def record(sig: dict, store: dict = None, now_ts: float = None) -> bool:
         # every alert with its own MEASURED_OI claim, and was equally
         # unfalsifiable for want of two lines here.
         "oi": sig.get("oi") or {},
+        # Supplied by the zone signals, absent on flips. None means "not
+        # applicable / not asked" and must never be read as "the timeframes
+        # disagreed" — the distinction this repo has now got wrong five times.
+        "tf5": sig.get("tf5"),
+        "with_trend": sig.get("with_trend"),
         # settle() measures from the bar AFTER this one.
         "bar_ts": int(sig.get("ts") or 0), "fired_ts": now_ts,
     }

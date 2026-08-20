@@ -506,11 +506,16 @@ def scan_once(client, recent: list, last_alert: dict, pending: list) -> list:
         except Exception as exc:  # noqa: BLE001 — detection never kills the sweep
             print(f"[flip] {sym} error: {exc}")
 
-        # 📦 Zone re-entry (SELL/LONG at the box). Same candles again — this
-        # is pure geometry, so it costs CPU and no API budget.
+        # 📦 Zone re-entry (SELL/LONG at the box). The 15m read is pure
+        # geometry on candles already in hand — CPU, no API budget. The 5m
+        # confirmation costs ONE call and is only asked after a 15m entry has
+        # passed everything free, so it fires a handful of times a sweep
+        # rather than 300.
         try:
             import zones
-            _zs = zones.consider(sym, ohlcv, _ZONE_STATE, _now)
+            _zs = zones.consider(
+                sym, ohlcv, _ZONE_STATE, _now,
+                fetch_tf=lambda _s, _tf, _n: client.call("fetch_ohlcv", _s, _tf, None, _n))
             if _zs:
                 LATEST_ZONES[sym] = {**_zs, "tv_url": _tv_url(sym)}
                 import zone_outcomes
@@ -518,7 +523,8 @@ def scan_once(client, recent: list, last_alert: dict, pending: list) -> list:
                 print(f"[zone] {sym} {_zs['side']} at {_zs['kind']} "
                       f"{_zs['zone_bottom']:.6g}-{_zs['zone_top']:.6g} "
                       f"x{_zs['touches']}"
-                      + (" · 順勢" if _zs['with_trend'] else " · 逆勢"))
+                      + (" · 順勢" if _zs['with_trend'] else " · 逆勢")
+                      + f" · 5m {_zs.get('tf5', 'unknown')}")
         except Exception as exc:  # noqa: BLE001 — detection never kills the sweep
             print(f"[zone] {sym} error: {exc}")
 
