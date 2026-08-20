@@ -188,13 +188,27 @@ SEGMENT_ZH = {"all": "全部", "blue": "上方無壓", "ceiling": "上方有壓"
 
 
 def stats(store: dict = None, segment: str = "all") -> dict:
+    """The RECORD — from the unpruned tally, not the trimmed `closed` list."""
     return S4O.stats(store if store is not None else load(), segment)
+
+
+def lifetime_n(store: dict = None) -> int:
+    """How many trades the record actually rests on. The card shows this next
+    to the recent feed so a 400-row window is never read as the sample."""
+    store = load() if store is None else store
+    return int(((store.get("tally") or {}).get("all") or {}).get("n") or 0)
 
 
 def web_view(store: dict = None, limit: int = 20) -> dict:
     """Everything the dashboard card needs."""
     import breakout_flip as B
     store = load() if store is None else store
+    # NAMED for what it is. `closed` is pruned to KEEP_CLOSED, which at this
+    # book's fire rate (~140/day) is a rolling FOUR DAYS — and a four-day
+    # window of this strategy has read -0.180R and +0.686R within two days of
+    # each other, each with an interval excluding zero. Anyone who computes an
+    # expectancy from this list is measuring a week's weather. `stats` reads
+    # the unpruned tally and is the record; this is a recent-activity feed.
     closed = sorted(store.get("closed") or [],
                     key=lambda c: c.get("exit_ts") or 0, reverse=True)
     segs = [s for s in ("all", "blue", "ceiling")
@@ -222,7 +236,13 @@ def web_view(store: dict = None, limit: int = 20) -> dict:
     return {
         "recent": recent_rows[:limit],
         "open": open_rows,
+        # Recent activity, NOT the sample the stats rest on. Both counts are
+        # shipped so a card cannot show "30 closed" beside an expectancy built
+        # from 766 and let the reader join them.
         "closed": closed[:30],
+        "closed_is_window": True,
+        "window_n": len(store.get("closed") or []),
+        "lifetime_n": lifetime_n(store),
         "stats": {s: stats(store, s) for s in segs},
         "segment_zh": SEGMENT_ZH,
         "track_hours": TRACK_HOURS,
