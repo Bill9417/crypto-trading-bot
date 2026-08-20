@@ -2230,7 +2230,13 @@
                     (m.with_trend_minus_top5?((m.with_trend_minus_top5.exp>0?'+':'')+m.with_trend_minus_top5.exp.toFixed(3)):'—')+
                     'R。前半段時間也測不出來 —— 只有一段行情，還不是結論。</div>'+
                   '<div class="analytics-subtitle">📓 實盤累積：'+(st.n||0)+' 筆已結算'+
-                    (st.n&&st.exp!=null?('，'+(st.exp>0?'+':'')+Number(st.exp).toFixed(3)+'R'):'（還沒有）')+'</div>';
+                    (st.n&&st.exp!=null?('，'+(st.exp>0?'+':'')+Number(st.exp).toFixed(3)+'R'):'（還沒有）')+'</div>'+
+                  // The two things that separate "what the shape did" from
+                  // "what you would have got". Both on the card, because a
+                  // number without them is a frictionless fantasy.
+                  '<div class="analytics-subtitle" style="opacity:.7">💸 已扣成本：'+
+                    esc(d.costs||'—')+'｜同時最多 '+(d.max_concurrent||0)+' 筆'+
+                    (d.skipped_no_slot?('，沒空位而略過 '+d.skipped_no_slot+' 筆'):'')+'</div>';
             }
             function load(){ if(document.hidden) return;
                 fetch('/api/zones').then(function(r){return r.ok?r.json():null;})

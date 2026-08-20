@@ -65,9 +65,21 @@ def key_of(sig: dict) -> str:
     return f"{sig.get('symbol')}:{int(sig.get('ts') or 0)}"
 
 
-def record(sig: dict, store: dict = None, now_ts: float = None) -> bool:
-    """Add one alerted flip to the open book. False if it was already there."""
+# How many of these a real account could hold at once. The books used to
+# record EVERY alert, but this one settles ~63/day and 48h holds on 8 slots
+# allow ~4/day — so the recorded edge was measured on 16x the trades anyone
+# could take, and which subset you take is a choice nothing had measured.
+# Recording only what a free slot existed for makes the page the answer to
+# "what would I have got" rather than "what did the shape do".
+MAX_CONCURRENT = int(os.getenv("FLIP_MAX_CONCURRENT", "8"))
+
+
+def record(sig: dict, store: dict = None, now_ts: float = None,
+           max_concurrent: int = None) -> bool:
+    """Add one alerted flip to the open book. False if it was already there,
+    or if every slot was full when it fired."""
     store = load() if store is None else store
+    cap = MAX_CONCURRENT if max_concurrent is None else max_concurrent
     now_ts = now_ts if now_ts is not None else time.time()
     pl = sig.get("plan") or {}
     entry, sl, tp = pl.get("entry"), pl.get("sl"), pl.get("tp")
@@ -75,6 +87,11 @@ def record(sig: dict, store: dict = None, now_ts: float = None) -> bool:
         return False
     k = key_of(sig)
     if k in store["open"] or any(c.get("key") == k for c in store["closed"]):
+        return False
+    if cap > 0 and len(store["open"]) >= cap:
+        # Counted, not silently dropped: a book that quietly ignores 90% of
+        # its own signals looks identical to one that never saw them.
+        store["skipped_no_slot"] = int(store.get("skipped_no_slot") or 0) + 1
         return False
     row = {
         "key": k, "symbol": sig.get("symbol"), "base": sig.get("base"),
@@ -243,6 +260,12 @@ def web_view(store: dict = None, limit: int = 20) -> dict:
         "closed_is_window": True,
         "window_n": len(store.get("closed") or []),
         "lifetime_n": lifetime_n(store),
+        # What the numbers above already have taken out of them, and what they
+        # had to decline. Both stated so the page cannot be read as a
+        # frictionless, unlimited-capital result.
+        "costs": __import__("trade_costs").describe(),
+        "max_concurrent": MAX_CONCURRENT,
+        "skipped_no_slot": int(store.get("skipped_no_slot") or 0),
         "stats": {s: stats(store, s) for s in segs},
         "segment_zh": SEGMENT_ZH,
         "track_hours": TRACK_HOURS,

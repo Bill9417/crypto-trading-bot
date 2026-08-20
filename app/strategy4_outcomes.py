@@ -208,7 +208,19 @@ def settle(trade: dict, candles: list, now_ts: float = None,
 
 
 def _close(trade, outcome, r, exit_ms, mae, mfe, after) -> dict:
-    return {**trade, "outcome": outcome, "r": round(float(r), 4),
+    """`r` is the NET result — fees and slippage already taken out.
+
+    The headline field carries the number you would actually have, because
+    that is the one every page, tally and Telegram card reads. The gross
+    figure is kept beside it so the two can always be compared, and because
+    "what did the shape do" and "what would you have kept" are different
+    questions that were previously answered by the same number.
+    """
+    import trade_costs
+    gross = round(float(r), 4)
+    net, cost = trade_costs.net_r(gross, trade.get("stop_pct"))
+    return {**trade, "outcome": outcome, "r": net, "r_gross": gross,
+            "cost_r": cost,
             "exit_ts": exit_ms / 1000.0, "bars": len(after),
             "mae": round(mae, 3), "mfe": round(mfe, 3)}
 
