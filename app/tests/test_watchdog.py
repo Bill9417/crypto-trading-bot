@@ -56,6 +56,15 @@ def _wire_tick(monkeypatch, ps_text, tmp_path, watch_tunnel=False):
     monkeypatch.setattr(watchdog, "STATE_FILE", str(tmp_path / "wd.json"))
     monkeypatch.setattr(watchdog, "LOG_DIR", str(tmp_path / "logs"))
     monkeypatch.setattr(watchdog, "_ps", lambda: ps_text)
+    # Staleness reads the REAL repo mtimes against the REAL process start
+    # times, so these tests passed or failed depending on whether the deployed
+    # code happened to match the running stack. That is not flakiness anyone
+    # can act on — and preflight runs this suite BEFORE every restart, so
+    # "there is new code waiting" would fail the tests that gate the restart
+    # which would deliver it. Stubbed here; the staleness path has its own
+    # tests that opt in.
+    import restart_ctl
+    monkeypatch.setattr(restart_ctl, "stale", lambda *a, **k: [])
     sent = []
     monkeypatch.setattr(telegram_utils, "send_message",
                         lambda msg, **kw: sent.append(msg) or True)
