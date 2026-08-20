@@ -27,7 +27,11 @@ from zoneinfo import ZoneInfo
 TZ = ZoneInfo(os.getenv("TZ_DISPLAY", "Asia/Taipei"))
 STATE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                           "daily_watch.json")
-TOP_N = int(os.getenv("WATCH_TOP_N", "5"))
+# Ten, not five. Five was the reference's shape; this list ranks by how many
+# engines agree, and on a normal day the 2-engine tier is a dozen coins deep —
+# cutting at five hid most of a tier and made the boundary look meaningful when
+# it was just where the list stopped.
+TOP_N = int(os.getenv("WATCH_TOP_N", "10"))
 # Keep a couple of days so a morning look still shows yesterday's list while
 # today's is still thin.
 KEEP_DAYS = int(os.getenv("WATCH_KEEP_DAYS", "3"))
@@ -197,7 +201,17 @@ def top(n: int = None, now=None, do_refresh: bool = True) -> dict:
     # Agreeing coins first: a conflicted pair ranks below a clean single.
     rows.sort(key=lambda r: (r["conflict"], -r["engines"], -r["hits"],
                              -r["last"], r["base"]))
+    shown = rows[:n]
+    # How many coins are tied with the LAST one shown. Without this the cut
+    # reads as a boundary: on a normal day the 2-engine tier is 22 coins deep
+    # and only 9 of them fit, so rank 10 is not "the tenth best", it is where
+    # the list stopped.
+    cut = shown[-1]["engines"] if shown else 0
+    tied_total = sum(1 for r in rows if r["engines"] == cut)
+    tied_shown = sum(1 for r in shown if r["engines"] == cut)
     return {"date": day, "refreshes": today.get("refreshes", 0),
             "updated": today.get("updated"),
             "tracked": len(today.get("coins") or {}),
-            "top": rows[:n]}
+            "tier_engines": cut,
+            "tier_hidden": max(0, tied_total - tied_shown),
+            "top": shown}

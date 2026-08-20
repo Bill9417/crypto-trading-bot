@@ -163,3 +163,30 @@ def test_a_directionless_engine_does_not_create_a_conflict(monkeypatch):
     }))
     r = W.top()["top"][0]
     assert r["conflict"] is False and r["side"] == "long"
+
+
+def test_the_cut_is_disclosed_when_it_lands_mid_tier(monkeypatch):
+    """On a normal day the 2-engine tier is 22 coins deep and 9 fit, so rank
+    10 is not 'the tenth best' — it is where the list stopped. Presenting it
+    without saying so makes an arbitrary boundary look like a meaningful one."""
+    many = {f"C{i:02d}": {"s2": {"note": "做多", "side": "long"},
+                          "zone": {"note": "做多", "side": "long"}}
+            for i in range(25)}
+    many["TOP"] = {"s2": {"note": "做多", "side": "long"},
+                   "zone": {"note": "做多", "side": "long"},
+                   "flip": {"note": "做多", "side": "long"}}
+    monkeypatch.setattr(W, "_sightings", _fake(many))
+    d = W.top(n=10)
+    assert d["top"][0]["base"] == "TOP"
+    assert d["tier_engines"] == 2
+    assert d["tier_hidden"] == 25 - 9, "the tied-but-omitted count is wrong"
+
+
+def test_no_tier_is_hidden_when_the_list_fits(monkeypatch):
+    monkeypatch.setattr(W, "_sightings", _fake({
+        "A": {"s2": "x"}, "B": {"s2": "x"}}))
+    assert W.top(n=10)["tier_hidden"] == 0
+
+
+def test_the_default_is_ten():
+    assert W.TOP_N == 10

@@ -168,10 +168,13 @@
         .picks-legend b { color:var(--wolf-champagne,#f0d49a); font-weight:700; }
         .picks-legend .hd { display:block; margin-bottom:3px; opacity:.85; }
         /* 👀 每日觀察清單 */
-        .watch-row { display:grid; grid-template-columns:26px 84px 74px 1fr;
-                     align-items:center; gap:10px; padding:9px 2px;
+        .watch-row { display:grid; grid-template-columns:24px 80px 78px 1fr;
+                     align-items:center; gap:9px; padding:6px 2px;
                      border-bottom:1px solid rgba(255,255,255,.05);
                      text-decoration:none; color:inherit; }
+        /* Where the agreement tier changes — the honest boundary, rather than
+           wherever the list happens to be cut off. */
+        .watch-row.tier-break { border-top:1px solid rgba(240,212,154,.20); }
         .watch-row:last-of-type { border-bottom:0; }
         .watch-row:hover { background:rgba(255,255,255,.03); }
         .watch-rank { font-size:.7rem; font-weight:900; color:var(--wolf-gold);
@@ -2295,12 +2298,22 @@
                 var el=document.getElementById('watch-body'); if(!el) return;
                 var rows=(d&&d.top)||[];
                 if(!rows.length){
-                    el.innerHTML='<div class="analytics-subtitle">'+
-                      (d&&d.error?'載入失敗':'今天還沒有累積到 —— 掃描器剛開始跑')+'</div>';
+                    var why;
+                    if (d && d.http === 404) why = '這個功能還沒生效 —— 網站程式要重啟才會有（/restart）';
+                    else if (d && d.http)    why = '伺服器回應 '+d.http+' —— 稍後再試';
+                    else if (d && d.neterr)  why = '連不上伺服器：'+esc(d.neterr);
+                    else if (d && d.error)   why = '載入失敗：'+esc(d.error);
+                    else                     why = '今天還沒有累積到 —— 掃描器剛開始跑';
+                    el.innerHTML='<div class="analytics-subtitle">'+why+'</div>';
                     return;
                 }
                 var h=rows.map(function(r,i){
-                    return '<a class="watch-row" href="/coin/'+encodeURIComponent(r.base)+'">'+
+                    // Mark where the engine count drops, so the reader sees
+                    // the tier rather than reading rank 6 as meaningfully
+                    // worse than rank 5.
+                    var brk = i>0 && rows[i-1].engines>r.engines;
+                    return '<a class="watch-row'+(brk?' tier-break':'')+
+                           '" href="/coin/'+encodeURIComponent(r.base)+'">'+
                       '<span class="watch-rank">'+(i+1)+'</span>'+
                       '<span class="watch-base">'+esc(r.base)+'</span>'+
                       '<span class="watch-eng'+(r.conflict?' conflict':'')+'">'+
@@ -2313,13 +2326,26 @@
                       '</a>';
                 }).join('');
                 h+='<div class="analytics-subtitle" style="margin-top:8px;opacity:.7">'+
-                   esc(d.date||'')+' 累積 · 今天追蹤 '+(d.tracked||0)+' 檔 · '+
-                   '排序看「幾個獨立引擎」，不是加權分數。這是觀察名單，不是進場訊號。</div>';
+                   esc(d.date||'')+' 累積 · 今天追蹤 '+(d.tracked||0)+' 檔'+
+                   (d.tier_hidden ? ('　⚠ 同樣 '+d.tier_engines+' 個引擎的還有 '+
+                        d.tier_hidden+' 檔沒列出 —— 第 '+rows.length+
+                        ' 名不是分界，只是列表到此為止') : '')+
+                   '<br>排序看「幾個獨立引擎」，不是加權分數。這是觀察名單，不是進場訊號。</div>';
                 el.innerHTML=h;
             }
             function load(){ if(document.hidden) return;
-                fetch('/api/daily_watch').then(function(r){return r.ok?r.json():null;})
-                    .then(paint).catch(function(){}); }
+                // A 404 and an empty day are DIFFERENT and used to read the
+                // same: the route did not exist yet on the running process and
+                // the card said 掃描器剛開始跑. And a network failure hit
+                // catch(){} and left the placeholder up forever, which is the
+                // one state that tells the reader nothing at all.
+                fetch('/api/daily_watch')
+                    .then(function(r){
+                        if (!r.ok) return {top: [], http: r.status};
+                        return r.json();
+                    })
+                    .then(paint)
+                    .catch(function(e){ paint({top: [], neterr: String(e && e.message || e)}); }); }
             load();
             if (window.wolfPoll) wolfPoll(load, 300000); else setInterval(load, 300000);
         })();
@@ -2347,8 +2373,13 @@
             function paint(d){
                 var el=document.getElementById('sector-body'); if(!el) return;
                 var rows=(d&&d.sectors)||[];
-                if(!rows.length){ el.innerHTML='<div class="analytics-subtitle">'+
-                    (d&&d.error?'載入失敗':'資料不足')+'</div>'; return; }
+                if(!rows.length){
+                    var why = (d&&d.http===404) ? '這個功能還沒生效 —— 需要重啟（/restart）'
+                            : (d&&d.http)       ? ('伺服器回應 '+d.http)
+                            : (d&&d.neterr)     ? ('連不上伺服器：'+esc(d.neterr))
+                            : (d&&d.error)      ? ('載入失敗：'+esc(d.error))
+                            : '資料不足';
+                    el.innerHTML='<div class="analytics-subtitle">'+why+'</div>'; return; }
                 // Scale the bars to the biggest absolute move on the board, so
                 // a +2% day is not drawn like a +20% one.
                 var mx=Math.max.apply(null,rows.map(function(r){return Math.abs(r.median)}))||1;
@@ -2370,8 +2401,10 @@
                 el.innerHTML=h;
             }
             function load(){ if(document.hidden) return;
-                fetch('/api/sectors').then(function(r){return r.ok?r.json():null;})
-                    .then(paint).catch(function(){}); }
+                fetch('/api/sectors')
+                    .then(function(r){ return r.ok ? r.json() : {sectors: [], http: r.status}; })
+                    .then(paint)
+                    .catch(function(e){ paint({sectors: [], neterr: String(e && e.message || e)}); }); }
             load();
             if (window.wolfPoll) wolfPoll(load, 120000); else setInterval(load, 120000);
         })();
