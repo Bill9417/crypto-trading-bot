@@ -57,6 +57,24 @@ def test_an_unknown_stop_costs_nothing_rather_than_a_guess():
     assert C.cost_r(0.0) == 0.0
 
 
+def test_an_impossibly_tight_stop_is_charged_the_maximum_not_waived():
+    """The tightest stops are where cost is LARGEST, and this returned 0.0 for
+    them until 2026-08-21 — 'free' about the one trade that is all cost.
+
+    Found on real data: seven USDC/USDT rows with a 0.003% ATR carried a true
+    cost of 100-240R each and scored costless, moving a -0.50R sample to
+    -0.07R. Waiving is the flattering direction, so the stop is clamped and
+    the cost is charged at the floor.
+    """
+    floor_cost = C.cost_r(C.MIN_STOP_FRAC * 100)
+    assert floor_cost > 1.0, "the floor is not expensive"
+    for absurd in (0.003, 0.01, 0.05):
+        assert C.cost_r(absurd) == floor_cost, \
+            f"a {absurd}% stop was not charged the floor cost"
+    # …and it must never be cheaper than a wider, more believable stop.
+    assert C.cost_r(0.003) > C.cost_r(1.0) > C.cost_r(5.0)
+
+
 def test_the_book_only_takes_what_a_free_slot_existed_for():
     st = F._blank()
 

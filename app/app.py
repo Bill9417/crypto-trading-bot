@@ -4040,6 +4040,26 @@ def api_zones():
                         "error": str(e)[:150]}), 200
 
 
+@app.route("/api/vegas")
+@login_required
+def api_vegas():
+    """🌊 隧道翻多 — EMA200 turns up + price reclaims the Vegas tunnel + volume.
+
+    Observe-only by measurement, not by caution: net of costs the shape scores
+    -0.094R per firing hour with an interval that excludes zero, so it ships no
+    entry, stop or target and the payload carries MEASURED so the card cannot
+    show the signals without the verdict beside them. Reads state files; a poll
+    costs no exchange call.
+    """
+    try:
+        import vegas_scan
+        return jsonify(_json_safe(vegas_scan.web_view()))
+    except Exception as e:  # noqa: BLE001
+        print(f"[vegas] view failed: {e}")
+        return jsonify({"recent": [], "open": [], "live": {}, "measured": {},
+                        "error": str(e)[:150]}), 200
+
+
 @app.route("/api/daily_watch")
 @login_required
 def api_daily_watch():

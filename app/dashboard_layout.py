@@ -36,6 +36,7 @@ STORE_FILE = os.path.join(os.path.dirname(__file__), "dashboard_layout.json")
 CARDS = (
     ("picks", "🏆 綜合前三名 買/賣"),
     ("watch", "👀 每日觀察清單"),
+    ("vegas", "🌊 隧道翻多"),
     ("pulse", "⚡ Market Pulse"),
     ("breadth", "📊 Market Breadth"),
     ("s4", "📊 S4 · Perp Setups"),
@@ -70,7 +71,8 @@ CARD_TITLE = dict(CARDS)
 GROUPS = (
     ("幣種專區", (("oi", "OI 異常"), ("sectors", "板塊"), ("whale", "巨鯨"), ("zones", "供需區"),
                   ("flips", "壓力翻支撐"), ("coins", "主流幣"), ("liqmap", "清算地圖"))),
-    ("訊號專區", (("picks", "綜合前三"), ("watch", "每日觀察"), ("s4", "S4 雷達"), ("entries", "進場候選"),
+    ("訊號專區", (("picks", "綜合前三"), ("watch", "每日觀察"), ("vegas", "隧道翻多"),
+                  ("s4", "S4 雷達"), ("entries", "進場候選"),
                   ("signals", "訊號脈動"), ("hunting", "獵捕中"), ("radar", "動能雷達"))),
     ("行情專區", (("pulse", "市場脈動"), ("breadth", "廣度"), ("briefing", "今日簡報"))),
     ("新聞專區", (("news", "即時新聞"),)),

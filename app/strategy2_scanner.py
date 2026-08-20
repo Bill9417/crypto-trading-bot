@@ -857,6 +857,37 @@ def main() -> None:
                       f"{_fo['closed']} closed")
         except Exception as exc:  # noqa: BLE001
             print(f"[strategy2] flip outcomes error: {exc}")
+        # 🌊 Vegas 隧道翻多 — hourly 1h scan (self-paced; every gate compares
+        # against a CLOSED 1h bar, so between bar closes the answer cannot
+        # change). Observe-list only: measured break-even after costs, so it
+        # ships no entry/stop/target and places no orders.
+        try:
+            import vegas_scan
+            # universe() costs a fetch_tickers, so it is built only on the one
+            # sweep an hour that will actually use it. `syms` is scan_once's
+            # local and is NOT in scope here — reaching for it raised a
+            # NameError that this try/except would have swallowed forever,
+            # leaving a scanner that looked wired and never ran.
+            _vg = (vegas_scan.tick(client, universe(client))
+                   if vegas_scan.is_due() else {"skipped": "not due"})
+            if _vg.get("fired"):
+                for _s in _vg["signals"]:
+                    print(f"[vegas] {_s['symbol']} 站回隧道 · EMA200 翻正 · "
+                          f"量 {_s['vol_mult']:.1f}x · ATR {_s['atr_pct']:.2f}%")
+            elif "skipped" not in _vg:
+                print(f"[vegas] 0 fired · {_vg['checked']}/{_vg['universe']} "
+                      f"checked · funnel {_vg.get('funnel')}")
+        except Exception as exc:  # noqa: BLE001 — must never kill the loop
+            print(f"[strategy2] vegas scan error: {exc}")
+        # 📓 Vegas forward record — settles at +6/24/48h in the same units the
+        # card quotes, so its claim is falsifiable rather than decorative.
+        try:
+            import vegas_outcomes
+            _vo = vegas_outcomes.tick(client)
+            if _vo.get("settled"):
+                print(f"[vegas] settled {_vo['settled']} · {_vo['open']} open")
+        except Exception as exc:  # noqa: BLE001
+            print(f"[strategy2] vegas outcomes error: {exc}")
         # 📋 Signal outcomes — replay 48h-old signals against real candles;
         # Sunday scorecard closes the honesty loop.
         try:

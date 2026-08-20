@@ -28,7 +28,12 @@ import os
 TAKER_FEE = float(os.getenv("COST_TAKER_FEE", "0.00055"))
 SLIPPAGE = float(os.getenv("COST_SLIPPAGE", "0.0010"))      # per side
 # Below this the cost model stops being believable at all — a stop that tight
-# is dominated by the spread, and no fill assumption rescues it.
+# is dominated by the spread, and no fill assumption rescues it. The stop is
+# CLAMPED to it rather than the cost being waived: a 0.003% stop is the case
+# where cost is largest, and returning 0.0 for it said "free" about the single
+# worst trade the book can hold. Found 2026-08-21 while measuring the Vegas
+# scan, where seven USDC/USDT rows with a 0.003% ATR carried a true cost of
+# 100-240R each and scored as costless — dragging a -0.50R sample to -0.07R.
 MIN_STOP_FRAC = float(os.getenv("COST_MIN_STOP_FRAC", "0.001"))
 
 
@@ -43,9 +48,12 @@ def cost_r(stop_pct: float) -> float:
         frac = float(stop_pct) / 100.0
     except (TypeError, ValueError):
         return 0.0
-    if frac < MIN_STOP_FRAC:
+    if frac <= 0:
+        # Not a stop distance at all. Unknown, like the branch above — and an
+        # unmeasurable cost must not be invented in either direction.
         return 0.0
-    return 2.0 * (TAKER_FEE + SLIPPAGE) / frac
+    # Clamped, never waived. See MIN_STOP_FRAC.
+    return 2.0 * (TAKER_FEE + SLIPPAGE) / max(frac, MIN_STOP_FRAC)
 
 
 def net_r(gross_r: float, stop_pct: float) -> tuple:

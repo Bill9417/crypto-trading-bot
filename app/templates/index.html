@@ -1305,7 +1305,16 @@
 
             /* ── Analytics ── */
             .analytics-panel { padding: 10px 12px; }
-            .analytics-subtitle { display: none; }
+            /* Scoped to the HEAD. This used to hide EVERY
+               .analytics-subtitle under 768px, which is also the class the
+               cards render their state messages into — so "這個功能還沒生效 ——
+               需要重啟" and "今天還沒有累積到" were in the DOM with
+               display:none on the one device this dashboard is read on. The
+               card looked like an unexplained blank, which is the exact
+               failure those messages were added to remove. The declutter this
+               rule was for is the explanatory line under each panel title, so
+               that is what it now targets. */
+            .analytics-head .analytics-subtitle { display: none; }
             .insight-grid { grid-template-columns: repeat(2, 1fr); gap: 8px; }
             .insight-value { font-size: 0.92rem; }
             .insight-note { font-size: 0.62rem; }
@@ -2417,6 +2426,193 @@
              the 順勢/逆勢 split is shown per row because that is the cut the
              measurement says matters, and the one the forward book has to
              settle. -->
+        <!-- 🌊 隧道翻多 — EMA200 turns up, price closes back above the Vegas
+             tunnel (EMA144/169), and volume surges on an up bar. Asked for
+             2026-08-21 off a DASH chart; DASH 2026-08-19 22:00 台北 is the
+             reference bar and this scanner reproduces it exactly.
+             OBSERVE ONLY, and the card says so above the signals rather than
+             below them: net of costs the shape scores -0.094R per firing hour
+             with an interval that excludes zero. It ships no entry, stop or
+             target because it has not earned one. -->
+        <section class="analytics-panel" data-card="vegas">
+            <div class="analytics-head">
+                <div>
+                    <div class="analytics-title">🌊 隧道翻多 <span style="text-transform:none;letter-spacing:0;font-weight:600;opacity:.7;">EMA200 翻正 · 站回 Vegas 隧道 · 爆量</span></div>
+                    <div class="analytics-subtitle" id="vegas-sub">1 小時線；EMA200 由紅翻綠、收盤站回 EMA144/169 隧道上方，同時買方爆量</div>
+                </div>
+            </div>
+            <div id="vegas-verdict" style="margin-bottom:8px;"></div>
+            <div id="vegas-row" style="display:flex; gap:8px; overflow-x:auto; padding:2px 0 6px; -webkit-overflow-scrolling:touch;">
+                <div style="font-size:.7rem;color:var(--wolf-muted,#8a99ad);line-height:1.6;padding:2px 0;">載入中…</div>
+            </div>
+            <div id="vegas-record" style="margin-top:10px;"></div>
+        </section>
+        <script>
+        (function () {
+            function esc(t){return String(t==null?'':t).replace(/[&<>"]/g,function(c){
+                return ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]);});}
+            function ago(ts){if(!ts)return'';var s=Math.max(0,Date.now()/1000-ts);
+                if(s<90)return Math.round(s)+'秒前';if(s<5400)return Math.round(s/60)+'分前';
+                if(s<172800)return Math.round(s/3600)+'小時前';return Math.round(s/86400)+'天前';}
+            function num(v,d){v=Number(v);return isFinite(v)?v.toFixed(d==null?2:d):null;}
+
+            function tile(r){
+                var loud = !!r.loud;
+                var col = loud ? 'var(--wolf-gold,#e5b567)' : 'var(--long,#4ade80)';
+                // vol_mult is null when there was no volume history to compare
+                // against. Printing "0.0x" for a reading nobody could take
+                // would assert the bar was quiet — which is the opposite of
+                // what fired it.
+                var vm = num(r.vol_mult,1);
+                return '<a href="/coin/'+encodeURIComponent(r.base||'')+'"'+
+                  ' style="flex:0 0 auto;min-width:142px;text-decoration:none;color:inherit;'+
+                  'background:rgba(255,255,255,.03);border:1px solid '+col+';border-radius:12px;'+
+                  'padding:8px 11px;display:block;">'+
+                  '<div style="font-weight:800;font-size:.82rem;">'+esc(r.base||'')+(loud?' 🔥':' 🌊')+'</div>'+
+                  '<div style="font-size:.7rem;color:'+col+';font-weight:700;">'+
+                    (vm===null?'量能不明':('量 '+vm+'x'))+'</div>'+
+                  '<div style="font-size:.64rem;color:var(--wolf-muted,#8a99ad);margin-top:2px;">'+
+                    'ATR '+(num(r.atr_pct,2)||'—')+'% · 1h</div>'+
+                  '<div style="font-size:.64rem;color:var(--wolf-muted,#8a99ad);">'+
+                    ago(r.fired_ts)+'</div></a>';
+            }
+
+            function verdict(d){
+                var m = (d && d.measured) || {};
+                if (m.per_hour_r == null) return '';
+                // The verdict sits ABOVE the signals. Under them it reads as a
+                // disclaimer; above them it is the frame you read the coins in.
+                return '<div style="border:1px solid rgba(248,113,113,.35);background:rgba(248,113,113,.07);'+
+                    'border-radius:10px;padding:7px 10px;font-size:.68rem;line-height:1.65;">'+
+                    '<b style="color:#f87171">只做觀察，不是進場訊號。</b>'+
+                    '回測 '+(m.n||0)+' 筆訊號（'+(m.hours||0)+' 個小時）：扣掉手續費與滑價後，'+
+                    '每個觸發小時 <b>'+num(m.per_hour_r,3)+'R</b>，'+
+                    '信賴區間 ['+num(m.per_hour_lo,3)+', '+num(m.per_hour_hi,3)+'] —— 區間整段在零以下。'+
+                    '所以這張卡不給進場價、停損或目標。</div>';
+            }
+
+            function record(d){
+                var m=(d&&d.measured)||{}, live=(d&&d.live)||{}, p=(d&&d.params)||{};
+                var out='';
+                // ── what the shape did in the backtest, mean AND median ──
+                if (m.fwd && m.fwd.length){
+                    out += '<div style="font-size:.66rem;opacity:.72;line-height:1.7;">'+
+                      '📐 回測後續漲跌（'+esc(m.span||'')+'）：'+
+                      m.fwd.map(function(f){
+                        return '+'+f[0]+'h 平均 <b style="color:var(--long,#4ade80)">'+
+                          (f[1]>=0?'+':'')+num(f[1],2)+'%</b>／中位數 <b style="color:#f87171">'+
+                          (f[2]>=0?'+':'')+num(f[2],2)+'%</b>';
+                      }).join('、')+
+                      '<br><span style="opacity:.85">平均為正、中位數為負 —— '+
+                      '代表<b>超過一半的訊號隔天是下跌的</b>，平均值是被少數大漲的那幾檔拉起來的。</span></div>';
+                }
+                // ── which gate is actually doing the work ──
+                if (m.ablation && m.ablation.length){
+                    out += '<div style="font-size:.64rem;opacity:.6;line-height:1.6;margin-top:6px;">'+
+                      '🔬 拆開來看：'+m.ablation.map(function(a){
+                        return esc(a[0])+' '+(a[1]>=0?'+':'')+num(a[1],3)+'R';
+                      }).join(' → ')+
+                      '。<b>量能那一關才是關鍵</b>（+0.12R）；EMA200 翻正只動了 0.036R，'+
+                      '窗口從 3 根拉到 24 根結果只差 0.008R —— 它是這個「型態」的一部分，不是有效的過濾條件。</div>';
+                }
+                if (m.cluster_trap){
+                    out += '<div style="font-size:.64rem;opacity:.6;line-height:1.6;margin-top:6px;">'+
+                      '⚠️ '+esc(m.cluster_trap)+'</div>';
+                }
+                // ── the live forward record ──
+                var hz=(live&&live.horizons)||{}, hs=(d&&d.horizons)||[];
+                var parts=[];
+                hs.forEach(function(h){
+                    var v=hz[h]||hz[String(h)]||{};
+                    // n=0 renders as "還沒有", never as 0.0%. A neutral default
+                    // here would claim the signal went nowhere on evidence
+                    // that does not exist yet.
+                    if(!v.n){ parts.push('+'+h+'h 尚未累積'); return; }
+                    parts.push('+'+h+'h 平均 '+(v.mean>=0?'+':'')+num(v.mean,2)+
+                        '%／中位數 '+(v.median>=0?'+':'')+num(v.median,2)+'%（'+v.n+' 筆）');
+                });
+                out += '<div style="font-size:.66rem;opacity:.72;line-height:1.7;margin-top:6px;">'+
+                    '📓 上線後實際追蹤：'+(parts.length?parts.join('、'):'尚未累積')+
+                    '（每筆都等滿 48 小時才結算，用的是下一根 K 的開盤價）</div>';
+                // ── what the scan actually covered ──
+                var cov='';
+                if (d && d.scanned != null && d.universe != null){
+                    cov = '掃描 '+d.scanned+' / '+d.universe+' 檔（依成交量排序，'+
+                        '回測用的也是流動性前 200 名）';
+                } else {
+                    cov = '尚未跑過第一輪掃描';
+                }
+                var f=(d&&d.funnel)||{};
+                var fun='';
+                if (f && f.reclaim!=null){
+                    fun = ' · 上一輪：站回隧道 '+(f.reclaim||0)+' → EMA200 翻正 '+(f.turn||0)+
+                          ' → 收紅翻綠 '+(f.buyer||0)+' → 爆量 '+(f.surge||0)+' → 過波動門檻 '+(f.atr||0);
+                }
+                out += '<div style="font-size:.62rem;opacity:.5;line-height:1.6;margin-top:6px;">'+
+                    '⚙️ 每小時掃一次（'+esc(p.timeframe||'1h')+' 收線才會變）· '+
+                    'EMA'+(p.fast||144)+'/'+(p.slow||169)+' 隧道 + EMA'+(p.trend||200)+
+                    ' · 量 ≥ '+num(p.vol_mult,1)+'x（🔥 = ≥'+num(p.vol_loud,1)+'x）· '+
+                    esc(cov)+esc(fun)+'</div>';
+                return out;
+            }
+
+            function paint(d){
+                var row=document.getElementById('vegas-row');
+                var rec=document.getElementById('vegas-record');
+                var ver=document.getElementById('vegas-verdict');
+                if(!row) return;
+                // Every failure mode says which one it was. A swallowed error
+                // that leaves 載入中 up forever, or a 404 rendered as "市場很安靜",
+                // is a claim about the market made by a routing error — this
+                // dashboard has shipped both.
+                if (d && d.http === 404){
+                    row.innerHTML='<div style="font-size:.7rem;color:var(--wolf-muted,#8a99ad);line-height:1.6;padding:2px 0;">這個功能還沒生效 —— 網站程式要重啟才會有（/restart）</div>';
+                    if(rec) rec.innerHTML=''; if(ver) ver.innerHTML=''; return;
+                }
+                if (d && d.http){
+                    row.innerHTML='<div style="font-size:.7rem;color:var(--wolf-muted,#8a99ad);line-height:1.6;padding:2px 0;">伺服器回應 HTTP '+d.http+'</div>';
+                    if(rec) rec.innerHTML=''; if(ver) ver.innerHTML=''; return;
+                }
+                if (d && d.neterr){
+                    row.innerHTML='<div style="font-size:.7rem;color:var(--wolf-muted,#8a99ad);line-height:1.6;padding:2px 0;">連不上伺服器：'+esc(d.neterr)+'</div>';
+                    if(rec) rec.innerHTML=''; if(ver) ver.innerHTML=''; return;
+                }
+                if (ver) ver.innerHTML = verdict(d);
+                var live=((d&&d.recent)||[]).concat((d&&d.open)||[]);
+                var seen={}, rows=[];
+                live.sort(function(a,b){return (b.fired_ts||0)-(a.fired_ts||0);});
+                live.forEach(function(r){
+                    if(r.symbol && !seen[r.symbol]){ seen[r.symbol]=1; rows.push(r); }
+                });
+                if (rows.length){
+                    row.innerHTML = rows.slice(0,14).map(tile).join('');
+                } else if (!d || !d.ran_ts){
+                    row.innerHTML='<div style="font-size:.7rem;color:var(--wolf-muted,#8a99ad);line-height:1.6;padding:2px 0;">掃描器還沒跑第一輪（每小時一次）</div>';
+                } else {
+                    // "Nothing fired" and "the scan is broken" must not look
+                    // alike, so the empty state carries the funnel with it.
+                    var f=(d.funnel)||{};
+                    row.innerHTML='<div style="font-size:.7rem;color:var(--wolf-muted,#8a99ad);line-height:1.6;padding:2px 0;">過去 '+
+                        Math.round(d.retain_hours||36)+' 小時沒有符合的幣 —— '+
+                        '這是一個「穿越」訊號，全市場平均一天約 9 檔。'+
+                        (f.reclaim!=null?('上一輪有 '+(f.reclaim||0)+' 檔站回隧道，'+
+                          (f.surge||0)+' 檔同時爆量。'):'')+
+                        '（'+ago(d.ran_ts)+'掃描）</div>';
+                }
+                if (rec) rec.innerHTML = record(d);
+            }
+
+            function load(){
+                fetch('/api/vegas')
+                    .then(function(r){ if(!r.ok) return {http:r.status}; return r.json(); })
+                    .then(paint)
+                    .catch(function(e){ paint({neterr:String((e&&e.message)||e)}); });
+            }
+            load();
+            if (window.wolfPoll) wolfPoll(load, 180000); else setInterval(load, 180000);
+        })();
+        </script>
+
         <section class="analytics-panel" data-card="zones">
             <div class="analytics-head">
                 <div>

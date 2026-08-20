@@ -37,7 +37,7 @@ TOP_N = int(os.getenv("WATCH_TOP_N", "10"))
 KEEP_DAYS = int(os.getenv("WATCH_KEEP_DAYS", "3"))
 
 SRC_ZH = {"s2": "S2 訊號", "flip": "壓力翻支撐", "zone": "供需區",
-          "oi": "OI 異常", "s4": "S4 掃描"}
+          "oi": "OI 異常", "s4": "S4 掃描", "vegas": "隧道翻多"}
 
 
 def today_str(now=None) -> str:
@@ -100,6 +100,22 @@ def _sightings() -> dict:
                 note(r.get("base"), src, "做多" if side == "long" else "做空", side)
         except Exception:  # noqa: BLE001
             pass
+
+    # 🌊 隧道翻多. Read from the SCAN state rather than the outcome book: the
+    # book only holds rows still awaiting their 48h horizon, so a signal would
+    # vanish from the watchlist the moment it became measurable.
+    try:
+        import json as _j
+        d = _j.load(open(os.path.join(os.path.dirname(STATE_FILE),
+                                      "vegas_state.json"), encoding="utf-8"))
+        for r in (d.get("recent") or [])[:40]:
+            m = r.get("vol_mult")
+            # None means the volume average was unavailable, not that volume
+            # was flat — so it prints as unknown rather than as "0.0x".
+            vol = f"量 {m:.1f}x" if isinstance(m, (int, float)) else "量能不明"
+            note(r.get("base"), "vegas", f"站回隧道·{vol}", "long")
+    except Exception:  # noqa: BLE001
+        pass
 
     try:
         import json as _j
