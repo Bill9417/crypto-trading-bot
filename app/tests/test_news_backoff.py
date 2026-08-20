@@ -20,7 +20,8 @@ RSS = """<?xml version="1.0"?><rss><channel>
 
 @pytest.fixture
 def feeds(monkeypatch, tmp_path):
-    monkeypatch.setattr(M, "_FEED_STATE_FILE", str(tmp_path / "feeds.json"))
+    # ONE seam — the same one the degradation test uses.
+    monkeypatch.setattr(M, "_DISK_CACHE_DIR", str(tmp_path))
     monkeypatch.setattr(M, "NEWS_FEEDS", [("Good", "http://x/good"),
                                           ("Limited", "http://x/limited")])
     state = {"mode": "ok", "calls": 0}
@@ -80,11 +81,11 @@ def test_a_feed_dark_for_hours_is_still_reported(feeds):
     page must say the source is missing rather than quietly ageing."""
     t = 1_000_000.0
     M._news(now=t)
-    with open(M._FEED_STATE_FILE, encoding="utf-8") as f:
+    with open(M._feed_state_path(), encoding="utf-8") as f:
         st = json.load(f)
     st["Limited"]["ts"] = t - (M.FEED_STALE_REPORT_SEC + 5000)
     st["Limited"]["until"] = 0
-    with open(M._FEED_STATE_FILE, "w", encoding="utf-8") as f:
+    with open(M._feed_state_path(), "w", encoding="utf-8") as f:
         json.dump(st, f)
     feeds["mode"] = "429"
     assert M._news(now=t + 100)["errors"], "a long-dark source went unmentioned"
@@ -94,4 +95,4 @@ def test_the_state_is_shared_between_processes(feeds):
     """The web process and the scanner both fetch news. In-memory backoff
     would let each hold the publisher to its own limit."""
     M._news(now=1_000_000.0)
-    assert os.path.exists(M._FEED_STATE_FILE)
+    assert os.path.exists(M._feed_state_path())

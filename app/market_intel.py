@@ -359,12 +359,21 @@ FEED_BACKOFF_SEC = float(os.getenv("NEWS_BACKOFF_SEC", "1800"))
 FEED_BACKOFF_MAX = float(os.getenv("NEWS_BACKOFF_MAX_SEC", "21600"))
 # How old a feed's cached items may be before its absence is worth reporting.
 FEED_STALE_REPORT_SEC = float(os.getenv("NEWS_STALE_REPORT_SEC", "7200"))
-_FEED_STATE_FILE = os.path.join(_DISK_CACHE_DIR, "news_feeds.json")
+def _feed_state_path() -> str:
+    """Resolved at CALL time from _DISK_CACHE_DIR, not frozen at import.
+
+    This module already has exactly one seam for "where does cached data
+    live", and the degradation test moves it to a tmp dir to prove the page
+    still renders with every provider dead. A second path captured at import
+    ignored that seam, so the test read the REAL headline cache and saw a live
+    news feed in a run where nothing was supposed to work.
+    """
+    return os.path.join(_DISK_CACHE_DIR, "news_feeds.json")
 
 
 def _feed_state() -> dict:
     try:
-        with open(_FEED_STATE_FILE, encoding="utf-8") as fh:
+        with open(_feed_state_path(), encoding="utf-8") as fh:
             return json.load(fh) or {}
     except Exception:  # noqa: BLE001 — missing/corrupt = cold start
         return {}
@@ -373,10 +382,10 @@ def _feed_state() -> dict:
 def _save_feed_state(state: dict) -> None:
     try:
         os.makedirs(_DISK_CACHE_DIR, exist_ok=True)
-        tmp = _FEED_STATE_FILE + f".{os.getpid()}.tmp"
+        tmp = _feed_state_path() + f".{os.getpid()}.tmp"
         with open(tmp, "w", encoding="utf-8") as fh:
             json.dump(state, fh)
-        os.replace(tmp, _FEED_STATE_FILE)
+        os.replace(tmp, _feed_state_path())
     except Exception:  # noqa: BLE001 — news must not fail on a cache write
         pass
 
