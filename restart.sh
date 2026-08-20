@@ -26,6 +26,33 @@ LOCK="$APP/.restart.lock"
 
 cd "$DIR" || exit 1
 
+# ── Read .env from the FILE, not from an inherited snapshot ────────────────
+# config.py does os.environ.setdefault() for every .env key, so any python
+# process that imports it carries the whole file in its environment — and
+# passes it to everything it spawns. This script is spawned BY such a process,
+# so without the strip below, run_all.sh and every engine it launches inherit
+# the .env of whenever that chain started, and later edits are ignored forever.
+#
+# On 2026-08-20 that meant disarming live trading in .env left the running
+# stack with LIVE_TRADING=true, and a /restart would have relaunched it ARMED.
+# The pre-flight tests caught it and aborted the launch, which is the only
+# reason it was noticed.
+#
+# PROTECTED names are never unset: .env should not contain them, but unsetting
+# PATH here would take the interpreter out with it.
+PROTECTED=" PATH HOME SHELL USER LOGNAME LANG TERM PWD TMPDIR "
+if [ -f "$APP/.env" ]; then
+    while IFS= read -r _line || [ -n "$_line" ]; do
+        case "$_line" in ""|"#"*) continue ;; esac
+        case "$_line" in *"="*) : ;; *) continue ;; esac
+        _key="${_line%%=*}"
+        _key="$(printf '%s' "$_key" | tr -d "[:space:]")"
+        [ -z "$_key" ] && continue
+        case "$PROTECTED" in *" $_key "*) continue ;; esac
+        unset "$_key" 2>/dev/null || true
+    done < "$APP/.env"
+fi
+
 # One at a time. mkdir is atomic on every filesystem this runs on, so two
 # simultaneous taps cannot both get past here and race two run_all.sh.
 if ! mkdir "$LOCK" 2>/dev/null; then

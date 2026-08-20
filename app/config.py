@@ -1,5 +1,20 @@
 import os
 
+# Which keys came from the .env FILE, as opposed to a real shell export.
+#
+# This matters more than it looks. setdefault() below puts every .env value
+# into os.environ, so any child this process spawns inherits them as REAL
+# environment variables — and in that child, setdefault() will not override
+# them. One app-spawned restart therefore freezes the .env of the moment
+# FOREVER: every later edit is silently ignored down that whole chain, and the
+# only way to pick a change up is to launch from a clean shell.
+#
+# That is how, on 2026-08-20, disarming live trading in .env left the running
+# stack carrying LIVE_TRADING=true — and would have relaunched it armed. See
+# restart_ctl.request() and restart.sh, which strip these keys from the child
+# so a restart re-reads the file.
+_ENV_FILE_KEYS: set = set()
+
 # Load environment variables from .env file if it exists
 env_path = os.path.join(os.path.dirname(__file__), ".env")
 if os.path.exists(env_path):
@@ -14,11 +29,19 @@ if os.path.exists(env_path):
                 val = val.strip().strip("'\"")
                 # Let real shell exports override the local .env file.
                 os.environ.setdefault(key, val)
+                _ENV_FILE_KEYS.add(key)
 
 # Path to the .env this config was loaded from (may not exist yet). The admin UI
 # uses the helpers below to persist a setting (e.g. LIVE_STRATEGY); the bot reads
 # .env only at startup, so a bot restart is required for a change to take effect.
 ENV_PATH = env_path
+
+
+def env_file_keys() -> set:
+    """Keys this process took from the .env file. A restart must clear these
+    from the child's environment or the child inherits today's values and
+    can never see tomorrow's edit."""
+    return set(_ENV_FILE_KEYS)
 
 
 def read_env_var(name, default=None):

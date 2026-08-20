@@ -220,6 +220,31 @@ def in_flight(state=None, now=None) -> bool:
         and now - state["started_at"] < INFLIGHT_SEC
 
 
+def _clean_env() -> dict:
+    """This process's environment MINUS everything it took from .env.
+
+    config.py does os.environ.setdefault() for every key in the file, so a
+    process that imports it carries the whole .env in its environment and hands
+    that snapshot to every child. The child's own setdefault() then cannot
+    override it, so the restart chain freezes the .env of whenever it started
+    and later edits are silently ignored.
+
+    That is not a cosmetic staleness: on 2026-08-20 disarming live trading in
+    .env left the running stack with LIVE_TRADING=true, and a restart would
+    have relaunched it ARMED. restart.sh strips the same keys — belt and
+    braces, because that script is the one that actually runs and this is the
+    one that survives someone calling request() directly.
+    """
+    env = dict(os.environ)
+    try:
+        import config
+        for k in config.env_file_keys():
+            env.pop(k, None)
+    except Exception:  # noqa: BLE001 — a restart must not depend on this
+        pass
+    return env
+
+
 # ── the ask ──────────────────────────────────────────────────────────────────
 def request(reason: str = "manual", *, spawn=None) -> tuple:
     """Kick off a restart. Returns (accepted, message-for-the-asker).
@@ -254,7 +279,7 @@ def request(reason: str = "manual", *, spawn=None) -> tuple:
         # the life of that process. The failure path is exactly the path that
         # repeats.
         proc_util.reap(
-            runner(["/bin/bash", RUNNER, reason], cwd=ROOT,
+            runner(["/bin/bash", RUNNER, reason], cwd=ROOT, env=_clean_env(),
                    stdout=log, stderr=subprocess.STDOUT,
                    stdin=subprocess.DEVNULL, start_new_session=True))
     except Exception as exc:  # noqa: BLE001 — a failed spawn must clear the flag
