@@ -211,3 +211,30 @@ def test_confirmation_is_recorded_not_required():
     cmp = cmp[:cmp.index("});")]
     assert "tf5==='agree'" in cmp, "the board does not sort confirmed first"
     assert "z.tf5==null?''" in card, "an unasked 5m would render as ✗"
+
+
+def test_the_card_shows_setups_that_are_still_open():
+    """`recent` deliberately excludes anything still OPEN so one position is
+    not listed twice. A card reading only `recent` therefore shows NOTHING
+    while setups are live — which is exactly what happened: 20 coins sitting
+    in a zone and the card said 目前沒有價格回到區間.
+
+    That failure is indistinguishable from "no coin fits", which is the whole
+    reason this test exists.
+    """
+    dash = open(os.path.join(os.path.dirname(os.path.abspath(zones.__file__)),
+                             "templates/index.html"), encoding="utf-8").read()
+    card = dash[dash.index('data-card="zones"'):]
+    card = card[:card.index("</script>")]
+    assert "d.open" in card, "the card ignores live setups"
+    assert "concat" in card, "the card shows only one of open/recent"
+
+
+def test_an_empty_book_says_whether_it_has_ever_run():
+    """'nothing fits right now' and 'the scanner just restarted' produce the
+    same empty list and must not read the same."""
+    dash = open(os.path.join(os.path.dirname(os.path.abspath(zones.__file__)),
+                             "templates/index.html"), encoding="utf-8").read()
+    card = dash[dash.index('data-card="zones"'):]
+    card = card[:card.index("</script>")]
+    assert "lifetime_n===0" in card, "an unrun scanner reads as a quiet market"

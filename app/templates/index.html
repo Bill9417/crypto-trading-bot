@@ -2186,7 +2186,12 @@
             function paint(d){
                 var row=document.getElementById('zone-row'), rec=document.getElementById('zone-record');
                 if(!row) return;
-                var live=(d && d.recent)||[];
+                // OPEN first, then recent. `recent` deliberately EXCLUDES
+                // anything still open (one position must not appear twice),
+                // so a card reading only `recent` shows nothing at all while
+                // setups are live — which is exactly what it did: 20 coins in
+                // a zone and the card said 目前沒有價格回到區間.
+                var live=((d && d.open)||[]).concat((d && d.recent)||[]);
                 // Confirmed on BOTH timeframes first. The owner reads this
                 // setup on 5m AND 15m, so a 15m entry the 5m does not also
                 // place at supply/demand is a different thing wearing the same
@@ -2213,7 +2218,8 @@
                             : ' · <span style="opacity:.6">5m✗</span>'))+'</div>'+
                       '<div class="analytics-subtitle">進 '+px(z.entry)+' · 損 '+px(z.sl)+'</div>'+
                       '</a>';
-                }).join('') : '<div class="analytics-subtitle">目前沒有價格回到區間</div>';
+                }).join('') : '<div class="analytics-subtitle">目前沒有價格回到區間'
+                       + (d && d.lifetime_n===0 ? '（掃描器剛重啟，等下一輪）' : '') + '</div>';
 
                 if(!rec) return;
                 var m=(d&&d.measured)||{}, st=(d&&d.stats&&d.stats.all)||{};
