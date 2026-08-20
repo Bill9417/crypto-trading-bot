@@ -92,6 +92,14 @@ SIGNALS_FILE = os.path.join(os.path.dirname(__file__), "strategy2_signals.json")
 LATEST_SCORES: dict = {}
 # Latest mover read per symbol, refreshed in place during each sweep.
 LATEST_MOVERS: dict = {}
+# 📦 Zone re-entries seen this run, plus their per-symbol cooldown. Alert-only
+# and deliberately NOT gated on the trend agreement: measured +0.175R with the
+# trend vs -0.032R against over 3,653 replayed entries, but the plain signal
+# dies when the best five symbols are dropped and the early half of the window
+# straddles zero. Recording both halves is what makes the cut answerable.
+LATEST_ZONES: dict = {}
+_ZONE_STATE: dict = {}
+
 # 🚀 Resistance→support flips seen this run, and the per-symbol alert cooldown.
 # In-process rather than on disk: a flip is only reportable for a few bars
 # (breakout_flip.MAX_BARS_SINCE_FLIP), so nothing here outlives a restart in a
@@ -497,6 +505,22 @@ def scan_once(client, recent: list, last_alert: dict, pending: list) -> list:
                       + (" · ⭐ 完整型態 (三角→翻轉→無壓)" if _bf.get("full_setup") else ""))
         except Exception as exc:  # noqa: BLE001 — detection never kills the sweep
             print(f"[flip] {sym} error: {exc}")
+
+        # 📦 Zone re-entry (SELL/LONG at the box). Same candles again — this
+        # is pure geometry, so it costs CPU and no API budget.
+        try:
+            import zones
+            _zs = zones.consider(sym, ohlcv, _ZONE_STATE, _now)
+            if _zs:
+                LATEST_ZONES[sym] = {**_zs, "tv_url": _tv_url(sym)}
+                import zone_outcomes
+                zone_outcomes.note(_zs)
+                print(f"[zone] {sym} {_zs['side']} at {_zs['kind']} "
+                      f"{_zs['zone_bottom']:.6g}-{_zs['zone_top']:.6g} "
+                      f"x{_zs['touches']}"
+                      + (" · 順勢" if _zs['with_trend'] else " · 逆勢"))
+        except Exception as exc:  # noqa: BLE001 — detection never kills the sweep
+            print(f"[zone] {sym} error: {exc}")
 
         # 🚀 Pump Radar — reuses this symbol's candles, no extra API call.
         mv = _mover_metrics(ohlcv)

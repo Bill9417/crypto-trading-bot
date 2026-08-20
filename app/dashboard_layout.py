@@ -43,6 +43,7 @@ CARDS = (
     ("briefing", "📊 Today's Briefing"),
     ("radar", "🚀 Pump Radar"),
     ("flips", "🚀 壓力翻支撐"),
+    ("zones", "📦 供需區進場"),
     ("oi", "🐋 OI 異常"),
     ("whale", "🐳 Whale Positioning"),
     ("liqmap", "💥 Liquidation Map"),

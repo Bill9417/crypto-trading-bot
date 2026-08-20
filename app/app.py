@@ -4011,6 +4011,24 @@ def api_flips():
                         "error": str(e)[:150]}), 200
 
 
+@app.route("/api/zones")
+@login_required
+def api_zones():
+    """📦 SELL / LONG at the box — live zone re-entries plus the forward record.
+
+    Same shape as /api/flips and backed by the same settle logic, so the two
+    boards cannot disagree about what a win is. Reads a state file; polling
+    costs no exchange call.
+    """
+    try:
+        import zone_outcomes
+        return jsonify(_json_safe(zone_outcomes.web_view()))
+    except Exception as e:  # noqa: BLE001
+        print(f"[zones] view failed: {e}")
+        return jsonify({"recent": [], "open": [], "closed": [], "stats": {},
+                        "error": str(e)[:150]}), 200
+
+
 @app.route("/api/crowd_radar")
 @login_required
 def api_crowd_radar():

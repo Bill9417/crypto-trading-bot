@@ -2158,6 +2158,76 @@
         </script>
 
 
+        <!-- 📦 供需區進場 (SELL / LONG at the box). Price trades back INTO a
+             zone it has not yet closed through: sell at supply, buy at demand.
+             The rules were read off a chart the owner sent, so the measured
+             numbers sit next to the signals rather than in a footnote — and
+             the 順勢/逆勢 split is shown per row because that is the cut the
+             measurement says matters, and the one the forward book has to
+             settle. -->
+        <section class="analytics-panel" data-card="zones">
+            <div class="analytics-head">
+                <div>
+                    <div class="analytics-title">📦 供需區進場 <span style="text-transform:none;letter-spacing:0;font-weight:600;opacity:.7;">價格回到還沒被吃掉的區間</span></div>
+                    <div class="analytics-subtitle" id="zone-sub">壓力區賣、支撐區買 —— 收盤穿過的區間就不算了</div>
+                </div>
+            </div>
+            <div id="zone-row" style="display:flex; gap:8px; overflow-x:auto; padding:2px 0 6px; -webkit-overflow-scrolling:touch;">
+                <div class="analytics-subtitle">等待掃描…</div>
+            </div>
+            <div id="zone-record" style="margin-top:10px;"></div>
+        </section>
+        <script>
+        (function () {
+            function esc(t){return String(t==null?'':t).replace(/[&<>"]/g,function(c){
+                return ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]);});}
+            function px(v){v=Number(v);if(!isFinite(v))return'—';
+                var d=v>=1000?0:v>=1?3:v>=0.01?5:8;return v.toFixed(d);}
+            function paint(d){
+                var row=document.getElementById('zone-row'), rec=document.getElementById('zone-record');
+                if(!row) return;
+                var live=(d && d.recent)||[];
+                row.innerHTML = live.length ? live.slice(0,14).map(function(z){
+                    var sell = z.side==='short';
+                    var col = sell ? 'var(--short)' : 'var(--long)';
+                    return '<a href="/coin/'+encodeURIComponent(z.base||'')+'" class="coin-tile" '+
+                      'style="min-width:150px;border-color:'+col+'55;text-decoration:none">'+
+                      '<div style="display:flex;align-items:center;gap:6px">'+
+                        '<b>'+esc(z.base||'')+'</b>'+
+                        '<span style="font-size:.6rem;font-weight:800;letter-spacing:.06em;color:'+col+'">'+
+                          (sell?'SELL':'LONG')+'</span></div>'+
+                      '<div class="analytics-subtitle" style="margin-top:3px">'+
+                        (z.touches?('測試 '+z.touches+' 次'):'') +
+                        (z.with_trend===undefined?'':(z.with_trend?' · 順勢':' · 逆勢'))+'</div>'+
+                      '<div class="analytics-subtitle">進 '+px(z.entry)+' · 損 '+px(z.sl)+'</div>'+
+                      '</a>';
+                }).join('') : '<div class="analytics-subtitle">目前沒有價格回到區間</div>';
+
+                if(!rec) return;
+                var m=(d&&d.measured)||{}, st=(d&&d.stats&&d.stats.all)||{};
+                // The live sample and the replay, side by side — a live n of 4
+                // next to a 3,653-entry replay must not be read as the answer.
+                rec.innerHTML =
+                  '<div class="analytics-subtitle">📐 實測（回放 '+(m.n||0)+' 筆）：'+
+                    '整體 '+(m.exp>0?'+':'')+(m.exp||0).toFixed(3)+'R'+
+                    '，<b>順勢</b> '+(m.with_trend?((m.with_trend.exp>0?'+':'')+m.with_trend.exp.toFixed(3)):'—')+'R'+
+                    '、逆勢 '+(m.against?((m.against.exp>0?'+':'')+m.against.exp.toFixed(3)):'—')+'R。</div>'+
+                  '<div class="analytics-subtitle" style="opacity:.75">⚠️ 拿掉最賺的 5 檔後整體只剩 '+
+                    (m.minus_top5?((m.minus_top5.exp>0?'+':'')+m.minus_top5.exp.toFixed(3)):'—')+
+                    'R（信賴區間含 0）；順勢那半邊還有 '+
+                    (m.with_trend_minus_top5?((m.with_trend_minus_top5.exp>0?'+':'')+m.with_trend_minus_top5.exp.toFixed(3)):'—')+
+                    'R。前半段時間也測不出來 —— 只有一段行情，還不是結論。</div>'+
+                  '<div class="analytics-subtitle">📓 實盤累積：'+(st.n||0)+' 筆已結算'+
+                    (st.n&&st.exp!=null?('，'+(st.exp>0?'+':'')+Number(st.exp).toFixed(3)+'R'):'（還沒有）')+'</div>';
+            }
+            function load(){ if(document.hidden) return;
+                fetch('/api/zones').then(function(r){return r.ok?r.json():null;})
+                    .then(paint).catch(function(){}); }
+            load();
+            if (window.wolfPoll) wolfPoll(load, 120000); else setInterval(load, 120000);
+        })();
+        </script>
+
         <!-- 🚀 壓力翻支撐 — broke a multi-touch resistance zone, retested it,
              the zone held as support, and nothing prior is overhead.
              Two halves on purpose: the LIVE flips, and the TRACK RECORD. The
