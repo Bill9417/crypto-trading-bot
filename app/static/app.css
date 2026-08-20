@@ -165,11 +165,14 @@ body.has-sidebar { padding-left: var(--wsb-w); }
     padding: 18px 18px 16px; border-bottom: 1px solid var(--wolf-border);
     flex: 0 0 auto;
 }
+/* The mark itself, on a dark tile — a gold plate with a gold wolf on it has
+   no silhouette left. The glow comes off the mark, not the plate. */
 .wsb-mark {
-    width: 32px; height: 32px; border-radius: 9px; flex: 0 0 auto;
-    display: grid; place-items: center; font-weight: 900; font-size: .95rem;
-    color: #1a1405; background: linear-gradient(145deg, #ffdf7a, #e0aa2a);
-    box-shadow: 0 3px 12px rgba(255, 210, 87, .28), inset 0 1px 0 rgba(255, 255, 255, .45);
+    width: 34px; height: 34px; border-radius: 10px; flex: 0 0 auto;
+    padding: 5px; object-fit: contain;
+    background: linear-gradient(150deg, rgba(255,210,87,.10), rgba(255,255,255,.02));
+    border: 1px solid rgba(255, 210, 87, .22);
+    filter: drop-shadow(0 2px 8px rgba(255, 210, 87, .18));
 }
 .wsb-brand-txt { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .wsb-brand-txt b { font-size: .8rem; font-weight: 800; letter-spacing: .04em; color: var(--wolf-text); }

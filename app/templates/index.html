@@ -1541,8 +1541,28 @@
             .pg-head-l { order: 1; max-width: 100%; }
             .pg-head-r { order: 3; }
         }
-        .pg-time { font-size: .7rem; color: var(--wolf-muted); }
-        .pg-time b { color: var(--wolf-text); }
+        .pg-time { color: var(--wolf-muted); }
+        .pg-time b { color: var(--wolf-text); font-weight: 700; }
+        /* The meta line is one row of small type with hairline separators, so
+           three unrelated facts read as one strip instead of three widgets. */
+        .pg-sub { display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+                  white-space: normal; }
+        .pg-sep { opacity: .28; }
+        .dotpill {
+            display: inline-flex; align-items: center; gap: 5px;
+            font-size: .6rem; font-weight: 800; letter-spacing: .08em;
+            padding: 2px 8px 2px 6px; border-radius: 999px;
+            border: 1px solid var(--wolf-border); color: var(--wolf-muted);
+            background: rgba(255,255,255,.04);
+        }
+        .dotpill::before {
+            content: ""; width: 5px; height: 5px; border-radius: 50%;
+            background: currentColor; box-shadow: 0 0 6px currentColor;
+        }
+        .dotpill.idle { color: var(--long); border-color: rgba(46,232,138,.32);
+                        background: rgba(46,232,138,.08); }
+        .dotpill.busy { color: var(--wolf-gold); border-color: rgba(255,210,87,.35);
+                        background: rgba(255,210,87,.09); }
 
         .bento { display: grid; gap: 14px; margin-bottom: 14px; }
         .bento-hero { grid-template-columns: minmax(0, 1.15fr) minmax(0, 1.25fr) minmax(0, .95fr); }
@@ -1740,7 +1760,18 @@
             {% include '_nav.html' %}
             <div class="pg-head-l">
                 <h1 class="pg-title">Market Overview</h1>
-                <div class="pg-sub">Scanning top {{ scan_limit }} · trading top {{ trade_limit }} · 1h timeframe · <b>{{ user.username|upper }}</b></div>
+                <!-- Status lives WITH the title, not among the buttons. It is
+                     information about this page, and mixing it into the action
+                     group made a row of five things with no hierarchy — you
+                     had to read all of them to find the one you could press. -->
+                <div class="pg-sub">
+                    <span id="bot-status-badge"><span class="dotpill idle">待命中</span></span>
+                    <span class="pg-sep">·</span>
+                    <span>Top {{ scan_limit }} 掃描 · {{ trade_limit }} 交易 · 1h</span>
+                    <span class="pg-sep">·</span>
+                    <span class="pg-time">更新 <b id="last-update">{{ last_update }}</b>
+                        <span id="scan-age" class="scan-age"></span></span>
+                </div>
             </div>
             <!-- 🔍 幣種分析 search. Types a ticker, opens the SAME pop-out the
                  OI/flip cards use — no new analysis code, no second window
@@ -1754,12 +1785,8 @@
                 <div class="pgs-sugg" id="pgs-sugg" role="listbox"></div>
             </div>
             <div class="pg-head-r">
-                <span id="bot-status-badge">
-                    <span class="badge bg-success" style="font-size:.65rem;">BOT IDLE</span>
-                </span>
-                <span class="pg-time">Updated <b id="last-update">{{ last_update }}</b> <span id="scan-age" class="scan-age"></span></span>
-                <button class="btn btn-ghost" onclick="openStrategyModal()">Rules</button>
-                <button class="btn btn-wolf refresh-btn" onclick="fetchLivePrices()">↻ Refresh</button>
+                <button class="btn btn-ghost" onclick="openStrategyModal()">規則</button>
+                <button class="btn btn-wolf refresh-btn" onclick="fetchLivePrices()">↻ 更新</button>
             </div>
         </header>
 
@@ -3713,10 +3740,13 @@
                 const data = await response.json();
 
                 const badgeEl = document.getElementById('bot-status-badge');
+                // Same pill as the server rendered — the JS used to replace it
+                // with a Bootstrap badge, so the header changed shape the first
+                // time it polled.
                 if (data.status === 'scanning') {
-                    badgeEl.innerHTML = '<span class="badge bg-warning text-dark pulse-scanning" style="font-size:.65rem;">HUNTING...</span>';
+                    badgeEl.innerHTML = '<span class="dotpill busy pulse-scanning">掃描中</span>';
                 } else {
-                    badgeEl.innerHTML = '<span class="badge bg-success" style="font-size:.65rem;">BOT IDLE</span>';
+                    badgeEl.innerHTML = '<span class="dotpill idle">待命中</span>';
                 }
                 lastAgeSec = data.age_sec; lastAgeAt = Date.now(); lastIntervalMin = data.interval_min;
                 renderScanAge(data.age_sec, data.interval_min);

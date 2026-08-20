@@ -61,7 +61,8 @@
             mask-image: radial-gradient(ellipse 70% 62% at 50% 45%, #000 40%, transparent 78%);
         }
         .hero-in { position: relative; }
-        .hero .icon { font-size: 4rem; filter: drop-shadow(0 0 18px rgba(255,210,87,.30)); }
+        .hero .icon { width: 96px; height: 96px; display: block; margin: 0 auto;
+                      filter: drop-shadow(0 0 26px rgba(255,210,87,.34)); }
         .hero h1 { font-weight: 900; letter-spacing: -1px; font-size: 2.1rem; margin: 8px 0 4px; }
         /* The old two-tone rule targeted a <span> that no longer exists — and
            then accidentally matched the kinetic word masks, colouring the
@@ -166,7 +167,7 @@
            undercut the one thing it is selling. #}
         <canvas id="hero-field" aria-hidden="true"></canvas>
         <div class="hero-in">
-            <div class="icon">🐺</div>
+            <img class="icon" src="/static/logo.svg?v={{ asset_ver }}" alt="Wolf Scanner" width="96" height="96">
             <h1 data-kinetic>WOLF SCANNER</h1>
             <p class="tag">24/7 自動化加密貨幣交易訊號 — 進場 · 停損 · 目標，一則訊息全給你</p>
             <div class="honest">我們公開輸單，不只貼贏單</div>

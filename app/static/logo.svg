@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Wolf Scanner">
+  <!-- Wolf Scanner mark.
+       ONE path, cut with evenodd so the eyes and nose are HOLES rather than
+       stacked shapes — that is what lets the mark sit on any background and
+       shrink to a 16px favicon without its pieces separating.
+       Proportions are the whole job: the first pass flared the ears and
+       stopped the muzzle short, which reads as a fox. A wolf is narrow, with
+       upright ears set close and a long snout. -->
+  <defs>
+    <linearGradient id="wsg" x1="0.2" y1="0" x2="0.6" y2="1">
+      <stop offset="0" stop-color="#ffeaa7"/>
+      <stop offset="0.45" stop-color="#ffd257"/>
+      <stop offset="1" stop-color="#cf8f16"/>
+    </linearGradient>
+  </defs>
+  <path fill="url(#wsg)" fill-rule="evenodd" d="
+    M32 61 L22 46 L11 32 L13 3 L26 19 H38 L51 3 L53 32 L42 46 Z
+    M18 27.5 L29 33 L20 37 Z
+    M46 27.5 L35 33 L44 37 Z
+    M32 53 L28.5 48.5 H35.5 Z
+  "/>
+</svg>
