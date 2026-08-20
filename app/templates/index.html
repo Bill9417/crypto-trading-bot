@@ -167,6 +167,46 @@
                         line-height:1.6; }
         .picks-legend b { color:var(--wolf-champagne,#f0d49a); font-weight:700; }
         .picks-legend .hd { display:block; margin-bottom:3px; opacity:.85; }
+        /* 🧭 專區 navigator */
+        .zones-nav {
+            display:flex; align-items:flex-start; gap:0; flex-wrap:wrap;
+            margin:0 0 14px; padding:10px 4px 4px;
+            border-top:1px solid var(--wolf-border);
+            border-bottom:1px solid var(--wolf-border);
+            overflow-x:auto; -webkit-overflow-scrolling:touch;
+        }
+        .zn-group { display:flex; flex-direction:column; gap:5px; padding:0 14px;
+                    border-left:1px solid rgba(255,255,255,.07); }
+        .zn-group:first-of-type { border-left:0; padding-left:8px; }
+        .zn-label { font-size:.58rem; font-weight:800; letter-spacing:.14em;
+                    color:var(--wolf-champagne); opacity:.72; text-transform:uppercase;
+                    white-space:nowrap; }
+        .zn-items { display:flex; gap:4px; flex-wrap:wrap; }
+        .zn-tab, .zn-all {
+            font-family:inherit; font-size:.72rem; font-weight:700; cursor:pointer;
+            padding:6px 11px; border-radius:9px; white-space:nowrap;
+            color:var(--wolf-muted); background:transparent;
+            border:1px solid transparent; text-decoration:none;
+            transition:color .15s, background .15s, border-color .15s;
+        }
+        .zn-tab:hover, .zn-all:hover { color:var(--wolf-text); background:rgba(255,255,255,.05); }
+        .zn-tab.on, .zn-all.on {
+            color:var(--wolf-gold);
+            background:linear-gradient(180deg, rgba(255,210,87,.16), rgba(255,210,87,.05));
+            border-color:rgba(255,210,87,.32);
+        }
+        .zn-all { align-self:center; margin-right:6px; }
+        .zn-link { color:var(--wolf-muted); }
+        /* Filtering hides panels; the layout editor must still show all of
+           them, or you cannot re-order something you have filtered away. */
+        body.zone-filtering .page-wrap > [data-card]:not(.zn-show) { display:none; }
+        body.layout-editing .page-wrap > [data-card] { display:block !important; }
+        @media (max-width:820px) {
+            .zn-group { padding:0 10px; }
+            .zn-label { font-size:.54rem; }
+            .zn-tab, .zn-all { font-size:.68rem; padding:5px 9px; }
+        }
+
         .layout-scope { display:none; font-size:.66rem; color:var(--wolf-amber,#f59e0b); }
         body.layout-editing .layout-scope { display:inline; }
         .layout-list { display:none; flex-direction:column; gap:6px; width:100%;
@@ -1789,6 +1829,38 @@
                 <button class="btn btn-wolf refresh-btn" onclick="fetchLivePrices()">↻ 更新</button>
             </div>
         </header>
+
+        <!-- 🧭 專區 — grouped navigator over the panels below.
+             The board is sixteen panels of scroll; this jumps to the one you
+             came for. It FILTERS the existing sections rather than rendering
+             anything itself, so a panel can never appear twice or drift from
+             its tab. Built from dashboard_layout.GROUPS, which a test forces
+             to cover every card. -->
+        {% if nav_groups %}
+        <nav class="zones-nav" id="zones-nav" aria-label="專區">
+            <button type="button" class="zn-all on" data-zone="">全部</button>
+            {% for title, items in nav_groups %}
+            <div class="zn-group">
+                <div class="zn-label">{{ title }}</div>
+                <div class="zn-items">
+                    {% for cid, label in items %}
+                    <button type="button" class="zn-tab" data-zone="{{ cid }}">{{ label }}</button>
+                    {% endfor %}
+                </div>
+            </div>
+            {% endfor %}
+            {% for title, items in nav_links %}
+            <div class="zn-group">
+                <div class="zn-label">{{ title }}</div>
+                <div class="zn-items">
+                    {% for href, label in items %}
+                    <a class="zn-tab zn-link" href="{{ href }}">{{ label }} ↗</a>
+                    {% endfor %}
+                </div>
+            </div>
+            {% endfor %}
+        </nav>
+        {% endif %}
 
         <!-- Health banners — shown ONLY when something needs attention (the
              all-clear "Trading Allowed" strip was removed 2026-07-05, user
@@ -4834,6 +4906,56 @@
     setInterval(load, 120000);
 })();
 </script>
+<script>
+/* 🧭 專區 filter. Shows one panel at a time, or all of them.
+ *
+ * It only ever toggles a class on sections that already exist — nothing is
+ * rendered here, so a panel cannot appear twice or fall out of step with its
+ * tab. The choice is remembered, because the whole point is arriving straight
+ * at the board you use. */
+(function () {
+    var NAV = document.getElementById('zones-nav');
+    if (!NAV) return;
+    var KEY = 'wolfZone';
+    var panels = function () {
+        return document.querySelectorAll('.page-wrap > [data-card]');
+    };
+
+    function apply(zone) {
+        var any = false;
+        Array.prototype.forEach.call(panels(), function (el) {
+            var hit = !zone || el.getAttribute('data-card') === zone;
+            el.classList.toggle('zn-show', hit);
+            if (hit) any = true;
+        });
+        // A filter that empties the page is worse than no filter: the panel
+        // may simply be hidden in the layout editor. Fall back to everything
+        // and drop the stored choice rather than showing a blank board.
+        if (zone && !any) { zone = ''; apply(''); return; }
+        document.body.classList.toggle('zone-filtering', !!zone);
+        Array.prototype.forEach.call(NAV.querySelectorAll('[data-zone]'), function (b) {
+            b.classList.toggle('on', (b.getAttribute('data-zone') || '') === (zone || ''));
+        });
+        try { zone ? localStorage.setItem(KEY, zone) : localStorage.removeItem(KEY); } catch (e) { }
+    }
+
+    NAV.addEventListener('click', function (e) {
+        var b = e.target.closest && e.target.closest('[data-zone]');
+        if (!b) return;                       // the ↗ page links fall through
+        e.preventDefault();
+        var z = b.getAttribute('data-zone') || '';
+        // Tapping the active tab clears it — otherwise the only way back to
+        // the full board is to find 全部, which is off to the left on a phone.
+        apply(b.classList.contains('on') ? '' : z);
+        if (z) window.scrollTo({ top: 0, behavior: 'smooth' });
+    });
+
+    var saved = '';
+    try { saved = localStorage.getItem(KEY) || ''; } catch (e) { }
+    apply(saved);
+})();
+</script>
+
 <!-- 幣種 pop-out. Markup lives here; the strips only need to link to /coin. -->
 <div class="coin-modal" id="coin-modal" role="dialog" aria-modal="true" aria-label="幣種分析">
     <div class="cm-back" data-close></div>

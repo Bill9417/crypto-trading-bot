@@ -70,9 +70,16 @@ def test_the_icons_were_regenerated_with_the_mark():
 
 def test_the_header_groups_status_with_the_title_not_the_buttons():
     h = _client().get("/").get_data(as_text=True)
-    head = h[h.index('class="pg-head"'):h.index('class="status-row"')]
-    left = head[head.index('class="pg-head-l"'):head.index('class="pg-head-r"')]
-    right = head[head.index('class="pg-head-r"'):]
+    # The action group is bounded by the </header> that comes AFTER it — not
+    # by whatever markup follows the header (the 專區 navigator moved in there
+    # and put six unrelated buttons inside "the action group"), and not by the
+    # FIRST </header> either, because _nav.html's mobile bar is itself a
+    # <header> nested above this one.
+    start = h.index('class="pg-head"')
+    rstart = h.index('class="pg-head-r"', start)
+    end = h.index("</header>", rstart)
+    left = h[h.index('class="pg-head-l"', start):rstart]
+    right = h[rstart:end]
     # status is information about the page…
     assert 'id="bot-status-badge"' in left and 'id="last-update"' in left
     # …and the action group holds only things you can press.

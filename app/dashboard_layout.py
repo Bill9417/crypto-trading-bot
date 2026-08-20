@@ -55,6 +55,49 @@ CARDS = (
 CARD_IDS = tuple(c[0] for c in CARDS)
 CARD_TITLE = dict(CARDS)
 
+# ── 專區 — the grouped navigator across the top of the dashboard ─────────────
+# The board is one long scroll of sixteen panels; grouping them lets you jump
+# to the one you came for. Short tab labels on purpose — the full title is on
+# the panel itself, and a tab strip that wraps to three rows is the thing it
+# was meant to replace.
+#
+# Derived from CARDS, not a second list: GROUPS names ids, and
+# assert_groups_cover_every_card() fails the suite if a panel is added without
+# a home or ends up in two. A navigator that silently omits a panel is worse
+# than no navigator, because the panel is still there and now looks missing.
+GROUPS = (
+    ("幣種專區", (("oi", "OI 異常"), ("whale", "巨鯨"), ("zones", "供需區"),
+                  ("flips", "壓力翻支撐"), ("coins", "主流幣"), ("liqmap", "清算地圖"))),
+    ("訊號專區", (("picks", "綜合前三"), ("s4", "S4 雷達"), ("entries", "進場候選"),
+                  ("signals", "訊號脈動"), ("hunting", "獵捕中"), ("radar", "動能雷達"))),
+    ("行情專區", (("pulse", "市場脈動"), ("breadth", "廣度"), ("briefing", "今日簡報"))),
+    ("新聞專區", (("news", "即時新聞"),)),
+)
+
+# Destinations that are pages rather than dashboard panels. They sit in the
+# same strip because "where do I find the US stocks" is the same question, and
+# sending someone hunting through the sidebar for it is the failure this is
+# fixing.
+GROUP_LINKS = (
+    ("美股專區", (("/us", "美股進場"), ("/tw", "台股進場"),
+                  ("/stocks", "市場看板"), ("/universe", "3D 宇宙"))),
+)
+
+
+def assert_groups_cover_every_card() -> None:
+    """Every panel has exactly one home. Raises with the offenders named."""
+    seen = [cid for _, items in GROUPS for cid, _ in items]
+    missing = [c for c in CARD_IDS if c not in seen]
+    dupes = sorted({c for c in seen if seen.count(c) > 1})
+    unknown = [c for c in seen if c not in CARD_IDS]
+    if missing or dupes or unknown:
+        raise AssertionError(
+            f"dashboard groups are wrong — missing: {missing}, "
+            f"duplicated: {dupes}, unknown ids: {unknown}")
+
+
+assert_groups_cover_every_card()
+
 _lock = threading.Lock()
 
 

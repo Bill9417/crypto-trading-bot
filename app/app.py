@@ -2072,14 +2072,25 @@ def index():
         _lay = dashboard_layout.load(current_user.get_id())
         layout_css = dashboard_layout.style_block(_lay)
         layout_cards = dashboard_layout.cards_for_editor(_lay)
+        # Only the panels this user actually has. A navigator offering a tab
+        # for a card someone hid in the layout editor sends them to a blank
+        # screen, which reads as a broken page rather than a hidden panel.
+        _visible = set(_lay.get("order") or []) - set(_lay.get("hidden") or [])
+        nav_groups = [
+            (title, [(cid, lab) for cid, lab in items if cid in _visible])
+            for title, items in dashboard_layout.GROUPS]
+        nav_groups = [(t, i) for t, i in nav_groups if i]
+        nav_links = [(t, list(i)) for t, i in dashboard_layout.GROUP_LINKS]
     except Exception as e:  # noqa: BLE001 — a layout must never break the page
         print(f"Dashboard layout error: {e}")
-        layout_css, layout_cards = "", []
+        layout_css, layout_cards, nav_groups, nav_links = "", [], [], []
 
     return render_template(
         "index.html", 
         layout_css=layout_css,
         layout_cards=layout_cards,
+        nav_groups=nav_groups,
+        nav_links=nav_links,
         signals=data["signals"], 
         last_update=data["last_update"],
         symbol_limit=TOP_SYMBOL_LIMIT,
