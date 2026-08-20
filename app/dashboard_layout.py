@@ -44,6 +44,7 @@ CARDS = (
     ("radar", "🚀 Pump Radar"),
     ("flips", "🚀 壓力翻支撐"),
     ("zones", "📦 供需區進場"),
+    ("sectors", "🧩 板塊"),
     ("oi", "🐋 OI 異常"),
     ("whale", "🐳 Whale Positioning"),
     ("liqmap", "💥 Liquidation Map"),
@@ -66,7 +67,7 @@ CARD_TITLE = dict(CARDS)
 # a home or ends up in two. A navigator that silently omits a panel is worse
 # than no navigator, because the panel is still there and now looks missing.
 GROUPS = (
-    ("幣種專區", (("oi", "OI 異常"), ("whale", "巨鯨"), ("zones", "供需區"),
+    ("幣種專區", (("oi", "OI 異常"), ("sectors", "板塊"), ("whale", "巨鯨"), ("zones", "供需區"),
                   ("flips", "壓力翻支撐"), ("coins", "主流幣"), ("liqmap", "清算地圖"))),
     ("訊號專區", (("picks", "綜合前三"), ("s4", "S4 雷達"), ("entries", "進場候選"),
                   ("signals", "訊號脈動"), ("hunting", "獵捕中"), ("radar", "動能雷達"))),

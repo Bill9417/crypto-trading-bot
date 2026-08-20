@@ -167,6 +167,22 @@
                         line-height:1.6; }
         .picks-legend b { color:var(--wolf-champagne,#f0d49a); font-weight:700; }
         .picks-legend .hd { display:block; margin-bottom:3px; opacity:.85; }
+        /* 🧩 板塊 */
+        .sect-row { display:grid; grid-template-columns:170px 1fr 68px;
+                    grid-template-areas:'name bar val' 'sub sub sub';
+                    align-items:center; gap:4px 10px; padding:7px 0;
+                    border-bottom:1px solid rgba(255,255,255,.05); }
+        .sect-row:last-child { border-bottom:0; }
+        .sect-name { grid-area:name; font-size:.78rem; font-weight:800; }
+        .sect-n { font-size:.6rem; font-weight:600; color:var(--wolf-muted); margin-left:6px; }
+        .sect-bar { grid-area:bar; height:7px; border-radius:4px;
+                    background:rgba(255,255,255,.05); overflow:hidden; }
+        .sect-bar i { display:block; height:100%; border-radius:4px; }
+        .sect-val { grid-area:val; text-align:right; font-size:.82rem; font-weight:800;
+                    font-variant-numeric:tabular-nums; }
+        .sect-sub { grid-area:sub; font-size:.63rem; color:var(--wolf-muted); }
+        @media (max-width:620px){ .sect-row { grid-template-columns:110px 1fr 60px; } }
+
         /* 🧭 專區 navigator */
         .zones-nav {
             display:flex; align-items:flex-start; gap:0; flex-wrap:wrap;
@@ -2229,6 +2245,58 @@
         })();
         </script>
 
+
+        <!-- 🧩 板塊 — which corner of crypto is moving. MEDIAN per sector,
+             not mean: one coin at +80% drags a mean up ten points and makes a
+             flat sector look like a rotation. Coverage is printed because
+             "迷因 is strongest" means something different when a third of the
+             board was never classified. -->
+        <section class="analytics-panel" data-card="sectors">
+            <div class="analytics-head">
+                <div>
+                    <div class="analytics-title">🧩 板塊 <span style="text-transform:none;letter-spacing:0;font-weight:600;opacity:.7;">24h 各類別中位漲跌</span></div>
+                    <div class="analytics-subtitle" id="sector-sub">看的是「典型成員」漲多少 —— 用中位數，一檔暴衝不會拉高整個板塊</div>
+                </div>
+            </div>
+            <div id="sector-body"><div class="analytics-subtitle">載入中…</div></div>
+        </section>
+        <script>
+        (function () {
+            function esc(t){return String(t==null?'':t).replace(/[&<>"]/g,function(c){
+                return ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]);});}
+            function pct(v){v=Number(v)||0;return (v>0?'+':'')+v.toFixed(2)+'%';}
+            function paint(d){
+                var el=document.getElementById('sector-body'); if(!el) return;
+                var rows=(d&&d.sectors)||[];
+                if(!rows.length){ el.innerHTML='<div class="analytics-subtitle">'+
+                    (d&&d.error?'載入失敗':'資料不足')+'</div>'; return; }
+                // Scale the bars to the biggest absolute move on the board, so
+                // a +2% day is not drawn like a +20% one.
+                var mx=Math.max.apply(null,rows.map(function(r){return Math.abs(r.median)}))||1;
+                var h=rows.map(function(r){
+                    var up=r.median>=0, w=Math.max(2,Math.abs(r.median)/mx*100);
+                    var col=up?'var(--long)':'var(--short)';
+                    return '<div class="sect-row">'+
+                      '<div class="sect-name">'+esc(r.sector)+
+                        '<span class="sect-n">'+r.n+' 檔</span></div>'+
+                      '<div class="sect-bar"><i style="width:'+w+'%;background:'+col+'"></i></div>'+
+                      '<div class="sect-val" style="color:'+col+'">'+pct(r.median)+'</div>'+
+                      '<div class="sect-sub">漲 '+r.up+'/'+r.n+
+                        ' · 最強 '+esc(r.best.base)+' '+pct(r.best.change_pct)+'</div>'+
+                      '</div>';
+                }).join('');
+                h+='<div class="analytics-subtitle" style="margin-top:8px;opacity:.7">'+
+                   '取成交額前 '+(d.universe||0)+' 檔加密永續（美股永續已排除 '+(d.excluded_tradfi||0)+' 檔）'+
+                   '，其中 '+(d.coverage_pct||0)+'% 有分類；未分類 '+(d.unmapped||0)+' 檔不列入。</div>';
+                el.innerHTML=h;
+            }
+            function load(){ if(document.hidden) return;
+                fetch('/api/sectors').then(function(r){return r.ok?r.json():null;})
+                    .then(paint).catch(function(){}); }
+            load();
+            if (window.wolfPoll) wolfPoll(load, 120000); else setInterval(load, 120000);
+        })();
+        </script>
 
         <!-- 📦 供需區進場 (SELL / LONG at the box). Price trades back INTO a
              zone it has not yet closed through: sell at supply, buy at demand.

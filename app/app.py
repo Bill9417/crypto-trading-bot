@@ -4040,6 +4040,41 @@ def api_zones():
                         "error": str(e)[:150]}), 200
 
 
+@app.route("/api/sectors")
+@login_required
+def api_sectors():
+    """🧩 板塊 — median 24h move per crypto sector.
+
+    Built on the futures tickers market_intel already caches, so polling this
+    costs no exchange call. Restricted to the most-traded names because that
+    is where the curated sector map has coverage — reporting a sector from the
+    long tail of week-old listings would be a bucket of noise wearing a
+    sector's name.
+    """
+    try:
+        import market_intel
+        import sectors
+        rows = (market_intel.binance_futures(top_n=300) or {}).get("rows") or []
+        skip = sectors.tradfi_bases()
+        crypto = [r for r in rows
+                  if sectors.normalise(r.get("base")) not in skip
+                  and (r.get("base") or "").upper() not in skip]
+        crypto.sort(key=lambda r: -(r.get("volume_usdt") or 0))
+        top = crypto[:int(request.args.get("n") or 120)]
+        out = sectors.board(top, exclude=skip)
+        # The route drops the stock perps BEFORE board() sees them, so board's
+        # own counter reads 0 and the page said "已排除 0 檔" while 50 had in
+        # fact been removed upstream. Report where the filtering happened.
+        out["excluded_tradfi"] = len(rows) - len(crypto)
+        out["universe"] = len(top)
+        out["coverage_pct"] = (round(out["mapped"] / len(top) * 100)
+                               if top else 0)
+        return jsonify(_json_safe(out))
+    except Exception as e:  # noqa: BLE001 — a board must never 500 the page
+        print(f"[sectors] failed: {e}")
+        return jsonify({"sectors": [], "error": str(e)[:150]}), 200
+
+
 @app.route("/api/crowd_radar")
 @login_required
 def api_crowd_radar():
