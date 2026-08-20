@@ -167,6 +167,31 @@
                         line-height:1.6; }
         .picks-legend b { color:var(--wolf-champagne,#f0d49a); font-weight:700; }
         .picks-legend .hd { display:block; margin-bottom:3px; opacity:.85; }
+        /* 👀 每日觀察清單 */
+        .watch-row { display:grid; grid-template-columns:26px 84px 74px 1fr;
+                     align-items:center; gap:10px; padding:9px 2px;
+                     border-bottom:1px solid rgba(255,255,255,.05);
+                     text-decoration:none; color:inherit; }
+        .watch-row:last-of-type { border-bottom:0; }
+        .watch-row:hover { background:rgba(255,255,255,.03); }
+        .watch-rank { font-size:.7rem; font-weight:900; color:var(--wolf-gold);
+                      text-align:center; opacity:.85; }
+        .watch-base { font-size:.86rem; font-weight:800; letter-spacing:.02em; }
+        .watch-eng { font-size:.62rem; font-weight:800; text-align:center;
+                     padding:2px 7px; border-radius:999px;
+                     color:var(--wolf-champagne);
+                     border:1px solid rgba(240,212,154,.28);
+                     background:rgba(240,212,154,.09); }
+        .watch-why { font-size:.68rem; color:var(--wolf-muted); }
+        .watch-why i { font-style:normal; opacity:.75; }
+        /* Two engines pointing opposite ways is not two engines agreeing. */
+        .watch-eng.conflict { color:var(--wolf-orange); border-color:rgba(251,146,60,.35);
+                              background:rgba(251,146,60,.10); }
+        @media (max-width:620px){
+            .watch-row { grid-template-columns:22px 66px 66px 1fr; gap:7px; }
+            .watch-why { font-size:.62rem; }
+        }
+
         /* 🧩 板塊 */
         .sect-row { display:grid; grid-template-columns:170px 1fr 68px;
                     grid-template-areas:'name bar val' 'sub sub sub';
@@ -2245,6 +2270,60 @@
         })();
         </script>
 
+
+        <!-- 👀 每日觀察清單. Distinct from 綜合前三名, which is a LIVE snapshot
+             that changes every sweep. This accumulates across a 台北 day, so a
+             coin earns its place by being flagged repeatedly by DIFFERENT
+             engines over hours. Ranked by breadth, never by a blended score —
+             every one of these engines has been measured individually as
+             somewhere between negative and indistinguishable from zero, so a
+             weighted composite of them would be a made-up number. -->
+        <section class="analytics-panel" data-card="watch">
+            <div class="analytics-head">
+                <div>
+                    <div class="analytics-title">👀 每日觀察清單 <span style="text-transform:none;letter-spacing:0;font-weight:600;opacity:.7;">今天一直被點名的幣</span></div>
+                    <div class="analytics-subtitle" id="watch-sub">看的是「幾個獨立引擎點名、點了幾次」，不是分數 —— 只是觀察名單，沒有進出場</div>
+                </div>
+            </div>
+            <div id="watch-body"><div class="analytics-subtitle">載入中…</div></div>
+        </section>
+        <script>
+        (function () {
+            function esc(t){return String(t==null?'':t).replace(/[&<>"]/g,function(c){
+                return ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]);});}
+            function paint(d){
+                var el=document.getElementById('watch-body'); if(!el) return;
+                var rows=(d&&d.top)||[];
+                if(!rows.length){
+                    el.innerHTML='<div class="analytics-subtitle">'+
+                      (d&&d.error?'載入失敗':'今天還沒有累積到 —— 掃描器剛開始跑')+'</div>';
+                    return;
+                }
+                var h=rows.map(function(r,i){
+                    return '<a class="watch-row" href="/coin/'+encodeURIComponent(r.base)+'">'+
+                      '<span class="watch-rank">'+(i+1)+'</span>'+
+                      '<span class="watch-base">'+esc(r.base)+'</span>'+
+                      '<span class="watch-eng'+(r.conflict?' conflict':'')+'">'+
+                        (r.conflict ? '⚠ 方向分歧'
+                                    : r.engines+' 個引擎'+(r.side==='short'?' 空':r.side==='long'?' 多':''))+
+                        '</span>'+
+                      '<span class="watch-why">'+r.why.map(function(w){
+                          return esc(w.label)+(w.note?(' <i>'+esc(w.note)+'</i>'):'');
+                      }).join(' · ')+'</span>'+
+                      '</a>';
+                }).join('');
+                h+='<div class="analytics-subtitle" style="margin-top:8px;opacity:.7">'+
+                   esc(d.date||'')+' 累積 · 今天追蹤 '+(d.tracked||0)+' 檔 · '+
+                   '排序看「幾個獨立引擎」，不是加權分數。這是觀察名單，不是進場訊號。</div>';
+                el.innerHTML=h;
+            }
+            function load(){ if(document.hidden) return;
+                fetch('/api/daily_watch').then(function(r){return r.ok?r.json():null;})
+                    .then(paint).catch(function(){}); }
+            load();
+            if (window.wolfPoll) wolfPoll(load, 300000); else setInterval(load, 300000);
+        })();
+        </script>
 
         <!-- 🧩 板塊 — which corner of crypto is moving. MEDIAN per sector,
              not mean: one coin at +80% drags a mean up ten points and makes a

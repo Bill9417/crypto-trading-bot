@@ -4040,6 +4040,22 @@ def api_zones():
                         "error": str(e)[:150]}), 200
 
 
+@app.route("/api/daily_watch")
+@login_required
+def api_daily_watch():
+    """👀 每日觀察清單 — the coins that kept showing up today.
+
+    Reads the engines' state FILES only, so a page load costs no exchange
+    call, and the tally advances on a fixed cadence rather than per request.
+    """
+    try:
+        import daily_watch
+        return jsonify(_json_safe(daily_watch.top()))
+    except Exception as e:  # noqa: BLE001 — a watchlist must never 500 a page
+        print(f"[watch] failed: {e}")
+        return jsonify({"top": [], "error": str(e)[:150]}), 200
+
+
 @app.route("/api/sectors")
 @login_required
 def api_sectors():
