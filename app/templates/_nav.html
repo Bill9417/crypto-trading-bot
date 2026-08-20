@@ -138,6 +138,9 @@
 {# wolfPoll() — hidden-tab-aware setInterval. Loaded here (nav sits near the top
    of every page's body) so it is defined before any page's polling script. #}
 <script src="{{ url_for('static', filename='poll.js') }}?v={{ asset_ver }}"></script>
+{# Motion. Deferred: it decorates content, so it must never be in front of
+   painting it. #}
+<script defer src="{{ url_for('static', filename='motion.js') }}?v={{ asset_ver }}"></script>
 <script>
 /* The body offset lives in ONE css rule keyed off this class, so public pages
    (login / welcome / tw / us) that never include this partial stay full-width. */

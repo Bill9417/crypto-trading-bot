@@ -103,6 +103,29 @@ html { scrollbar-width: thin; scrollbar-color: rgba(255, 255, 255, 0.18) transpa
 ::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.14); border-radius: 999px; }
 ::-webkit-scrollbar-thumb:hover { background: rgba(255, 210, 87, 0.35); }
 
+/* ── Motion ───────────────────────────────────────────────────────────────
+   Arrival and change only; nothing loops and nothing moves while idle. The
+   end state is the DEFAULT and .will-reveal is what pulls an element back —
+   so if motion.js never loads, every card is simply already in place rather
+   than invisible. A dashboard that depends on JS to show its content is one
+   broken script away from a blank page. */
+.will-reveal {
+    opacity: 0; transform: translateY(10px);
+    transition: opacity .42s cubic-bezier(.22,.61,.36,1),
+                transform .42s cubic-bezier(.22,.61,.36,1);
+    will-change: opacity, transform;
+}
+.will-reveal.is-in { opacity: 1; transform: none; }
+/* Once it has arrived, drop the hint — a page holding will-change on fifty
+   cards keeps fifty layers alive for nothing. */
+.will-reveal.is-in { will-change: auto; }
+
+@media (prefers-reduced-motion: reduce) {
+    .will-reveal, .will-reveal.is-in {
+        opacity: 1 !important; transform: none !important; transition: none !important;
+    }
+}
+
 /* ── Global navigation: fixed LEFT SIDEBAR (shared partial _nav.html) ──────
    Redesigned 2026-08-09. The old horizontal pill bar had 16 destinations and
    wrapped to two rows on a laptop / side-scrolled on a phone, which hid half

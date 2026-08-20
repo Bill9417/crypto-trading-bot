@@ -97,6 +97,10 @@ def test_a_fill_records_ownership(monkeypatch):
     seen = []
     monkeypatch.setattr(strategy_ledger, "record_open",
                         lambda *a, **k: seen.append(a))
+    # Force the gate open: this test is about the LEDGER, not about whether
+    # execution is armed — and since 2026-08-20 the account runs in paper mode,
+    # so open_trade() short-circuits at enabled() before it can record anything.
+    monkeypatch.setattr(E, "enabled", lambda: True)
     monkeypatch.setattr(E, "preflight", lambda *a, **k: (True, "ok"))
     monkeypatch.setattr(E, "_send", lambda *a, **k: {"ok": True, "qty": 1.0})
     out = E.open_trade({"symbol": "ETH/USDT:USDT", "side": "long",
