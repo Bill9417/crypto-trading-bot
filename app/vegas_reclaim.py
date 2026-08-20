@@ -83,7 +83,6 @@ Anti-lookahead, same discipline as breakout_flip and zones:
     measured from the NEXT bar, which is what strategy4_outcomes.settle does
 """
 import os
-import time
 
 TIMEFRAME = os.getenv("VEGAS_TIMEFRAME", "1h")
 

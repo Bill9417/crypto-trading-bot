@@ -9,8 +9,6 @@ the test does not depend on a live exchange.
 import json
 import os
 
-import pytest
-
 import vegas_reclaim as V
 import vegas_outcomes as O
 import vegas_scan as S
