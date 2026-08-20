@@ -533,9 +533,19 @@
 
         function render(d) {
             const eb = document.getElementById('errbar');
-            eb.innerHTML = (d.errors && d.errors.length)
+            // Two different states, said differently. A source we are serving
+            // from cache after a rate limit still has its headlines on the
+            // page; showing it with the same ⚠ as a dead feed was what made a
+            // transient 429 read as a breakage.
+            var bar = (d.errors && d.errors.length)
                 ? '<div class="errbar">⚠ Some sources had issues: ' + d.errors.slice(0, 4).map(esc).join(' · ') + '</div>'
                 : '';
+            var stale = d.news_stale_sources || [];
+            if (stale.length) {
+                bar += '<div class="errbar" style="opacity:.62;border-color:rgba(255,255,255,.10)">'
+                     + '↺ 暫時用快取（對方限流）：' + stale.slice(0, 4).map(esc).join(' · ') + '</div>';
+            }
+            eb.innerHTML = bar;
 
             const fut = d.futures || [];
             const totVol = fut.reduce((a, r) => a + (r.volume_usdt || 0), 0);

@@ -340,14 +340,87 @@ def _pub_ts(item: dict) -> float:
         return 0.0
 
 
-def _news(per_feed: int = 6) -> dict:
-    out = {"items": [], "errors": []}
+# ── Per-feed memory ──────────────────────────────────────────────────────────
+# One publisher rate-limiting us used to cost its headlines entirely AND put a
+# permanent-looking warning on the page: CryptoSlate 429s, the source vanishes
+# from the merged stream, and the reader is told something is broken when the
+# only thing that happened is "not so fast".
+#
+# Two behaviours fix that, and they are the same two this codebase applies to
+# every other flaky feed:
+#   · LAST GOOD — a fetch that fails serves the previous items, aged, rather
+#     than nothing. A missing reading must not silently become an absence.
+#   · BACK OFF — after a 429, stop asking for a while. Retrying a rate limit on
+#     the next 5-minute tick is what earns the next 429; the backoff doubles to
+#     a ceiling and resets on the first success.
+# Disk-backed, so the web process and the scanner share one memory instead of
+# each holding the publisher to its own limit.
+FEED_BACKOFF_SEC = float(os.getenv("NEWS_BACKOFF_SEC", "1800"))
+FEED_BACKOFF_MAX = float(os.getenv("NEWS_BACKOFF_MAX_SEC", "21600"))
+# How old a feed's cached items may be before its absence is worth reporting.
+FEED_STALE_REPORT_SEC = float(os.getenv("NEWS_STALE_REPORT_SEC", "7200"))
+_FEED_STATE_FILE = os.path.join(_DISK_CACHE_DIR, "news_feeds.json")
+
+
+def _feed_state() -> dict:
+    try:
+        with open(_FEED_STATE_FILE, encoding="utf-8") as fh:
+            return json.load(fh) or {}
+    except Exception:  # noqa: BLE001 — missing/corrupt = cold start
+        return {}
+
+
+def _save_feed_state(state: dict) -> None:
+    try:
+        os.makedirs(_DISK_CACHE_DIR, exist_ok=True)
+        tmp = _FEED_STATE_FILE + f".{os.getpid()}.tmp"
+        with open(tmp, "w", encoding="utf-8") as fh:
+            json.dump(state, fh)
+        os.replace(tmp, _FEED_STATE_FILE)
+    except Exception:  # noqa: BLE001 — news must not fail on a cache write
+        pass
+
+
+def _is_rate_limited(exc: Exception) -> bool:
+    return "429" in str(exc) or "too many requests" in str(exc).lower()
+
+
+def _news(per_feed: int = 6, now: float = None) -> dict:
+    now = time.time() if now is None else now
+    state = _feed_state()
+    out = {"items": [], "errors": [], "stale_sources": []}
     for source, url in NEWS_FEEDS:
-        try:
-            xml_text = _get_text(url, timeout=8.0)
-            out["items"].extend(_parse_rss(source, xml_text, per_feed))
-        except Exception as e:  # noqa: BLE001
-            out["errors"].append(f"{source}: {e}")
+        rec = state.get(source) or {}
+        until = float(rec.get("until") or 0)
+        fetched = None
+        if until > now:
+            pass                       # in backoff — do not ask, serve memory
+        else:
+            try:
+                fetched = _parse_rss(source, _get_text(url, timeout=8.0), per_feed)
+                rec = {"items": fetched, "ts": now, "until": 0, "wait": 0}
+            except Exception as e:  # noqa: BLE001
+                if _is_rate_limited(e):
+                    wait = min(max(float(rec.get("wait") or 0) * 2, FEED_BACKOFF_SEC),
+                               FEED_BACKOFF_MAX)
+                    rec = {**rec, "until": now + wait, "wait": wait}
+                else:
+                    rec = {**rec, "err": str(e)[:120]}
+        state[source] = rec
+
+        items = fetched if fetched is not None else (rec.get("items") or [])
+        out["items"].extend(items)
+        if fetched is None:
+            age = now - float(rec.get("ts") or 0)
+            if items and age < FEED_STALE_REPORT_SEC:
+                # Serving memory that is still recent enough to be worth
+                # showing. Not an error — nothing is missing from the page.
+                out["stale_sources"].append(source)
+            else:
+                why = ("rate limited, backing off" if until > now or rec.get("until")
+                       else rec.get("err") or "unavailable")
+                out["errors"].append(f"{source}: {why}")
+    _save_feed_state(state)
     # One merged stream, newest first (unparseable dates keep feed order at the
     # end) — reads like a wire feed instead of blocks grouped by source.
     out["items"].sort(key=_pub_ts, reverse=True)
@@ -791,5 +864,9 @@ def market_intel(top_n: int = 15, pos_n: int = 6) -> dict:
         "calendar": cal.get("events", []),
         "news": nw.get("items", []),
         "news_sentiment": nw.get("sentiment"),
+        # Sources being served from memory after a rate limit. NOT an error —
+        # their headlines are on the page — but the reader is entitled to know
+        # a name is not live rather than being told nothing at all.
+        "news_stale_sources": nw.get("stale_sources") or [],
         "errors": errors,
     }
