@@ -7,8 +7,20 @@ breakout + volume surge on the final candle. This satisfies every S4 filter:
 Donchian breakout + ATR buffer, EMA200 side, ADX≥25 & rising, volume gate.
 """
 import math
+import os
 
 import pytest
+
+# ── One working directory, whichever way pytest was invoked ─────────────────
+# pytest.ini sets testpaths = app/tests, so preflight runs `pytest -q` FROM
+# app/ and every relative open("templates/…") in a test resolves. Run the same
+# suite from the repo root with an explicit path and those same tests raise
+# FileNotFoundError — a green suite and a red one from identical code.
+#
+# Anchoring each call site works and was done twice before drifting again;
+# fixing the cwd fixes the class. app/ is the directory the app itself runs
+# from, so this makes the tests match production rather than the shell.
+os.chdir(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 HOUR_MS = 3_600_000
 

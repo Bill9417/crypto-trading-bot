@@ -12,9 +12,21 @@ the panel itself:
     minutes between deploy and restart. That is not hypothetical: it happened
     when this panel was added.
 """
+import os
 import re
 
 import app as APP
+
+# Anchored to the MODULE, not the process cwd. pytest gets run from app/ (what
+# preflight does) and from the repo root with an explicit path, and a relative
+# open() silently picks whichever it was given — passing in one and raising
+# FileNotFoundError in the other.
+APP_DIR = os.path.dirname(os.path.abspath(APP.__file__))
+
+
+def _tpl(name="strategies.html"):
+    with open(os.path.join(APP_DIR, "templates", name), encoding="utf-8") as f:
+        return f.read()
 
 
 def _client():
@@ -62,8 +74,7 @@ def test_the_rules_quote_the_modules_not_a_second_copy(monkeypatch):
 def test_the_panel_is_guarded_against_a_stale_app_py():
     """Templates hot-reload; app.py does not. Without the guard the page 500s
     on 'dict object has no attribute s4' until someone restarts."""
-    with open("templates/strategies.html", encoding="utf-8") as f:
-        tpl = f.read()
+    tpl = _tpl()
     assert "p.s4 is defined" in tpl, "the panel would 500 on a stale process"
     assert re.search(r"\{%\s*if s4\s*%\}", tpl), "the panel is not conditional"
     # …and nothing inside the panel reaches past the guarded alias.
@@ -88,14 +99,12 @@ def test_it_says_why_nothing_fired():
     breakdown — an ambiguity that has cost this repo three days of silence."""
     st = APP.build_strategies_status()["s4"]
     assert "rejected" in st and "checked" in st
-    with open("templates/strategies.html", encoding="utf-8") as f:
-        tpl = f.read()
+    tpl = _tpl()
     assert "卡在" in tpl and "rejZH" in tpl
 
 
 def test_rejection_reasons_are_translated_but_never_swallowed():
-    with open("templates/strategies.html", encoding="utf-8") as f:
-        tpl = f.read()
+    tpl = _tpl()
     seg = tpl[tpl.index("var S4_REJ"):tpl.index("function renderS4")]
     assert "'no short triangle'" in seg
     # An unknown gate must show as ITSELF rather than disappearing.
