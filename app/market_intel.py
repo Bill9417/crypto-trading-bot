@@ -186,6 +186,57 @@ def binance_futures(top_n: int = 15, ttl: float = 45.0) -> dict:
     return _cached(f"binance:{top_n}", ttl, lambda: _binance_futures(top_n))
 
 
+# How long a tickers snapshot stays fresh. MUST exceed the poll interval of
+# anything that consumes it, or the cache is a decoration: the 板塊 card polls
+# every 120s against a 45s TTL, so it missed 100% of the time by construction
+# and every single poll paid the full cold cost. test_sectors_perf pins this
+# against the interval in the template.
+TICKERS_TTL = float(os.getenv("MARKET_TICKERS_TTL", "300"))
+
+
+def _binance_tickers(top_n: int) -> dict:
+    """Volume / price / 24h change for the top N USDT perps — ONE REST call.
+
+    Separate from _binance_futures on purpose. That function also fetches open
+    interest, and it does so with one call PER SYMBOL: at top_n=300 that is 300
+    sequential REST round-trips and 17.6 measured seconds, during which it
+    holds a waitress worker thread. The 板塊 board reads exactly three fields —
+    base, change_pct, volume_usdt — and never looks at open interest or
+    funding, so all 300 of those calls were bought and thrown away.
+
+    Anything that genuinely needs OI should keep using binance_futures with a
+    small top_n.
+    """
+    out = {"rows": [], "errors": []}
+    try:
+        tickers = _exchange().fetch_tickers()
+    except Exception as e:  # noqa: BLE001
+        out["errors"].append(f"tickers: {e}")
+        return out
+    perps = [(sym, t) for sym, t in tickers.items()
+             if sym.endswith(":USDT") and (t.get("quoteVolume") or 0) > 0]
+    perps.sort(key=lambda kv: float(kv[1].get("quoteVolume", 0) or 0), reverse=True)
+    for sym, t in perps[:top_n]:
+        # None, not 0.0, when the field is absent. A ticker missing its 24h
+        # change is not a coin that did not move, and a sector median built
+        # from fabricated zeros reads "flat" for a sector nobody measured.
+        pct = t.get("percentage")
+        out["rows"].append({
+            "symbol": sym,
+            "base": sym.split("/")[0],
+            "price": float(t.get("last") or t.get("close") or 0) or None,
+            "change_pct": float(pct) if pct is not None else None,
+            "volume_usdt": float(t.get("quoteVolume") or 0),
+        })
+    return out
+
+
+def binance_tickers(top_n: int = 300, ttl: float = None) -> dict:
+    ttl = TICKERS_TTL if ttl is None else ttl
+    return _cached(f"binance_tickers:{top_n}", ttl,
+                   lambda: _binance_tickers(top_n))
+
+
 def _oi_change(symbols: tuple) -> dict:
     """24h open-interest change per symbol from Binance's public futures-data API
     (hourly openInterestHist, no key needed). OI direction vs price direction is

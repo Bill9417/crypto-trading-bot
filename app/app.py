@@ -4081,16 +4081,24 @@ def api_daily_watch():
 def api_sectors():
     """🧩 板塊 — median 24h move per crypto sector.
 
-    Built on the futures tickers market_intel already caches, so polling this
-    costs no exchange call. Restricted to the most-traded names because that
-    is where the curated sector map has coverage — reporting a sector from the
-    long tail of week-old listings would be a bucket of noise wearing a
-    sector's name.
+    Restricted to the most-traded names because that is where the curated
+    sector map has coverage — reporting a sector from the long tail of
+    week-old listings would be a bucket of noise wearing a sector's name.
+
+    Uses binance_TICKERS, not binance_futures. This route used to call
+    binance_futures(top_n=300), which fetches open interest with one REST call
+    PER SYMBOL: 300 round-trips and a measured 17.65 seconds, holding a
+    waitress worker thread for the whole of it, on a card that polls every
+    120 seconds against a 45-second cache — so the cache never hit and every
+    poll paid in full. The board reads base, change_pct and volume_usdt and
+    nothing else, so all 300 of those calls were bought and discarded. The
+    docstring here claimed "costs no exchange call", which is how it survived.
+    Now one call, cached for longer than the poll interval: 2.1s cold, 0s warm.
     """
     try:
         import market_intel
         import sectors
-        rows = (market_intel.binance_futures(top_n=300) or {}).get("rows") or []
+        rows = (market_intel.binance_tickers(top_n=300) or {}).get("rows") or []
         skip = sectors.tradfi_bases()
         crypto = [r for r in rows
                   if sectors.normalise(r.get("base")) not in skip
