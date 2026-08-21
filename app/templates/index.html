@@ -191,13 +191,25 @@
         .watch-eng.conflict { color:var(--wolf-orange); border-color:rgba(251,146,60,.35);
                               background:rgba(251,146,60,.10); }
         @media (max-width:620px){
-            .watch-row { grid-template-columns:22px 66px 66px 1fr; gap:7px; }
-            .watch-why { font-size:.62rem; }
+            /* TWO ROWS on a phone, not four columns.
+               The badge column was a fixed 66px sized for 9.9px text. Enlarging
+               that text (and stopping it wrapping INSIDE the pill) made the pill
+               ~100px wide, so it overflowed its column and the description ran
+               underneath it — the overlap in the 2026-08-21 screenshot. Widening
+               the column instead would leave ~170px for a description that needs
+               the width more than the badge does.
+               Each .watch-row is its own grid, so an `auto` column cannot align
+               across rows either; a fixed width for the badge and a full-width
+               second row is the only version that both fits and lines up. */
+            .watch-row { grid-template-columns:22px 1fr auto; gap:6px 8px; }
+            .watch-eng { justify-self:end; }
+            .watch-why { grid-column:1 / -1; font-size:.7rem; line-height:1.5;
+                         padding-left:30px; }
         }
 
         /* 🧩 板塊 */
         .sect-row { display:grid; grid-template-columns:170px 1fr 68px;
-                    grid-template-areas:'name bar val' 'sub sub sub';
+                    grid-template-areas:'name bar val' 'sub sub sub' 'mem mem mem';
                     align-items:center; gap:4px 10px; padding:7px 0;
                     border-bottom:1px solid rgba(255,255,255,.05); }
         .sect-row:last-child { border-bottom:0; }
@@ -209,7 +221,40 @@
         .sect-val { grid-area:val; text-align:right; font-size:.82rem; font-weight:800;
                     font-variant-numeric:tabular-nums; }
         .sect-sub { grid-area:sub; font-size:.63rem; color:var(--wolf-muted); }
-        @media (max-width:620px){ .sect-row { grid-template-columns:110px 1fr 60px; } }
+        @media (max-width:620px){
+            /* The name column was 110px and had to hold the sector name, the
+               caret AND "N 檔" — so every name over four characters truncated
+               (比特幣生態…, 隱私 3 sh…). The count is redundant here: the line
+               below already reads 漲 12/12, which says N twice over. Drop it
+               and give the name the room. */
+            /* NOTE: the sector column widths are NOT set here — see the
+               phone block near the end of this stylesheet. A second
+               `.sect-row` rule (for /market) is defined further down the file
+               and wins on source order, so a rule written here does nothing
+               at all. That is why every value was still clipped after two
+               attempts to widen it. */
+            .sect-name .sect-n { display:none; }
+            .sect-name { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+        }
+        /* 🧩 tap a sector to see which coins are in it */
+        #sector-body .sect-row { cursor:pointer; }
+        #sector-body .sect-row:hover { background:rgba(255,255,255,.03); }
+        .sect-caret { display:inline-block; margin-right:5px; opacity:.5;
+                      transition:transform .15s; font-size:.7em; }
+        .sect-row.open .sect-caret { transform:rotate(90deg); opacity:.9; }
+        .sect-mem { grid-area:mem; display:none; flex-wrap:wrap; gap:5px;
+                    padding:2px 0 6px; }
+        .sect-row.open .sect-mem { display:flex; }
+        .sect-coin { display:inline-flex; align-items:center; gap:5px;
+                     padding:4px 9px; border-radius:8px; text-decoration:none;
+                     font-size:.72rem; font-weight:700; color:var(--wolf-text);
+                     background:rgba(255,255,255,.045);
+                     border:1px solid rgba(255,255,255,.07); }
+        .sect-coin:hover { background:rgba(255,255,255,.09); }
+        @media (max-width:620px){
+            /* 44px so a coin chip is a thumb target, not a mouse one. */
+            .sect-coin { font-size:.76rem; padding:8px 11px; min-height:38px; }
+        }
 
         /* 🧭 專區 navigator */
         .zones-nav {
@@ -1923,6 +1968,23 @@
                the actual cost of this whole pass, and it is paid here rather
                than by shrinking the text back. */
             .watch-eng { white-space: nowrap; padding: 4px 10px; }
+
+            /* 🧩 Sector rows. Measured: the value cell was 46px holding
+               "+20.85%" at 13.1px, which needs 59 — every row on the board was
+               clipped. The name cell was 82px, which truncated 比特幣生態.
+               Set HERE and not beside the other .sect-row rules, because a
+               second definition for /market sits between them and wins. */
+            #sector-body .sect-row { grid-template-columns: 116px 1fr 66px; }
+            #sector-body .sect-val { white-space: nowrap; }
+
+            /* The last tail, found by measuring computed sizes rather than
+               reading the file — every one of these was still under 10px
+               after two passes that thought they had covered it. */
+            .news-src, .pick-n, .pp-w, .brief-tag, .ct-score, .acct-net,
+            .picks-legend b, .s4d-rej span, .pick-entry i,
+            .trend-dates span { font-size: .72rem; }
+            /* The caret is decoration, but 8.3px makes it a smudge. */
+            .sect-caret { font-size: .8em; }
             /* The tail. Each is only 4-15 elements, but they are the labels on
                the numbers — the part you read rather than glance at. */
             .h-cell, .fl-n, .entry-status, .chip,
@@ -2533,20 +2595,59 @@
                 var h=rows.map(function(r){
                     var up=r.median>=0, w=Math.max(2,Math.abs(r.median)/mx*100);
                     var col=up?'var(--long)':'var(--short)';
-                    return '<div class="sect-row">'+
-                      '<div class="sect-name">'+esc(r.sector)+
+                    // Tappable: a median over N coins is a summary of a bucket
+                    // you cannot open, and "which ones?" is the question the
+                    // row provokes. The members ride in the same payload, so
+                    // opening one costs no request.
+                    var mem=(r.members||[]).map(function(m){
+                        var mu=m.change_pct>=0;
+                        return '<a class="sect-coin" href="/coin/'+encodeURIComponent(m.base)+'">'+
+                          '<b>'+esc(m.base)+'</b>'+
+                          '<span style="color:'+(mu?'var(--long)':'var(--short)')+'">'+
+                          pct(m.change_pct)+'</span></a>';
+                    }).join('');
+                    return '<div class="sect-row" data-sect="'+esc(r.sector)+'" role="button" tabindex="0">'+
+                      '<div class="sect-name"><span class="sect-caret">▸</span>'+esc(r.sector)+
                         '<span class="sect-n">'+r.n+' 檔</span></div>'+
                       '<div class="sect-bar"><i style="width:'+w+'%;background:'+col+'"></i></div>'+
                       '<div class="sect-val" style="color:'+col+'">'+pct(r.median)+'</div>'+
                       '<div class="sect-sub">漲 '+r.up+'/'+r.n+
                         ' · 最強 '+esc(r.best.base)+' '+pct(r.best.change_pct)+'</div>'+
+                      '<div class="sect-mem">'+mem+'</div>'+
                       '</div>';
                 }).join('');
                 h+='<div class="analytics-subtitle" style="margin-top:8px;opacity:.7">'+
                    '取成交額前 '+(d.universe||0)+' 檔加密永續（美股永續已排除 '+(d.excluded_tradfi||0)+' 檔）'+
                    '，其中 '+(d.coverage_pct||0)+'% 有分類；未分類 '+(d.unmapped||0)+' 檔不列入。</div>';
                 el.innerHTML=h;
+                // Re-open whatever was open before the repaint — a poll every
+                // 120s would otherwise close the list under your thumb.
+                OPEN.forEach(function(name){
+                    var row=el.querySelector('.sect-row[data-sect="'+name.replace(/"/g,'\\"')+'"]');
+                    if(row) row.classList.add('open');
+                });
             }
+            var OPEN = [];
+            function toggle(row){
+                if(!row) return;
+                var name=row.getAttribute('data-sect');
+                var on=row.classList.toggle('open');
+                var at=OPEN.indexOf(name);
+                if(on && at<0) OPEN.push(name);
+                if(!on && at>=0) OPEN.splice(at,1);
+            }
+            document.addEventListener('click', function(ev){
+                // A tap on a coin link inside the list must open the coin, not
+                // collapse the sector under it.
+                if(ev.target.closest('.sect-coin')) return;
+                var row=ev.target.closest('#sector-body .sect-row');
+                if(row) toggle(row);
+            });
+            document.addEventListener('keydown', function(ev){
+                if(ev.key!=='Enter' && ev.key!==' ') return;
+                var row=ev.target.closest && ev.target.closest('#sector-body .sect-row');
+                if(row){ ev.preventDefault(); toggle(row); }
+            });
             function load(){ if(document.hidden) return;
                 fetch('/api/sectors')
                     .then(function(r){ return r.ok ? r.json() : {sectors: [], http: r.status}; })

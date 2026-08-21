@@ -259,7 +259,7 @@ window.WOLF_ZH_EN = {
   "這小時": "this hour ",
   "進場價": "Entry",
   "部位。": " .",
-  " 檔": " shown",
+  " 檔": " coins",
   " 次": "×",
   "上升": "rising",
   "上移": "move up",

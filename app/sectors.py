@@ -179,6 +179,17 @@ def board(rows: list, min_members: int = None, min_volume: float = 0.0,
             "volume_usdt": round(sum(float(m.get("volume_usdt") or 0) for m in members)),
             "best": {"base": best["base"], "change_pct": round(float(best["change_pct"]), 2)},
             "worst": {"base": worst["base"], "change_pct": round(float(worst["change_pct"]), 2)},
+            # WHICH coins, not just how many. A median with a member count is a
+            # summary of a bucket you cannot open — asked for 2026-08-21, and
+            # it is the obvious next question the card was provoking and not
+            # answering. Sorted best-first so the list reads the same way the
+            # board does, and carrying the raw base so the card can link
+            # straight to /coin/<base>.
+            "members": [
+                {"base": m["base"],
+                 "change_pct": round(float(m["change_pct"]), 2)}
+                for m in sorted(members, key=lambda x: -x["change_pct"])
+            ],
         })
     out.sort(key=lambda s: -s["median"])
     return {

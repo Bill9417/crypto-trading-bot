@@ -321,7 +321,12 @@ SUB_OK = {
     " 根（近 ": " bars (last ", " 天） · 依「未平倉量增加」加權 · 目前 OI $":
         "d) · weighted by OI increase · current OI $",
     " 檔也符合 —— 這裡只列量能最大的 ":
-        " also qualify — only the strongest ", " 檔": " shown",
+        " also qualify — only the strongest ",
+    # 檔 is a COUNTER WORD ("items"), and it only means "shown" in the one
+    # phrase above. Mapping the bare counter to " shown" turned "scanned 527
+    # coins" into "scanned 527 shown" and "3 檔" into "3 shown" everywhere it
+    # appeared. The general form gets the general meaning.
+    " 檔": " coins",
     "滑過看進場價與損益": "hover for entry and P&L",
     "都在區間 · 賽克斯": "both in the zone · Sykes",
     "= 5 分線也判斷在同一個區間": "= the 5m read agrees on the same zone",
