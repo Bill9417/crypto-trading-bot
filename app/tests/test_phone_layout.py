@@ -49,6 +49,20 @@ def page():
         for (_d, _p, name), ck in client._cookies.items():
             pg.context.add_cookies([{"name": name, "value": ck.value,
                                      "domain": "127.0.0.1", "path": "/"}])
+        # The page is MODULE-scoped and keeps polling for the whole file. The
+        # conftest guard that blocks strategy3_exec.client() is FUNCTION-scoped,
+        # so in the gap between two tests it is briefly unpatched — and a poll
+        # landing in that gap made a REAL Bybit call with the live keys and
+        # cached the result for 5s, which the next test inherited. That is how
+        # test_s1_bybit_mirror started failing at random without being touched.
+        #
+        # A layout test has no business asking for account data at all, so the
+        # account endpoints are refused at the browser instead of relying on
+        # the timing working out. The cards render their error state, which is
+        # a layout worth checking anyway.
+        for path in ("**/api/bybit", "**/api/account", "**/api/account/**",
+                     "**/api/performance*"):
+            pg.route(path, lambda route: route.abort())
         errors = []
         pg.on("pageerror", lambda e: errors.append(str(e)))
         pg.goto(f"http://127.0.0.1:{port}/", wait_until="domcontentloaded")

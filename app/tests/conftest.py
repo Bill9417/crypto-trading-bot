@@ -129,6 +129,27 @@ def _no_live_side_effects(request, monkeypatch, tmp_path):
     def _no_bybit_client():
         raise RuntimeError("strategy3_exec.client() called in tests — stub it")
     monkeypatch.setattr(strategy3_exec, "client", _no_bybit_client)
+    # …and its 5-second account cache is cleared, because blocking the client
+    # is not enough on its own. account_snapshot() caches a SUCCESSFUL snapshot
+    # module-wide, and that outlives the test that produced it.
+    #
+    # 2026-08-21: test_s1_bybit_mirror::test_account_snapshot_includes_mirror_
+    # positions began failing at random with a KeyError on its own fixture data
+    # — it was reading a REAL Bybit balance (equity 0.0859, not the fake 300).
+    # A module-scoped browser fixture elsewhere kept a dashboard page polling
+    # /api/bybit for the whole file; this guard is function-scoped, so in the
+    # gap between two tests the client was briefly unpatched, one poll got
+    # through, and the next test inherited the answer.
+    #
+    # test_strategy3 had a _reset_account_cache() helper whose own docstring
+    # says "every test exercising a fresh fetch must clear it first" — a rule
+    # that is one forgotten call away from this, and the very next test file
+    # forgot it. Clearing it here removes the rule instead of restating it.
+    strategy3_exec._account_cache["ts"] = 0.0
+    strategy3_exec._account_cache["data"] = None
+    import executor as _exec0
+    _exec0._account_cache["ts"] = 0.0
+    _exec0._account_cache["data"] = None
     # Copy-trading: redirect the encrypted follower store + runtime status into
     # tmp_path (never touch the real copy_followers.json), keep the master
     # switch OFF, and make the two live-Bybit entry points die loudly so no
