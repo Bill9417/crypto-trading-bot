@@ -90,7 +90,7 @@ ADMIN_CACHE_SEC = 300
 # Quick Reply that survives across messages, but inline keyboard buttons
 # attached to a reply DO stay tappable indefinitely (they're part of that
 # specific message, not a suggestion bar), which is the closer fit here.
-REFRESHABLE_CMDS = {"positions", "price", "signals", "winrate", "alerts",
+REFRESHABLE_CMDS = {"positions", "price", "signals", "watch", "winrate", "alerts",
                     "liq", "whale", "whaletop", "twnow", "paper", "us", "s4",
                     "s3", "xaut"}
 _admin_cache = {"ts": 0.0, "ids": set()}
@@ -310,6 +310,65 @@ def fmt_signals(payload: dict, limit: int = 5) -> str:
     return "\n".join(lines)
 
 
+def fmt_watch(payload: dict) -> str:
+    """👀 每日觀察清單 for Telegram — the dashboard card, on the phone.
+
+    Same data, same ranking, same disclosure. Not a second implementation: the
+    board is daily_watch.top(), so the phone and the web cannot disagree about
+    which coins are on it — a divergence nobody would notice until one of them
+    was acted on.
+
+    RANKED BY BREADTH, and the reply says so, because the number people will
+    read it as is a score. It is not: it is how many INDEPENDENT engines
+    flagged the coin today. Every one of those engines has been measured
+    individually in this repo and sits somewhere between negative and
+    indistinguishable from zero, so agreement between them is worth a look and
+    is not evidence.
+
+    NO ACCOUNT DATA — this is a joinable-group reply. Bases, engine names and
+    counts only; no position, size, or P&L anywhere in it.
+    """
+    import tg_format
+    rows_in = (payload or {}).get("top") or []
+    day = (payload or {}).get("date") or ""
+    if not rows_in:
+        tracked = (payload or {}).get("tracked")
+        # "nothing to show" and "the scanners have not run" are different
+        # facts, and only one of them is about the market.
+        if tracked:
+            return (f"👀 每日觀察清單 · {day}\n"
+                    f"今天追蹤了 {tracked} 檔，還沒有任何一檔被重複點名。")
+        return (f"👀 每日觀察清單 · {day}\n"
+                "今天還沒有累積到 —— 掃描器剛開始跑（每 5 分鐘累積一次）。")
+
+    lines = [f"👀 每日觀察清單 · {day}",
+             "今天被不同引擎重複點名的幣 —— 觀察用，不是進場訊號\n"]
+    table = [("", "幣種", "引擎", "次數", "來源")]
+    for i, r in enumerate(rows_in, 1):
+        srcs = [w.get("label") or w.get("src") for w in (r.get("why") or [])]
+        # A coin two engines disagree about is not two engines agreeing, and
+        # the web board ranks it below a clean single for exactly that reason.
+        # The phone must not quietly drop the distinction.
+        mark = "⚠️" if r.get("conflict") else (
+            "🟢" if r.get("side") == "long" else
+            "🔴" if r.get("side") == "short" else "·")
+        table.append((f"{i}", f"{mark} {r.get('base')}",
+                      r.get("engines"), r.get("hits"),
+                      "／".join(srcs[:3])))
+    lines.append(tg_format.pre_table(table, align="rlrrl"))
+
+    tail = ["\n⚠️ = 引擎方向不一致（不是共識）· 排序看「幾個獨立引擎」，不是分數"]
+    hidden = (payload or {}).get("tier_hidden") or 0
+    if hidden:
+        # Without this the cut reads as a boundary. On a normal day the
+        # 2-engine tier is a dozen coins deep and only a few fit.
+        tail.append(f"同樣 {payload.get('tier_engines')} 個引擎的還有 {hidden} 檔"
+                    f"沒列出 —— 最後一名不是分界")
+    tail.append("每個引擎自己的實測都在零附近，所以「一致」只值得看一眼")
+    lines.append("\n".join(tail))
+    return "\n".join(lines)
+
+
 def fmt_alerts(alerts: list) -> str:
     import tg_format
     active = [a for a in alerts if not a.get("triggered")]
@@ -368,6 +427,7 @@ HELP = ("🤖 指令列表\n"
         "/winrate — 真實 Binance + Bybit 帳戶的勝率報告\n"
         "/positions — 兩個帳戶的未平倉部位\n"
         "/signals — 最近的 S2 訊號（含進場/停損/目標）\n"
+        "/watch — 👀 每日觀察清單: 今天被幾個獨立引擎重複點名的幣\n"
         "/alerts — 目前設定的到價提醒\n"
         "/link — 🔗 網站儀表板連結（重啟後自動更新公告）\n"
         "/report — 今日帳戶+市場日報（擁有者專用, 只私訊回覆）\n"
@@ -388,7 +448,7 @@ HELP = ("🤖 指令列表\n"
         "/clean [小時] — 刪除 bot 超過 N 小時的舊訊息（預設 24, 上限 47, 限管理員）\n"
         "/cleanall — 一次清掉記錄功能上線前的全部舊訊息（限管理員, 需確認）\n"
         "/help — 顯示這份清單\n"
-        "\n💡 /positions /price /signals /winrate /alerts /liq /whale /twnow /paper "
+        "\n💡 /positions /price /signals /watch /winrate /alerts /liq /whale /twnow /paper "
         "/s3 /s4 的回覆下方有 🔄 按鈕，點一下就能直接更新，不用重打指令")
 
 
@@ -509,6 +569,15 @@ def handle(cmd: str, args: str = "", owner: bool = False) -> str:
         except Exception:  # noqa: BLE001
             payload = {}
         return fmt_signals(payload)
+    if cmd in ("watch", "w"):
+        import daily_watch
+        # do_refresh=True is deliberate and is NOT "a command advances the
+        # record": refresh() is time-gated to WATCH_REFRESH_SEC, so a reply
+        # folds in at most one sighting per cadence window — exactly what a
+        # page load does. Reading without refreshing would leave the list
+        # permanently empty for anyone who only uses Telegram, since the web
+        # route is the only other thing that drives it.
+        return fmt_watch(daily_watch.top())
     if cmd == "alerts":
         import price_alerts
         return fmt_alerts(price_alerts.load_alerts())
