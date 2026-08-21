@@ -705,6 +705,14 @@ def scan_once(client, recent: list, last_alert: dict, pending: list) -> list:
             if _ts:
                 _THRUST_FUNNEL["fired"] += 1
                 _THRUST_STORE = vol_thrust.note(_ts, _THRUST_STORE, time.time())
+                # …and into the OUTCOME book. vol_thrust's own state records
+                # sightings only, so without this the card carried a backtest
+                # and could never accumulate anything to check it against.
+                try:
+                    import thrust_outcomes
+                    thrust_outcomes.note(_ts, time.time())
+                except Exception as exc:  # noqa: BLE001 — never kill the sweep
+                    print(f"[thrust] outcome record failed: {exc}")
                 print(f"[thrust] {_sym} 隧道上方 +{_ts['above_pct']:.2f}% · "
                       f"這小時量 {_ts['vol_mult']:.1f}x · "
                       f"買方 {100 * (_ts['buy_share'] or 0):.0f}% · "
@@ -978,6 +986,17 @@ def main() -> None:
                 print(f"[vegas] settled {_vo['settled']} · {_vo['open']} open")
         except Exception as exc:  # noqa: BLE001
             print(f"[strategy2] vegas outcomes error: {exc}")
+        # 📓 隧道上方爆量 outcomes — forward % at +1/6/24/48h, the same
+        # horizons the card's backtest quotes, so the two can be read side by
+        # side. Added 2026-08-21: the detector had been recording sightings
+        # with no outcome book at all.
+        try:
+            import thrust_outcomes
+            _to = thrust_outcomes.tick(client)
+            if _to.get("settled"):
+                print(f"[thrust] settled {_to['settled']} · {_to['open']} open")
+        except Exception as exc:  # noqa: BLE001
+            print(f"[strategy2] thrust outcomes error: {exc}")
         # 📓 供需區 outcomes — settle replayed zone entries, exactly as the
         # flip book above does. This call did not exist until 2026-08-21 and
         # its absence was silent and total: nothing ever settled, so the book

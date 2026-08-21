@@ -92,15 +92,16 @@ def record(sig: dict, store: dict = None, now_ts: float = None) -> bool:
     return True
 
 
-def note(sig: dict, now_ts: float = None) -> bool:
-    store = load()
+def note(sig: dict, now_ts: float = None, path: str = None) -> bool:
+    store = load(path)
     added = record(sig, store, now_ts)
     if added:
-        save(store)
+        save(store, path)
     return added
 
 
-def settle(row: dict, candles: list, now_ts: float) -> dict:
+def settle(row: dict, candles: list, now_ts: float,
+           horizons: tuple = None) -> dict:
     """Forward % at each horizon, or None while the longest one is unreached.
 
     Entry is the OPEN OF THE NEXT BAR. The signal is read at a bar's close, so
@@ -116,7 +117,7 @@ def settle(row: dict, candles: list, now_ts: float) -> dict:
     if not entry:
         return None
     out = {}
-    for h in HORIZONS:
+    for h in (horizons or HORIZONS):
         # rows[0] is the signal bar; the bar h hours after ENTRY is index h+1.
         if len(rows) <= h + 1:
             return None
@@ -125,14 +126,16 @@ def settle(row: dict, candles: list, now_ts: float) -> dict:
 
 
 def evaluate_open(client=None, store: dict = None, now_ts: float = None,
-                  max_eval: int = None) -> dict:
-    store = load() if store is None else store
+                  max_eval: int = None, horizons: tuple = None,
+                  path: str = None) -> dict:
+    store = load(path) if store is None else store
     now_ts = now_ts if now_ts is not None else time.time()
     max_eval = MAX_EVAL_PER_TICK if max_eval is None else max_eval
+    hz = horizons or HORIZONS
     done = {"settled": 0, "still_open": 0, "errors": 0}
     if client is None:
         return done
-    longest = max(HORIZONS) * 3600
+    longest = max(hz) * 3600
     # Least-recently-checked first. Sorted by age with a per-tick cap, the same
     # rows get looked at every tick and everything behind them starves — the
     # bug strategy4_outcomes had to learn twice.
@@ -146,13 +149,13 @@ def evaluate_open(client=None, store: dict = None, now_ts: float = None,
         row["checked_ts"] = now_ts          # stamped before the call can fail
         try:
             candles = client.call("fetch_ohlcv", row["symbol"], TIMEFRAME,
-                                  int(row["bar_ts"]), max(HORIZONS) + 5)
+                                  int(row["bar_ts"]), max(hz) + 5)
         except Exception:  # noqa: BLE001 — a dead symbol must not stall the book
             done["errors"] += 1
             continue
         finally:
             time.sleep(PACE_SEC)
-        closed = settle(row, candles, now_ts)
+        closed = settle(row, candles, now_ts, hz)
         if not closed:
             done["still_open"] += 1
             continue
@@ -164,20 +167,21 @@ def evaluate_open(client=None, store: dict = None, now_ts: float = None,
     return done
 
 
-def tick(client=None, now_ts: float = None) -> dict:
-    store = load()
-    done = evaluate_open(client, store, now_ts)
-    save(store)
+def tick(client=None, now_ts: float = None, horizons: tuple = None,
+         path: str = None) -> dict:
+    store = load(path)
+    done = evaluate_open(client, store, now_ts, horizons=horizons, path=path)
+    save(store, path)
     return {**done, "open": len(store["open"]), "closed": len(store["closed"])}
 
 
 # ── the read ─────────────────────────────────────────────────────────────────
-def stats(store: dict = None) -> dict:
+def stats(store: dict = None, horizons: tuple = None) -> dict:
     """Mean AND median forward % per horizon, from every settled row."""
     store = load() if store is None else store
     closed = store.get("closed") or []
     out = {"n": len(closed), "horizons": {}}
-    for h in HORIZONS:
+    for h in (horizons or HORIZONS):
         vals = [c.get(f"fwd_{h}h") for c in closed
                 if isinstance(c.get(f"fwd_{h}h"), (int, float))]
         if not vals:
