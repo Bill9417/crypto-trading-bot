@@ -2018,6 +2018,28 @@
         </style>
     {# The saved layout, rendered server-side. Doing this in JavaScript after
        load would paint the default order and then visibly jump, every view. #}
+    <script>
+    /* 🧾 One renderer for "what does this R assume".
+       Every card that prints an R has a different bracket behind it — the
+       flip's stop is structural (below the zone that defines the setup), the
+       zone's is the far side of its own box with a min/max distance, the
+       observe-only books use 1.5xATR. So each BOOK supplies its own `basis`
+       and this only draws it. Writing the text here instead would have put one
+       strategy's rules under another's number, which is the worst kind of
+       wrong: plausible, specific, and about something else. */
+    window.wolfBasis = function (d) {
+        var b = d && d.basis;
+        if (!b || !b.entry) return '';
+        function e(t){return String(t==null?'':t).replace(/[&<>"]/g,function(c){
+            return ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]);});}
+        return '<div style="font-size:.62rem;opacity:.55;line-height:1.6;margin-top:6px;">'
+             + '🧾 這筆紀錄是這樣算的：進場 ' + e(b.entry)
+             + '｜停損 ' + e(b.sl) + '｜停利 ' + e(b.tp)
+             + '｜' + e(b.cap) + '｜' + e(b.tie) + '｜' + e(b.hold)
+             + '<br>' + e(b.costs)
+             + '　⚠️ ' + e(b.not_modelled) + '</div>';
+    };
+    </script>
     <style id="layout-order">{{ layout_css|default('', true)|safe }}</style>
 </head>
 <body>
@@ -3101,7 +3123,8 @@
                   // number without them is a frictionless fantasy.
                   '<div class="analytics-subtitle" style="opacity:.7">💸 已扣成本：'+
                     esc(d.costs||'—')+'｜同時最多 '+(d.max_concurrent||0)+' 筆'+
-                    (d.skipped_no_slot?('，沒空位而略過 '+d.skipped_no_slot+' 筆'):'')+'</div>';
+                    (d.skipped_no_slot?('，沒空位而略過 '+d.skipped_no_slot+' 筆'):'')+'</div>'+
+                  wolfBasis(d);
             }
             function load(){ if(document.hidden) return;
                 fetch('/api/zones').then(function(r){return r.ok?r.json():null;})
@@ -3203,7 +3226,8 @@
                     '</div>' +
                     (segs ? '<div style="margin-top:5px;font-size:.7rem;">' + segs + '</div>' : '') +
                     '<div style="margin-top:5px;font-size:.7rem;opacity:.8;">' +
-                        (st.verdict_zh || st.verdict || '') + '</div>' + back;
+                        (st.verdict_zh || st.verdict || '') + '</div>' + back
+                    + wolfBasis(d);
             }
             function load() {
                 fetch('/api/flips').then(function(r){return r.ok?r.json():null;})

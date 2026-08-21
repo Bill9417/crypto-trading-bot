@@ -186,6 +186,45 @@ def test_net_and_gross_are_both_kept():
 
 
 # ── the web says what it assumed ─────────────────────────────────────────────
+BASIS_CARDS = ["flips", "zones", "vegas", "thrust"]
+
+
+@pytest.mark.parametrize("card", BASIS_CARDS)
+def test_every_card_that_prints_an_R_states_its_basis(card):
+    """+0.610R on its own does not answer "will real money give me this"."""
+    import os
+    here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    with open(os.path.join(here, "templates", "index.html"),
+              encoding="utf-8") as f:
+        html = f.read()
+    seg = html[html.index(f'data-card="{card}"'):]
+    seg = seg[:seg.index("</script>", seg.index("<script>"))]
+    assert "wolfBasis(" in seg or "這筆紀錄是這樣算的" in seg, \
+        f"the {card} card prints an R with no stated basis"
+
+
+@pytest.mark.parametrize("book,mod", [
+    ("flip", "flip_outcomes"), ("zone", "zone_outcomes"),
+])
+def test_each_book_states_its_own_stop_rule(book, mod):
+    """The flip's stop is structural (below the zone that defines the setup);
+    the zone's is the far side of its own box with a min/max distance; the
+    observe-only books use 1.5xATR. One shared sentence would put one
+    strategy's rules under another's number — plausible, specific and about
+    something else."""
+    import importlib
+    basis = importlib.import_module(mod).basis()
+    assert basis["sl"], f"{book} states no stop rule"
+    assert "ATR" not in basis["sl"], (
+        f"{book} claims an ATR stop — its stop is structural")
+
+
+def test_the_flip_and_zone_stop_rules_are_not_the_same_sentence():
+    import flip_outcomes
+    import zone_outcomes
+    assert flip_outcomes.basis()["sl"] != zone_outcomes.basis()["sl"]
+
+
 def test_the_cards_publish_the_basis_of_their_numbers():
     """"Will real money give me this number" cannot be answered by a number
     alone. Both cards now print the entry rule, the stop, the target, the

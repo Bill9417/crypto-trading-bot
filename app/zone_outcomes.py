@@ -64,6 +64,21 @@ MEASURED = {
 }
 
 
+def basis() -> dict:
+    """The zone book's own terms. It shares flip's settle logic and its
+    concurrency cap, but NOT its stop rule: the stop sits beyond the far side
+    of the zone that produced the signal, and a stop distance outside
+    MIN/MAX_STOP_PCT means no trade at all rather than an invented one."""
+    import zones
+    return F.basis({
+        "entry": "訊號那根 K 的收盤價（實際成交會有價差，已用滑價估算）",
+        "sl": "區間另一側再加緩衝（結構性停損；距離不在 "
+              f"{zones.MIN_STOP_PCT * 100:.1f}%–{zones.MAX_STOP_PCT * 100:.1f}% "
+              "之間就不進場）",
+        "tp": f"停損距離 × {zones.TP_R:g}",
+    })
+
+
 def web_view(limit: int = 20) -> dict:
     """The board, with the ZONE's numbers on it.
 
@@ -76,4 +91,7 @@ def web_view(limit: int = 20) -> dict:
     for k in ("measured", "measured_oos", "measured_seq"):
         v.pop(k, None)
     v["measured"] = MEASURED
+    # Same reason as the MEASURED swap above: flip's basis describes flip's
+    # stop rule, and these signals do not use it.
+    v["basis"] = basis()
     return v

@@ -225,6 +225,34 @@ def lifetime_n(store: dict = None) -> int:
     return int(((store.get("tally") or {}).get("all") or {}).get("n") or 0)
 
 
+def basis(plan_desc: dict = None) -> dict:
+    """Everything standing between this record and a live account.
+
+    Published on the card, not left in a docstring: the owner's question is
+    "will real money give me this number", and a number without its
+    assumptions cannot answer it. Each book states its OWN rules — the flip's
+    stop is structural (below the zone that defines the setup), which is a
+    different thing from the ATR bracket the observe-only books use, and
+    copying that text here would be a lie that looked like documentation.
+    """
+    import trade_costs
+    out = {
+        # The optimistic one, and the reason slippage is charged: the trade is
+        # scored as filled AT the signal bar's close. A real market order
+        # sent on that close gets the next tick, not that price.
+        "entry": "訊號那根 K 的收盤價（實際成交會有價差，已用滑價估算）",
+        "sl": "翻轉區下緣再往下 0.15%（結構性停損，不是固定百分比）",
+        "tp": "停損距離 × 2（RR 2）",
+        "cap": f"最多同時 {MAX_CONCURRENT} 筆（滿了就跳過並計數）",
+        "tie": "同一根 K 同時碰到停損和停利 → 算停損",
+        "hold": f"{TRACK_HOURS:.0f} 小時內沒觸發就用最後收盤價結算",
+        "costs": trade_costs.describe(),
+        "not_modelled": "資金費率（持倉過夜的成本）尚未計入",
+    }
+    out.update(plan_desc or {})
+    return out
+
+
 def web_view(store: dict = None, limit: int = 20) -> dict:
     """Everything the dashboard card needs."""
     import breakout_flip as B
@@ -273,6 +301,7 @@ def web_view(store: dict = None, limit: int = 20) -> dict:
         # had to decline. Both stated so the page cannot be read as a
         # frictionless, unlimited-capital result.
         "costs": __import__("trade_costs").describe(),
+        "basis": basis(),
         "max_concurrent": MAX_CONCURRENT,
         "skipped_no_slot": int(store.get("skipped_no_slot") or 0),
         "stats": {s: stats(store, s) for s in segs},
