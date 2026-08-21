@@ -154,7 +154,11 @@
     if (!el) {
       el = document.createElement("span");
       el.className = "wolf-age";
-      el.style.cssText = "flex:0 0 auto;align-self:center;font-size:.6rem;" +
+      // .72rem, not .6rem: at 390px that was 9.6px, which the phone-layout
+      // pass measured as unreadable. Inline, so it beats the stylesheet —
+      // which means the media query cannot fix it and the size has to be
+      // right here.
+      el.style.cssText = "flex:0 0 auto;align-self:center;font-size:.72rem;" +
         "font-weight:700;letter-spacing:.04em;white-space:nowrap;" +
         "color:var(--wolf-muted,#8a99ad);opacity:.75;";
       head.appendChild(el);

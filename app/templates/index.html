@@ -1815,6 +1815,144 @@
             .pulse-ring { width: 112px; height: 112px; }
             .pulse-score { font-size: 2rem; }
         }
+
+        /* ═══════════════════════════════════════════════════════════════════
+           📱 PHONE LAYOUT — measured, not guessed.
+
+           At 390px the dashboard put the first card 1,135px down: a 31px
+           button row, a 194px header and a 183px navigator that wrapped into
+           three labelled rows. Nearly 1.3 screens of chrome before any data,
+           on the one device this is actually read on.
+
+           And the content it eventually reached was small: 212 elements at
+           8.6px, 207 at 8.8px, 22 tap targets under 32px. Under a thumb, on a
+           phone, that is not a dense interface — it is an unreadable one.
+
+           So: the CHROME gets compressed and the CONTENT gets bigger. Those
+           are not in tension — the space comes from the part that carries no
+           information.
+           ═══════════════════════════════════════════════════════════════════ */
+        @media (max-width: 767px) {
+            /* ── chrome ────────────────────────────────────────────────── */
+            /* "Edit layout" is a once-in-a-while action that was taking a
+               full row at the very top of every visit. It keeps its 40px tap
+               target but stops being the first thing on the page. */
+            .layout-bar { margin-bottom: 4px; }
+            .layout-bar .layout-btn { font-size: .72rem; padding: 6px 10px; }
+
+            /* 50px of nothing sat between the navigator and the first panel:
+               the nav's own bottom margin plus the grid's top gap. */
+            .hero-grid { margin-top: 0; }
+            .page-wrap > .zones-nav + * { margin-top: 0; }
+            .pg-head {
+                gap: 10px;
+                padding: 2px 2px 10px;
+                margin-bottom: 10px;
+            }
+            .pg-title { font-size: 1.2rem; }
+            .pg-sub { margin-top: 2px; gap: 6px; }
+
+            /* The navigator was three stacked groups, each with its own
+               heading, and it wrapped because the row could not fit. One
+               horizontal strip that SCROLLS instead: 183px -> ~52px, and the
+               group headings become inline separators rather than rows of
+               their own. */
+            .zones-nav {
+                flex-wrap: nowrap;
+                align-items: center;
+                gap: 2px;
+                margin-bottom: 10px;
+                padding: 6px 2px;
+                /* momentum scrolling is already on; this keeps the strip from
+                   being clipped mid-tab at the right edge */
+                scroll-padding-inline: 8px;
+            }
+            .zn-group {
+                flex-direction: row;
+                align-items: center;
+                gap: 4px;
+                padding: 0 8px;
+            }
+            .zn-label {
+                font-size: .6rem;
+                opacity: .55;
+                /* inline now, so it labels the group beside it rather than
+                   costing a whole line above it */
+                align-self: center;
+            }
+            .zn-items { flex-wrap: nowrap; }
+
+            /* ── tap targets ───────────────────────────────────────────────
+               22 controls were under 32px tall. 44px is the size a thumb
+               actually hits; the padding is what changes, not the type. */
+            .zn-tab, .zn-all, .layout-bar button, .pg-head-r button,
+            .pg-head-r a, .tv-btn {
+                min-height: 40px;
+                display: inline-flex;
+                align-items: center;
+                justify-content: center;
+            }
+            .zn-tab, .zn-all { font-size: .8rem; padding: 8px 12px; }
+
+            /* ── readability ───────────────────────────────────────────────
+               Every class measured under 11px, raised to at least 11px. Listed
+               explicitly rather than with a blanket rule so a future element
+               that needs to be small can still be, deliberately. */
+            .conv-tier,
+            .chevron,
+            .watch-only-badge { font-size: .72rem; }
+            .smc-zone-pill,
+            .side-pill,
+            .trade-status-badge,
+            .watch-why,
+            .tv-btn,
+            .liq2d-px,
+            .liq2d-usd,
+            .mv-px { font-size: .74rem; }
+            /* Specificity, not a second opinion: .cell-smc .smc-zone-pill is
+               (0,2,0) and silently outranked the single-class rule above —
+               211 pills stayed at 9.3px while the rule "existed". */
+            .cell-smc .smc-zone-pill { font-size: .74rem; padding: 4px 8px; }
+            .lk, .pick-chip, .acct-k, .entry-need,
+            .sect-n, .sect-name, .sect-pct { font-size: .74rem; }
+            .pick-why, .watch-eng, .insight-note,
+            .dash-filter-btn { font-size: .76rem; }
+            /* The badge is a pill sized to its old 9.9px text. Enlarged, "4
+               個引擎 多" wrapped onto two lines inside it and the pill grew a
+               second row. Bigger type has to come with room for it — that is
+               the actual cost of this whole pass, and it is paid here rather
+               than by shrinking the text back. */
+            .watch-eng { white-space: nowrap; padding: 4px 10px; }
+            /* The tail. Each is only 4-15 elements, but they are the labels on
+               the numbers — the part you read rather than glance at. */
+            .h-cell, .fl-n, .entry-status, .chip,
+            .sect-sub, .insight-label, .lv, .seg3,
+            .progress-label, .progress-value { font-size: .74rem; }
+            .wsb-group { font-size: .72rem; }
+            /* Two-class selectors, because the single-class versions above are
+               outranked by the two-class rules that set these in the first
+               place — the same specificity trap as .cell-smc .smc-zone-pill.
+               A rule that loses silently reads exactly like a rule nobody
+               wrote. */
+            .entry-levels .lk,
+            .entry-levels .lv,
+            .bc-sub, .bc-more, .mini-pill, .nr-tag, .nr-state,
+            .entry-dir, .liq2d-foot, .flow-label, .flow-note,
+            .zones-nav .zn-label { font-size: .74rem; }
+            /* The card sub-lines and footnotes — the ones carrying the
+               measured verdicts, which are the whole point of those cards. */
+            .analytics-panel [style*="font-size:.62rem"],
+            .analytics-panel [style*="font-size:.64rem"],
+            .analytics-panel [style*="font-size:.66rem"],
+            .analytics-panel [style*="font-size:.68rem"] { font-size: .74rem !important; }
+            .analytics-panel [style*="font-size:.7rem"] { font-size: .76rem !important; }
+
+            /* Tiles were 138-150px wide with 11px type inside; give the text
+               room rather than letting it wrap to four lines. */
+            .analytics-panel a[style*="min-width:138px"],
+            .analytics-panel a[style*="min-width:142px"],
+            .analytics-panel a[style*="min-width:150px"] { min-width: 160px !important; }
+        }
         </style>
     {# The saved layout, rendered server-side. Doing this in JavaScript after
        load would paint the default order and then visibly jump, every view. #}
