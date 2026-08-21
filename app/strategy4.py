@@ -166,12 +166,28 @@ SIGNALS_FILE = os.path.join(os.path.dirname(__file__), "strategy4_signals.json")
 
 ENABLED = os.getenv("S4_ENABLED", "true").strip().lower() in ("1", "true", "yes", "on")
 TIMEFRAME = os.getenv("S4_TIMEFRAME", "15m")
-# 750, not the old 450: All-in-One_ULTIMATE_Pro moved the outer tunnel to
-# EMA676, so strategy2_meter.MIN_CANDLES rose to ~690. At 450 the tunnel factor
-# would abstain on every bar and the triangle gate would quietly be scoring on
-# 90 of its 100 points — the same silent-degradation failure as the 2026-07-25
-# weight drift, just arriving through a period change instead.
-CANDLES = int(os.getenv("S4_CANDLES", "750"))
+# DERIVED from the meter, not a literal. All-in-One_ULTIMATE_Pro moved the
+# outer tunnel to EMA676, strategy2_meter's requirement rose to ~690, and this
+# number was bumped 450 -> 750 BY HAND to keep up. That fix does not hold: the
+# gate at consider() abstains with "not enough history" the moment the
+# requirement passes the fetch, and every symbol failing that check looks
+# exactly like a quiet market — the failure that cost this repo three days in
+# July, in the module that places real orders. strategy2_scanner took the
+# structural fix at the same time and this one did not, so it has been sitting
+# on 42 bars of headroom since.
+#
+# Imported lazily inside the max() rather than at module scope: strategy4 is
+# imported from the scanner loop and a top-level meter import would widen the
+# import graph for a single integer.
+def _meter_floor() -> int:
+    try:
+        import strategy2_meter
+        return int(strategy2_meter.SIGNAL_MIN_CANDLES) + 20
+    except Exception:  # noqa: BLE001 — a broken import must not zero the budget
+        return 0
+
+
+CANDLES = max(int(os.getenv("S4_CANDLES", "750")), _meter_floor())
 # Both sides, independently switchable. Long has the (inconclusive) n=50 behind
 # it; short has NOTHING measured — see the LONG/SHORT note in the docstring.
 ENABLE_LONG = os.getenv("S4_ENABLE_LONG", "true").strip().lower() in ("1", "true", "yes", "on")

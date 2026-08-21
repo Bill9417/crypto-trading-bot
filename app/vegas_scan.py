@@ -27,7 +27,12 @@ import vegas_outcomes as O
 STATE_FILE = os.path.join(os.path.dirname(__file__), "vegas_state.json")
 RUN_EVERY_SEC = float(os.getenv("VEGAS_RUN_EVERY_SEC", "3600"))
 MAX_SYMBOLS = int(os.getenv("VEGAS_MAX_SYMBOLS", "180"))
-CANDLES = int(os.getenv("VEGAS_CANDLES", "320"))
+# DERIVED, not a literal — same reason strategy4 and strategy2_scanner derive
+# theirs. consider() needs WARMUP CLOSED bars and drops the forming candle, so
+# the floor is WARMUP + 1; raising VEGAS_TREND_EMA raises WARMUP, and a fixed
+# 320 would silently start returning "K 棒不足" for every symbol while the log
+# kept printing "0 fired" exactly as it does on a quiet hour.
+CANDLES = max(int(os.getenv("VEGAS_CANDLES", "320")), V.WARMUP + 20)
 PACE_SEC = float(os.getenv("VEGAS_SCAN_PACE_SEC", "0.12"))
 RETAIN_HOURS = float(os.getenv("VEGAS_RETAIN_HOURS", "36"))
 MAX_KEEP = 60

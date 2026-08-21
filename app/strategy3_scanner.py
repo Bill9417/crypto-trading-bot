@@ -77,7 +77,16 @@ TF_SEC = timeframe_to_seconds(TIMEFRAME)
 POLL_SEC = int(os.getenv("STRATEGY3_POLL_SEC", "45"))       # candle-close watcher
 # Deep history on purpose: the arm/alternation state replays from the start of
 # the series, so more bars ⇒ the last-bar flag matches TradingView better.
-CANDLES = int(os.getenv("STRATEGY3_CANDLES", "1000"))
+# DERIVED from the signal module, not a literal. strategy3_signal.compute()
+# sets insufficient=True below MIN_CANDLES (EMA338 + Vegas smoothing + the
+# 360-bar volume window), and an insufficient read produces no flag — which is
+# indistinguishable in the log from a bar that simply did not flag. This engine
+# is the one armed on Bybit, so "silently stopped deciding" is the worst of the
+# three ways it can be wrong. Headroom today is large; the point is that it
+# follows if MIN_CANDLES moves. Same fix strategy2_scanner, strategy4 and
+# vegas_scan carry.
+CANDLES = max(int(os.getenv("STRATEGY3_CANDLES", "1000")),
+              SIG.MIN_CANDLES + 20)
 
 STATE_FILE = os.path.join(os.path.dirname(__file__), "strategy3_state.json")
 
