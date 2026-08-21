@@ -107,6 +107,16 @@ _ZONE_STATE: dict = {}
 LATEST_FLIPS: dict = {}
 _BFLIP_STATE: dict = {}
 
+# ⚡ 隧道上方爆量 — price already above the middle tunnel with an hour of buying
+# underneath it. The cooldown lives ON DISK (vol_thrust.STATE_FILE) rather than
+# here, because unlike a flip this is a STATE that persists for hours: an
+# in-process cooldown would reset on every restart and re-alert the same surge.
+_THRUST_STATE: dict = {}
+# Confirmations cost ONE 5m call each. The universe is volume-sorted, so a
+# per-sweep counter spends them on the most liquid names first — same burst-cap
+# idiom the ⭐ premium alerts use. Reported, never silent.
+THRUST_MAX_CONFIRM = int(os.getenv("THRUST_MAX_CONFIRM", "40"))
+
 
 def _mover_metrics(ohlcv):
     """1h/24h change + last-hour volume vs its 24h average, on CLOSED 15m
@@ -444,6 +454,13 @@ def scan_once(client, recent: list, last_alert: dict, pending: list) -> list:
     # reads that simply don't fire, while a disarmed one produces nothing but
     # insufficient-history reads. Counting them separates the two.
     unusable = 0
+    # ⚡ 隧道上方爆量, per sweep. The funnel counts SURVIVORS at each stage
+    # rather than first-failures: on a normal sweep almost every symbol fails
+    # the tunnel gate, and a first-failure tally reads identically whether the
+    # detector is discriminating or hardcoded to False.
+    _THRUST_FUNNEL = {"above": 0, "confirmed": 0, "fired": 0}
+    _THRUST_CANDIDATES: list = []
+    _THRUST_STORE = __import__("vol_thrust").load_state()
     for stale in [s for s in _ohlcv_cache if s not in set(syms)]:
         del _ohlcv_cache[stale]                 # delisted symbols leave the cache
     print(f"[strategy2] scanning {total} {TIMEFRAME} perps…")
@@ -527,6 +544,32 @@ def scan_once(client, recent: list, last_alert: dict, pending: list) -> list:
                       + f" · 5m {_zs.get('tf5', 'unknown')}")
         except Exception as exc:  # noqa: BLE001 — detection never kills the sweep
             print(f"[zone] {sym} error: {exc}")
+
+        # ⚡ 隧道上方爆量 — COLLECT here, confirm after the loop.
+        # The tunnel read is free on the candles already in hand. The surge
+        # read is not: it costs one 5m call, and it has to be a 5m call
+        # because this sweep caches candles per 15m bucket and never patches
+        # VOLUME onto the forming bar, so volume that arrived inside the
+        # current bucket is invisible here. A detector reading only these
+        # candles would always be up to 20 minutes late and nothing would
+        # say so.
+        #
+        # Deferred rather than inline because the calls are CAPPED and the cap
+        # binds hard: on a broadly bullish morning 81 of the top 100 symbols
+        # sit above their tunnel. Confirming inline spends the budget in
+        # volume order — on whoever came first — instead of on whoever is
+        # actually being bought. Collecting first costs nothing and lets the
+        # budget go to the highest 15m volume ratio.
+        try:
+            import vol_thrust
+            _t_read = vol_thrust.tunnel_read(ohlcv)
+            if _t_read and _t_read["above"] and \
+                    _t_read["atr_pct"] >= vol_thrust.MIN_ATR_PCT:
+                _THRUST_FUNNEL["above"] += 1
+                _THRUST_CANDIDATES.append(
+                    (vol_thrust.recent_volume_rank(ohlcv), sym, ohlcv))
+        except Exception as exc:  # noqa: BLE001 — detection never kills the sweep
+            print(f"[thrust] {sym} error: {exc}")
 
         # 🚀 Pump Radar — reuses this symbol's candles, no extra API call.
         mv = _mover_metrics(ohlcv)
@@ -641,6 +684,53 @@ def scan_once(client, recent: list, last_alert: dict, pending: list) -> list:
             _write(recent, total, i + 1)            # progress for the page
 
     _write(recent, total, total)
+
+    # ⚡ The 5m confirmation pass — highest 15m volume ratio first, capped.
+    # Ranked on a BUCKET-OLD reading, which is fine for choosing who to LOOK
+    # at and would not be fine as a gate: it cannot see the newest volume, so
+    # it decides priority, never outcome.
+    try:
+        import vol_thrust
+        for _rank, _sym, _rows in sorted(_THRUST_CANDIDATES,
+                                         key=lambda c: -c[0])[:THRUST_MAX_CONFIRM]:
+            _THRUST_FUNNEL["confirmed"] += 1
+            try:
+                _ts = vol_thrust.consider(
+                    _sym, _rows, _THRUST_STATE, time.time(),
+                    fetch_tf=lambda _s, _tf, _n: client.call(
+                        "fetch_ohlcv", _s, _tf, None, _n))
+            except Exception as exc:  # noqa: BLE001 — one symbol, not the pass
+                print(f"[thrust] confirm {_sym}: {exc}")
+                continue
+            if _ts:
+                _THRUST_FUNNEL["fired"] += 1
+                _THRUST_STORE = vol_thrust.note(_ts, _THRUST_STORE, time.time())
+                print(f"[thrust] {_sym} 隧道上方 +{_ts['above_pct']:.2f}% · "
+                      f"這小時量 {_ts['vol_mult']:.1f}x · "
+                      f"買方 {100 * (_ts['buy_share'] or 0):.0f}% · "
+                      f"延遲 {_ts['age_s']}s")
+    except Exception as exc:  # noqa: BLE001
+        print(f"[thrust] confirm pass failed: {exc}")
+
+    # ⚡ Both numbers, always: "0 fired" alone cannot be told apart from a
+    # detector that never ran. `above` is the free gate, `confirmed` is how
+    # many 5m calls were actually spent, and the cap is named when it bites.
+    _tf = _THRUST_FUNNEL
+    _skipped = max(0, _tf["above"] - _tf["confirmed"])
+    _capped = f" · {_skipped} above the tunnel NOT confirmed (cap)" if _skipped else ""
+    print(f"[thrust] {_tf['fired']} fired · {_tf['above']} above the tunnel · "
+          f"{_tf['confirmed']}/{THRUST_MAX_CONFIRM} 5m confirms{_capped}")
+    _THRUST_STORE["skipped_cap"] = _skipped
+    try:
+        import vol_thrust
+        _THRUST_STORE["ran_ts"] = time.time()
+        _THRUST_STORE["scanned"] = total
+        _THRUST_STORE["confirmed"] = _tf["confirmed"]
+        _THRUST_STORE["confirm_cap"] = THRUST_MAX_CONFIRM
+        _THRUST_STORE["funnel"] = dict(_tf)
+        vol_thrust.save_state(_THRUST_STORE)
+    except Exception as exc:  # noqa: BLE001
+        print(f"[thrust] state save failed: {exc}")
     if OHLCV_CACHE_ON:
         print(f"[strategy2] candle cache: {hits} reused / {total - hits} fetched")
     # A handful of insufficient reads is normal — newly listed perps have no

@@ -37,7 +37,8 @@ TOP_N = int(os.getenv("WATCH_TOP_N", "10"))
 KEEP_DAYS = int(os.getenv("WATCH_KEEP_DAYS", "3"))
 
 SRC_ZH = {"s2": "S2 訊號", "flip": "壓力翻支撐", "zone": "供需區",
-          "oi": "OI 異常", "s4": "S4 掃描", "vegas": "隧道翻多"}
+          "oi": "OI 異常", "s4": "S4 掃描", "vegas": "隧道翻多",
+          "thrust": "隧道上方爆量"}
 
 
 def today_str(now=None) -> str:
@@ -114,6 +115,20 @@ def _sightings() -> dict:
             # was flat — so it prints as unknown rather than as "0.0x".
             vol = f"量 {m:.1f}x" if isinstance(m, (int, float)) else "量能不明"
             note(r.get("base"), "vegas", f"站回隧道·{vol}", "long")
+    except Exception:  # noqa: BLE001
+        pass
+
+    # ⚡ 隧道上方爆量. Only the CAPPED top slice reaches the watchlist, not
+    # every hit: this fires ~54x a day (biggest hour: 59 coins at once), and a
+    # source that flags a third of the board would sit beside almost every
+    # coin and stop distinguishing anything — which is the one job a
+    # breadth ranking has.
+    try:
+        import vol_thrust as _vt
+        for r in _vt.top():
+            m = r.get("vol_mult")
+            vol = f"量 {m:.1f}x" if isinstance(m, (int, float)) else "量能不明"
+            note(r.get("base"), "thrust", f"隧道上方·{vol}", "long")
     except Exception:  # noqa: BLE001
         pass
 

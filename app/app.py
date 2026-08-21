@@ -4068,6 +4068,25 @@ def api_vegas():
                         "error": str(e)[:150]}), 200
 
 
+@app.route("/api/thrust")
+@login_required
+def api_thrust():
+    """⚡ 隧道上方爆量 — above the middle tunnel with an hour of buying under it.
+
+    Observe-only, and by measurement rather than caution: 1551 signals over 31
+    days score -0.125R each and -0.202R per firing hour, both intervals
+    entirely BELOW zero. The payload carries MEASURED so the card cannot show
+    the coins without the verdict beside them. Reads a state file; polling
+    costs no exchange call.
+    """
+    try:
+        import vol_thrust
+        return jsonify(_json_safe(vol_thrust.web_view()))
+    except Exception as e:  # noqa: BLE001
+        print(f"[thrust] view failed: {e}")
+        return jsonify({"top": [], "measured": {}, "error": str(e)[:150]}), 200
+
+
 @app.route("/api/daily_watch")
 @login_required
 def api_daily_watch():
