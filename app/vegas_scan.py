@@ -170,6 +170,12 @@ def web_view(state: dict = None, limit: int = 20) -> dict:
         "retain_hours": RETAIN_HOURS,
         "run_every_sec": RUN_EVERY_SEC,
         "live": ov.get("live") or {},
+        # Forwarded explicitly, like everything else here — the named-key merge
+        # is what stops the outcome book's `recent` clobbering the scan's, and
+        # the cost of that safety is that a new field has to be named twice.
+        "basis": ov.get("basis") or {},
+        "max_concurrent": ov.get("max_concurrent"),
+        "skipped_no_slot": ov.get("skipped_no_slot"),
         "measured": ov.get("measured") or {},
         "params": ov.get("params") or {},
         "horizons": ov.get("horizons") or list(O.HORIZONS),

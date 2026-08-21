@@ -65,4 +65,9 @@ def web_view(limit: int = 20) -> dict:
         "measured": T.MEASURED,
         "open": len(store.get("open") or {}),
         "settled": len(store.get("closed") or []),
+        # Same assumptions as the vegas book — it is the same settle code — so
+        # the card can say what its R actually means.
+        "basis": V.web_view().get("basis") or {},
+        "max_concurrent": V.MAX_CONCURRENT,
+        "skipped_no_slot": int(store.get("skipped_no_slot") or 0),
     }

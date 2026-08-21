@@ -2758,6 +2758,14 @@
                 if (d && d.age_median_s!=null){
                     lat=' · 警報延遲中位數 '+d.age_median_s+'s（最久 '+d.age_max_s+'s，一根 5m K = 300s）';
                 }
+                var b=(d&&d.live&&d.live.basis)||null;
+                if (b){
+                    out += '<div style="font-size:.62rem;opacity:.55;line-height:1.6;margin-top:6px;">'+
+                      '🧾 這筆紀錄是這樣算的：進場 '+esc(b.entry)+'｜停損 '+esc(b.sl)+
+                      '｜停利 '+esc(b.tp)+'｜'+esc(b.cap)+'｜'+esc(b.tie)+
+                      '｜'+esc(b.hold)+'<br>'+esc(b.costs)+
+                      '　⚠️ '+esc(b.not_modelled)+'</div>';
+                }
                 out += '<div style="font-size:.62rem;opacity:.5;line-height:1.6;margin-top:6px;">'+
                     '⚙️ 隧道 EMA'+(p.fast||144)+'/'+(p.slow||169)+'（'+esc(p.timeframe||'15m')+'）· '+
                     '量能看最近 '+(p.window_min||60)+' 分鐘 vs 自己過去 '+(p.baseline_hours||24)+
@@ -2939,6 +2947,17 @@
                 if (f && f.reclaim!=null){
                     fun = ' · 上一輪：站回隧道 '+(f.reclaim||0)+' → EMA200 翻正 '+(f.turn||0)+
                           ' → 收紅翻綠 '+(f.buyer||0)+' → 爆量 '+(f.surge||0)+' → 過波動門檻 '+(f.atr||0);
+                }
+                // What the recorded R assumes. Printed because the owner's
+                // question is "will real money give me this number", and a
+                // number without its assumptions cannot answer that.
+                var b=(d&&d.live&&d.live.basis)||(d&&d.basis)||null;
+                if (b){
+                    out += '<div style="font-size:.62rem;opacity:.55;line-height:1.6;margin-top:6px;">'+
+                      '🧾 這筆紀錄是這樣算的：進場 '+esc(b.entry)+'｜停損 '+esc(b.sl)+
+                      '｜停利 '+esc(b.tp)+'｜'+esc(b.cap)+'｜'+esc(b.tie)+
+                      '｜'+esc(b.hold)+'<br>'+esc(b.costs)+
+                      '　⚠️ '+esc(b.not_modelled)+'</div>';
                 }
                 out += '<div style="font-size:.62rem;opacity:.5;line-height:1.6;margin-top:6px;">'+
                     '⚙️ 每小時掃一次（'+esc(p.timeframe||'1h')+' 收線才會變）· '+

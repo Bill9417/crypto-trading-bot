@@ -193,21 +193,22 @@ def settle(trade: dict, candles: list, now_ts: float = None,
         hit_sl = low <= sl if is_long else high >= sl
         hit_tp = high >= tp if is_long else low <= tp
         if hit_sl:                                      # stop first, always
-            return _close(trade, "sl", -1.0, c[0], mae, mfe, after)
+            return _close(trade, "sl", -1.0, c[0], mae, mfe, after, sl)
         if hit_tp:
             r = (tp - entry) / risk if is_long else (entry - tp) / risk
-            return _close(trade, "tp", r, c[0], mae, mfe, after)
+            return _close(trade, "tp", r, c[0], mae, mfe, after, tp)
 
     age_h = (now_ts - (bar_ts / 1000.0)) / 3600.0
     if age_h >= track_hours:
         last = float(after[-1][4]) if after else entry
         r = (last - entry) / risk if is_long else (entry - last) / risk
         return _close(trade, "expired", r,
-                      after[-1][0] if after else bar_ts, mae, mfe, after)
+                      after[-1][0] if after else bar_ts, mae, mfe, after, last)
     return {}                                            # still live
 
 
-def _close(trade, outcome, r, exit_ms, mae, mfe, after) -> dict:
+def _close(trade, outcome, r, exit_ms, mae, mfe, after,
+           exit_price=None) -> dict:
     """`r` is the NET result — fees and slippage already taken out.
 
     The headline field carries the number you would actually have, because
@@ -221,6 +222,18 @@ def _close(trade, outcome, r, exit_ms, mae, mfe, after) -> dict:
     net, cost = trade_costs.net_r(gross, trade.get("stop_pct"))
     return {**trade, "outcome": outcome, "r": net, "r_gross": gross,
             "cost_r": cost,
+            # The price the trade is scored as leaving at. Recorded so a row
+            # can be RECONSTRUCTED — entry, stop, target, exit and the two
+            # timestamps are then everything needed to replay it against the
+            # exchange's own candles and check this book is telling the truth.
+            #
+            # It is the LEVEL, not a fill: a stop is scored at the stop price
+            # and a target at the target price. Real money does not get that,
+            # which is exactly what cost_r above is charging for — and having
+            # both numbers in the row is what makes that assumption auditable
+            # rather than buried.
+            "exit_price": (round(float(exit_price), 10)
+                           if exit_price is not None else None),
             "exit_ts": exit_ms / 1000.0, "bars": len(after),
             "mae": round(mae, 3), "mfe": round(mfe, 3)}
 

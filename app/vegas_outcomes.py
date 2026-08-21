@@ -30,6 +30,36 @@ STORE_FILE = os.path.join(os.path.dirname(__file__), "vegas_outcomes.json")
 # rows against the printed claim, so they are not env-tunable.
 HORIZONS = (6, 24, 48)
 TIMEFRAME = "1h"
+
+# ── the bracket the record is scored on ──────────────────────────────────────
+# These books were forward-% only: they recorded which coin fired and where
+# price was N hours later, and NOT a trade. That is enough to test the card's
+# own claim and nothing else — you cannot check it against a real account,
+# because there is no entry, no stop and no exit to compare.
+#
+# So every row now ALSO carries the bracket its own MEASURED figure was
+# computed with — 1.5x ATR stop, 2R target, 48h cap — with the actual prices
+# and both timestamps written down. Same numbers as the backtest, so the live
+# record and the claim it is testing are finally in the same units, and any
+# row can be replayed against the exchange's own candles.
+#
+# ENTRY IS THE NEXT BAR'S OPEN. The signal is read at a bar's close, so that
+# bar cannot fill its own trade.
+# How many of these a real account could hold at once. WITHOUT this the book
+# records every signal, which for 隧道上方爆量 means ~54 a day held for 48h —
+# a record that assumes ~108 simultaneous positions. Nobody has that, so the
+# number it produced could not be reproduced with real money however correct
+# the arithmetic was. flip_outcomes hit exactly this and fixed it the same way.
+#
+# Recording only what a free slot existed for makes the page the answer to
+# "what would I have got", not "what did the shape do" — and the skips are
+# COUNTED, because a book that quietly declines 90% of its own signals looks
+# identical to one that never saw them.
+MAX_CONCURRENT = int(os.getenv("FWD_MAX_CONCURRENT", "8"))
+
+SL_ATR_MULT = float(os.getenv("FWD_SL_ATR_MULT", "1.5"))
+TP_R = float(os.getenv("FWD_TP_R", "2.0"))
+TRACK_HOURS = float(os.getenv("FWD_TRACK_HOURS", "48"))
 MAX_EVAL_PER_TICK = int(os.getenv("VEGAS_EVAL_PER_TICK", "8"))
 PACE_SEC = float(os.getenv("VEGAS_PACE_SEC", "0.25"))
 KEEP_CLOSED = int(os.getenv("VEGAS_KEEP_CLOSED", "400"))
@@ -65,11 +95,16 @@ def key_of(sig: dict) -> str:
     return f"{sig.get('symbol')}:{int(sig.get('ts') or 0)}"
 
 
-def record(sig: dict, store: dict = None, now_ts: float = None) -> bool:
+def record(sig: dict, store: dict = None, now_ts: float = None,
+           max_concurrent: int = None) -> bool:
     store = load() if store is None else store
     now_ts = now_ts if now_ts is not None else time.time()
     k = key_of(sig)
     if k in store["open"] or any(c.get("key") == k for c in store["closed"]):
+        return False
+    cap = MAX_CONCURRENT if max_concurrent is None else max_concurrent
+    if cap > 0 and len(store["open"]) >= cap:
+        store["skipped_no_slot"] = int(store.get("skipped_no_slot") or 0) + 1
         return False
     row = {
         "key": k, "symbol": sig.get("symbol"), "base": sig.get("base"),
@@ -93,9 +128,14 @@ def record(sig: dict, store: dict = None, now_ts: float = None) -> bool:
 
 
 def note(sig: dict, now_ts: float = None, path: str = None) -> bool:
+    """Persists when the SKIP COUNTER moves too, not only when a row is added
+    — saving only on `added` throws the skip count away every time, which is
+    the bug flip_outcomes.note had and which made its card read
+    "沒空位而略過 0 筆" while the book was refusing everything."""
     store = load(path)
+    before = int(store.get("skipped_no_slot") or 0)
     added = record(sig, store, now_ts)
-    if added:
+    if added or int(store.get("skipped_no_slot") or 0) != before:
         save(store, path)
     return added
 
@@ -122,7 +162,36 @@ def settle(row: dict, candles: list, now_ts: float,
         if len(rows) <= h + 1:
             return None
         out[f"fwd_{h}h"] = round((rows[h + 1][4] - entry) / entry * 100, 4)
-    return {**row, "entry": entry, "settled_ts": now_ts, **out}
+
+    # …and the same trade as a BRACKET, so the row is a trade and not just a
+    # pair of prices. atr_pct is the reading taken at the signal bar; without
+    # it there is no risk to size the stop from and the bracket is skipped
+    # rather than invented from a default.
+    bracket = {}
+    atr_pct = row.get("atr_pct")
+    if isinstance(atr_pct, (int, float)) and atr_pct > 0:
+        risk = entry * (atr_pct / 100.0) * SL_ATR_MULT
+        long_ = (row.get("side") or "long") == "long"
+        sl = entry - risk if long_ else entry + risk
+        tp = entry + TP_R * risk if long_ else entry - TP_R * risk
+        trade = {"symbol": row.get("symbol"), "side": "long" if long_ else "short",
+                 "entry": entry, "sl": sl, "tp": tp,
+                 "stop_pct": round(risk / entry * 100, 4),
+                 "bar_ts": bar}
+        import strategy4_outcomes as S4O
+        done = S4O.settle(trade, rows, now_ts, track_hours=TRACK_HOURS)
+        if done:
+            bracket = {k: done[k] for k in
+                       ("sl", "tp", "stop_pct", "outcome", "exit_price",
+                        "exit_ts", "r", "r_gross", "cost_r", "mae", "mfe")
+                       if k in done}
+        else:
+            # Still running at the cap — record the PLAN so the row is
+            # complete and auditable even before it resolves.
+            bracket = {"sl": sl, "tp": tp, "stop_pct": trade["stop_pct"],
+                       "outcome": "open"}
+    return {**row, "entry": entry, "entry_ts": rows[1][0] / 1000.0,
+            "settled_ts": now_ts, **bracket, **out}
 
 
 def evaluate_open(client=None, store: dict = None, now_ts: float = None,
@@ -229,4 +298,19 @@ def web_view(store: dict = None, limit: int = 20) -> dict:
             "fast": V.FAST_EMA, "slow": V.SLOW_EMA, "trend": V.TREND_EMA,
         },
         "horizons": list(HORIZONS),
+        "max_concurrent": MAX_CONCURRENT,
+        "skipped_no_slot": int(store.get("skipped_no_slot") or 0),
+        # Everything standing between this record and a live account, stated
+        # on the page rather than left in a docstring. A number without its
+        # assumptions cannot be checked against a real fill.
+        "basis": {
+            "entry": "下一根 K 的開盤價（市價單）",
+            "sl": f"進場價 − {SL_ATR_MULT}×ATR",
+            "tp": f"停損距離 × {TP_R}",
+            "cap": f"最多同時 {MAX_CONCURRENT} 筆（滿了就跳過並計數）",
+            "tie": "同一根 K 同時碰到停損和停利 → 算停損",
+            "hold": f"{TRACK_HOURS:.0f} 小時內沒觸發就用最後收盤價結算",
+            "costs": __import__("trade_costs").describe(),
+            "not_modelled": "資金費率（持倉過夜的成本）尚未計入",
+        },
     }

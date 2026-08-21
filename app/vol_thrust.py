@@ -398,6 +398,17 @@ def top(state: dict = None, n: int = None, now: float = None) -> list:
     return sorted(uniq, key=lambda r: -(r.get("vol_mult") or 0))[:n]
 
 
+def _record_view() -> dict:
+    """The forward record's own view, or {} if it is unavailable. Never fatal:
+    a card must still render its live signals when the book cannot be read."""
+    try:
+        import thrust_outcomes
+        return thrust_outcomes.web_view()
+    except Exception as exc:  # noqa: BLE001
+        print(f"[thrust] record view failed: {exc}")
+        return {}
+
+
 def web_view(state: dict = None, now: float = None) -> dict:
     state = load_state() if state is None else state
     now = now if now is not None else time.time()
@@ -428,6 +439,10 @@ def web_view(state: dict = None, now: float = None) -> dict:
         "age_median_s": (sorted(ages)[len(ages) // 2] if ages else None),
         "age_max_s": (max(ages) if ages else None),
         "measured": MEASURED,
+        # The forward book's terms. vol_thrust records sightings; the R that
+        # the record accumulates comes from thrust_outcomes, so its
+        # assumptions belong on this card and not only on that module.
+        "live": _record_view(),
         "params": {
             "timeframe": TIMEFRAME, "confirm_tf": CONFIRM_TF,
             "window_min": WINDOW_MIN, "vol_mult": VOL_MULT,
