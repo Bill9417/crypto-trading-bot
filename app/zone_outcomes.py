@@ -29,12 +29,10 @@ def save(store: dict) -> None:
 
 
 def note(sig: dict, now_ts: float = None) -> bool:
-    """Record one alerted zone entry. False if it was already there."""
-    store = load()
-    added = F.record(sig, store, now_ts)
-    if added:
-        save(store)
-    return added
+    """Record one alerted zone entry. False if it was already there, or if
+    every slot was full when it fired — and the skip is PERSISTED either way
+    (see flip_outcomes.note)."""
+    return F.note(sig, now_ts, path=STORE_FILE)
 
 
 def tick(client=None, now_ts: float = None) -> dict:

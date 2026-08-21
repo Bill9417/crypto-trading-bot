@@ -191,12 +191,21 @@ def tick(client=None, now_ts: float = None) -> dict:
     return {**done, "open": len(store["open"]), "closed": len(store["closed"])}
 
 
-def note(sig: dict, now_ts: float = None) -> bool:
-    """Record one flip and persist immediately — called from the sweep."""
-    store = load()
+def note(sig: dict, now_ts: float = None, path: str = None) -> bool:
+    """Record one flip and persist immediately — called from the sweep.
+
+    Persists when the SKIP COUNTER moves too, not only when a row is added.
+    record() increments skipped_no_slot precisely so a book that declines 90%
+    of its own signals cannot look like one that never saw them — and saving
+    only on `added` threw that number away every time, so the card read
+    "沒空位而略過 0 筆" while the book was refusing everything. A count that is
+    never written is a count that does not exist.
+    """
+    store = load(path)
+    before = int(store.get("skipped_no_slot") or 0)
     added = record(sig, store, now_ts)
-    if added:
-        save(store)
+    if added or int(store.get("skipped_no_slot") or 0) != before:
+        save(store, path)
     return added
 
 

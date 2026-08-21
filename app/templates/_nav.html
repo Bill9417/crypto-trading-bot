@@ -142,6 +142,9 @@
    fetches — not deferred. 39 of this app's 67 fetch sites swallow their errors,
    which renders identically to "no data"; this notices on their behalf. #}
 <script src="{{ url_for('static', filename='feedhealth.js') }}?v={{ asset_ver }}"></script>
+{# wolfLive() — push a card the moment its data lands, instead of waiting out
+   its poll interval. Needs wolfPoll (above) for the fallback path. #}
+<script src="{{ url_for('static', filename='live.js') }}?v={{ asset_ver }}"></script>
 {# Motion. Deferred: it decorates content, so it must never be in front of
    painting it. #}
 <script defer src="{{ url_for('static', filename='motion.js') }}?v={{ asset_ver }}"></script>

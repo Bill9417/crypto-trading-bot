@@ -2356,7 +2356,7 @@
                     .then(paint)
                     .catch(function(e){ paint({top: [], neterr: String(e && e.message || e)}); }); }
             load();
-            if (window.wolfPoll) wolfPoll(load, 300000); else setInterval(load, 300000);
+            if (window.wolfPoll) wolfLive('watch', load, 300000); else setInterval(load, 300000);
         })();
         </script>
 
@@ -2575,7 +2575,7 @@
                     .catch(function(e){ paint({neterr:String((e&&e.message)||e)}); });
             }
             load();
-            if (window.wolfPoll) wolfPoll(load, 120000); else setInterval(load, 120000);
+            if (window.wolfPoll) wolfLive('thrust', load, 180000); else setInterval(load, 120000);
         })();
         </script>
 
@@ -2762,7 +2762,7 @@
                     .catch(function(e){ paint({neterr:String((e&&e.message)||e)}); });
             }
             load();
-            if (window.wolfPoll) wolfPoll(load, 180000); else setInterval(load, 180000);
+            if (window.wolfPoll) wolfLive('vegas', load, 180000); else setInterval(load, 180000);
         })();
         </script>
 
@@ -2849,7 +2849,7 @@
                 fetch('/api/zones').then(function(r){return r.ok?r.json():null;})
                     .then(paint).catch(function(){}); }
             load();
-            if (window.wolfPoll) wolfPoll(load, 120000); else setInterval(load, 120000);
+            if (window.wolfPoll) wolfLive('zones', load, 180000); else setInterval(load, 120000);
         })();
         </script>
 
@@ -2963,8 +2963,10 @@
                     }).catch(function(){});
             }
             load();
-            setInterval(function(){ if(!document.hidden) load(); }, 60000);
-            document.addEventListener('visibilitychange', function(){ if(!document.hidden) load(); });
+            // Pushed the moment flip_outcomes.json is written; the interval is the
+            // fallback for when the stream is refused or unavailable. wolfLive
+            // also handles the hidden tab, so the hand-rolled listener is gone.
+            wolfLive('flips', load, 180000);
         })();
         </script>
 
@@ -3068,8 +3070,10 @@
             // 30s: the scanner re-scans every sweep, and this endpoint only
             // reads a file, so polling faster than the producer costs nothing
             // and shows a new pile-up the moment it is written.
-            setInterval(function () { if (!document.hidden) load(); }, 30000);
-            document.addEventListener('visibilitychange', function () { if (!document.hidden) load(); });
+            // Was 30s "because polling faster than the producer costs nothing".
+            // A push costs less again AND arrives sooner: the card now updates
+            // when crowd_radar_state.json is written rather than up to 30s after.
+            wolfLive('oi', load, 180000);
         })();
         </script>
 
@@ -3196,7 +3200,7 @@
                 this.querySelectorAll('button').forEach(function(x){x.classList.remove('on')});
                 b.classList.add('on'); COIN=b.dataset.c; load();
             });
-            load(); if(window.wolfPoll) wolfPoll(load,180000);
+            load(); if(window.wolfPoll) wolfLive('whale', load, 180000);
         })();
         </script>
 
@@ -3310,7 +3314,7 @@
                 b.classList.add('on'); COIN = b.dataset.c; load();
             });
             load();
-            if (window.wolfPoll) wolfPoll(load, 120000);
+            if (window.wolfPoll) wolfLive('liq', load, 180000);
         })();
         </script>
 
@@ -3459,7 +3463,7 @@
             });
             window.addEventListener('resize',resize);
             resize(); load();
-            if(window.wolfPoll) wolfPoll(load,180000);
+            if(window.wolfPoll) wolfLive('liq', load, 180000);
         })();
         </script>
 
@@ -5190,7 +5194,7 @@
                 .then(function (d) { if (d) render(d); }).catch(function () {});
         }
         load();
-        if (window.wolfPoll) wolfPoll(load, 120000);
+        if (window.wolfPoll) wolfLive('s4', load, 180000);
     })();
     </script>
     <script>
@@ -5432,7 +5436,7 @@
             .then(paint).catch(function(){});
     }
     load();
-    setInterval(load, 120000);
+    wolfLive('signals', load, 180000);
 })();
 </script>
 <script>

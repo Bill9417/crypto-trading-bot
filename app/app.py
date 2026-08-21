@@ -21,7 +21,8 @@ def _default_json_encoder(obj):
         return bool(obj)
     raise TypeError(f"Object of type {type(obj)} is not JSON serializable")
 
-from flask import Flask, render_template, jsonify, request, redirect, url_for, flash, session, abort
+from flask import (Flask, render_template, jsonify, request, redirect, url_for,
+                   flash, session, abort, Response, stream_with_context)
 from flask_sqlalchemy import SQLAlchemy
 from flask_login import LoginManager, UserMixin, login_user, login_required, logout_user, current_user
 from werkzeug.security import generate_password_hash, check_password_hash
@@ -4066,6 +4067,63 @@ def api_vegas():
         print(f"[vegas] view failed: {e}")
         return jsonify({"recent": [], "open": [], "live": {}, "measured": {},
                         "error": str(e)[:150]}), 200
+
+
+@app.route("/api/stream")
+@login_required
+def api_stream():
+    """📡 Server-Sent Events — the browser is TOLD when new data lands.
+
+    Measured: a card's number is (poll interval + upstream cadence) old, and
+    only the first half is the browser's fault. /api/zones polls every 120s
+    against a scanner writing every 300s, so up to 120 of those seconds are
+    just not having asked yet. This removes that half.
+
+    It does NOT make an hourly scanner hourly-fresh, and the payload ships
+    per-feed `ages` so a card can say what it actually is rather than looking
+    live because it sits on a live-looking page.
+
+    Holds a waitress worker thread for as long as it is open, so the stream is
+    capped and self-terminating — see live_feed. A refused stream degrades to
+    the polling every card already does.
+    """
+    import live_feed
+    if not live_feed.acquire():
+        # 503 rather than a queued connection: queueing would hold a thread
+        # while doing nothing, which is the failure this cap exists to prevent.
+        return jsonify({"ok": False, "reason": "too many streams",
+                        "open": live_feed.open_streams(),
+                        "max": live_feed.MAX_STREAMS}), 503
+
+    def gen():
+        try:
+            yield from live_feed.events()
+        finally:
+            live_feed.release()
+
+    resp = Response(stream_with_context(gen()), mimetype="text/event-stream")
+    resp.headers["Cache-Control"] = "no-cache, no-transform"
+    # NO "Connection: keep-alive" here. It is a hop-by-hop header and PEP 3333
+    # forbids a WSGI application from setting one — waitress raises
+    # AssertionError and the whole endpoint 500s. Flask's dev server and the
+    # test client both accept it silently, so this only appears in production:
+    # the stream would have been dead on the real server while every test
+    # passed. The connection is kept alive by the server anyway.
+    # nginx and several reverse proxies buffer a streaming response by default,
+    # which turns "instant" into "whenever the buffer flushes". Harmless when
+    # nothing is proxying; essential when something is.
+    resp.headers["X-Accel-Buffering"] = "no"
+    return resp
+
+
+@app.route("/api/feed_ages")
+@login_required
+def api_feed_ages():
+    """How old each feed's data actually is. The honest half of "live"."""
+    import live_feed
+    return jsonify({"ages": live_feed.ages(),
+                    "streams": live_feed.open_streams(),
+                    "max_streams": live_feed.MAX_STREAMS})
 
 
 @app.route("/api/thrust")

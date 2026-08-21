@@ -978,6 +978,23 @@ def main() -> None:
                 print(f"[vegas] settled {_vo['settled']} · {_vo['open']} open")
         except Exception as exc:  # noqa: BLE001
             print(f"[strategy2] vegas outcomes error: {exc}")
+        # 📓 供需區 outcomes — settle replayed zone entries, exactly as the
+        # flip book above does. This call did not exist until 2026-08-21 and
+        # its absence was silent and total: nothing ever settled, so the book
+        # reached 76 rows against a MAX_CONCURRENT of 8, at which point
+        # record() correctly refused every new signal — and note() then
+        # declined to save, so zone_outcomes.json stopped being written
+        # altogether. The card kept showing the backtest beside an empty live
+        # record for 13 hours, which is the unfalsifiable-claim failure this
+        # book exists to prevent. Surfaced by the per-card data-age chip.
+        try:
+            import zone_outcomes
+            _zo = zone_outcomes.tick(client)
+            if _zo.get("settled"):
+                print(f"[zone] settled {_zo['settled']} · {_zo['open']} open · "
+                      f"{_zo['closed']} closed")
+        except Exception as exc:  # noqa: BLE001
+            print(f"[strategy2] zone outcomes error: {exc}")
         # 📋 Signal outcomes — replay 48h-old signals against real candles;
         # Sunday scorecard closes the honesty loop.
         try:
