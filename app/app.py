@@ -35,7 +35,7 @@ from config import (
     LEVERAGE, FIXED_MARGIN_USDT, MAX_MARGIN_USDT, MAX_CONCURRENT_POSITIONS,
     LIVE_PARTIAL_TP, LIVE_TP_TARGET,
 )
-from market_data import SafeBinanceClient, RateLimitCooldownError
+from market_data import SafeBinanceClient, TickerSnapshot, RateLimitCooldownError
 import liquidations
 import market_intel
 import executor
@@ -562,7 +562,21 @@ def safe_float(value, default=0.0):
         return default
 
 
+# ONE shared ticker snapshot for the whole web process. Every /api/live_prices
+# request used to call the exchange itself: 2.08s measured, polled every 10s by
+# the dashboard, so a single open tab held a worker thread for 2 seconds out of
+# every 10 and fired a real Binance call each time. Two tabs, two calls.
+# Binance has no multi-symbol ticker endpoint — ccxt fetches all of them and
+# filters — so asking for 5 symbols costs exactly what asking for 500 does, and
+# one shared snapshot is strictly better than N filtered ones.
+_ticker_snapshot = TickerSnapshot(rest_client,
+                                  ttl=float(os.getenv("LIVE_PRICE_TTL", "8")),
+                                  max_stale=float(os.getenv("LIVE_PRICE_MAX_STALE", "60")))
+
+
 def fetch_live_tickers(symbols):
+    """Prices for `symbols` from the shared snapshot. Never blocks on the
+    exchange unless the snapshot is older than max_stale."""
     unique_symbols = []
     seen = set()
     for symbol in symbols:
@@ -575,20 +589,14 @@ def fetch_live_tickers(symbols):
         return {}
 
     try:
-        return rest_client.call("fetch_tickers", unique_symbols)
+        tickers, _age = _ticker_snapshot.get(unique_symbols)
+        return tickers
     except RateLimitCooldownError as exc:
         print(f"Live-price refresh skipped during REST cooldown: {exc}")
         return {}
-    except Exception as exc:
-        if "same type" not in str(exc).lower():
-            print(f"Live-price refresh failed: {exc}")
-            return {}
-        try:
-            snapshot = rest_client.call("fetch_tickers")
-            return {symbol: snapshot[symbol] for symbol in unique_symbols if symbol in snapshot}
-        except Exception as snapshot_exc:  # noqa: BLE001
-            print(f"Live-price snapshot fallback failed: {snapshot_exc}")
-            return {}
+    except Exception as exc:  # noqa: BLE001 — a price board must never 500
+        print(f"Live-price refresh failed: {exc}")
+        return {}
 
 
 def csrf_token():

@@ -85,6 +85,101 @@ class SafeBinanceClient:
             raise last_exc
 
 
+class TickerSnapshot:
+    """A shared, self-refreshing ticker cache so a page load never waits on the
+    exchange.
+
+    /api/live_prices called fetch_tickers on EVERY request with no cache. The
+    dashboard polls it every 10 seconds and the call measures 2.08s, so one
+    open tab held a waitress worker for 2 seconds out of every 10 — 12.5 of the
+    14.3 thread-seconds per minute the whole dashboard costs — and fired a real
+    Binance REST call every 10s per tab. Two tabs, two calls. A phone left open
+    on the sofa, another.
+
+    Binance has no multi-symbol ticker endpoint, so ccxt fetches ALL of them and
+    filters; asking for 5 symbols costs the same as asking for 500. That makes
+    ONE shared snapshot strictly better than N filtered ones.
+
+    Three ages, three behaviours, and the middle one is the point:
+      fresh   (<= ttl)        serve, touch nothing
+      stale   (<= max_stale)  serve IMMEDIATELY, refresh in the background
+      expired (> max_stale)   block and refresh — better a slow answer than a
+                              silently minutes-old price on a live board
+    A refresh is single-flight: concurrent callers wait for the one in progress
+    instead of each starting their own, which is how a cache miss under load
+    turns into the stampede it was meant to prevent.
+
+    `age` is returned, never hidden. A cache that cannot say how old it is
+    turns a stale reading into a current one, which is the same fabrication as
+    writing 0 for a value nobody measured.
+    """
+
+    def __init__(self, client, ttl: float = 8.0, max_stale: float = 60.0):
+        self.client = client
+        self.ttl = float(ttl)
+        self.max_stale = float(max_stale)
+        self._data: dict = {}
+        self._at = 0.0
+        self._lock = threading.Lock()          # guards _data/_at
+        self._refresh_lock = threading.Lock()  # single-flight
+        self._refreshing = False
+
+    def _snapshot(self):
+        with self._lock:
+            return self._data, self._at
+
+    def _refresh(self) -> bool:
+        """One fetch. Returns False on failure, leaving the old data in place —
+        a failed refresh must not empty the board."""
+        try:
+            fresh = self.client.call("fetch_tickers")
+        except Exception as exc:  # noqa: BLE001 — callers get the stale copy
+            print(f"[tickers] refresh failed: {exc}")
+            return False
+        if not fresh:
+            return False
+        with self._lock:
+            self._data = fresh
+            self._at = time.time()
+        return True
+
+    def _refresh_once(self) -> None:
+        """Single-flight refresh: the first caller does the work, the rest
+        return immediately rather than queueing behind it."""
+        if self._refreshing:
+            return
+        with self._refresh_lock:
+            if self._refreshing:
+                return
+            self._refreshing = True
+        try:
+            self._refresh()
+        finally:
+            self._refreshing = False
+
+    def _refresh_background(self) -> None:
+        t = threading.Thread(target=self._refresh_once, name="ticker-refresh",
+                             daemon=True)
+        t.start()
+
+    def get(self, symbols=None) -> tuple:
+        """(tickers, age_seconds). age is None when there is no data at all."""
+        data, at = self._snapshot()
+        age = (time.time() - at) if at else None
+        if age is None or age > self.max_stale:
+            # Nothing usable. Block — but single-flight, so ten concurrent
+            # requests cost one exchange call, not ten.
+            self._refresh_once()
+            data, at = self._snapshot()
+            age = (time.time() - at) if at else None
+        elif age > self.ttl:
+            self._refresh_background()
+        if symbols is None:
+            return data, age
+        want = [s for s in symbols if s]
+        return {s: data[s] for s in want if s in data}, age
+
+
 class BinanceFuturesPriceStream:
     def __init__(self, stale_after_seconds: int = 120):
         self.stale_after_seconds = int(stale_after_seconds)
