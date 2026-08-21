@@ -243,6 +243,127 @@
     }
   }
 
+  // ── 中文 → English ────────────────────────────────────────────────────────
+  // The DICT above translates English markup INTO Chinese, which was the whole
+  // job while the templates were written in English. Most of this app is now
+  // authored in 中文 — 910 distinct phrases across the templates — and that
+  // dictionary cannot reach any of it, which is why the pages read as a
+  // mixture rather than as either language.
+  //
+  // SUBSTRING replacement, longest phrase first, not whole-string lookup. The
+  // rendered text is assembled at runtime from fragments — '· 延遲 ' + 195 +
+  // 's' — so the Chinese arrives glued to numbers and a whole-string match
+  // finds none of it. After concatenation the fragment is still there
+  // verbatim, so replacing within the text node works where equality does not.
+  // Longest-first is what stops '隧道' rewriting the inside of '隧道上方爆量'.
+  //
+  // IDEMPOTENT BY CONSTRUCTION: the output contains no Chinese, so a second
+  // pass over an already-translated node matches nothing. That matters because
+  // the MutationObserver re-runs this on every card re-render.
+  // SHORT keys are whole-node only. Chinese has no word boundaries, so a
+  // 1-2 character entry used as a substring rewrites the inside of longer
+  // words: 多→"long" and 進場→"Entry" turned 新多進場 into "新longEntry",
+  // 平倉→"close" turned 未平倉 into "未close", and 近→"last" turned 最近 into
+  // "最last". Longest-first ordering does not help, because the longer word
+  // is not in the table at all — that is precisely why the short key reached
+  // inside it. Requiring a short phrase to BE the whole text node removes the
+  // class rather than the instances.
+  var WHOLE_MAX = 3;
+  var SPLIT = null;
+
+  function zhEnPairs() {
+    if (SPLIT) return SPLIT;
+    var table = window.WOLF_ZH_EN || {};
+    var keys = Object.keys(table);
+    keys.sort(function (a, b) { return b.length - a.length; });
+    var okSub = {};
+    (window.WOLF_ZH_EN_SUB || []).forEach(function (k) { okSub[k] = 1; });
+    var sub = [], whole = {};
+    keys.forEach(function (k) {
+      var cjk = k.replace(/[^\u4e00-\u9fff]/g, "").length;
+      // Long enough to be unambiguous, or explicitly vetted as safe.
+      if (cjk > WHOLE_MAX || okSub[k]) sub.push([k, table[k]]);
+      else whole[k] = table[k];
+    });
+    SPLIT = { sub: sub, whole: whole };
+    return SPLIT;
+  }
+
+  function toEnglish(text) {
+    var t = zhEnPairs();
+    // A short phrase only counts when it IS the node.
+    var trimmed = text.trim();
+    if (Object.prototype.hasOwnProperty.call(t.whole, trimmed)) {
+      return text.replace(trimmed, t.whole[trimmed]);
+    }
+    var out = text;
+    for (var i = 0; i < t.sub.length; i++) {
+      if (out.indexOf(t.sub[i][0]) >= 0) {
+        out = out.split(t.sub[i][0]).join(t.sub[i][1]);
+      }
+    }
+    return out;
+  }
+
+  var CJK = /[\u4e00-\u9fff]/;
+
+  function translateToEnglish(root) {
+    var walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, null, false);
+    var node, hits = [];
+    while ((node = walker.nextNode())) {
+      if (!node.nodeValue || !CJK.test(node.nodeValue)) continue;
+      var p = node.parentNode;
+      if (p && (p.nodeName === "SCRIPT" || p.nodeName === "STYLE")) continue;
+      hits.push(node);
+    }
+    for (var i = 0; i < hits.length; i++) {
+      var v = hits[i].nodeValue;
+      var t = toEnglish(v);
+      if (t !== v) hits[i].nodeValue = t;
+    }
+    // title / placeholder / aria-label carry text too.
+    ["title", "placeholder", "aria-label"].forEach(function (attr) {
+      var els = root.querySelectorAll ? root.querySelectorAll("[" + attr + "]") : [];
+      Array.prototype.forEach.call(els, function (el) {
+        var val = el.getAttribute(attr);
+        if (val && CJK.test(val)) el.setAttribute(attr, toEnglish(val));
+      });
+    });
+  }
+
+  function applyEn() {
+    translating = true;
+    if (observer) observer.disconnect();
+    try {
+      translateToEnglish(document.body);
+      document.documentElement.setAttribute("lang", "en");
+    } finally {
+      if (observer) observer.observe(document.body, {
+        childList: true, subtree: true, characterData: true
+      });
+      translating = false;
+    }
+  }
+
+  // How much of what is on screen right now is still untranslated. Exposed
+  // rather than hidden: "mixed" was the complaint, so it needs to be
+  // MEASURABLE instead of a matter of opinion.
+  window.wolfLangCoverage = function () {
+    var walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT,
+                                           null, false);
+    var node, left = [];
+    while ((node = walker.nextNode())) {
+      var p = node.parentNode;
+      if (p && (p.nodeName === "SCRIPT" || p.nodeName === "STYLE")) continue;
+      var v = (node.nodeValue || "").trim();
+      // 中文 on the toggle is deliberate — the button names the language it
+      // switches TO, so in English mode it must read 中文. Counting it as a
+      // miss would mean the coverage number could never reach zero.
+      if (v && CJK.test(v) && v !== "中文") left.push(v);
+    }
+    return { untranslated: left.length, samples: left.slice(0, 40) };
+  };
+
   function applyZh() {
     translating = true;
     if (observer) observer.disconnect();
@@ -267,7 +388,7 @@
       if (pending) return;
       pending = setTimeout(function () {
         pending = null;
-        applyZh();
+        if (getLang() === "zh") { applyZh(); } else { applyEn(); }
       }, 150);
     });
     observer.observe(document.body, {
@@ -290,9 +411,9 @@
   document.addEventListener("DOMContentLoaded", function () {
     var lang = getLang();
     setToggleLabel(lang);
-    if (lang === "zh") {
-      startObserver();
-      applyZh();
-    }
+    // Both directions now run. EN used to be a no-op because the server
+    // rendered English; it renders 中文 now, so English is a translation too.
+    startObserver();
+    if (lang === "zh") { applyZh(); } else { applyEn(); }
   });
 })();
