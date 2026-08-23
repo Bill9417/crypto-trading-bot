@@ -380,11 +380,25 @@ def note(sig: dict, state: dict = None, now: float = None) -> dict:
     return state
 
 
-def top(state: dict = None, n: int = None, now: float = None) -> list:
-    """The strongest live hits, one per symbol, newest kept."""
+def live_rows(state: dict = None, now: float = None) -> list:
+    """EVERY live hit inside the retain window, one per symbol, strongest first.
+
+    Separate from top() because the two caps in this module answer different
+    questions and had been collapsed into one:
+
+      TOP_N          how many reach 每日觀察清單. That list ranks coins by how
+                     many INDEPENDENT engines flagged them, so a source firing
+                     on 80 coins would sit beside almost everything and stop
+                     distinguishing anything. The cap is doing real work there.
+      the card       has no such constraint. It is a list of what fired, and
+                     hiding 72 of 80 rows from the person who asked for the
+                     detector serves nothing.
+
+    vol_mult is None when there was no baseline to compare against; a missing
+    reading must not sort as though it were the weakest measured one.
+    """
     state = load_state() if state is None else state
     now = now if now is not None else time.time()
-    n = TOP_N if n is None else n
     live = [r for r in (state.get("recent") or [])
             if now - (r.get("fired_ts") or 0) <= RETAIN_HOURS * 3600]
     seen, uniq = set(), []
@@ -393,9 +407,30 @@ def top(state: dict = None, n: int = None, now: float = None) -> list:
         if sym and sym not in seen:
             seen.add(sym)
             uniq.append(r)
-    # Strongest first. vol_mult is None when there was no baseline, and a
-    # missing reading must not sort as though it were the weakest measured one.
-    return sorted(uniq, key=lambda r: -(r.get("vol_mult") or 0))[:n]
+    return sorted(uniq, key=lambda r: -(r.get("vol_mult") or 0))
+
+
+def top(state: dict = None, n: int = None, now: float = None) -> list:
+    """The strongest N live hits — what reaches the WATCHLIST. See live_rows."""
+    return live_rows(state, now)[:TOP_N if n is None else n]
+
+
+def tracked_symbols() -> set:
+    """Symbols the forward record actually took a position in.
+
+    The record is capped at 8 concurrent, so on a busy day it DECLINES most of
+    what fires — 96 declined against 8 taken, the day this was written. A card
+    listing 80 coins without saying which 8 the book is following would imply
+    all 80 are being measured, which is the opposite of true and exactly the
+    kind of gap that makes a paper record unreproducible with real money.
+    """
+    try:
+        import thrust_outcomes
+        return {r.get("symbol") for r in (thrust_outcomes.load().get("open")
+                                          or {}).values() if r.get("symbol")}
+    except Exception as exc:  # noqa: BLE001 — a card must still render
+        print(f"[thrust] tracked lookup failed: {exc}")
+        return set()
 
 
 def _record_view() -> dict:
@@ -414,14 +449,26 @@ def web_view(state: dict = None, now: float = None) -> dict:
     now = now if now is not None else time.time()
     live = [r for r in (state.get("recent") or [])
             if now - (r.get("fired_ts") or 0) <= RETAIN_HOURS * 3600]
-    shown = top(state, now=now)
+    rows = live_rows(state, now)
+    tracked = tracked_symbols()
+    for r in rows:
+        # Whether the BOOK is following this one, not just whether it fired.
+        r["tracked"] = r.get("symbol") in tracked
+    shown = rows[:TOP_N]
     ages = [r.get("age_s") for r in live
             if isinstance(r.get("age_s"), (int, float))]
     return {
         "top": shown,
-        # Both numbers, always: "the strongest 8" must never read as "all 8".
-        "live_n": len(live),
-        "hidden": max(0, len(live) - len(shown)),
+        # The remainder, so the card can list them on request instead of only
+        # counting them. Same rows, same order — just past the fold.
+        "rest": rows[TOP_N:],
+        "tracked_n": sum(1 for r in rows if r.get("tracked")),
+        # DEDUPED. `live` is the raw retained list and can hold the same coin
+        # twice (a second fire inside the retain window); the card renders one
+        # tile per SYMBOL, so counting the raw rows made it state 29 above 26
+        # tiles. A count the page contradicts is worse than no count.
+        "live_n": len(rows),
+        "hidden": max(0, len(rows) - len(shown)),
         "top_n": TOP_N,
         "retain_hours": RETAIN_HOURS,
         "scanned": state.get("scanned"),

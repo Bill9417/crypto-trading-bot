@@ -2726,7 +2726,8 @@
                   ' style="flex:0 0 auto;min-width:150px;text-decoration:none;color:inherit;'+
                   'background:rgba(255,255,255,.03);border:1px solid '+col+';border-radius:12px;'+
                   'padding:8px 11px;display:block;">'+
-                  '<div style="font-weight:800;font-size:.82rem;">'+esc(r.base||'')+(loud?' 🔥':' ⚡')+'</div>'+
+                  '<div style="font-weight:800;font-size:.82rem;">'+esc(r.base||'')+(loud?' 🔥':' ⚡')+
+                    (r.tracked?' <span title="紀錄有跟這筆">🔖</span>':'')+'</div>'+
                   '<div style="font-size:.7rem;color:'+col+';font-weight:700;">'+
                     (vm===null?'量能不明':('這小時 '+vm+'x'))+'</div>'+
                   '<div style="font-size:.64rem;color:var(--wolf-muted,#8a99ad);margin-top:2px;">'+
@@ -2770,6 +2771,21 @@
                       '。你要求的那一關是最貴的一關 —— 條件留著（那是你要的型態），但它沒有在幫忙。</div>';
                 }
                 // ── coverage + latency: the two things this card must not hide
+                // How many of the coins listed above the BOOK is actually
+                // following. The record holds 8 at once, so on a busy day it
+                // declines most of what fires — a list of 80 with no note of
+                // that reads as "80 are being measured", which is the opposite
+                // of true and precisely what makes a paper record
+                // unreproducible with real money.
+                var lv=(d&&d.live)||{};
+                if (d && d.live_n){
+                    var trk=d.tracked_n||0, cap=lv.max_concurrent||0;
+                    out += '<div style="font-size:.66rem;opacity:.72;line-height:1.7;margin-top:6px;">'+
+                      '📓 上面列出 '+d.live_n+' 檔，但<b>紀錄只跟其中 '+trk+' 檔</b>'+
+                      '（同時最多 '+cap+' 筆，🔖 = 紀錄有跟）'+
+                      (lv.skipped_no_slot?('　·　沒空位而略過 '+lv.skipped_no_slot+' 筆'):'')+
+                      '</div>';
+                }
                 var cov='';
                 if (d && d.scanned!=null){
                     cov='掃描 '+d.scanned+' 檔 · 站上隧道後用 5m 確認 '+
@@ -2818,11 +2834,15 @@
                 if (ver) ver.innerHTML=verdict(d);
                 var rows=(d&&d.top)||[];
                 if (rows.length){
-                    row.innerHTML=rows.map(tile).join('');
-                    if (d.hidden){
+                    var rest=(d&&d.rest)||[];
+                    row.innerHTML=rows.map(tile).join('')+
+                        (rest.length ? rest.map(tile).join('') : '');
+                    // The rest are RENDERED, not counted. Hiding 72 of 80 rows
+                    // from the person who asked for the detector serves nothing
+                    // — the cap that matters is the BOOK's, not the card's.
+                    if (!rest.length && d.hidden){
                         row.innerHTML += '<div style="flex:0 0 auto;align-self:center;'+MSG+
-                            'padding-left:6px;max-width:150px;">還有 '+d.hidden+
-                            ' 檔也符合 —— 這裡只列量能最大的 '+(d.top_n||8)+' 檔</div>';
+                            'padding-left:6px;max-width:150px;">還有 '+d.hidden+' 檔</div>';
                     }
                 } else if (!d || !d.ran_ts){
                     row.innerHTML='<div style="'+MSG+'">掃描器還沒跑第一輪</div>';

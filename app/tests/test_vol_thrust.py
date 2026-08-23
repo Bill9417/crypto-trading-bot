@@ -254,6 +254,68 @@ def test_it_ships_no_trade_plan():
 
 
 # ── the record and the board ─────────────────────────────────────────────────
+def test_the_card_lists_every_live_coin_not_just_the_top_slice():
+    """Asked for 2026-08-22: the card counted 72 coins it would not show.
+    The cap that matters is the BOOK's, not the card's — hiding rows from the
+    person who asked for the detector serves nothing."""
+    st = {"recent": [
+        {"symbol": f"S{i}/USDT:USDT", "base": f"S{i}", "fired_ts": 1000.0 + i,
+         "vol_mult": float(i)} for i in range(20)]}
+    v = T.web_view(st, now=1000.0)
+    assert len(v["top"]) == T.TOP_N
+    assert len(v["rest"]) == 20 - T.TOP_N
+    assert v["live_n"] == len(v["top"]) + len(v["rest"]), \
+        "the count contradicts the rows the card renders"
+    # strongest first, across the join
+    order = [r["vol_mult"] for r in v["top"] + v["rest"]]
+    assert order == sorted(order, reverse=True)
+
+
+def test_the_watchlist_stays_capped_even_though_the_card_does_not():
+    """Two caps, two jobs. 每日觀察清單 ranks by how many INDEPENDENT engines
+    agree, so a source flagging 23 coins would sit beside almost everything
+    and stop distinguishing anything."""
+    st = {"recent": [
+        {"symbol": f"S{i}/USDT:USDT", "base": f"S{i}", "fired_ts": 1000.0 + i,
+         "vol_mult": float(i)} for i in range(20)]}
+    assert len(T.top(st, now=1000.0)) == T.TOP_N
+    assert len(T.live_rows(st, now=1000.0)) == 20
+
+
+def test_a_coin_firing_twice_is_one_row_and_one_count():
+    """The retain window can hold the same coin twice. The card renders one
+    tile per SYMBOL, so counting raw rows made it claim 29 above 26 tiles."""
+    st = {"recent": [
+        {"symbol": "A/USDT:USDT", "base": "A", "fired_ts": 1000.0, "vol_mult": 4.0},
+        {"symbol": "A/USDT:USDT", "base": "A", "fired_ts": 900.0, "vol_mult": 9.0},
+        {"symbol": "B/USDT:USDT", "base": "B", "fired_ts": 950.0, "vol_mult": 5.0}]}
+    v = T.web_view(st, now=1000.0)
+    assert v["live_n"] == 2
+    assert len(v["top"]) + len(v["rest"]) == 2
+    # the NEWER fire wins, not the louder one
+    a = next(r for r in v["top"] if r["base"] == "A")
+    assert a["vol_mult"] == 4.0
+
+
+def test_the_rows_say_whether_the_record_is_following_them(tmp_path,
+                                                           monkeypatch):
+    """The book holds 8 at once and declines the rest. A list of 23 with no
+    note of that reads as '23 are being measured', which is the opposite of
+    true — and is exactly what makes a paper record unreproducible."""
+    import thrust_outcomes as TO
+    monkeypatch.setattr(TO, "STORE_FILE", str(tmp_path / "t.json"))
+    TO.save({"open": {"k": {"symbol": "S3/USDT:USDT"}}, "closed": [],
+             "recent": []})
+    st = {"recent": [
+        {"symbol": f"S{i}/USDT:USDT", "base": f"S{i}", "fired_ts": 1000.0 + i,
+         "vol_mult": float(i)} for i in range(5)]}
+    v = T.web_view(st, now=1000.0)
+    flags = {r["base"]: r["tracked"] for r in v["top"] + v["rest"]}
+    assert flags["S3"] is True
+    assert all(not f for b, f in flags.items() if b != "S3")
+    assert v["tracked_n"] == 1
+
+
 def test_the_board_caps_and_says_it_capped():
     """This fires ~54x a day. A source that flags a third of the board would
     sit beside almost every coin and stop distinguishing anything."""
@@ -345,6 +407,24 @@ def test_the_card_admits_the_buy_share_finding():
     assert "if(m.buy_share_ladder&&m.buy_share_ladder.length){" in seg, \
         "the buy-share block is present but not reachable"
     assert "更差" in seg
+
+
+def test_the_card_renders_every_row_it_counts():
+    """`rest` shipping in the payload is not the same as the card drawing it."""
+    seg = _card()
+    assert "d.rest" in seg, "the card ignores the rows past the fold"
+    assert "rest.map(tile)" in seg.replace(" ", "").replace(
+        "rest.map(tile)", "rest.map(tile)") or "rest.map(tile)" in seg, \
+        "the extra rows are fetched and never drawn"
+
+
+def test_the_card_marks_which_rows_the_record_follows():
+    """The book holds 8 and declines the rest, so a list of 23 without that
+    note reads as '23 are being measured'."""
+    seg = _card()
+    assert "r.tracked" in seg, "the per-coin marker is gone"
+    assert "紀錄只跟其中" in seg, "the card does not say how many are tracked"
+    assert "max_concurrent" in seg, "the cap behind that number is not shown"
 
 
 def test_the_card_shows_coverage_and_latency():
