@@ -514,6 +514,17 @@ def scan_once(client, recent: list, last_alert: dict, pending: list) -> list:
                 # ever settle whether this pattern pays.
                 import flip_outcomes
                 flip_outcomes.note(_bf)
+                # …and into the UNCAPPED log. flip_outcomes declines a signal
+                # when its 8 slots are full — 824 declined against 82 taken —
+                # so its book cannot answer "what would a different rule have
+                # done", because the trades that rule would have taken instead
+                # were never settled. trade_log records every signal and lets
+                # each variant apply its own filter and capacity at read time.
+                try:
+                    import trade_log
+                    trade_log.note(_bf, "flip")
+                except Exception as exc:  # noqa: BLE001 — never kill the sweep
+                    print(f"[tradelog] flip record failed: {exc}")
                 telegram_utils.send_message(
                     breakout_flip.format_alert(sym, _bf, _bf["plan"]),
                     parse_mode="HTML", force=True, channel="signals")
@@ -537,6 +548,11 @@ def scan_once(client, recent: list, last_alert: dict, pending: list) -> list:
                 LATEST_ZONES[sym] = {**_zs, "tv_url": _tv_url(sym)}
                 import zone_outcomes
                 zone_outcomes.note(_zs)
+                try:
+                    import trade_log
+                    trade_log.note(_zs, "zone")
+                except Exception as exc:  # noqa: BLE001
+                    print(f"[tradelog] zone record failed: {exc}")
                 print(f"[zone] {sym} {_zs['side']} at {_zs['kind']} "
                       f"{_zs['zone_bottom']:.6g}-{_zs['zone_top']:.6g} "
                       f"x{_zs['touches']}"
@@ -986,6 +1002,17 @@ def main() -> None:
                 print(f"[vegas] settled {_vo['settled']} · {_vo['open']} open")
         except Exception as exc:  # noqa: BLE001
             print(f"[strategy2] vegas outcomes error: {exc}")
+        # 📒 The uncapped trade log — settles EVERY recorded signal, so the
+        # variant replay has real outcomes for the trades each rule-set would
+        # have taken rather than only for the ones that fit in 8 slots.
+        try:
+            import trade_log
+            _tl = trade_log.tick(client)
+            if _tl.get("settled"):
+                print(f"[tradelog] settled {_tl['settled']} · "
+                      f"{_tl['open']} open · {_tl['rows']} logged")
+        except Exception as exc:  # noqa: BLE001
+            print(f"[strategy2] trade log error: {exc}")
         # 📓 隧道上方爆量 outcomes — forward % at +1/6/24/48h, the same
         # horizons the card's backtest quotes, so the two can be read side by
         # side. Added 2026-08-21: the detector had been recording sightings

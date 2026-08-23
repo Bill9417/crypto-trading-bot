@@ -4126,6 +4126,32 @@ def api_feed_ages():
                     "max_streams": live_feed.MAX_STREAMS})
 
 
+@app.route("/trades")
+@login_required
+def trades_page():
+    """📒 Every logged signal, and what two rule-sets would have held.
+
+    The page exists because a capped book cannot answer "what would a
+    different rule have done": skipping a setup FREES A SLOT, so the other
+    rule-set takes trades this one had to decline. See trade_log.
+    """
+    return render_template("trades.html", user=current_user)
+
+
+@app.route("/api/trade_log")
+@login_required
+def api_trade_log():
+    """The log plus every variant replayed over it. Reads a file; no exchange
+    call, so polling is free."""
+    import trade_log
+    src = (request.args.get("source") or "").strip() or None
+    try:
+        return jsonify(_json_safe(trade_log.board(source=src)))
+    except Exception as e:  # noqa: BLE001 — the page degrades, never 500s
+        print(f"[tradelog] board failed: {e}")
+        return jsonify({"variants": {}, "logged": 0, "error": str(e)[:150]}), 200
+
+
 @app.route("/api/thrust")
 @login_required
 def api_thrust():

@@ -1,0 +1,251 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <!-- Prices and R multiples are numbers, never numbers to call: iOS Safari
+         turns anything shaped like 866.0700 into a tel: link. -->
+    <meta name="format-detection" content="telephone=no">
+    <title>Wolf Scanner — 交易紀錄</title>
+    <link rel="manifest" href="/manifest.webmanifest">
+    <meta name="theme-color" content="#0a0b0f">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="Wolf">
+    <link rel="apple-touch-icon" href="/static/apple-touch-icon.png">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/static/app.css?v={{ asset_ver }}">
+    <style>
+        /* ── 交易紀錄 (2026-08-22) ──────────────────────────────────────────
+           Every logged signal, and what two different rule-sets would have
+           held. The layout puts the two variants SIDE BY SIDE at the top,
+           because the only reason to run both is the difference between them —
+           a page that made you switch tabs to compare would hide the answer. */
+        /* app.css does NOT paint the body on a standalone page — every
+           other one sets its own, and omitting it here rendered /trades with
+           a transparent background and BLACK text while the rest of the app
+           is dark. It looked like a washed-out screenshot; it was the page. */
+        body {
+            margin: 0; background: var(--wolf-slate); color: var(--wolf-text);
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            -webkit-font-smoothing: antialiased;
+        }
+        .nav-standalone { position: sticky; top: 0; z-index: 40; margin: 0 0 18px; }
+        .tl-wrap { max-width: 1180px; margin: 0 auto; padding: 0 16px 60px; }
+        .tl-head { padding: 4px 2px 14px; margin-bottom: 14px;
+                   border-bottom: 1px solid var(--wolf-border); }
+        .tl-title { margin: 0; font-size: 1.35rem; font-weight: 800;
+                    letter-spacing: -.02em; color: var(--wolf-text); }
+        .tl-sub { margin-top: 6px; font-size: .74rem; color: var(--wolf-muted);
+                  line-height: 1.7; }
+
+        .tl-vs { display: grid; grid-template-columns: 1fr 1fr; gap: 12px;
+                 margin-bottom: 14px; }
+        .tl-card { border: 1px solid var(--wolf-border); border-radius: 14px;
+                   padding: 13px 15px; background: rgba(255,255,255,.025); }
+        .tl-card.on { border-color: rgba(255,210,87,.45);
+                      background: linear-gradient(180deg, rgba(255,210,87,.09), rgba(255,210,87,.02)); }
+        .tl-vname { font-size: .78rem; font-weight: 800; color: var(--wolf-gold);
+                    letter-spacing: .03em; }
+        .tl-vdesc { font-size: .68rem; color: var(--wolf-muted); margin-top: 3px;
+                    line-height: 1.6; }
+        .tl-vexp { font-size: 1.5rem; font-weight: 900; margin-top: 8px;
+                   letter-spacing: -.02em; }
+        .tl-vrow { font-size: .7rem; color: var(--wolf-muted); margin-top: 4px;
+                   line-height: 1.7; }
+
+        .tl-tabs { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 12px; }
+        .tl-tab { font-family: inherit; font-size: .74rem; font-weight: 700;
+                  padding: 9px 14px; border-radius: 10px; cursor: pointer;
+                  min-height: 40px; color: var(--wolf-muted);
+                  background: transparent; border: 1px solid transparent; }
+        .tl-tab.on { color: var(--wolf-gold);
+                     background: linear-gradient(180deg, rgba(255,210,87,.16), rgba(255,210,87,.05));
+                     border-color: rgba(255,210,87,.32); }
+
+        .tl-tablewrap { overflow-x: auto; -webkit-overflow-scrolling: touch;
+                        border: 1px solid var(--wolf-border); border-radius: 14px; }
+        table.tl { width: 100%; border-collapse: collapse; font-size: .72rem;
+                   min-width: 900px; }
+        table.tl th { text-align: right; font-size: .62rem; font-weight: 800;
+                      letter-spacing: .08em; text-transform: uppercase;
+                      color: var(--wolf-champagne); opacity: .75;
+                      padding: 10px 10px; white-space: nowrap;
+                      border-bottom: 1px solid var(--wolf-border); }
+        table.tl th:first-child, table.tl td:first-child { text-align: left; }
+        table.tl td { text-align: right; padding: 9px 10px; white-space: nowrap;
+                      border-bottom: 1px solid rgba(255,255,255,.045);
+                      color: var(--wolf-text); font-variant-numeric: tabular-nums; }
+        table.tl tr:last-child td { border-bottom: 0; }
+        table.tl tr:hover td { background: rgba(255,255,255,.03); }
+        .tl-sym { font-weight: 800; }
+        .tl-sym a { color: inherit; text-decoration: none; }
+        .tl-sym a:hover { color: var(--wolf-gold); }
+        .tl-pill { display: inline-block; font-size: .6rem; font-weight: 800;
+                   padding: 2px 7px; border-radius: 999px; margin-left: 6px; }
+        .tl-blue { color: #86efac; background: rgba(74,222,128,.12); }
+        .tl-ceil { color: #fbbf24; background: rgba(251,191,36,.12); }
+        .tl-win { color: #86efac; } .tl-loss { color: #fca5a5; }
+        .tl-open { color: var(--wolf-muted); }
+        .tl-note { font-size: .66rem; color: var(--wolf-muted); opacity: .8;
+                   line-height: 1.7; margin-top: 10px; }
+        @media (max-width: 767px) {
+            .tl-wrap { padding: 0 10px 60px; }
+            .tl-vs { grid-template-columns: 1fr; }
+            .tl-vexp { font-size: 1.3rem; }
+        }
+    </style>
+</head>
+<body class="has-sidebar">
+    <div class="nav-standalone">{% include '_nav.html' %}</div>
+    <div class="tl-wrap">
+        <div class="tl-head">
+            <h1 class="tl-title">📒 交易紀錄</h1>
+            <div class="tl-sub" id="tl-sub">載入中…</div>
+        </div>
+
+        <!-- The two rule-sets, side by side. Comparing them IS the page. -->
+        <div class="tl-vs" id="tl-vs"></div>
+
+        <div class="tl-tabs" id="tl-tabs"></div>
+        <div class="tl-tablewrap"><table class="tl" id="tl-table"></table></div>
+        <div class="tl-note" id="tl-note"></div>
+    </div>
+
+<script>
+(function () {
+    "use strict";
+    var DATA = null, VARIANT = 'all', SOURCE = 'flip';
+
+    function esc(t){return String(t==null?'':t).replace(/[&<>"]/g,function(c){
+        return ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]);});}
+    function num(v,d){v=Number(v);return isFinite(v)?v.toFixed(d==null?2:d):null;}
+    function px(v){v=Number(v);if(!isFinite(v))return '—';
+        var d=v>=1000?2:v>=1?4:v>=0.01?6:8; return v.toFixed(d);}
+    function when(ts){ if(!ts) return '—';
+        var d=new Date(ts*1000);
+        function p(n){return (n<10?'0':'')+n;}
+        return p(d.getMonth()+1)+'-'+p(d.getDate())+' '+p(d.getHours())+':'+p(d.getMinutes()); }
+
+    function vcard(name, v, on){
+        var st=v.stats||{}, exp=st.exp;
+        // n=0 renders as "尚未累積", never as 0.000R. A book with nothing in it
+        // has no expectancy, and printing one would be a claim about a
+        // strategy nobody has observed yet.
+        var expTxt = (st.n ? ((exp>=0?'+':'')+num(exp,3)+'R') : '尚未累積');
+        var col = !st.n ? 'var(--wolf-muted)' : (exp>0?'#86efac':'#fca5a5');
+        var skip=v.skipped||{};
+        return '<div class="tl-card'+(on?' on':'')+'" data-v="'+esc(name)+'" role="button" tabindex="0">'+
+          '<div class="tl-vname">'+esc(v.label)+'</div>'+
+          '<div class="tl-vdesc">'+esc(v.desc)+'</div>'+
+          '<div class="tl-vexp" style="color:'+col+'">'+expTxt+'</div>'+
+          '<div class="tl-vrow">'+
+            (st.n ? ('已結算 '+st.n+' 筆 · 停利 '+st.wins+' / 停損 '+st.losses+
+                     ' · 勝率 '+num(st.wr,0)+'%'+
+                     (st.ci ? '　信賴區間 ['+num(st.ci[0],3)+', '+num(st.ci[1],3)+']' : ''))
+                  : '還沒有結算完成的交易')+
+          '</div>'+
+          '<div class="tl-vrow">'+
+            '未結算 '+(st.open||0)+' 筆'+
+            (skip.filter ? '　· 規則跳過 '+skip.filter+' 筆' : '')+
+            (skip.no_slot ? '　· 沒空位 '+skip.no_slot+' 筆' : '')+
+          '</div></div>';
+    }
+
+    function rows(v){
+        var t=(v&&v.trades)||[];
+        if(!t.length) return '<tr><td colspan="11" style="text-align:center;padding:26px;'+
+            'color:var(--wolf-muted)">這個版本還沒有交易</td></tr>';
+        return t.map(function(r){
+            var win = r.outcome==='tp' || (Number(r.r)>0);
+            var cls = r.outcome==null ? 'tl-open' : (win?'tl-win':'tl-loss');
+            var res = r.outcome==null ? '持倉中'
+                    : r.outcome==='tp' ? '停利'
+                    : r.outcome==='sl' ? '停損' : '到期';
+            var seg = r.segment==='blue'
+                ? '<span class="tl-pill tl-blue">上方無壓</span>'
+                : '<span class="tl-pill tl-ceil">上方有壓</span>';
+            return '<tr>'+
+              '<td class="tl-sym"><a href="/coin/'+encodeURIComponent(r.base||'')+'">'+
+                esc(r.base||'')+'</a>'+seg+'</td>'+
+              '<td>'+when(r.fired_ts)+'</td>'+
+              '<td>'+px(r.entry)+'</td>'+
+              '<td>'+px(r.sl)+'</td>'+
+              '<td>'+px(r.tp)+'</td>'+
+              '<td>'+(r.stop_pct!=null?('−'+num(r.stop_pct,2)+'%'):'—')+'</td>'+
+              '<td>'+(r.exit_price!=null?px(r.exit_price):'—')+'</td>'+
+              '<td>'+when(r.exit_ts)+'</td>'+
+              '<td class="'+cls+'">'+res+'</td>'+
+              '<td class="'+cls+'">'+(r.r!=null?((r.r>=0?'+':'')+num(r.r,3)+'R'):'—')+'</td>'+
+              '<td style="opacity:.6">'+(r.cost_r!=null?('−'+num(r.cost_r,3)):'—')+'</td>'+
+              '</tr>';
+        }).join('');
+    }
+
+    function paint(){
+        var d=DATA;
+        var sub=document.getElementById('tl-sub');
+        if(!d || d.error){
+            sub.textContent = (d&&d.http===404)
+                ? '這個功能還沒生效 —— 網站程式要重啟才會有（/restart）'
+                : ('載入失敗：'+((d&&(d.error||d.neterr))||'未知'));
+            return;
+        }
+        var since = d.since ? new Date(d.since*1000).toLocaleString() : '—';
+        // The honest framing, at the top: this log starts when it was switched
+        // on. Everything the capped book declined before that was never
+        // settled and cannot be recovered.
+        sub.innerHTML = '每一筆訊號都記下來（不設上限），再用不同規則回放 —— '+
+            '所以兩個版本用的是同一批訊號，差別只在誰被跳過。<br>'+
+            '紀錄從 <b>'+esc(since)+'</b> 開始 · 共 '+d.logged+' 筆訊號（'+d.open+
+            ' 筆還沒結算）· 回放時最多同時持有 '+d.max_concurrent+' 筆<br>'+
+            '⚠️ 開始記錄之前被「沒空位」擋掉的訊號沒有結果，任何版本都算不出來。';
+
+        var vs=document.getElementById('tl-vs'), html='';
+        for (var k in d.variants) html += vcard(k, d.variants[k], k===VARIANT);
+        vs.innerHTML = html;
+
+        var srcs=d.sources||{};
+        var tabs=Object.keys(srcs).map(function(s){
+            return '<button class="tl-tab'+(s===SOURCE?' on':'')+'" data-src="'+esc(s)+'">'+
+                   esc(s)+' ('+srcs[s]+')</button>';
+        }).join('');
+        document.getElementById('tl-tabs').innerHTML = tabs;
+
+        var v=d.variants[VARIANT]||{};
+        document.getElementById('tl-table').innerHTML =
+            '<thead><tr><th>幣種</th><th>進場時間</th><th>進場</th><th>停損</th>'+
+            '<th>停利</th><th>停損距離</th><th>出場價</th><th>出場時間</th>'+
+            '<th>結果</th><th>R（已扣成本）</th><th>成本</th></tr></thead>'+
+            '<tbody>'+rows(v)+'</tbody>';
+
+        var only = '兩個版本拿到的不是同一批交易：只有「全部進場」拿到的 '+
+            (d.only_in_all||0)+' 筆，只有「跳過上方有壓」拿到的 '+(d.only_in_blue||0)+
+            ' 筆。跳過一筆會空出位子，後面本來排不進去的訊號就進得來了。';
+        document.getElementById('tl-note').innerHTML =
+            only+'<br>R 已扣掉手續費與滑價；進場價是訊號那根 K 的收盤價，'+
+            '出場價是碰到的那個價位（停損就是停損價）。資金費率尚未計入。';
+    }
+
+    function load(){
+        fetch('/api/trade_log?source='+encodeURIComponent(SOURCE))
+            .then(function(r){ if(!r.ok) return {http:r.status, error:'HTTP '+r.status};
+                               return r.json(); })
+            .then(function(d){ DATA=d; paint(); })
+            .catch(function(e){ DATA={neterr:String((e&&e.message)||e)}; paint(); });
+    }
+
+    document.addEventListener('click', function(ev){
+        var card=ev.target.closest('.tl-card');
+        if(card){ VARIANT=card.getAttribute('data-v'); paint(); return; }
+        var tab=ev.target.closest('.tl-tab');
+        if(tab){ SOURCE=tab.getAttribute('data-src'); load(); }
+    });
+    load();
+    if (window.wolfPoll) wolfPoll(load, 120000); else setInterval(load, 120000);
+})();
+</script>
+</body>
+</html>

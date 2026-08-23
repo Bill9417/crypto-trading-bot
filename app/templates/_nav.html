@@ -64,6 +64,7 @@
     {% endif %}
     <a href="/s4" class="wsb-item{% if request.endpoint == 's4_page' %} on{% endif %}"><svg class="wsb-ico" viewBox="0 0 24 24"><use href="#wi-target"/></svg><span>S4 Radar</span></a>
     <a href="/reality" class="wsb-item{% if request.endpoint == 'reality_page' %} on{% endif %}"><svg class="wsb-ico" viewBox="0 0 24 24"><use href="#wi-sliders"/></svg><span>Reality Check</span></a>
+    <a href="/trades" class="wsb-item{% if request.endpoint == 'trades_page' %} on{% endif %}"><svg class="wsb-ico" viewBox="0 0 24 24"><use href="#wi-sliders"/></svg><span>Trade Log</span></a>
 
     <div class="wsb-group">Stocks</div>
     <a href="/tw" class="wsb-item{% if request.endpoint == 'tw_page' %} on{% endif %}"><svg class="wsb-ico" viewBox="0 0 24 24"><use href="#wi-bank"/></svg><span>TW Stocks</span></a>
@@ -109,6 +110,7 @@
     'strategies': ('Strategies', 'wi-layers'), 'strategy2': ('Strategies', 'wi-layers'),
     'funnel': ('Signal Funnel', 'wi-filter'), 'performance': ('Performance', 'wi-bars'),
     's4_page': ('S4 Radar', 'wi-target'), 'reality_page': ('Reality Check', 'wi-sliders'),
+    'trades_page': ('交易紀錄', 'wi-sliders'),
     'tw_page': ('TW Stocks', 'wi-bank'), 'us_page': ('US Stocks', 'wi-flag'),
     'stocks_page': ('Market Board', 'wi-line'), 'copy_page': ('Copy Trading', 'wi-users'),
     'account': ('Binance', 'wi-wallet'), 'bybit_page': ('Bybit', 'wi-coins'),
