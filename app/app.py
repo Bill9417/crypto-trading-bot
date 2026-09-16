@@ -1937,8 +1937,8 @@ def join_group():
     reader gets "a new era of messaging" instead of a Join button and assumes
     the group is dead. Measured 2026-08-11:
 
-        t.me/+__YKMoQF32czNDE1  → 200, Join Group Chat     ✅
-        t.me/__YKMoQF32czNDE1   → 302 telegram.org         ❌  (same link, no +)
+        t.me/+EXAMPLEINVITEHASH  → 200, Join Group Chat     ✅
+        t.me/EXAMPLEINVITEHASH   → 302 telegram.org         ❌  (same link, no +)
 
     A plain path with no reserved characters cannot be mangled by anything, so
     this is what gets published. It also means the invite can be rotated

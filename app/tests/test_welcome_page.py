@@ -103,8 +103,8 @@ def test_welcome_hides_tiny_outcome_sample(monkeypatch):
 # t.me then reads the rest as a username, finds nothing, and bounces to
 # telegram.org's homepage — so the reader sees "a new era of messaging" instead
 # of a Join button and assumes the group is dead. Measured that day:
-#     t.me/+__YKMoQF32czNDE1  → 200 Join Group Chat
-#     t.me/__YKMoQF32czNDE1   → 302 telegram.org      (same link, no +)
+#     t.me/+EXAMPLEINVITEHASH  → 200 Join Group Chat
+#     t.me/EXAMPLEINVITEHASH   → 302 telegram.org      (same link, no +)
 # Both invites were valid the whole time; the `+` was the bug.
 def test_join_redirects_to_the_live_invite(monkeypatch):
     import telegram_utils

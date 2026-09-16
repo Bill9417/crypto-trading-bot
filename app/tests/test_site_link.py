@@ -79,7 +79,7 @@ def test_link_reply_without_tunnel(monkeypatch):
 # A permanent URL changes what the copy is allowed to promise: the old text
 # told the family "the link will change on reboot and we'll send the new one",
 # which becomes a lie people plan around once the URL is fixed.
-STABLE = "https://shihbochuns-mac-mini.tail902e9c.ts.net"
+STABLE = "https://my-node.tailnet-name.ts.net"
 
 
 def test_public_base_url_wins_over_the_tunnel(monkeypatch):
