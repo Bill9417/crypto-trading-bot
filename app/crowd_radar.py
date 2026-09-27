@@ -50,6 +50,7 @@ import time
 
 import requests
 
+import crowd_outcomes
 import tg_format as F
 import telegram_utils
 
@@ -393,6 +394,14 @@ def with_live(oi_series: list, px_series: list, oi_now: float) -> tuple:
     return oi_series + [float(oi_now)], px_series + [px_series[-1]]
 
 
+def klines_after(symbol: str, ts: float, limit: int = 100) -> list:
+    """15m candles from the alert onward — 100 bars covers the 24h horizon
+    with room for the closing bar. Raw Binance rows, scored by
+    crowd_outcomes.score()."""
+    return _get("/fapi/v1/klines", {"symbol": symbol, "interval": PERIOD,
+                                    "startTime": int(ts * 1000), "limit": limit})
+
+
 def ls_ratio(symbol: str, period: str = PERIOD, limit: int = HIST) -> list:
     rows = _get("/futures/data/topLongShortPositionRatio",
                 {"symbol": symbol, "period": period, "limit": limit})
@@ -454,7 +463,7 @@ def _usd(v: float) -> str:
     return f"${v:.0f}"
 
 
-def build_alert(row: dict) -> str:
+def build_alert(row: dict, record: str = "") -> str:
     base = row["symbol"][:-4]
     head = HEAD_ZH.get(row["state"], "🐋 未平倉異動")
     rows = [("未平倉", f"{F.pct(row['oi_pct'])}  ({row['span_h']:g}h)"),
@@ -490,7 +499,10 @@ def build_alert(row: dict) -> str:
         # likelihood and it is a ranking against this symbol's own five days.
         f"\n{tail}\n⚠️ 這是「持倉位置」，不是進場訊號 —— "
         f"本系統從未驗證過它能預測方向。\n"
-        f"罕見度 = 跟自己過去 5 天的每 2 小時變化比的排名。",
+        f"罕見度 = 跟自己過去 5 天的每 2 小時變化比的排名。"
+        # The forward book's own count for this read, once it can carry one.
+        # A past-tense tally of what followed, never the odds for this alert.
+        + (f"\n{record}" if record else ""),
         F.bybit_line(base),
     ])
 
@@ -559,6 +571,9 @@ def scan(symbols: list = None, now: float = None, store: dict = None,
         store.setdefault("recent", []).insert(0, row)
         store.setdefault("last", {})[f"{row['symbol']}:{row['state']}"] = {
             "ts": now, "oi_pct": row["oi_pct"]}
+        # Everything the board shows is scored later, so the record is over
+        # the same events the reader saw — not a cleaner subset.
+        crowd_outcomes.note(store, row)
 
     sendable = [h for h in hits if not h.get("suppressed")]
     sendable.sort(key=lambda h: (-(h.get("pctile") or 0), -(h.get("notional") or 0)))
@@ -571,12 +586,17 @@ def scan(symbols: list = None, now: float = None, store: dict = None,
     for row in loud[:MAX_ALERTS_PER_SWEEP]:
         if send:
             try:
-                send(build_alert(row))
+                send(build_alert(row, crowd_outcomes.record_line(store, row["state"])))
             except Exception as exc:  # noqa: BLE001
                 print(f"[crowd] alert failed {row['symbol']}: {exc}")
 
     store["recent"] = (store.get("recent") or [])[:KEEP_RECENT]
     store["ran_ts"] = now
+    # What the sweep covered, kept so the card can say "320 checked" instead
+    # of leaving an empty strip to mean either "quiet" or "never ran".
+    store["last_scan"] = {"ts": now, "checked": checked, "errors": errors,
+                          "live": live, "shown": len(sendable),
+                          "alerted": min(len(loud), MAX_ALERTS_PER_SWEEP)}
     # `shown` vs `alerted` are deliberately both reported: a cap that silently
     # dropped findings would read as "nothing else was happening".
     return {"checked": checked, "errors": errors, "hits": hits, "live": live,
@@ -607,6 +627,12 @@ def tick(now: float = None, force: bool = False) -> dict:
     if not force and now - (store.get("ran_ts") or 0) < RUN_EVERY_SEC:
         return {"skipped": "not due"}
     result = scan(now=now, store=store, send=_send)
+    # Score the pile-ups whose horizons have printed. Its own try: a dead
+    # klines endpoint must not cost the sweep that just ran.
+    try:
+        result["book"] = crowd_outcomes.settle(store, klines_after, now, pace=PACE_SEC)
+    except Exception as exc:  # noqa: BLE001
+        result["book"] = {"error": str(exc)}
     save(store)
     return result
 
@@ -633,11 +659,22 @@ def dedupe_recent(rows: list) -> list:
     return out
 
 
-def web_view(store: dict = None, limit: int = 20) -> dict:
+# A pile-up from three days ago is history, not a reading. The store keeps
+# it (the book scores it), the strip stops showing it.
+SHOW_MAX_AGE_H = float(os.getenv("CROWD_SHOW_MAX_AGE_H", "48"))
+
+
+def web_view(store: dict = None, limit: int = 20, now: float = None) -> dict:
     store = load() if store is None else store
+    now = time.time() if now is None else now
+    recent = [r for r in dedupe_recent(store.get("recent"))
+              if now - (r.get("ts") or 0) <= SHOW_MAX_AGE_H * 3600]
     return {
-        "recent": dedupe_recent(store.get("recent"))[:limit],
+        "recent": recent[:limit],
         "ran_ts": store.get("ran_ts") or 0,
+        "last_scan": store.get("last_scan") or {},
+        "book": crowd_outcomes.summary(store),
+        "show_max_age_h": SHOW_MAX_AGE_H,
         "span_h": SPAN_BARS * 15 / 60,
         "pctile_gate": PCTILE_GATE,
         "min_oi_pct": MIN_OI_PCT,

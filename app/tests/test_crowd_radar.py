@@ -614,8 +614,29 @@ def test_the_full_history_is_still_in_the_store():
     analysis need every event, and it is only the DISPLAY that wants one row."""
     store = C._blank()
     store["recent"] = [{"symbol": "X", "ts": 2}, {"symbol": "X", "ts": 1}]
-    assert len(C.web_view(store)["recent"]) == 1
+    assert len(C.web_view(store, now=3)["recent"]) == 1
     assert len(store["recent"]) == 2
+
+
+def test_the_strip_stops_showing_a_pile_up_from_days_ago():
+    """A row from three days back is history. It stays in the store (the
+    book scores it) and leaves the strip, so an empty strip means quiet
+    NOW rather than "nothing since Tuesday"."""
+    store = C._blank()
+    old_ts = 1000.0
+    store["recent"] = [{"symbol": "OLD", "ts": old_ts},
+                       {"symbol": "NEW", "ts": old_ts + 49 * 3600}]
+    now = old_ts + 49 * 3600 + 60
+    assert [r["symbol"] for r in C.web_view(store, now=now)["recent"]] == ["NEW"]
+    assert len(store["recent"]) == 2
+
+
+def test_the_view_carries_the_book_and_the_sweep_meta():
+    store = C._blank()
+    store["last_scan"] = {"ts": 5.0, "checked": 320, "shown": 3}
+    v = C.web_view(store, now=6.0)
+    assert v["last_scan"]["checked"] == 320
+    assert v["book"]["n_lifetime"] == 0 and v["book"]["min_n"] == 30
 
 
 def test_dedupe_survives_rows_with_no_timestamp():

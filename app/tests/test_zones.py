@@ -238,3 +238,51 @@ def test_an_empty_book_says_whether_it_has_ever_run():
     card = dash[dash.index('data-card="zones"'):]
     card = card[:card.index("</script>")]
     assert "lifetime_n===0" in card, "an unrun scanner reads as a quiet market"
+
+
+# ── the live record on the replay's own cuts (2026-09-27) ───────────────────
+def test_the_live_record_is_split_by_trend_and_5m_agreement():
+    """The replay's headline is with-trend +0.175R vs against -0.032R, and
+    with_trend / tf5 were recorded on every row so the forward book could
+    price that. Recorded on a row in a list pruned to 400 is a record that
+    expires; bucketed in the lifetime tally it is not."""
+    import strategy4_outcomes as S4O
+    store = {"tally": {}}
+    S4O.accumulate(store, {"r": 1.0, "segment": "ceiling", "side": "short",
+                           "outcome": "tp", "with_trend": True, "tf5": "agree"})
+    S4O.accumulate(store, {"r": -1.0, "segment": "ceiling", "side": "short",
+                           "outcome": "sl", "with_trend": False, "tf5": "no"})
+    # A flip row never asked either question and must land in neither cut.
+    S4O.accumulate(store, {"r": 0.5, "segment": "blue", "side": "long",
+                           "outcome": "tp", "with_trend": None, "tf5": None})
+    t = store["tally"]
+    assert t["trend:with"]["n"] == 1 and t["trend:against"]["n"] == 1
+    assert t["tf5:agree"]["n"] == 1 and t["tf5:no"]["n"] == 1
+    assert t["all"]["n"] == 3
+
+
+def test_the_board_shows_the_split_it_was_built_to_settle(monkeypatch, tmp_path):
+    import flip_outcomes as F
+    import strategy4_outcomes as S4O
+    store = F._blank()
+    S4O.accumulate(store, {"r": 1.0, "segment": "ceiling", "side": "short",
+                           "outcome": "tp", "with_trend": True, "tf5": "agree"})
+    monkeypatch.setattr(Z, "STORE_FILE", str(tmp_path / "z.json"))
+    Z.save(store)
+    v = Z.web_view()
+    assert v["stats"]["trend:with"]["n"] == 1
+    assert v["stats"]["tf5:agree"]["n"] == 1
+    assert "trend:against" not in v["stats"], "an empty cut must not render as zero"
+    assert v["segment_zh"]["trend:with"] == "順勢"
+
+
+def test_the_card_tells_a_live_setup_from_a_settled_one():
+    """`open` and `recent` were concatenated into one strip with nothing to
+    say which was which — a stopped-out row from yesterday read exactly like
+    a position that is live now."""
+    dash = open(os.path.join(os.path.dirname(os.path.abspath(zones.__file__)),
+                             "templates/index.html"), encoding="utf-8").read()
+    card = dash[dash.index('data-card="zones"'):]
+    card = card[:card.index("</script>")]
+    assert "進行中" in card and "d.closed" in card, "settled rows carry no outcome"
+    assert "trend:with" in card, "the with-trend live split is not on the card"

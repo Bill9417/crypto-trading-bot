@@ -89,7 +89,7 @@ The Flask app (default `http://127.0.0.1:4000`) serves a mobile-friendly PWA wit
 
 | Page | What it shows |
 |---|---|
-| **Dashboard** | Live scan results, both account strips, price alerts, 🚀 pump radar |
+| **Dashboard** | Live scan results, both account strips, price alerts, 🚀 pump radar, 🐋 OI 異常 (each pile-up scored against real candles 1h / 4h / 24h later, so "crowded longs get squeezed" is a count, not a belief) and 📦 供需區進場 (open vs settled setups, the zone drawn as a band, and the live record split by trend and 5m agreement beside the replay it is testing) |
 | **Funnel** | Why each coin passed or was rejected, gate by gate + best-trade hero |
 | **Strategies** | S1 / S2 / S3 / S4 — rules, **measured record** and live situation, one tab each, plus the retired list |
 | **Strategy 2** | Confluence meter (mirrors All-in-One ULTIMATE Pro), EMA chart, score heatmap |

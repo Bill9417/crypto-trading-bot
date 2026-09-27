@@ -280,6 +280,19 @@ def accumulate(store: dict, closed: dict) -> None:
     star = closed.get("full_setup")
     if star is not None:
         names = (*names, "star" if star else "plain")
+    # The zone book's two cuts. Its replay said with-trend +0.175R against
+    # -0.032R and the 5m agreement was recorded on every row precisely so
+    # the forward record could price it — but a row-level flag in a list
+    # pruned to KEEP_CLOSED is a record that expires. Bucketed here, in the
+    # lifetime tally, so the live split can actually answer the replay.
+    # None means the question was never asked (every flip row) and buckets
+    # to neither side.
+    wt = closed.get("with_trend")
+    if wt is not None:
+        names = (*names, "trend:with" if wt else "trend:against")
+    tf5 = closed.get("tf5")
+    if tf5 in ("agree", "no"):
+        names = (*names, f"tf5:{tf5}")
     for name in names:
         b = store.setdefault("tally", {}).setdefault(name, _bucket())
         for k, v in _bucket().items():                 # heal older shapes

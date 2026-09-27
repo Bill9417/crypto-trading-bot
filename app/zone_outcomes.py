@@ -79,6 +79,11 @@ def basis() -> dict:
     })
 
 
+SEGMENTS = ("trend:with", "trend:against", "tf5:agree", "tf5:no")
+SEGMENT_ZH = {"trend:with": "順勢", "trend:against": "逆勢",
+              "tf5:agree": "5m 也在區間", "tf5:no": "5m 不在區間"}
+
+
 def web_view(limit: int = 20) -> dict:
     """The board, with the ZONE's numbers on it.
 
@@ -87,10 +92,19 @@ def web_view(limit: int = 20) -> dict:
     strategy's evidence next to these signals, which is the worst kind of
     wrong: plausible, specific, and about something else.
     """
-    v = F.web_view(load(), limit)
+    store = load()
+    v = F.web_view(store, limit)
     for k in ("measured", "measured_oos", "measured_seq"):
         v.pop(k, None)
     v["measured"] = MEASURED
+    # The live record on the replay's own cuts. flip's web_view only knows
+    # its blue/ceiling segments; these are the ones THIS book was built to
+    # settle, shown beside the replay figure each one is testing.
+    tally = store.get("tally") or {}
+    for seg in SEGMENTS:
+        if tally.get(seg):
+            v["stats"][seg] = F.stats(store, seg)
+    v["segment_zh"] = {**(v.get("segment_zh") or {}), **SEGMENT_ZH}
     # Same reason as the MEASURED swap above: flip's basis describes flip's
     # stop rule, and these signals do not use it.
     v["basis"] = basis()

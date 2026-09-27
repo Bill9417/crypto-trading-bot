@@ -76,6 +76,7 @@ SUBTITLES = {
     "壓力區被站上後回踩沒破 —— 舊壓力變新支撐":
         "Resistance was reclaimed and the retest held — old ceiling, new floor",
     "開倉／平倉的異常量 —— 跟每個幣自己過去": "Unusual open/close volume — against each coin's own past",
+    "開倉／平倉的異常量 —— 跟每個幣自己過去 5 天比": "Unusual open/close volume — against each coin's own past 5 days",
     "看的是「典型成員」漲多少 —— 用中位數，一檔暴衝不會拉高整個板塊":
         "Shows what the TYPICAL member did — median, so one spike cannot lift "
         "a whole sector",
@@ -257,6 +258,7 @@ SUB_OK = {
     "延遲 ": "delay ", "買方 ": "buyers ", "這小時 ": "this hour ",
     "翻轉區 ": "flip zone ",
     "同時最多 ": "at most ", "已扣成本：": "net of costs: ",
+    "中位 ": "median ", "區間 ": "zone ", "多空比 ": "L/S ratio ", "到期 ": "expired ",
     "上一輪": "last sweep", "全市場平均一天約 ": "about ",
     "停損 ": "stop ", "停利 ": "target ",
     # ── repeated tile patterns (verified by unsafe_substrings) ──────────────
@@ -495,10 +497,44 @@ HUB = {
 }
 
 
+# ── 🐋 OI 異常 / 📦 供需區進場 cards (2026-09-27) ───────────────────────────
+CARDS_0927 = {
+    # Whole-node labels (the markup wraps each in its own element).
+    "建倉": "Builds", "平倉": "Unwinds", "進行中": "Open", "順勢 + 5m✓": "With trend + 5m✓",
+    "已結算": "settled", "未通知": "not alerted", "只列": "showing last", "小時內": "hours",
+    "檔": "coins", "進": "in", "價": "px", "小型": "small", "中型": "mid", "大型": "large", "判讀": "Read", "切面": "Cut", "整體": "All", "反向": "reversal", "延續": "continuation",
+    "h 後": "h later", "4h 後": "after 4h", "📐 回放": "📐 Replay", "📓 實盤累積": "📓 Live record",
+    "事後驗證": "Scored afterwards", "累積": "So far", "筆結案、": "closed, ", "筆等待中；不到": "pending; no verdict under",
+    "筆不下結論。": "events.", "反向率": "reversal rate", "延續率": "continuation rate",
+    "空單回補": "short covering", "多單平倉": "long liquidation",
+    "5m 也在區間": "5m also in zone", "去掉最賺 5 檔": "Minus the best 5 coins",
+    "多半延續": "mostly continued", "多半反轉": "mostly reversed",
+    # Longer phrases, substituted anywhere.
+    "這一類目前沒有 —— 換個篩選看看。": "None of this kind right now — try another filter.",
+    "這個篩選目前沒有 —— 其他 ": "Nothing under this filter — the other ",
+    " 筆在「全部」。": " are under \u300cAll\u300d.",
+    " —— 每筆上板的堆積都拿真實 K 線在 1h / 4h / 24h 後對答案。建倉看":
+        " — every pile-up on the board is checked against real candles 1h / 4h / 24h later. Builds show the ",
+    "（價格轉頭 = 擁擠的一方被軋），平倉看": " (price turned = the crowded side got squeezed); unwinds show the ",
+    "還沒有結案的樣本 —— 第一批 1h 結果會在下一次堆積後一小時出現。":
+        "No scored events yet — the first 1h results appear an hour after the next pile-up.",
+    "建倉後 24h 內對堆積方向最大反向幅度中位數 ": "Median largest move against the crowd within 24h of a build: ",
+    "—— 這就是「燃料」實際燒了多少。": "— how much of the \u201cfuel\u201d actually burned.",
+    "樣本不足（": "too few events (",
+    "反向擠壓成立：多數時候價格轉頭": "squeeze confirmed: price usually turned",
+    "沒有擠壓：多數時候順著堆積方向走": "no squeeze: price usually kept going with the crowd",
+    "分不出來（區間含 50%）": "cannot tell (the interval contains 50%)",
+    "罕見度：跟自己近 5 天比的排名": "rarity: rank against its own last 5 days",
+    "（信賴區間含 0）；順勢那半邊還有 ": " (CI contains 0); the with-trend half still ",
+    "。前半段時間也測不出來 —— 只有一段行情，還不是結論。":
+        ". The first half of the window could not show it either — one regime, not a conclusion.",
+}
+
+
 def table() -> dict:
     """The whole ZH → EN map."""
     out = {}
-    for part in (TITLES, SUBTITLES, VERDICTS, STATES, WORDS, HUB, SUB_OK):
+    for part in (TITLES, SUBTITLES, VERDICTS, STATES, WORDS, HUB, CARDS_0927, SUB_OK):
         out.update(part)
     return out
 

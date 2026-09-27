@@ -1514,6 +1514,65 @@
             padding: 12px 14px; text-decoration: none; color: var(--wolf-text);
             background: rgba(255,255,255,.02); overflow: hidden; transition: transform .15s, border-color .15s, box-shadow .15s; }
         .coin-tile:hover { transform: translateY(-2px); border-color: rgba(0,210,255,.4); box-shadow: 0 6px 20px rgba(0,0,0,.3); }
+
+        /* ── 🐋 OI 異常 · 📦 供需區進場 — one chip grammar for both strips.
+           Each chip is a card in a snap-scrolling row: identity on top, the
+           one number that matters big, the read under it, then the caveats
+           (rank, size, age) in muted type. Colour follows what the move means
+           for PRICE (a short build is red though OI rose), never the sign of
+           the number, and stale rows fade instead of pretending to be now. */
+        .chip-strip { display:flex; gap:8px; overflow-x:auto; padding:2px 0 6px;
+            -webkit-overflow-scrolling:touch; scroll-snap-type:x proximity; }
+        .seg-btns { display:inline-flex; gap:2px; padding:2px; border:1px solid var(--wolf-border);
+            border-radius:999px; background:rgba(255,255,255,.03); }
+        .seg-btns button { border:0; background:transparent; color:var(--wolf-muted); font:inherit;
+            font-size:.64rem; font-weight:800; letter-spacing:.04em; padding:3px 9px; border-radius:999px;
+            cursor:pointer; white-space:nowrap; }
+        .seg-btns button.on { background:rgba(255,255,255,.1); color:var(--wolf-text); }
+        .oi-tools { display:flex; align-items:center; gap:8px; flex-wrap:wrap; justify-content:flex-end; }
+        .oi-meta { font-size:.66rem; color:var(--wolf-muted); margin:-4px 0 8px; display:flex; gap:10px; flex-wrap:wrap; }
+        .oi-meta b { color:var(--wolf-text); font-weight:800; }
+        .oi-chip, .zn-chip { flex:0 0 auto; width:160px; display:block; text-decoration:none; color:inherit;
+            background:rgba(255,255,255,.03); border:1px solid var(--wolf-border); border-radius:12px;
+            padding:9px 11px; scroll-snap-align:start; transition:transform .15s, border-color .15s; }
+        .oi-chip:hover, .zn-chip:hover { transform:translateY(-2px); border-color:var(--wolf-border-hi); }
+        .oi-chip.bull, .zn-chip.long { border-color:rgba(46,232,138,.42); }
+        .oi-chip.bear, .zn-chip.sell { border-color:rgba(255,77,109,.42); }
+        .oi-chip.stale { opacity:.55; }
+        .oc-top { display:flex; align-items:center; gap:5px; font-size:.82rem; font-weight:800; min-width:0; }
+        .oc-top b { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+        .oc-tier, .zn-status { margin-left:auto; flex:0 0 auto; font-size:.56rem; font-weight:800; color:var(--wolf-muted);
+            border:1px solid var(--wolf-border); border-radius:999px; padding:1px 6px; white-space:nowrap; }
+        .oc-oi { font-size:1.05rem; font-weight:900; letter-spacing:-.01em; margin-top:2px; }
+        .oc-oi small { font-size:.58rem; font-weight:700; opacity:.6; margin-left:4px; letter-spacing:.04em; }
+        .bull .oc-oi, .bull .oc-read { color:var(--long); }
+        .bear .oc-oi, .bear .oc-read { color:var(--short); }
+        .oc-read { font-size:.68rem; font-weight:700; }
+        .oc-meter { height:4px; border-radius:2px; background:rgba(255,255,255,.08); margin:6px 0 4px; overflow:hidden; }
+        .oc-meter i { display:block; height:100%; border-radius:2px; background:var(--wolf-gold); }
+        .oc-sub { font-size:.62rem; color:var(--wolf-muted); line-height:1.5; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+        .oc-sub b { color:var(--wolf-text); font-weight:700; }
+        .oi-record { margin-top:10px; }
+        .rec-wrap { overflow-x:auto; }
+        .rec-t { width:100%; border-collapse:collapse; font-size:.66rem; margin-top:6px; }
+        .rec-t th, .rec-t td { padding:4px 6px; text-align:right; border-top:1px solid var(--wolf-border); white-space:nowrap; }
+        .rec-t th { color:var(--wolf-muted); font-weight:700; font-size:.6rem; letter-spacing:.04em; }
+        .rec-t td:first-child, .rec-t th:first-child { text-align:left; }
+        .rec-t small { opacity:.6; font-size:.58rem; margin-left:3px; }
+        .rec-t .up { color:var(--long); } .rec-t .dn { color:var(--short); }
+        .rec-t .dim { opacity:.5; }
+        .zn-side { font-size:.6rem; font-weight:800; letter-spacing:.06em; }
+        .sell .zn-side { color:var(--short); } .long .zn-side { color:var(--long); }
+        .zn-status.open { color:var(--wolf-gold); border-color:rgba(255,210,87,.45); }
+        .zn-status.tp { color:var(--long); border-color:rgba(46,232,138,.45); }
+        .zn-status.sl { color:var(--short); border-color:rgba(255,77,109,.45); }
+        /* The zone as a band: the box the signal came from, the entry as a
+           tick inside it, the stop as a red tick beyond its far side. */
+        .zn-band { position:relative; height:10px; margin:8px 2px 6px; border-radius:3px; background:rgba(255,255,255,.06); }
+        .zn-fill { position:absolute; top:0; bottom:0; border-radius:3px; background:rgba(255,255,255,.16); }
+        .sell .zn-fill { background:rgba(255,77,109,.28); } .long .zn-fill { background:rgba(46,232,138,.28); }
+        .zn-px, .zn-sl { position:absolute; top:-3px; bottom:-3px; width:2px; border-radius:1px; transform:translateX(-1px); }
+        .zn-px { background:var(--wolf-text); } .zn-sl { background:var(--short); opacity:.85; }
         .ct-row1 { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
         .ct-sym { font-size: .92rem; font-weight: 900; letter-spacing: .02em; }
         .ct-score { font-size: .6rem; font-weight: 800; letter-spacing: .04em; padding: 3px 9px; border-radius: 999px;
@@ -2010,6 +2069,10 @@
 
             /* Tiles were 138-150px wide with 11px type inside; give the text
                room rather than letting it wrap to four lines. */
+            .oc-sub, .oi-meta, .rec-t, .seg-btns button { font-size: .74rem; }
+            .oi-chip, .zn-chip { width: 172px; }
+            #oi-panel .analytics-head, #zone-panel .analytics-head { flex-wrap: wrap; }
+            .oi-tools, #zone-filter { margin-left: auto; }
             .analytics-panel a[style*="min-width:138px"],
             .analytics-panel a[style*="min-width:142px"],
             .analytics-panel a[style*="min-width:150px"] { min-width: 160px !important; }
@@ -3053,89 +3116,172 @@
         })();
         </script>
 
-        <section class="analytics-panel" data-card="zones">
+        <section class="analytics-panel" id="zone-panel" data-card="zones">
             <div class="analytics-head">
                 <div>
                     <div class="analytics-title">📦 供需區進場 <span style="text-transform:none;letter-spacing:0;font-weight:600;opacity:.7;">5m + 15m 都在區間 · 賽克斯</span></div>
                     <div class="analytics-subtitle" id="zone-sub">壓力區賣、支撐區買 —— 收盤穿過的區間就不算了。<b>5m✓</b> = 5 分線也判斷在同一個區間</div>
                 </div>
+                <div class="seg-btns" id="zone-filter" aria-label="篩選">
+                    <button type="button" class="on" data-f="">全部</button>
+                    <button type="button" data-f="open">進行中</button>
+                    <button type="button" data-f="best">順勢 + 5m✓</button>
+                </div>
             </div>
-            <div id="zone-row" style="display:flex; gap:8px; overflow-x:auto; padding:2px 0 6px; -webkit-overflow-scrolling:touch;">
+            <div class="oi-meta" id="zone-meta"></div>
+            <div id="zone-row" class="chip-strip">
                 <div class="analytics-subtitle">等待掃描…</div>
             </div>
             <div id="zone-record" style="margin-top:10px;"></div>
         </section>
         <script>
         (function () {
+            var KEY = 'wolf.zone.filter', filter = '', last = null;
+            try { filter = localStorage.getItem(KEY) || ''; } catch (e) {}
             function esc(t){return String(t==null?'':t).replace(/[&<>"]/g,function(c){
                 return ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]);});}
             function px(v){v=Number(v);if(!isFinite(v))return'—';
                 var d=v>=1000?0:v>=1?3:v>=0.01?5:8;return v.toFixed(d);}
-            function paint(d){
-                var row=document.getElementById('zone-row'), rec=document.getElementById('zone-record');
+            function R(v){v=Number(v);return isFinite(v)?((v>=0?'+':'')+v.toFixed(2)+'R'):'—';}
+            // Letter units on purpose: h/m/d need no translation and the pill
+            // has no room for a second word.
+            function ago(ts) {
+                if (!ts) return '';
+                var s = Math.max(0, Date.now() / 1000 - ts);
+                if (s < 5400) return Math.round(s / 60) + 'm';
+                if (s < 172800) return Math.round(s / 3600) + 'h';
+                return Math.round(s / 86400) + 'd';
+            }
+            function cp(v){v=Number(v);if(!isFinite(v))return'—';
+                if(v>=1000)return v.toFixed(0); if(v>=100)return v.toFixed(1);
+                if(v>=1)return v.toFixed(3); return v.toPrecision(3);}
+            // The zone drawn as a band: the box, the entry tick inside it and
+            // the stop tick beyond its far side. Geometry only — no number on
+            // this card is invented by the drawing.
+            function band(z) {
+                var top = Number(z.zone_top), bot = Number(z.zone_bottom), e = Number(z.entry), sl = Number(z.sl);
+                if (!(top > bot) || !isFinite(e) || !isFinite(sl)) return '';
+                var lo = Math.min(bot, e, sl), hi = Math.max(top, e, sl), pad = (hi - lo) * 0.08 || 1;
+                lo -= pad; hi += pad;
+                function X(v) { return ((v - lo) / (hi - lo) * 100).toFixed(1) + '%'; }
+                return '<div class="zn-band" title="區間 ' + px(bot) + ' – ' + px(top) + '">' +
+                    '<span class="zn-fill" style="left:' + X(bot) + ';width:' + ((top - bot) / (hi - lo) * 100).toFixed(1) + '%"></span>' +
+                    '<i class="zn-sl" style="left:' + X(sl) + '" title="停損 ' + px(sl) + '"></i>' +
+                    '<i class="zn-px" style="left:' + X(e) + '" title="進場 ' + px(e) + '"></i></div>';
+            }
+            // ● = still open, ✓ target, ✗ stop, ⏱ expired at the last close.
+            function status(z, closed) {
+                if (z.open) return '<span class="zn-status open" title="進行中">● ' + ago(z.fired_ts) + '</span>';
+                var c = closed[z.key];
+                if (!c) return '<span class="zn-status"><span>已結算</span></span>';
+                var ico = c.outcome === 'tp' ? '✓' : c.outcome === 'sl' ? '✗' : '⏱';
+                var lab = c.outcome === 'tp' ? '停利' : c.outcome === 'sl' ? '停損' : '到期';
+                return '<span class="zn-status ' + (c.outcome === 'tp' ? 'tp' : c.outcome === 'sl' ? 'sl' : '') +
+                    '" title="' + lab + '">' + ico + ' ' + R(c.r) + '</span>';
+            }
+            function chip(z, closed) {
+                var sell = z.side === 'short';
+                return '<a href="/coin/' + encodeURIComponent(z.base || '') + '" class="zn-chip ' + (sell ? 'sell' : 'long') + '">' +
+                    '<div class="oc-top"><b>' + esc(z.base || '') + '</b>' +
+                        '<span class="zn-side">' + (sell ? 'SELL' : 'LONG') + '</span>' + status(z, closed) + '</div>' +
+                    band(z) +
+                    '<div class="oc-sub">區間 ' + cp(z.zone_bottom) + '–' + cp(z.zone_top) + '</div>' +
+                    '<div class="oc-sub"><span>進</span> <b>' + cp(z.entry) + '</b> · 損 ' + cp(z.sl) + '</div>' +
+                    '<div class="oc-sub">' + (z.stop_pct != null ? '停損 ' + Number(z.stop_pct).toFixed(2) + '%' : '') +
+                        (z.touches ? ' · ' + z.touches + ' 次測試' : '') + '</div>' +
+                    '<div class="oc-sub">停利 ' + cp(z.tp) + (z.rr ? ' · RR ' + z.rr : '') + '</div>' +
+                    '<div class="oc-sub">' +
+                        (z.with_trend == null ? '' : (z.with_trend ? '<b>順勢</b>' : '<span>逆勢</span>')) +
+                        // null = never asked. Printing "5m✗" for a reading
+                        // nobody took would assert the timeframes disagreed.
+                        (z.tf5==null?'':(z.tf5==='agree'
+                            ? (z.with_trend==null?'':' · ') + '<b style="color:var(--wolf-gold)">5m✓</b>'
+                            : (z.with_trend==null?'':' · ') + '<span style="opacity:.6">5m✗</span>')) + '</div></a>';
+            }
+            function segRow(label, m, live) {
+                function rep(x) { return x && x.n ? '<span class="' + (x.exp > 0 ? 'up' : x.exp < 0 ? 'dn' : '') + '">' +
+                    R(x.exp) + '</span><small>n=' + x.n + '</small>' : '<span class="dim">—</span>'; }
+                return '<tr><td>' + label + '</td><td>' + rep(m) + '</td><td>' + rep(live) + '</td></tr>';
+            }
+            function paint() {
+                var d = last; if (!d) return;
+                var row=document.getElementById('zone-row'), rec=document.getElementById('zone-record'),
+                    meta=document.getElementById('zone-meta');
                 if(!row) return;
                 // OPEN first, then recent. `recent` deliberately EXCLUDES
                 // anything still open (one position must not appear twice),
                 // so a card reading only `recent` shows nothing at all while
                 // setups are live — which is exactly what it did: 20 coins in
                 // a zone and the card said 目前沒有價格回到區間.
-                var live=((d && d.open)||[]).concat((d && d.recent)||[]);
-                // Confirmed on BOTH timeframes first. The owner reads this
-                // setup on 5m AND 15m, so a 15m entry the 5m does not also
-                // place at supply/demand is a different thing wearing the same
-                // label — it stays on the board, but below the ones that agree.
+                var open=((d && d.open)||[]).map(function(z){ z.open=true; return z; });
+                var live=open.concat((d && d.recent)||[]);
+                var closed={}; ((d && d.closed)||[]).forEach(function(c){ if(c.key) closed[c.key]=c; });
+                // Confirmed on BOTH timeframes first, then with-trend. The
+                // owner reads this setup on 5m AND 15m, and the replay's one
+                // large split is trend — so the rows the measurement likes
+                // best sit first, and the rest stay on the board below them.
                 live = live.slice().sort(function(a,b){
-                    return (b.tf5==='agree') - (a.tf5==='agree');
+                    return ((b.tf5==='agree') - (a.tf5==='agree')) ||
+                           ((b.with_trend?1:0) - (a.with_trend?1:0)) ||
+                           ((b.open?1:0) - (a.open?1:0));
                 });
-                row.innerHTML = live.length ? live.slice(0,14).map(function(z){
-                    var sell = z.side==='short';
-                    var col = sell ? 'var(--short)' : 'var(--long)';
-                    return '<a href="/coin/'+encodeURIComponent(z.base||'')+'" class="coin-tile" '+
-                      'style="min-width:150px;border-color:'+col+'55;text-decoration:none">'+
-                      '<div style="display:flex;align-items:center;gap:6px">'+
-                        '<b>'+esc(z.base||'')+'</b>'+
-                        '<span style="font-size:.6rem;font-weight:800;letter-spacing:.06em;color:'+col+'">'+
-                          (sell?'SELL':'LONG')+'</span></div>'+
-                      '<div class="analytics-subtitle" style="margin-top:3px">'+
-                        (z.touches?('測試 '+z.touches+' 次'):'') +
-                        (z.with_trend==null?'':(z.with_trend?' · 順勢':' · 逆勢'))+
-                        // null = never asked. Printing "5m✗" for a reading
-                        // nobody took would assert the timeframes disagreed.
-                        (z.tf5==null?'':(z.tf5==='agree'
-                            ? ' · <b style="color:var(--wolf-gold)">5m✓</b>'
-                            : ' · <span style="opacity:.6">5m✗</span>'))+'</div>'+
-                      '<div class="analytics-subtitle">進 '+px(z.entry)+' · 損 '+px(z.sl)+'</div>'+
-                      '</a>';
-                }).join('') : '<div class="analytics-subtitle">目前沒有價格回到區間'
+                var shown = live.filter(function(z){
+                    if (filter==='open') return !!z.open;
+                    if (filter==='best') return z.tf5==='agree' && !!z.with_trend;
+                    return true;
+                });
+                row.innerHTML = shown.length ? shown.slice(0,16).map(function(z){ return chip(z, closed); }).join('')
+                    : live.length ? '<div class="analytics-subtitle">這個篩選目前沒有 —— 其他 ' + live.length + ' 筆在「全部」。</div>'
+                    : '<div class="analytics-subtitle">目前沒有價格回到區間'
                        + (d && d.lifetime_n===0 ? '（掃描器剛重啟，等下一輪）' : '') + '</div>';
+                var best = live.filter(function(z){ return z.tf5==='agree' && z.with_trend; }).length;
+                meta.innerHTML = '<span>進行中 <b>' + open.length + '</b></span>' +
+                    '<span>順勢 + 5m✓ <b>' + best + '</b></span>' +
+                    '<span>同時最多 <b>' + (d.max_concurrent||0) + '</b> 筆' +
+                    (d.skipped_no_slot?('，沒空位而略過 '+d.skipped_no_slot+' 筆'):'') + '</span>';
 
                 if(!rec) return;
-                var m=(d&&d.measured)||{}, st=(d&&d.stats&&d.stats.all)||{};
-                // The live sample and the replay, side by side — a live n of 4
-                // next to a 3,653-entry replay must not be read as the answer.
+                var m=(d&&d.measured)||{}, st=(d&&d.stats)||{};
+                // The live sample and the replay, side by side, cut by cut —
+                // a live n of 4 next to a 3,653-entry replay must not be read
+                // as the answer, and the with-trend line is the one claim
+                // the forward book exists to settle.
                 rec.innerHTML =
-                  '<div class="analytics-subtitle">📐 實測（回放 '+(m.n||0)+' 筆）：'+
-                    '整體 '+(m.exp>0?'+':'')+(m.exp||0).toFixed(3)+'R'+
-                    '，<b>順勢</b> '+(m.with_trend?((m.with_trend.exp>0?'+':'')+m.with_trend.exp.toFixed(3)):'—')+'R'+
-                    '、逆勢 '+(m.against?((m.against.exp>0?'+':'')+m.against.exp.toFixed(3)):'—')+'R。</div>'+
-                  '<div class="analytics-subtitle" style="opacity:.75">⚠️ 拿掉最賺的 5 檔後整體只剩 '+
-                    (m.minus_top5?((m.minus_top5.exp>0?'+':'')+m.minus_top5.exp.toFixed(3)):'—')+
-                    'R（信賴區間含 0）；順勢那半邊還有 '+
-                    (m.with_trend_minus_top5?((m.with_trend_minus_top5.exp>0?'+':'')+m.with_trend_minus_top5.exp.toFixed(3)):'—')+
-                    'R。前半段時間也測不出來 —— 只有一段行情，還不是結論。</div>'+
-                  '<div class="analytics-subtitle">📓 實盤累積：'+(st.n||0)+' 筆已結算'+
-                    (st.n&&st.exp!=null?('，'+(st.exp>0?'+':'')+Number(st.exp).toFixed(3)+'R'):'（還沒有）')+'</div>'+
+                  '<div class="rec-wrap"><table class="rec-t"><thead><tr><th>切面</th><th>📐 回放<small>n=' + (m.n||0) + '</small></th><th>📓 實盤累積</th></tr></thead><tbody>' +
+                  segRow('整體', m, st.all) +
+                  segRow('順勢', m.with_trend, st['trend:with']) +
+                  segRow('逆勢', m.against, st['trend:against']) +
+                  segRow('5m 也在區間', null, st['tf5:agree']) +
+                  segRow('去掉最賺 5 檔', m.minus_top5, null) +
+                  '</tbody></table></div>' +
+                  '<div class="analytics-subtitle" style="opacity:.75;margin-top:6px">⚠️ 拿掉最賺的 5 檔後整體只剩 '+
+                    (m.minus_top5?R(m.minus_top5.exp):'—')+
+                    '（信賴區間含 0）；順勢那半邊還有 '+
+                    (m.with_trend_minus_top5?R(m.with_trend_minus_top5.exp):'—')+
+                    '。前半段時間也測不出來 —— 只有一段行情，還不是結論。</div>'+
                   // The two things that separate "what the shape did" from
                   // "what you would have got". Both on the card, because a
                   // number without them is a frictionless fantasy.
                   '<div class="analytics-subtitle" style="opacity:.7">💸 已扣成本：'+
-                    esc(d.costs||'—')+'｜同時最多 '+(d.max_concurrent||0)+' 筆'+
-                    (d.skipped_no_slot?('，沒空位而略過 '+d.skipped_no_slot+' 筆'):'')+'</div>'+
+                    esc(d.costs||'—')+'</div>'+
                   wolfBasis(d);
             }
             function load(){ if(document.hidden) return;
                 fetch('/api/zones').then(function(r){return r.ok?r.json():null;})
-                    .then(paint).catch(function(){}); }
+                    .then(function(d){ if(d){ last=d; paint(); } }).catch(function(){}); }
+            var bar = document.getElementById('zone-filter');
+            function mark() {
+                Array.prototype.forEach.call(bar.querySelectorAll('button'), function (b) {
+                    b.classList.toggle('on', (b.getAttribute('data-f') || '') === filter);
+                });
+            }
+            bar.addEventListener('click', function (e) {
+                var b = e.target.closest && e.target.closest('button'); if (!b) return;
+                filter = b.getAttribute('data-f') || '';
+                try { filter ? localStorage.setItem(KEY, filter) : localStorage.removeItem(KEY); } catch (err) {}
+                mark(); paint();
+            });
+            mark();
             load();
             if (window.wolfPoll) wolfLive('zones', load, 180000); else setInterval(load, 120000);
         })();
@@ -3275,11 +3421,20 @@
                     <div class="analytics-title">🐋 OI 異常 <span style="text-transform:none;letter-spacing:0;font-weight:600;opacity:.7;">未平倉異常堆積</span></div>
                     <div class="analytics-subtitle" id="oi-sub">開倉／平倉的異常量 —— 跟每個幣自己過去 5 天比</div>
                 </div>
-                <a href="{{ url_for('market') }}" class="analytics-link">Market →</a>
+                <div class="oi-tools">
+                    <div class="seg-btns" id="oi-filter" aria-label="篩選">
+                        <button type="button" class="on" data-f="">全部</button>
+                        <button type="button" data-f="build">建倉</button>
+                        <button type="button" data-f="unwind">平倉</button>
+                    </div>
+                    <a href="{{ url_for('market') }}" class="analytics-link">Market →</a>
+                </div>
             </div>
-            <div id="oi-row" style="display:flex; gap:8px; overflow-x:auto; padding:2px 0 6px; -webkit-overflow-scrolling:touch;">
+            <div class="oi-meta" id="oi-meta"></div>
+            <div id="oi-row" class="chip-strip">
                 <div class="analytics-subtitle">等待下一次掃描…</div>
             </div>
+            <div id="oi-record" class="oi-record"></div>
         </section>
         <script>
         (function () {
@@ -3293,6 +3448,11 @@
                 shorts_closing: {zh: '空單回補',   ico: '🔥', bull: true,  build: false},
                 longs_closing:  {zh: '多單平倉',   ico: '🩸', bull: false, build: false}
             };
+            var ORDER = ['longs_opening', 'shorts_opening', 'shorts_closing', 'longs_closing'];
+            var KEY = 'wolf.oi.filter', filter = '', last = null;
+            try { filter = localStorage.getItem(KEY) || ''; } catch (e) {}
+            function esc(t){return String(t==null?'':t).replace(/[&<>"]/g,function(c){
+                return ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]);});}
             function ago(ts) {
                 if (!ts) return '';
                 var s = Math.max(0, Date.now() / 1000 - ts);
@@ -3308,60 +3468,121 @@
                 if (v >= 1e3) return '$' + (v / 1e3).toFixed(0) + 'K';
                 return '$' + v.toFixed(0);
             }
-            function chip(r) {
+            function sgn(v, d) { v = Number(v) || 0; return (v >= 0 ? '+' : '') + v.toFixed(d == null ? 1 : d); }
+            function chip(r, gate) {
                 var meta = READ[r.state] || {zh: r.state, ico: '•', bull: true, build: true};
-                var col = meta.bull ? 'var(--long, #4ade80)' : 'var(--short, #f87171)';
                 var base = (r.symbol || '').replace(/USDT$/, '');
                 var rare = Math.max(0.1, 100 - (r.pctile || 0));
+                // The meter is the RANK inside the shown band: p98 (just over
+                // the gate) is a sliver, p99.9 is full. It is a rank against
+                // the coin's own five days and is labelled as one.
+                var w = Math.max(6, Math.min(100, ((r.pctile || 0) - gate) / (100 - gate) * 100));
+                var stale = (Date.now() / 1000 - (r.ts || 0)) > 12 * 3600;
+                var ratio = r.ratio != null ? ('多空比 ' + Number(r.ratio).toFixed(2) +
+                    (r.ratio_pctile != null ? ' · 前 ' + Math.max(1, 100 - r.ratio_pctile).toFixed(0) + '%' : '')) : '';
                 // /coin — see the note on the flip strip above.
-                return '<a href="/coin/' + encodeURIComponent(base) + '" style="' +
-                    'flex:0 0 auto; min-width:132px; text-decoration:none; color:inherit;' +
-                    'background:rgba(255,255,255,.03); border:1px solid ' + col + ';' +
-                    'border-radius:12px; padding:8px 11px; display:block;">' +
-                    '<div style="font-weight:800; font-size:.82rem;">' + base + ' ' + meta.ico + '</div>' +
-                    '<div style="font-size:.95rem; font-weight:800; color:' + col + ';">' +
-                        (r.oi_pct >= 0 ? '+' : '') + r.oi_pct.toFixed(1) +
-                        '% <span style="font-size:.62rem; opacity:.65;">OI</span></div>' +
-                    '<div style="font-size:.66rem; color:' + col + '; opacity:.9;">' + meta.zh + '</div>' +
-                    '<div style="font-size:.64rem; color:var(--wolf-muted, #8a99ad); margin-top:2px;">' +
-                        '價 ' + (r.px_pct >= 0 ? '+' : '') + r.px_pct.toFixed(1) + '% · 前' + rare.toFixed(1) + '%</div>' +
+                return '<a href="/coin/' + encodeURIComponent(base) + '" class="oi-chip ' +
+                    (meta.bull ? 'bull' : 'bear') + (stale ? ' stale' : '') + '" data-state="' + esc(r.state) + '">' +
+                    '<div class="oc-top"><b>' + esc(base) + '</b><span>' + meta.ico + '</span>' +
+                        '<span class="oc-tier">' + esc(r.tier || '') + '</span></div>' +
+                    '<div class="oc-oi">' + sgn(r.oi_pct) + '%<small>OI · ' + (r.span_h || 2) + 'h</small></div>' +
+                    '<div class="oc-read">' + meta.zh + '</div>' +
+                    '<div class="oc-meter" title="罕見度：跟自己近 5 天比的排名"><i style="width:' + w.toFixed(0) + '%"></i></div>' +
+                    '<div class="oc-sub">價 <b>' + sgn(r.px_pct) + '%</b> · 前 ' + rare.toFixed(1) + '%' +
+                        (r.samples ? ' · n=' + r.samples : '') + '</div>' +
                     // Size is the caveat made visible. Most of this universe is
                     // 小型, where the same +20% can be one trader rather than a
                     // crowd — so the money is on the chip instead of the symbol
                     // being excluded and the event silently never reported.
-                    '<div style="font-size:.62rem; color:var(--wolf-muted, #8a99ad);">' +
-                        (r.tier || '') + ' ' + usd(r.notional) + ' OI</div>' +
-                    '<div style="font-size:.62rem; color:var(--wolf-muted, #8a99ad);">' + ago(r.ts) + '</div></a>';
+                    '<div class="oc-sub">' + usd(r.notional) + ' OI · ' + ago(r.ts) + (r.quiet ? ' · <span>未通知</span>' : '') + '</div>' +
+                    (ratio ? '<div class="oc-sub">' + ratio + '</div>' : '') + '</a>';
+            }
+            function cell(st, c) {
+                if (!c || !c.n) return '<td class="dim">—</td>';
+                var build = READ[st] && READ[st].build;
+                var share = build ? c.rev_pct : c.cont_pct;
+                var cls = c.n < 30 ? 'dim' : (share > 50 ? (build ? 'dn' : 'up') : '');
+                return '<td class="' + cls + '">' + share.toFixed(0) + '%<small>n=' + c.n + '</small>' +
+                    '<div class="oc-sub">中位 ' + sgn(c.median, 2) + '%</div></td>';
+            }
+            function record(d) {
+                var el = document.getElementById('oi-record'), bk = d && d.book;
+                if (!el || !bk) return;
+                var hs = bk.horizons || [1, 4, 24], any = false;
+                var rows = ORDER.map(function (st) {
+                    var s = bk.states && bk.states[st]; if (!s) return '';
+                    var m = READ[st];
+                    hs.forEach(function (h) { if (s.h[String(h)] && s.h[String(h)].n) any = true; });
+                    return '<tr><td>' + m.ico + ' <span>' + m.zh + '</span><small>' + (m.build ? '反向' : '延續') + '</small></td>' +
+                        hs.map(function (h) { return cell(st, s.h[String(h)]); }).join('') + '</tr>';
+                }).join('');
+                var verdicts = ['longs_opening', 'shorts_opening'].map(function (st) {
+                    var s = bk.states && bk.states[st]; if (!s) return '';
+                    return '<div class="analytics-subtitle">' + READ[st].ico + ' <span>' + READ[st].zh + '</span> → <span>4h 後</span>：<span>' + esc(s.verdict_zh) + '</span></div>';
+                }).join('');
+                el.innerHTML =
+                    '<div class="analytics-subtitle">📓 <b>事後驗證</b> —— 每筆上板的堆積都拿真實 K 線在 1h / 4h / 24h 後對答案。建倉看' +
+                    '<b>反向率</b>（價格轉頭 = 擁擠的一方被軋），平倉看<b>延續率</b>。</div>' +
+                    '<div class="analytics-subtitle">累積 <b>' + (bk.n_lifetime || 0) + '</b> 筆結案、<b>' + (bk.pending || 0) +
+                    '</b> 筆等待中；不到 <b>' + (bk.min_n || 30) + '</b> 筆不下結論。</div>' +
+                    (any ? '<div class="rec-wrap"><table class="rec-t"><thead><tr><th>判讀</th>' +
+                        hs.map(function (h) { return '<th>' + h + '<span>h 後</span></th>'; }).join('') + '</tr></thead><tbody>' +
+                        rows + '</tbody></table></div>' + verdicts +
+                        (bk.squeeze_n ? '<div class="analytics-subtitle" style="opacity:.75">📏 建倉後 24h 內對堆積方向最大反向幅度中位數 ' +
+                            Number(bk.squeeze_median_pct).toFixed(2) + '%（n=' + bk.squeeze_n + '）—— 這就是「燃料」實際燒了多少。</div>' : '')
+                     : '<div class="analytics-subtitle" style="opacity:.7">還沒有結案的樣本 —— 第一批 1h 結果會在下一次堆積後一小時出現。</div>');
+            }
+            function paint() {
+                var d = last; if (!d) return;
+                var row = document.getElementById('oi-row'), meta = document.getElementById('oi-meta');
+                var rows = d.recent || [], gate = Number(d.pctile_gate) || 98;
+                var shown = rows.filter(function (r) {
+                    var m = READ[r.state]; if (!filter || !m) return true;
+                    return filter === 'build' ? m.build : !m.build;
+                });
+                rows.forEach(function (r) { r.span_h = r.span_h || d.span_h; });
+                if (!rows.length) {
+                    row.innerHTML = '<div class="analytics-subtitle">目前沒有異常堆積 —— ' +
+                        '只有排進自己近 5 天前 ' + (100 - gate).toFixed(0) +
+                        '%、且幅度 ≥' + (d.min_oi_pct || 5) + '% 才會列出。空的是常態。</div>';
+                } else if (!shown.length) {
+                    row.innerHTML = '<div class="analytics-subtitle">這一類目前沒有 —— 換個篩選看看。</div>';
+                } else {
+                    row.innerHTML = shown.map(function (r) { return chip(r, gate); }).join('');
+                }
+                var counts = {}; rows.forEach(function (r) { counts[r.state] = (counts[r.state] || 0) + 1; });
+                var ls = d.last_scan || {};
+                meta.innerHTML = ORDER.map(function (st) {
+                    return '<span>' + READ[st].ico + ' <b>' + (counts[st] || 0) + '</b> ' + READ[st].zh + '</span>';
+                }).join('') + (ls.checked ? '<span>掃描 <b>' + ls.checked + '</b> 檔</span><span>' + ago(ls.ts) + '</span>' : '') +
+                    (d.show_max_age_h ? '<span style="opacity:.7">只列 <b>' + d.show_max_age_h + '</b> 小時內</span>' : '');
+                var sub = document.getElementById('oi-sub');
+                if (sub) sub.innerHTML = '開倉／平倉的異常量 —— 跟每個幣自己過去 5 天比' +
+                    (d.ran_ts ? ' · <span>掃描於 ' + ago(d.ran_ts) + '</span>' : '');
+                record(d);
             }
             function load() {
                 fetch('/api/crowd_radar')
                     .then(function (r) { return r.ok ? r.json() : null; })
-                    .then(function (d) {
-                        if (!d) return;
-                        var row = document.getElementById('oi-row');
-                        var rows = d.recent || [];
-                        var sub = document.getElementById('oi-sub');
-                        if (!rows.length) {
-                            row.innerHTML = '<div class="analytics-subtitle">目前沒有異常堆積 —— ' +
-                                '只有排進自己近 5 天前 ' + (100 - (d.pctile_gate || 98)).toFixed(0) +
-                                '%、且幅度 ≥' + (d.min_oi_pct || 5) + '% 才會列出。空的是常態。</div>';
-                        } else {
-                            row.innerHTML = rows.map(chip).join('');
-                        }
-                        if (sub) {
-                            sub.textContent = '開倉／平倉的異常量 —— 跟每個幣自己過去 5 天比' +
-                                (d.ran_ts ? ' · 掃描於 ' + ago(d.ran_ts) : '');
-                        }
-                    })
+                    .then(function (d) { if (d) { last = d; paint(); } })
                     .catch(function () {});
             }
+            var bar = document.getElementById('oi-filter');
+            function mark() {
+                Array.prototype.forEach.call(bar.querySelectorAll('button'), function (b) {
+                    b.classList.toggle('on', (b.getAttribute('data-f') || '') === filter);
+                });
+            }
+            bar.addEventListener('click', function (e) {
+                var b = e.target.closest && e.target.closest('button'); if (!b) return;
+                filter = b.getAttribute('data-f') || '';
+                try { filter ? localStorage.setItem(KEY, filter) : localStorage.removeItem(KEY); } catch (err) {}
+                mark(); paint();
+            });
+            mark();
             load();
-            // 30s: the scanner re-scans every sweep, and this endpoint only
-            // reads a file, so polling faster than the producer costs nothing
-            // and shows a new pile-up the moment it is written.
-            // Was 30s "because polling faster than the producer costs nothing".
-            // A push costs less again AND arrives sooner: the card now updates
-            // when crowd_radar_state.json is written rather than up to 30s after.
+            // The card updates when crowd_radar_state.json is written rather
+            // than up to a poll interval after; the interval is the fallback.
             wolfLive('oi', load, 180000);
         })();
         </script>
