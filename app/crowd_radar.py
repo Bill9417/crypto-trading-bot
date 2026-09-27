@@ -275,6 +275,35 @@ def assess(oi_series: list, px_series: list, span: int = SPAN_BARS,
     return out
 
 
+# The horizons the card's mini table shows beside the alert span. 2h is what
+# fires; the rest say whether the build is a two-hour spike or the tail of a
+# day-long climb — the same +7% reads very differently in those two cases.
+SPANS_H = (2, 6, 12, 24)
+
+
+def span_table(oi_series: list, px_series: list, spans_h: tuple = SPANS_H,
+               min_oi_pct: float = MIN_OI_PCT) -> list:
+    """OI and price change over each horizon, each ranked against the symbol's
+    own history of that horizon — [{h, oi, px, pctile, massive}], shortest
+    first. A horizon the series cannot cover is left out rather than zeroed."""
+    out = []
+    for h in spans_h:
+        a = assess(oi_series, px_series, span=int(h * 60 / 15), min_oi_pct=min_oi_pct)
+        if "oi_pct" not in a:
+            continue
+        out.append({"h": h, "oi": a["oi_pct"], "px": a["px_pct"],
+                    "pctile": a["pctile"], "massive": bool(a["massive"])})
+    return out
+
+
+def hottest_span(spans: list):
+    """The horizon where this symbol's move is rarest by its own standard —
+    the column the card highlights. None when nothing was computed."""
+    if not spans:
+        return None
+    return max(spans, key=lambda r: (r.get("pctile") or 0, abs(r.get("oi") or 0)))["h"]
+
+
 def ratio_extreme(ratios: list) -> dict:
     """Where the current long/short account ratio sits in its own 5-day range.
 
@@ -475,6 +504,14 @@ def build_alert(row: dict, record: str = "") -> str:
     # padded to match it.
     rows.append(("罕見度", f"前 {max(0.1, 100 - row['pctile']):.1f}%"
                            f" · n={row['samples']}"))
+    # The longer horizons, so the reader can tell a spike from the tail of a
+    # day-long climb without opening the chart.
+    longer = [r for r in (row.get("spans") or []) if r.get("h") != row.get("span_h")]
+    if longer:
+        rows.append(("OI " + "/".join(f"{r['h']:g}h" for r in longer),
+                     " / ".join(F.pct(r["oi"]) for r in longer)))
+        rows.append(("價 " + "/".join(f"{r['h']:g}h" for r in longer),
+                     " / ".join(F.pct(r["px"]) for r in longer)))
     if row.get("ratio") is not None:
         rows.append(("多空比", f"{row['ratio']:.2f}"
                                f" · 前 {max(0.1, 100 - row['ratio_pctile']):.0f}%"))
@@ -546,9 +583,11 @@ def scan(symbols: list = None, now: float = None, store: dict = None,
         if not a.get("massive"):
             continue
 
+        spans = span_table(oi, px)
         row = {**a, "symbol": sym, "turnover": turnover,
                "tier": tier_of(turnover), "notional": round(oi[-1] * px[-1]),
-               "span_h": SPAN_BARS * 15 / 60, "ts": now}
+               "span_h": SPAN_BARS * 15 / 60, "ts": now,
+               "spans": spans, "hot_h": hottest_span(spans)}
         # Only now is the second call worth spending.
         try:
             row.update(ratio_extreme(ls_ratio(sym)))
@@ -680,6 +719,7 @@ def web_view(store: dict = None, limit: int = 20, now: float = None) -> dict:
         "min_oi_pct": MIN_OI_PCT,
         "read_zh": READ_ZH,
         "head_zh": HEAD_ZH,
+        "spans_h": list(SPANS_H),
     }
 
 

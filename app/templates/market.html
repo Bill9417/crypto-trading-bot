@@ -325,6 +325,11 @@
                     <th style="padding:6px 8px;">Symbol</th><th style="padding:6px 8px;">判讀</th>
                     <th style="padding:6px 8px;text-align:right;">未平倉</th>
                     <th style="padding:6px 8px;text-align:right;">價格</th>
+                    {# The longer horizons: a spike and the tail of a day-long
+                       climb print the same 2h number and are not the same event. #}
+                    {% for h in (crowd.spans_h or [2, 6, 12, 24]) if h != (crowd.span_h or 2) %}
+                    <th style="padding:6px 8px;text-align:right;" title="未平倉變化 / 價格變化，{{ h }} 小時">OI {{ h }}h</th>
+                    {% endfor %}
                     <th style="padding:6px 8px;text-align:right;">罕見度</th>
                     <th style="padding:6px 8px;text-align:right;">多空比</th>
                     <th style="padding:6px 8px;text-align:right;">未平倉額</th>
@@ -342,6 +347,13 @@
                     </td>
                     <td style="padding:6px 8px;text-align:right;font-variant-numeric:tabular-nums;color:{{ '#86efac' if r.oi_pct > 0 else '#fca5a5' }};">{{ '%+.1f'|format(r.oi_pct) }}%</td>
                     <td style="padding:6px 8px;text-align:right;font-variant-numeric:tabular-nums;opacity:.8;">{{ '%+.1f'|format(r.px_pct) }}%</td>
+                    {% set by_h = {} %}{% for sp in (r.spans or []) %}{% set _ = by_h.update({sp.h: sp}) %}{% endfor %}
+                    {% for h in (crowd.spans_h or [2, 6, 12, 24]) if h != (crowd.span_h or 2) %}
+                    {% set sp = by_h.get(h) %}
+                    <td style="padding:6px 8px;text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap;{% if sp and r.hot_h == h %}background:rgba(255,255,255,.07);border-radius:6px;{% endif %}">
+                        {% if sp %}<span style="color:{{ '#86efac' if sp.oi > 0 else '#fca5a5' }};">{{ '%+.1f'|format(sp.oi) }}%</span>
+                        <span style="opacity:.55;font-size:.66rem;">/ {{ '%+.1f'|format(sp.px) }}%</span>{% else %}—{% endif %}</td>
+                    {% endfor %}
                     <td style="padding:6px 8px;text-align:right;font-variant-numeric:tabular-nums;opacity:.7;">前 {{ '%.1f'|format([0.1, 100 - r.pctile]|max) }}%</td>
                     <td style="padding:6px 8px;text-align:right;font-variant-numeric:tabular-nums;opacity:.7;">{% if r.ratio %}{{ '%.2f'|format(r.ratio) }}{% else %}—{% endif %}</td>
                     {# Size, not as a gate but as the caveat made visible: most

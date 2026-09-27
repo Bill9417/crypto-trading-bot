@@ -1552,6 +1552,18 @@
         .oc-meter i { display:block; height:100%; border-radius:2px; background:var(--wolf-gold); }
         .oc-sub { font-size:.62rem; color:var(--wolf-muted); line-height:1.5; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
         .oc-sub b { color:var(--wolf-text); font-weight:700; }
+        /* The horizon table: OI and price over 2h / 6h / 12h / 24h, the
+           rarest horizon (by the coin's own history) carrying the highlight.
+           Signed colour here, unlike the headline — this is a plain number
+           table and the read above it already says what the move means. */
+        .oi-chip { width:196px; }
+        .oc-h { width:100%; border-collapse:separate; border-spacing:0; margin:6px 0 2px; font-size:.62rem; table-layout:fixed; }
+        .oc-h th, .oc-h td { padding:1px 2px; text-align:right; font-weight:800; white-space:nowrap; }
+        .oc-h th { color:var(--wolf-muted); font-weight:700; }
+        .oc-h td:first-child, .oc-h th:first-child { text-align:left; color:var(--wolf-muted); font-weight:700; width:22px; }
+        .oc-h .up { color:var(--long); } .oc-h .dn { color:var(--short); }
+        .oc-h .hot { background:rgba(255,255,255,.09); }
+        .oc-h tr:first-child .hot { border-radius:6px 6px 0 0; } .oc-h tr:last-child .hot { border-radius:0 0 6px 6px; }
         .oi-record { margin-top:10px; }
         .rec-wrap { overflow-x:auto; }
         .rec-t { width:100%; border-collapse:collapse; font-size:.66rem; margin-top:6px; }
@@ -2070,7 +2082,7 @@
             /* Tiles were 138-150px wide with 11px type inside; give the text
                room rather than letting it wrap to four lines. */
             .oc-sub, .oi-meta, .rec-t, .seg-btns button { font-size: .74rem; }
-            .oi-chip, .zn-chip { width: 172px; }
+            .zn-chip { width: 172px; } .oi-chip { width: 206px; } .oc-h { font-size: .7rem; }
             #oi-panel .analytics-head, #zone-panel .analytics-head { flex-wrap: wrap; }
             .oi-tools, #zone-filter { margin-left: auto; }
             .analytics-panel a[style*="min-width:138px"],
@@ -3469,6 +3481,15 @@
                 return '$' + v.toFixed(0);
             }
             function sgn(v, d) { v = Number(v) || 0; return (v >= 0 ? '+' : '') + v.toFixed(d == null ? 1 : d); }
+            function horizons(r) {
+                var sp = r.spans || [];
+                if (!sp.length) return '';
+                function td(v, h) { return '<td class="' + (v > 0 ? 'up' : v < 0 ? 'dn' : '') + (h === r.hot_h ? ' hot' : '') + '">' + sgn(v) + '%</td>'; }
+                return '<table class="oc-h"><tr><th></th>' +
+                    sp.map(function (x) { return '<th' + (x.h === r.hot_h ? ' class="hot"' : '') + '>' + x.h + 'h</th>'; }).join('') + '</tr>' +
+                    '<tr><td>OI</td>' + sp.map(function (x) { return td(x.oi, x.h); }).join('') + '</tr>' +
+                    '<tr><td>價</td>' + sp.map(function (x) { return td(x.px, x.h); }).join('') + '</tr></table>';
+            }
             function chip(r, gate) {
                 var meta = READ[r.state] || {zh: r.state, ico: '•', bull: true, build: true};
                 var base = (r.symbol || '').replace(/USDT$/, '');
@@ -3487,6 +3508,7 @@
                         '<span class="oc-tier">' + esc(r.tier || '') + '</span></div>' +
                     '<div class="oc-oi">' + sgn(r.oi_pct) + '%<small>OI · ' + (r.span_h || 2) + 'h</small></div>' +
                     '<div class="oc-read">' + meta.zh + '</div>' +
+                    horizons(r) +
                     '<div class="oc-meter" title="罕見度：跟自己近 5 天比的排名"><i style="width:' + w.toFixed(0) + '%"></i></div>' +
                     '<div class="oc-sub">價 <b>' + sgn(r.px_pct) + '%</b> · 前 ' + rare.toFixed(1) + '%' +
                         (r.samples ? ' · n=' + r.samples : '') + '</div>' +

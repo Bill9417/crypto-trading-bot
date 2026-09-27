@@ -642,3 +642,57 @@ def test_the_view_carries_the_book_and_the_sweep_meta():
 def test_dedupe_survives_rows_with_no_timestamp():
     out = C.dedupe_recent([{"symbol": "A"}, {"symbol": "A", "ts": 5}])
     assert len(out) == 1
+
+
+# ── the horizon table on every hit (2026-09-27) ──────────────────────────────
+def _ramp(n=500, step=0.001):
+    return [1000.0 * (1 + step) ** i for i in range(n)]
+
+
+def test_every_horizon_is_ranked_against_its_own_history():
+    """A 24h change is judged against the symbol's own 24h changes, not
+    against its 2h ones — the same rule the alert span already follows."""
+    oi = [1000.0] * 400 + [1000.0 * (1 + 0.002 * i) for i in range(1, 101)]
+    px = flat(len(oi))
+    rows = C.span_table(oi, px)
+    assert [r["h"] for r in rows] == [2, 6, 12, 24]
+    by = {r["h"]: r for r in rows}
+    assert by[24]["oi"] > by[12]["oi"] > by[6]["oi"] > by[2]["oi"]
+    for r in rows:
+        assert 0 <= r["pctile"] <= 100
+
+
+def test_a_horizon_the_series_cannot_cover_is_left_out_not_zeroed():
+    rows = C.span_table([1000.0] * 30, flat(30))
+    assert [r["h"] for r in rows] == [2, 6]
+
+
+def test_the_highlighted_column_is_the_rarest_horizon():
+    """The card highlights where the anomaly is concentrated. A spike in the
+    last two hours on an otherwise flat book is a 2h story."""
+    oi = [1000.0 * (1 + 0.0008 * (i % 7 - 3)) for i in range(400)]
+    oi += [oi[-1] * 1.09, oi[-1] * 1.09 * 1.09]
+    rows = C.span_table(oi, flat(len(oi)))
+    assert C.hottest_span(rows) == 2
+    assert C.hottest_span([]) is None
+
+
+def test_a_hit_carries_the_horizon_table(fake):
+    out = C.scan([{"symbol": "HOTUSDT", "turnover": 5e8}], now=1000.0,
+                 store=C._blank())
+    hit = out["hits"][0]
+    assert [r["h"] for r in hit["spans"]] == [2, 6, 12, 24]
+    assert hit["hot_h"] in (2, 6, 12, 24)
+    assert C.web_view(C._blank())["spans_h"] == [2, 6, 12, 24]
+
+
+def test_the_alert_lists_the_longer_horizons():
+    row = {"symbol": "HOTUSDT", "state": C.LONGS_OPENING, "oi_pct": 12.0,
+           "px_pct": 3.0, "pctile": 99.1, "samples": 300, "span_h": 2.0,
+           "turnover": 5e8, "notional": 4e7, "tier": "中型",
+           "spans": [{"h": 2, "oi": 12.0, "px": 3.0, "pctile": 99.1},
+                     {"h": 6, "oi": 14.0, "px": 3.5, "pctile": 98.0},
+                     {"h": 24, "oi": 20.7, "px": 12.4, "pctile": 97.0}]}
+    msg = C.build_alert(row)
+    assert "OI 6h/24h" in msg and "+20.7%" in msg and "+12.4%" in msg
+    assert "OI 2h" not in msg, "the alert span is already the headline row"
