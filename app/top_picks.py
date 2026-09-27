@@ -22,9 +22,11 @@ That is a statement about agreement, which is true, rather than about
 probability, which is not known. Each row carries the measured record of every
 engine that voted for it, so the reason and the caveat arrive together.
 
-DIRECTION HANDLING. 壓力翻支撐 is long-only by construction. Movers vote, but
-their SHORT side is the one thing here measured confidently negative, so it is
-recorded and labelled rather than counted — see MOVER_SHORT_NOTE.
+DIRECTION HANDLING. 壓力翻支撐 is long-only by construction. Movers vote on
+the LONG side only: chasing a dump with a short is the one thing here measured
+confidently negative, so falling movers are not listed at all — a row that
+says "sell" next to a record that says "this loses" is an invitation, not a
+caveat. See MOVER_SHORT_NOTE.
 
 NO NETWORK. Everything is read from the state files the scanners already
 write, so this is a view over work already done, not another sweep.
@@ -61,10 +63,10 @@ RECORD = {
     "flip_full": "實盤 −0.18R/筆 (397 筆)；⭐ 這一段回測 +0.287R 但 108 筆、拿掉最賺的一檔就失效",
     "s4": "實測 −0.022R/筆 (90 筆，信賴區間含 0)",
     "oi": "當篩選條件實測沒有效果 (+0.28R ±0.40)",
-    "mover": "實測 −0.054R/筆；做空 −0.211R (確定為負)",
+    "mover": "實測 −0.054R/筆 (做多)；做空 −0.211R，確定為負，已不列入",
 }
 MOVER_SHORT_NOTE = ("動能做空是本專案唯一「確定會賠」的訊號 "
-                    "(−0.211R，信賴區間不含 0)，所以只列出、不計票。")
+                    "(−0.211R，信賴區間不含 0)，所以急殺的幣不會出現在賣方清單。")
 
 # Short chip labels — the row shows WHICH engines voted at a glance; the full
 # sentence for each lives once in the legend.
@@ -164,17 +166,15 @@ def collect(now: float = None) -> dict:
         add(s.get("base"), s.get("side") or "long", "s4", why, RECORD["s4"],
             (s.get("bar_ts") or 0) / 1000, plan=plan)
 
-    # ── movers ─────────────────────────────────────────────────────────────
+    # ── movers (pumps only — see MOVER_SHORT_NOTE) ──────────────────────────
     for m in (_load("strategy2_signals.json").get("movers") or []):
         if not _fresh(m.get("ts"), "mover", now):
             continue
-        up = (m.get("chg_1h") or 0) >= 0
-        side = "long" if up else "short"
+        if (m.get("chg_1h") or 0) < 0:
+            continue                     # a dump is not a short signal here
         why = (f"動能 · 一小時 {m.get('chg_1h', 0):+.1f}% · "
                f"成交量 {m.get('vol_mult', 0):.1f}× 平常")
-        # Counted long, listed-not-counted short — see MOVER_SHORT_NOTE.
-        add(m.get("base"), side, "mover", why, RECORD["mover"], m.get("ts"),
-            counts=up)
+        add(m.get("base"), "long", "mover", why, RECORD["mover"], m.get("ts"))
     return votes
 
 

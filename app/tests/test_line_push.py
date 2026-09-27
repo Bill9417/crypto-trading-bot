@@ -658,3 +658,21 @@ def test_a_correct_signature_still_passes(monkeypatch):
     assert line_push.sig_ok(body, good) is True
     assert line_push.sig_ok(body, "wrong") is False
     assert line_push.sig_ok(b'{"events":[1]}', good) is False      # body tampered
+
+
+# ── lifecycle wiring in the S2 scanner ───────────────────────────────────────
+def test_scanner_start_syncs_the_webhook_even_when_the_notice_is_off():
+    """THE TRAP: the quick-tunnel URL rotates on every restart, so
+    sync_webhook() must run unconditionally. If a future edit ever folds it
+    inside the LINE_LIFECYCLE_NOTICE check, LINE keeps posting to the dead
+    URL and 爸爸's replies silently stop arriving — a far worse bug than the
+    noisy notice this flag was added to remove."""
+    import inspect
+    import strategy2_scanner
+    src = inspect.getsource(strategy2_scanner.main)
+    sync = src.index("sync_webhook()")
+    notice = src.index("send_lifecycle(")
+    assert sync < notice, "sync_webhook must precede the optional notice"
+    # and it must not be nested under a lifecycle-notice conditional
+    line = next(l for l in src.split("\n") if "sync_webhook()" in l)
+    assert "LINE_LIFECYCLE_NOTICE" not in line

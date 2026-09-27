@@ -9,11 +9,11 @@ that mirrors TV.pine), and on a NEW signal it:
   • appends it to strategy2_signals.json  → the /strategy2 page "Live 15m Signals"
   • sends a Telegram alert (deduped per symbol+direction with a cooldown)
 
-By DEFAULT it is alert-only — it never touches the executor or the live account,
-you read the signal and decide. If you opt in with STRATEGY2_LIVE=true it ALSO
-hands each new high-conviction signal to strategy2_live.maybe_trade, which places
-a real bracketed order (see that module for the full safety model). With the
-default config STRATEGY2_LIVE is False, so nothing is ever ordered.
+It is alert-only BY CONSTRUCTION — this process has no order path and does
+not import the order layer. The opt-in live layer that used to sit beside it
+was retired: the S2 triangle measures −0.081R ± 0.018 over 22,631 scored
+outcomes (interval clear of zero) and every replayed exit rule is negative.
+You read the signal, the record beside it, and decide.
 
 Run detached (like the bot/web):
     nohup ./run_strategy2.sh >/dev/null 2>&1 & disown
@@ -27,7 +27,6 @@ import tg_format
 import config
 import daily_report
 import event_radar
-import executor
 import indicators
 import price_alerts
 import backup_state
@@ -42,7 +41,7 @@ import tw_stocks
 import us_market
 import watchdog
 import whale_tracker
-import strategy2_live as S2L
+import s2_plan
 import strategy2_meter as S2
 import telegram_utils
 from market_data import SafeBinanceClient, RateLimitCooldownError, is_tradfi_market
@@ -80,7 +79,13 @@ HC_ALERT = os.getenv("STRATEGY2_HC_ALERT", "true").strip().lower() in ("1", "tru
 # catch coins moving RIGHT NOW: 1h price change + last-hour volume vs its own
 # 24h norm. Alert-grade movers (both thresholds crossed) send an immediate
 # Telegram alert; the dashboard's 🚀 Pump Radar strip shows the top list.
-MOVER_1H_PCT = float(os.getenv("MOVER_1H_PCT", "4"))            # |1h %| for alert grade
+#
+# PUMPS ONLY are alert-grade. A dump used to fire the same alert with a 📉,
+# which reads as "short this" — and momentum shorts are the one signal this
+# repo has measured as confidently negative (−0.211R/trade, interval clear of
+# zero; top_picks.MOVER_SHORT_NOTE). Falling coins still appear on the strip
+# as information about the tape; they are never alerted and never voted.
+MOVER_1H_PCT = float(os.getenv("MOVER_1H_PCT", "4"))            # +1h % for alert grade
 MOVER_VOL_MULT = float(os.getenv("MOVER_VOL_MULT", "3"))        # last-hour vol vs 24h norm
 MOVER_ALERT_COOLDOWN_SEC = int(os.getenv("MOVER_ALERT_COOLDOWN_SEC", "7200"))
 MOVER_KEEP = int(os.getenv("MOVER_KEEP", "12"))                 # rows on the dashboard
@@ -137,6 +142,14 @@ def _mover_metrics(ohlcv):
         "vol_mult": (vol_1h / avg_1h) if avg_1h > 0 else 0.0,
         "price": closes[-1],
     }
+
+
+def _mover_hot(mv: dict) -> bool:
+    """Alert-grade = a PUMP with both thresholds crossed. Dumps never qualify:
+    the mirror-image "short the dump" is the one measured-negative signal in
+    this repo (−0.211R, interval clear of zero) and an alert is a nudge."""
+    return (mv.get("chg_1h") or 0) >= MOVER_1H_PCT and \
+        (mv.get("vol_mult") or 0) >= MOVER_VOL_MULT
 
 
 def _top_movers() -> list:
@@ -259,9 +272,6 @@ def _write(recent: list, scanning: int, done: int) -> None:
         "generated_at": time.time(),
         "last_scan_human": time.strftime("%Y-%m-%d %H:%M:%S"),
         "timeframe": TIMEFRAME,
-        # Whether THIS scanner is the live engine — lets the dashboard tell an
-        # alert-only scanner (running alongside S1) from one armed to trade.
-        "live": bool(config.STRATEGY2_LIVE),
         "scanning": scanning,
         "done": done,
         "signals": recent,
@@ -590,7 +600,7 @@ def scan_once(client, recent: list, last_alert: dict, pending: list) -> list:
         # 🚀 Pump Radar — reuses this symbol's candles, no extra API call.
         mv = _mover_metrics(ohlcv)
         if mv:
-            hot = abs(mv["chg_1h"]) >= MOVER_1H_PCT and mv["vol_mult"] >= MOVER_VOL_MULT
+            hot = _mover_hot(mv)
             LATEST_MOVERS[sym] = {
                 "symbol": sym, "base": sym.split("/")[0], "hot": hot,
                 "ts": time.time(), "tv_url": _tv_url(sym), **mv,
@@ -599,8 +609,7 @@ def scan_once(client, recent: list, last_alert: dict, pending: list) -> list:
             now_ts = time.time()
             if hot and now_ts - last_alert.get(key, 0) >= MOVER_ALERT_COOLDOWN_SEC:
                 last_alert[key] = now_ts
-                arrow = "🚀" if mv["chg_1h"] > 0 else "📉"
-                zh = "急拉" if mv["chg_1h"] > 0 else "急殺"
+                arrow, zh = "🚀", "急拉"
                 base_ = sym.split("/")[0]
                 print(f"[strategy2] MOVER {base_} {mv['chg_1h']:+.1f}% 1h "
                       f"vol {mv['vol_mult']:.1f}x")
@@ -645,12 +654,12 @@ def scan_once(client, recent: list, last_alert: dict, pending: list) -> list:
                 # alert/digest and the /strategy2 page show a complete
                 # Entry/SL/TP plan, not just a naked price. ⭐ signals publish
                 # the measured premium geometry; the rest keep the classic
-                # 1.5×ATR / 1R / 2R plan (which live execution also uses).
+                # 1.5×ATR / 1R / 2R plan.
                 try:
-                    levels_fn = (S2L.premium_trade_levels if sig["premium"]
-                                 else S2L.trade_levels)
+                    levels_fn = (s2_plan.premium_trade_levels if sig["premium"]
+                                 else s2_plan.trade_levels)
                     entry, sl, tp1, tp2 = levels_fn(
-                        res["price"], direction == "long", S2L._atr(ohlcv))
+                        res["price"], direction == "long", s2_plan.atr(ohlcv))
                     sig.update({"entry": entry, "sl": sl, "tp1": tp1, "tp2": tp2})
                 except Exception as exc:  # noqa: BLE001 — plan is a bonus, never blocks
                     print(f"[strategy2] plan calc failed {sym}: {exc}")
@@ -688,13 +697,6 @@ def scan_once(client, recent: list, last_alert: dict, pending: list) -> list:
                     print(f"[strategy2] ⭐ {sig['base']} over per-sweep alert cap "
                           f"({cap}) — digest only")
                 _write(recent, total, i + 1)        # surface on the page immediately
-                # Opt-in LIVE execution — a no-op unless STRATEGY2_LIVE is on. The
-                # best-plan filter + all safety gates live inside maybe_trade; `i`
-                # is the volume rank (universe is sorted most-liquid first).
-                try:
-                    S2L.maybe_trade(sig, ohlcv, rank=i)
-                except Exception as exc:  # noqa: BLE001 — live exec must never kill the sweep
-                    print(f"[strategy2] live exec error {sym}: {exc}")
 
         if (i + 1) % 25 == 0:
             _write(recent, total, i + 1)            # progress for the page
@@ -769,17 +771,8 @@ def scan_once(client, recent: list, last_alert: dict, pending: list) -> list:
 
 
 def main() -> None:
-    if config.STRATEGY2_LIVE:
-        net = "DRY-RUN" if not config.LIVE_TRADING else (
-            "TESTNET" if config.USE_TESTNET else "LIVE MAINNET")
-        mode = (f"LIVE EXECUTION ON ({net}) — high-conviction signals "
-                f"(long ≥{config.STRATEGY2_LIVE_MIN_SCORE} / short ≤"
-                f"{100 - config.STRATEGY2_LIVE_MIN_SCORE}) will place bracketed orders. "
-                f"STOP THE S1 BOT FIRST — one engine at a time.")
-    else:
-        mode = "ALERT-ONLY: no orders are ever placed (set STRATEGY2_LIVE=true to trade)."
     print(f"[strategy2] 15m signal scanner starting — interval {INTERVAL_SEC}s, "
-          f"cooldown {ALERT_COOLDOWN_SEC}s. {mode}")
+          f"cooldown {ALERT_COOLDOWN_SEC}s. ALERT-ONLY: this process has no order path.")
     # Whether S4 is spending money must be readable in the log, not inferred
     # from whether orders appear.
     try:
@@ -808,24 +801,6 @@ def main() -> None:
     pending = []                    # new signals awaiting the next digest
     last_digest = time.time()       # cadence anchor for the 30-min digest
 
-    def _guard():
-        """Keep the live account consistent every cycle. When S2 is the live
-        engine it manages the account, so each sweep it (1) reconciles closed
-        positions — freeing concurrency-cap slots and cancelling stale SL/TP so
-        the engine never wedges shut or fires an old stop at a new position — and
-        (2) auto-sets a stop on any naked position (orphaned/manual entries, or a
-        bracket that failed to place). No-op in dry-run / alert-only."""
-        if not config.STRATEGY2_LIVE:
-            return
-        try:
-            executor.reconcile_open_positions()    # release cap slots + cancel stale orders
-        except Exception as exc:  # noqa: BLE001 — reconcile must never kill the loop
-            print(f"[strategy2] reconcile error: {exc}")
-        try:
-            executor.ensure_stop_losses()
-        except Exception as exc:  # noqa: BLE001 — protection must never kill the loop
-            print(f"[strategy2] guardian error: {exc}")
-
     # 🤖 Telegram command bot — /winrate /positions /signals /alerts /report,
     # answered from a daemon thread (long-polls getUpdates; read-only).
     try:
@@ -840,10 +815,8 @@ def main() -> None:
     except Exception as exc:  # noqa: BLE001 — the collector is optional
         print(f"[strategy2] liq collector failed to start: {exc}")
 
-    _guard()                                   # protect immediately on startup
     while True:
         start = time.time()
-        _guard()                               # …and at the top of every sweep
         try:
             recent = scan_once(client, recent, last_alert, pending)
         except Exception as exc:  # noqa: BLE001 — keep the loop alive

@@ -8,6 +8,8 @@ Donchian breakout + ATR buffer, EMA200 side, ADX≥25 & rising, volume gate.
 """
 import math
 import os
+import tempfile
+import warnings
 
 import pytest
 
@@ -21,6 +23,53 @@ import pytest
 # fixing the cwd fixes the class. app/ is the directory the app itself runs
 # from, so this makes the tests match production rather than the shell.
 os.chdir(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+# ── A users DB the tests own ─────────────────────────────────────────────────
+# Page tests sign in by writing _user_id = "1" into the session. That only
+# resolves where instance/users.db already exists with the owner's admin as
+# row 1 — the owner's machine. On a clean checkout (CI, a fresh clone) there is
+# no table, every signed-in page test died with "no such table: user", and the
+# upstream suite had been red for weeks because of it. app.py honours these
+# two overrides; setting them BEFORE any test module imports app keeps every
+# test off the real auth database, and _seed_test_user below creates the one
+# row they assume. Same directory for the signal DB, for the same reason.
+_TEST_DB_DIR = tempfile.mkdtemp(prefix="wolf-tests-")
+os.environ["WOLF_USERS_DB_URI"] = "sqlite:///" + os.path.join(_TEST_DB_DIR, "users.db")
+os.environ["WOLF_SIGNALS_DB_URI"] = "sqlite:///" + os.path.join(_TEST_DB_DIR, "signals.db")
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _seed_test_user():
+    """Tables + the admin row (id 1) that signed-in page tests assume."""
+    import app as APP
+    with APP.app.app_context():
+        APP.db.create_all()
+        if APP.db.session.get(APP.User, 1) is None:
+            APP.db.session.add(APP.User(id=1, username="test-admin",
+                                        password="not-a-real-hash", is_admin=True))
+            APP.db.session.commit()
+    yield
+
+
+# ── ResourceWarning is not a test failure here ──────────────────────────────
+# CI runs pytest with -W error::Warning so a library deprecation cannot slip
+# past. Dozens of tests read a source file or a template with a bare
+# open(path).read(), and the Flask test client's static-file responses are
+# never closed either; CPython reports each of those as a ResourceWarning
+# from __del__, which pytest re-raises as PytestUnraisableExceptionWarning —
+# and under -W error that failed ~70 tests upstream for weeks, none of them
+# about the code under test. The leak is a one-shot read inside a test
+# process; it is not a bug in the application. A marker beats an ini filter
+# because marks are applied after the command line and therefore win.
+def pytest_collection_modifyitems(items):
+    for item in items:
+        item.add_marker(pytest.mark.filterwarnings("ignore::ResourceWarning"))
+
+
+# Between test phases pytest's own filters are not active, so a response
+# object collected a moment later would still surface as an unraisable
+# warning under the default hooks. Ignore the category process-wide as well.
+warnings.simplefilter("ignore", ResourceWarning)
 
 HOUR_MS = 3_600_000
 

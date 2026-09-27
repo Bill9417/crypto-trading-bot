@@ -29,6 +29,7 @@ here would race the ordinary subprocess.run() calls all over this codebase for
 the same exit statuses, and only works from the main thread anyway — while the
 watchdog runs inside a scanner's worker thread.
 """
+import os
 import threading
 
 
@@ -51,4 +52,36 @@ def reap(proc):
             pass
 
     threading.Thread(target=_reaper, name="reap", daemon=True).start()
+    return True
+
+
+# ── S1 bot liveness ──────────────────────────────────────────────────────────
+BOT_LOCK_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "bot.lock")
+
+
+def bot_lock_held(lock_file: str = None) -> bool:
+    """True if the S1 bot (bot.py) currently holds its PID lock.
+
+    bot.py acquires the lock ONLY when it trades on Binance — SCAN_ONLY and
+    S1_EXEC=bybit both skip it deliberately — so the lock is the one
+    unambiguous "S1 is placing Binance orders" signal available from outside
+    the process. Errs on the side of caution: an unreadable lock or an
+    alive-but-unsignalable PID both count as held."""
+    try:
+        with open(lock_file or BOT_LOCK_FILE, "r", encoding="utf-8") as f:
+            pid = int((f.read() or "0").strip())
+    except (FileNotFoundError, ValueError):
+        return False
+    except Exception:  # noqa: BLE001
+        return False
+    if pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)          # signal 0 = liveness probe, sends nothing
+    except ProcessLookupError:
+        return False             # no such process → S1 is not running
+    except PermissionError:
+        return True              # process exists (owned by another user) → alive
+    except Exception:  # noqa: BLE001
+        return False
     return True

@@ -87,9 +87,12 @@ from config import (
     FUNDING_MIN_SHORT,
     ENABLE_DIRECTION_CAP,
     MAX_SAME_DIRECTION,
+    S1_MAX_ATR_PCT,
     EXCLUDE_TRADFI_PERPS,
 )
 from indicators import (
+    atr_pct,
+    volatility_ceiling_ok,
     check_tsi_signal,
     check_macd_signal,
     check_volume_gate,
@@ -2342,6 +2345,19 @@ def run_bot() -> None:
                             # Can't compute ADX (short history) → leave adx_ok True;
                             # don't block on degraded data.
 
+                        # Volatility ceiling (optional, default OFF) — the symbol's
+                        # OWN ATR(14) as a % of price. s1_regime_lab found S1's
+                        # expectancy rising monotonically as this tightens and
+                        # paper_tracker forward-tests it; the ONE helper in
+                        # indicators.py is shared with the backtester, so the
+                        # simulation admits exactly the symbols the bot does.
+                        vol_ok = volatility_ceiling_ok(ohlcv, S1_MAX_ATR_PCT)
+                        if not vol_ok:
+                            _atrp = atr_pct(ohlcv)
+                            details.append(
+                                f"⚠ Volatility: ATR {_atrp:.2f}% of price is above the "
+                                f"{S1_MAX_ATR_PCT:g}% ceiling (S1_MAX_ATR_PCT)")
+
                         trade_qualified = (
                             effective_lights >= required_lights
                             and base_lights_ok
@@ -2360,6 +2376,7 @@ def run_bot() -> None:
                             and (not REQUIRE_RSI_50_CROSS or rsi_cross_ok)
                             and trend_4h_aligned
                             and adx_ok
+                            and vol_ok
                             and entry_price is not None
                             and not check_circuit_breaker()
                             and is_tradeable   # watch-only pairs (rank > TOP_SYMBOL_LIMIT) never trade

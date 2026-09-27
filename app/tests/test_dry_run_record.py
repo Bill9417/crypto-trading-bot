@@ -131,7 +131,6 @@ def test_a_wrapper_does_not_write_into_the_book_it_borrows(tmp_path,
 # ── nothing is armed ─────────────────────────────────────────────────────────
 LIVE_SWITCHES = {
     "LIVE_TRADING": "false",        # S1 — Binance orders
-    "STRATEGY2_LIVE": "false",      # S2 as the live engine
     "STRATEGY3_LIVE": "false",      # S3 — Bybit flag-flip
     "S4_EXEC": "off",               # S4 — Bybit perp orders
     "S1_BYBIT_MIRROR": "false",     # the S1 -> Bybit mirror

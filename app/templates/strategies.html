@@ -17,140 +17,190 @@
     <link rel="apple-touch-icon" href="/static/apple-touch-icon.png">
     <link rel="stylesheet" href="/static/app.css?v={{ asset_ver }}">
     <style>
-        /* Shares the site visual language (funnel/market/health): blue-accent
-           sticky bar, .card + .card-h, .chips + .reg-pill. Theme vars + nav come
-           from app.css; only the tab strip is page-specific. */
-        :root {
-            --blue: #00d2ff;
-            --blue-dim: rgba(0,210,255,.14);
-            --gold: #ffcf4b;
-            --bybit: #f7a600;
-            --slate: var(--wolf-slate);
-            --card: rgba(33,40,62,.80);
-            --border: rgba(255,255,255,.10);
-            --muted: #93a3b8;
-            --text: #f2f6fb;
-            --long: #16a34a;
-            --short: #dc2626;
-            --amber: #f59e0b;
-            --radius: 14px;
-            --shadow: 0 14px 40px rgba(0,0,0,.4);
-        }
+        /* 2026-09-27 redesign. The hub showed each engine's RULES and its LIVE
+           situation and never its RECORD — the one thing a person deciding
+           whether to trust an engine needs first. Every panel is now three
+           cards: what it does, what it has measured, what it is doing now.
+           Theme tokens come from app.css; this page no longer redefines the
+           direction colours (it used to carry the old print green/red). */
         * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
         html { -webkit-text-size-adjust: 100%; }
         body {
-            margin: 0; background: var(--slate); background-image: var(--page-bg-glow);
-            color: var(--text); font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+            margin: 0; background: var(--wolf-slate); background-image: var(--page-bg-glow);
+            color: var(--wolf-text); font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
             -webkit-font-smoothing: antialiased; min-height: 100vh;
         }
         .num { font-variant-numeric: tabular-nums; }
         .wrap { max-width: var(--page-max); margin: 0 auto; padding: 10px clamp(12px,4vw,20px) calc(34px + env(safe-area-inset-bottom)); }
 
-        /* ── Sticky header (matches funnel/market) ── */
+        /* ── Sticky header ── */
         .bar {
             position: sticky; top: 0; z-index: 20;
             background: rgba(10,12,20,.82); backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
-            border: 1px solid var(--border); border-left: 4px solid var(--blue);
+            border: 1px solid var(--wolf-border); border-left: 4px solid var(--wolf-gold);
             border-radius: var(--radius); box-shadow: var(--shadow);
             padding: 12px 16px; margin: 4px 0 16px;
             display: flex; align-items: center; justify-content: space-between; gap: 10px;
         }
         .brand { display: flex; align-items: center; gap: 11px; min-width: 0; }
-        .brand-icon { font-size: 1.7rem; line-height: 1; filter: drop-shadow(0 0 7px rgba(0,210,255,.4)); }
+        .brand-icon { font-size: 1.7rem; line-height: 1; filter: drop-shadow(0 0 7px rgba(255,210,87,.35)); }
         .brand h1 { font-size: clamp(1rem,3.6vw,1.2rem); font-weight: 900; margin: 0; letter-spacing: -.4px; white-space: nowrap; }
-        .brand h1 span { color: var(--blue); }
-        .brand-sub { font-size: .7rem; color: var(--muted); margin-top: 2px; display: flex; align-items: center; gap: 6px; }
+        .brand h1 span { color: var(--wolf-gold); }
+        .brand-sub { font-size: .7rem; color: var(--wolf-muted); margin-top: 2px; display: flex; align-items: center; gap: 6px; }
         .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--long); box-shadow: 0 0 8px var(--long); animation: pulse 2s infinite; flex-shrink: 0; }
         @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.3} }
+        @media (prefers-reduced-motion: reduce) { .dot { animation: none; } }
         .actions { display: flex; gap: 8px; flex-shrink: 0; }
         .btn {
-            background: rgba(255,255,255,.04); border: 1px solid var(--border);
-            color: var(--muted); font: inherit; font-weight: 700; font-size: .78rem;
+            background: rgba(255,255,255,.04); border: 1px solid var(--wolf-border);
+            color: var(--wolf-muted); font: inherit; font-weight: 700; font-size: .78rem;
             padding: 9px 13px; border-radius: 11px; cursor: pointer;
             display: inline-flex; align-items: center; gap: 6px; transition: .15s; white-space: nowrap;
         }
-        .btn:hover, .btn:active { border-color: rgba(0,210,255,.4); color: var(--text); background: rgba(255,255,255,.07); }
+        .btn:hover, .btn:active { border-color: var(--wolf-border-hi); color: var(--wolf-text); background: rgba(255,255,255,.07); }
 
-        /* ── Tab strip (page-specific, blue-accent to match) ── */
+        /* ── The one-line frame ── */
+        .frame {
+            display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+            border: 1px solid rgba(255,210,87,.22); background: rgba(255,210,87,.05);
+            border-radius: 12px; padding: 10px 14px; margin-bottom: 14px;
+            font-size: .78rem; line-height: 1.6; color: #d9dee7;
+        }
+        .frame b { color: var(--wolf-gold); }
+        .frame a { color: var(--wolf-blue); font-weight: 700; text-decoration: none; margin-left: auto; white-space: nowrap; }
+
+        /* ── Tab strip ── */
         .tabs { display: grid; grid-template-columns: repeat(4,1fr); gap: 9px; margin-bottom: 16px; }
         .tabs.tabs-3 { grid-template-columns: repeat(3,1fr); }
         @media (max-width: 980px) { .tabs { grid-template-columns: repeat(2,1fr); } }
         @media (max-width: 620px) { .tabs { grid-template-columns: 1fr; } }
         .tab {
-            cursor: pointer; text-align: left; font: inherit; color: var(--text);
-            background: var(--card); border: 1px solid var(--border); border-left: 4px solid var(--border);
-            border-radius: var(--radius); padding: 12px 14px; transition: .15s;
+            cursor: pointer; text-align: left; font: inherit; color: var(--wolf-text);
+            background: var(--wolf-card); border: 1px solid var(--wolf-border); border-left: 4px solid var(--wolf-border);
+            border-radius: var(--radius); padding: 12px 14px; transition: .15s; position: relative;
         }
-        .tab:hover { border-color: rgba(0,210,255,.4); }
-        .tab.active { border-left-color: var(--blue); background: linear-gradient(90deg, rgba(0,210,255,.08), transparent); box-shadow: var(--shadow); }
-        .tab .tnum { font-size: .6rem; font-weight: 900; letter-spacing: 1.4px; color: var(--muted); text-transform: uppercase; }
-        .tab.active .tnum { color: var(--blue); }
+        .tab:hover { border-color: var(--wolf-border-hi); }
+        .tab.active { border-left-color: var(--wolf-gold); background: linear-gradient(90deg, rgba(255,210,87,.10), transparent); box-shadow: var(--shadow); }
+        .tab:focus-visible { outline: 2px solid var(--wolf-gold); outline-offset: 2px; }
+        .tab .tnum { font-size: .6rem; font-weight: 900; letter-spacing: 1.4px; color: var(--wolf-muted); text-transform: uppercase; }
+        .tab.active .tnum { color: var(--wolf-gold); }
         .tab .tname { font-size: .98rem; font-weight: 900; margin-top: 3px; display: flex; align-items: center; gap: 7px; }
-        .tab .tsub { font-size: .68rem; color: var(--muted); margin-top: 2px; }
-        .tdot { width: 7px; height: 7px; border-radius: 999px; background: var(--muted); flex-shrink: 0; }
+        .tab .tsub { font-size: .68rem; color: var(--wolf-muted); margin-top: 2px; }
+        .tab .tverdict { margin-top: 8px; }
+        .tdot { width: 7px; height: 7px; border-radius: 999px; background: var(--wolf-muted); flex-shrink: 0; }
         .tdot.on { background: var(--long); box-shadow: 0 0 8px var(--long); }
-        .tdot.alert { background: var(--gold); box-shadow: 0 0 8px var(--gold); }
+        .tdot.alert { background: var(--wolf-gold); box-shadow: 0 0 8px var(--wolf-gold); }
 
         .panel { display: none; }
         .panel.active { display: block; }
 
         /* ── Strategy header row ── */
         .shead { display: flex; align-items: center; gap: 9px; flex-wrap: wrap; margin: 2px 2px 14px; }
-        .shead h2 { font-size: 1.12rem; font-weight: 900; margin: 0; letter-spacing: -.3px; }
+        .shead h2 { font-size: 1.12rem; font-weight: 900; margin: 0; letter-spacing: -.3px; color: var(--wolf-gold); }
         .sbadge { font-size: .62rem; font-weight: 900; letter-spacing: .4px; padding: 3px 9px; border-radius: 999px; text-transform: uppercase; }
-        .sbadge.venue { background: var(--blue-dim); color: var(--blue); }
-        .sbadge.tf { background: rgba(255,255,255,.05); color: var(--muted); }
-        .sbadge.live { background: rgba(34,197,94,.16); color: var(--long); }
-        .sbadge.alert { background: rgba(255,207,75,.16); color: var(--gold); }
+        .sbadge.venue { background: var(--wolf-blue-dim); color: var(--wolf-blue); }
+        .sbadge.tf { background: rgba(255,255,255,.05); color: var(--wolf-muted); }
+        .sbadge.live { background: var(--long-bg); color: var(--long); }
+        .sbadge.alert { background: rgba(255,210,87,.16); color: var(--wolf-gold); }
+        .shead .vp { margin-left: auto; }
 
-        /* ── Grid + card shell (matches funnel .card / .card-h) ── */
-        .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; align-items: start; }
-        @media (max-width: 820px) { .grid { grid-template-columns: 1fr; } }
-        .card { background: var(--card); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow); padding: 16px clamp(13px,3.5vw,20px); }
+        /* ── Verdict pills (shared by tabs, headers and record rows) ── */
+        .vp {
+            display: inline-flex; align-items: center; gap: 6px; font-size: .64rem; font-weight: 800;
+            letter-spacing: .03em; padding: 4px 10px; border-radius: 999px; white-space: nowrap;
+            border: 1px solid var(--wolf-border); background: rgba(255,255,255,.04); color: var(--wolf-muted);
+        }
+        .vp::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+        .vp.neg  { color: #fca5a5; border-color: rgba(255,77,109,.35); background: rgba(255,77,109,.10); }
+        .vp.pos  { color: #86efac; border-color: rgba(46,232,138,.35); background: rgba(46,232,138,.10); }
+        .vp.warn { color: var(--wolf-gold); border-color: rgba(255,210,87,.4); background: rgba(255,210,87,.10); }
+
+        /* ── Three cards per strategy ── */
+        .grid { display: grid; grid-template-columns: 1.15fr 1fr 1fr; gap: 14px; align-items: start; }
+        @media (max-width: 1180px) { .grid { grid-template-columns: 1fr 1fr; } .grid .card.rules { grid-column: 1 / -1; } }
+        @media (max-width: 760px) { .grid { grid-template-columns: 1fr; } }
+        .card { background: var(--wolf-card); border: 1px solid var(--wolf-border); border-radius: var(--radius); box-shadow: var(--shadow); padding: 16px clamp(13px,3.5vw,20px); min-width: 0; }
+        .card.record { border-top: 2px solid rgba(255,210,87,.45); }
         .card-h { display: flex; align-items: center; gap: 9px; margin-bottom: 12px; }
         .card-h .ic { font-size: 1.05rem; }
         .card-h h2 { font-size: .98rem; font-weight: 800; margin: 0; }
-        .card-h .scope { font-size: .62rem; font-weight: 800; color: var(--muted); background: rgba(255,255,255,.05); border: 1px solid var(--border); padding: 2px 8px; border-radius: 999px; text-transform: uppercase; margin-left: auto; }
+        .card-h .scope { font-size: .62rem; font-weight: 800; color: var(--wolf-muted); background: rgba(255,255,255,.05); border: 1px solid var(--wolf-border); padding: 2px 8px; border-radius: 999px; text-transform: uppercase; margin-left: auto; }
 
         /* ── Rules list ── */
         ul.rules { list-style: none; margin: 0; padding: 0; }
         ul.rules li { position: relative; padding: 8px 0 8px 20px; font-size: .83rem; line-height: 1.55; color: #cdd6e2; border-top: 1px solid rgba(255,255,255,.05); }
         ul.rules li:first-child { border-top: none; }
-        ul.rules li::before { content: "▸"; position: absolute; left: 2px; color: var(--blue); }
-        ul.rules li b { color: var(--text); font-weight: 800; }
-        ul.rules li .en { color: var(--muted); }
-        code.k { color: var(--gold); background: rgba(255,207,75,.09); padding: 1px 6px; border-radius: 6px; font-weight: 700; font-size: .82em; }
+        ul.rules li::before { content: "▸"; position: absolute; left: 2px; color: var(--wolf-gold); }
+        ul.rules li b { color: var(--wolf-text); font-weight: 800; }
+        ul.rules li .en { color: var(--wolf-muted); }
+        code.k { color: var(--wolf-gold); background: rgba(255,210,87,.09); padding: 1px 6px; border-radius: 6px; font-weight: 700; font-size: .82em; }
 
-        /* ── Live column (chips + reg-pill from funnel, + rows) ── */
+        /* ── Record card ── */
+        .rec-big { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; margin-bottom: 4px; }
+        .rec-big .v { font-size: 1.55rem; font-weight: 900; font-variant-numeric: tabular-nums; color: var(--wolf-champagne); letter-spacing: -.02em; }
+        .rec-big .v.neg { color: var(--short); } .rec-big .v.pos { color: var(--long); }
+        .rec-big .u { font-size: .7rem; color: var(--wolf-muted); font-weight: 700; }
+        .rec-sub { font-size: .74rem; color: var(--wolf-muted); line-height: 1.55; }
+        .rec-sub b { color: var(--wolf-text); }
+        .rec-tiles { display: grid; grid-template-columns: repeat(3, minmax(0,1fr)); gap: 8px; margin: 12px 0 4px; }
+        .rt { background: rgba(255,255,255,.03); border: 1px solid var(--wolf-border); border-radius: 11px; padding: 8px 10px; min-width: 0; }
+        .rt .k { font-size: .58rem; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--wolf-muted); }
+        .rt .v { font-size: 1.02rem; font-weight: 900; font-variant-numeric: tabular-nums; margin-top: 2px; color: var(--wolf-champagne); }
+        .rt .v.neg { color: var(--short); } .rt .v.pos { color: var(--long); }
+        .rec-h { font-size: .62rem; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; color: var(--wolf-muted); margin: 14px 0 4px; }
+        .rrow { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 8px 0; border-top: 1px solid rgba(255,255,255,.05); font-size: .78rem; }
+        .rrow:first-of-type { border-top: none; }
+        .rrow .lab { font-weight: 700; min-width: 0; }
+        .rrow .lab small { color: var(--wolf-muted); font-weight: 600; margin-left: 5px; }
+        .rrow .nums { margin-left: auto; color: var(--wolf-muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
+        .rrow .nums b { color: var(--wolf-text); }
+        .rrow .nums b.neg { color: var(--short); } .rrow .nums b.pos { color: var(--long); }
+        .rec-note { font-size: .7rem; color: var(--wolf-muted); line-height: 1.6; margin-top: 12px; padding-top: 10px; border-top: 1px solid rgba(255,255,255,.06); }
+        .rec-note a { color: var(--wolf-blue); font-weight: 700; text-decoration: none; }
+        .rec-note code { color: var(--wolf-gold); font-size: .68rem; }
+
+        /* ── Live column ── */
         .chips { display: grid; grid-template-columns: repeat(2,1fr); gap: 9px; margin-bottom: 12px; }
-        .chip { background: rgba(255,255,255,.03); border: 1px solid var(--border); border-radius: 12px; padding: 10px 12px; text-align: center; }
-        .chip .k { font-size: .6rem; text-transform: uppercase; letter-spacing: .6px; color: var(--muted); font-weight: 700; }
+        .chip { background: rgba(255,255,255,.03); border: 1px solid var(--wolf-border); border-radius: 12px; padding: 10px 12px; text-align: center; min-width: 0; }
+        .chip .k { font-size: .6rem; text-transform: uppercase; letter-spacing: .6px; color: var(--wolf-muted); font-weight: 700; }
         .chip .v { font-size: 1.3rem; font-weight: 900; margin-top: 3px; }
-        .chip .v.blue { color: var(--blue); } .chip .v.gold { color: var(--gold); }
+        .chip .v.blue { color: var(--wolf-blue); } .chip .v.gold { color: var(--wolf-gold); }
         .reg-pill { display: inline-block; padding: 3px 11px; border-radius: 999px; font-size: .82rem; font-weight: 900; letter-spacing: .4px; margin-top: 4px; }
-        .reg-bear { background: rgba(239,68,68,.16); color: var(--short); }
-        .reg-bull { background: rgba(34,197,94,.16); color: var(--long); }
-        .reg-neutral, .reg-unknown { background: rgba(245,158,11,.16); color: var(--amber); }
+        .reg-bear { background: var(--short-bg); color: var(--short); }
+        .reg-bull { background: var(--long-bg); color: var(--long); }
+        .reg-neutral, .reg-unknown { background: rgba(255,210,87,.16); color: var(--wolf-gold); }
         .kv { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; padding: 8px 0; border-top: 1px solid rgba(255,255,255,.05); font-size: .83rem; }
         .kv:first-child { border-top: none; }
-        .kv .k { color: var(--muted); } .kv .v { font-weight: 800; }
+        .kv .k { color: var(--wolf-muted); } .kv .v { font-weight: 800; }
         .srow { display: flex; align-items: center; gap: 8px; padding: 8px 0; border-top: 1px solid rgba(255,255,255,.05); font-size: .83rem; flex-wrap: wrap; }
         .srow:first-child { border-top: none; }
         .swhy { font-size: .76rem; line-height: 1.75; padding: 0 0 8px 2px; opacity: .9; }
         .srow .b { font-weight: 900; min-width: 52px; }
-        .srow .conv { margin-left: auto; font-weight: 800; color: var(--gold); }
+        .srow .conv { margin-left: auto; font-weight: 800; color: var(--wolf-gold); }
         .dir { font-size: .64rem; font-weight: 900; padding: 2px 8px; border-radius: 999px; letter-spacing: .4px; }
-        .dir.long { background: rgba(34,197,94,.16); color: var(--long); }
-        .dir.short { background: rgba(239,68,68,.16); color: var(--short); }
-        .plan { font-size: .74rem; color: var(--muted); margin-top: 8px; line-height: 1.5; }
-        .muted { color: var(--muted); }
-        .eng { font-size: .62rem; color: var(--muted); background: rgba(255,255,255,.05); padding: 1px 7px; border-radius: 999px; }
+        .dir.long { background: var(--long-bg); color: var(--long); }
+        .dir.short { background: var(--short-bg); color: var(--short); }
+        .plan { font-size: .74rem; color: var(--wolf-muted); margin-top: 8px; line-height: 1.5; }
+        .muted { color: var(--wolf-muted); }
+        .eng { font-size: .62rem; color: var(--wolf-muted); background: rgba(255,255,255,.05); padding: 1px 7px; border-radius: 999px; }
         .st { margin-left: auto; font-weight: 800; }
-        .detail-link { display: inline-flex; align-items: center; gap: 6px; margin-top: 14px; font-size: .78rem; font-weight: 800; color: var(--blue); text-decoration: none; }
+        .detail-link { display: inline-flex; align-items: center; gap: 6px; margin-top: 14px; font-size: .78rem; font-weight: 800; color: var(--wolf-blue); text-decoration: none; }
         .detail-link:hover { text-decoration: underline; }
-        .disclaimer { margin-top: 14px; font-size: .74rem; line-height: 1.6; color: #cdd6e2; background: rgba(255,207,75,.05); border: 1px solid rgba(255,207,75,.16); border-radius: 10px; padding: 11px 13px; }
-        .disclaimer b { color: var(--gold); }
-        .empty { color: var(--muted); font-size: .82rem; padding: 8px 0; line-height: 1.6; }
+        .disclaimer { margin-top: 14px; font-size: .74rem; line-height: 1.6; color: #cdd6e2; background: rgba(255,210,87,.05); border: 1px solid rgba(255,210,87,.16); border-radius: 10px; padding: 11px 13px; }
+        .disclaimer b { color: var(--wolf-gold); }
+        .empty { color: var(--wolf-muted); font-size: .82rem; padding: 8px 0; line-height: 1.6; }
+
+        /* ── Retired ── */
+        .retired { margin-top: 26px; }
+        .retired .card-h h2 { color: var(--wolf-text); }
+        .rlist { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 10px; }
+        .ritem { background: rgba(255,255,255,.025); border: 1px solid var(--wolf-border); border-radius: 12px; padding: 12px 14px; position: relative; }
+        .ritem::before { content: ""; position: absolute; left: 0; top: 10px; bottom: 10px; width: 3px; border-radius: 0 3px 3px 0; background: rgba(255,77,109,.55); }
+        .ritem .rwhen { font-size: .6rem; font-weight: 800; letter-spacing: .1em; color: var(--wolf-muted); text-transform: uppercase; }
+        .ritem .rname { font-size: .86rem; font-weight: 800; margin: 3px 0 2px; }
+        .ritem .rname small { display: block; font-size: .68rem; font-weight: 600; color: var(--wolf-muted); }
+        .ritem .rwhy { font-size: .76rem; line-height: 1.6; color: #cdd6e2; margin-top: 6px; }
+        .ritem .rwhy small { display: block; color: var(--wolf-muted); font-size: .7rem; margin-top: 3px; }
     </style>
 </head>
 <body>
@@ -160,7 +210,7 @@
             <div class="brand-icon">📊</div>
             <div style="min-width:0">
                 <h1>Wolf <span>Strategies</span></h1>
-                <div class="brand-sub"><span class="dot"></span>四大策略 · 規則與即時狀況</div>
+                <div class="brand-sub"><span class="dot"></span>四大策略 · 規則、實測紀錄與即時狀況</div>
             </div>
         </div>
         <div class="actions">
@@ -170,6 +220,11 @@
 
     <div class="nav-standalone">{% include '_nav.html' %}</div>
 
+    <div class="frame">
+        <span>每一套策略都有三張卡：<b>它的規則</b>、<b>它量出來的紀錄</b>、<b>它現在在做什麼</b>。紀錄是這個專案自己的實測 —— 勝率不等於優勢，只有期望值和它的信賴區間算數。</span>
+        <a href="/reality">完整記分板 Reality Check →</a>
+    </div>
+
     {% set p = params %}
     {# p.s4 arrives from _strategies_params(), which lives in app.py — and
        app.py does NOT hot-reload while templates do. Without this guard the
@@ -177,27 +232,31 @@
        between deploying and restarting, which is exactly what happened when
        this panel was added. The tab simply is not there until the restart. #}
     {% set s4 = p.s4 if p.s4 is defined and p.s4 else none %}
-    <div class="tabs{% if not s4 %} tabs-3{% endif %}" id="tabs">
-        <button class="tab active" data-tab="s1">
+    <div class="tabs{% if not s4 %} tabs-3{% endif %}" id="tabs" role="tablist">
+        <button class="tab active" data-tab="s1" role="tab">
             <div class="tnum">Strategy 1</div>
             <div class="tname"><span class="tdot" id="dot-s1"></span>多重共振</div>
-            <div class="tsub">Confluence Lights · Bybit</div>
+            <div class="tsub">Confluence Lights · Bybit 鏡單</div>
+            <div class="tverdict"><span class="vp" id="tv-s1">—</span></div>
         </button>
-        <button class="tab" data-tab="s2">
+        <button class="tab" data-tab="s2" role="tab">
             <div class="tnum">Strategy 2</div>
             <div class="tname"><span class="tdot alert" id="dot-s2"></span>信心量表</div>
-            <div class="tsub">Confluence Meter · 訊號</div>
+            <div class="tsub">Confluence Meter · 只發訊號</div>
+            <div class="tverdict"><span class="vp" id="tv-s2">—</span></div>
         </button>
-        <button class="tab" data-tab="s3">
+        <button class="tab" data-tab="s3" role="tab">
             <div class="tnum">Strategy 3</div>
             <div class="tname"><span class="tdot" id="dot-s3"></span>旗標翻轉</div>
             <div class="tsub">Flag-Flip · Bybit</div>
+            <div class="tverdict"><span class="vp" id="tv-s3">—</span></div>
         </button>
         {% if s4 %}
-        <button class="tab" data-tab="s4">
+        <button class="tab" data-tab="s4" role="tab">
             <div class="tnum">Strategy 4</div>
             <div class="tname"><span class="tdot" id="dot-s4"></span>永續掃描</div>
             <div class="tsub">Perp Scanner · Bybit</div>
+            <div class="tverdict"><span class="vp" id="tv-s4">—</span></div>
         </button>
         {% endif %}
     </div>
@@ -206,12 +265,14 @@
     <section class="panel active" id="panel-s1">
         <div class="shead">
             <h2>策略一 · 多重共振</h2>
-            <span class="sbadge venue">Bybit 實盤 · 每筆 100 USDT</span>
+            {% if p.s1.mirror_on %}<span class="sbadge venue">Bybit 實盤 · 每筆 {{ p.s1.mirror_usdt|int }} USDT</span>
+            {% else %}<span class="sbadge venue">Binance · 保證金 {{ p.s1.margin }}U</span>{% endif %}
             <span class="sbadge tf">{{ p.s1.tf }}</span>
             <span class="sbadge live">全自動交易</span>
+            <span class="vp" id="vp-s1">—</span>
         </div>
         <div class="grid">
-            <div class="card">
+            <div class="card rules">
                 <div class="card-h"><span class="ic">📋</span><h2>規則</h2><span class="scope">Rules</span></div>
                 <ul class="rules">
                     <li>多個指標<b>投票</b>定方向：RSI 極端（≤<code class="k">{{ p.s1.rsi_lo }}</code> 偏多 / ≥<code class="k">{{ p.s1.rsi_hi }}</code> 偏空）、MACD、EMA 9/20/50 排列、動能、SMC 結構 — 每個同向指標算一盞<b>燈</b>。</li>
@@ -221,22 +282,26 @@
                     <li>停損：ATR × <code class="k">{{ p.s1.sl_mult }}</code> 置於結構外，最大不超過 <code class="k">{{ p.s1.max_sl_pct }}%</code>。</li>
                     <li>停利：TP1 = <code class="k">{{ p.s1.tp1_r }}R</code>（先平一半、停損移到進場價）→ TP2 = <code class="k">{{ p.s1.tp2_r }}R</code>（剩餘續抱）。</li>
                     <li>槓桿 <code class="k">{{ p.s1.leverage }}x</code>（保證金 {{ p.s1.margin }}U ≈ {{ p.s1.notional }}U 名目）· 同時最多 <code class="k">{{ p.s1.max_concurrent }}</code> 筆。</li>
+                    <li>波動天花板 <code class="k">S1_MAX_ATR_PCT</code>：{% if p.s1.vol_ceiling and p.s1.vol_ceiling > 0 %}<b>已啟用</b> — 幣本身的 ATR 超過價格 <code class="k">{{ p.s1.vol_ceiling }}%</code> 就不進場。{% else %}<b>關閉</b>（預設）。這是實驗室找到的唯一一致改善，等右邊的前向紀錄證明再開。{% endif %}</li>
                     <li>Telegram <b>私人交易頻道</b> 全程推播：掛單 → 成交 → 出場（S1/S3/S4 同一處，非公開群組）。</li>
                 </ul>
+                {# 🪞 how S1 actually executes since S1_EXEC=bybit (2026-07-18) #}
+                <div class="card-h" style="margin-top:18px;"><span class="ic">🪞</span><h2>執行方式</h2><span class="scope">Bybit</span></div>
+                <ul class="rules">
+                    <li>訊號成交即以 <b>市價</b> 在 Bybit 開倉，每筆固定 <code class="k">{{ p.s1.mirror_usdt|int }} USDT</code> 名目。</li>
+                    <li><b>停損與最終目標都掛在交易所端</b> — 機器人斷線也會自行出場。</li>
+                    <li>TP1 先平一半、停損移到進場價；守護程序每 5 分鐘補掛遺失的停損。</li>
+                    <li>Binance 只出訊號、不下單；已有倉位的幣種自動跳過（保護手動/S3 倉）。</li>
+                </ul>
+            </div>
+            <div class="card record">
+                <div class="card-h"><span class="ic">📏</span><h2>實測紀錄</h2><span class="scope">Measured</span></div>
+                <div id="rec-s1"><div class="empty">載入中…</div></div>
             </div>
             <div class="card">
                 <div class="card-h"><span class="ic">📡</span><h2>即時狀況</h2><span class="scope">Live now</span></div>
                 <div id="live-s1"></div>
                 <a class="detail-link" href="/funnel">看完整漏斗與最佳設定 Funnel →</a>
-
-                {# 🪞 how S1 actually executes since S1_EXEC=bybit (2026-07-18) #}
-                <div class="card-h" style="margin-top:18px;"><span class="ic">🪞</span><h2>執行方式</h2><span class="scope">Bybit</span></div>
-                <ul class="rules">
-                    <li>訊號成交即以 <b>市價</b> 在 Bybit 開倉，每筆固定 <code>100 USDT</code> 名目。</li>
-                    <li><b>停損與最終目標都掛在交易所端</b> — 機器人斷線也會自行出場。</li>
-                    <li>TP1 先平一半、停損移到進場價；守護程序每 5 分鐘補掛遺失的停損。</li>
-                    <li>Binance 只出訊號、不下單；已有倉位的幣種自動跳過（保護手動/S3 倉）。</li>
-                </ul>
             </div>
         </div>
     </section>
@@ -247,10 +312,11 @@
             <h2>策略二 · 信心量表</h2>
             <span class="sbadge venue">TV.pine 共振</span>
             <span class="sbadge tf">{{ p.s2.tf }}</span>
-            <span class="sbadge alert" id="s2-mode-badge">僅發訊號</span>
+            <span class="sbadge alert">僅發訊號 · 無下單路徑</span>
+            <span class="vp" id="vp-s2">—</span>
         </div>
         <div class="grid">
-            <div class="card">
+            <div class="card rules">
                 <div class="card-h"><span class="ic">📋</span><h2>規則</h2><span class="scope">Rules</span></div>
                 <ul class="rules">
                     <li>信心量表 <b>0–100</b>，綜合：EMA 排列、價格 vs EMA200、SMC 內部結構、趨勢線、市場結構轉折 <span class="en">MSB</span>、Vegas 通道。</li>
@@ -258,11 +324,16 @@
                     <li><b>⭐ 精選 PREMIUM</b> 門檻：信心 <code class="k">≥{{ p.s2.premium_score }}</code> + 與 BTC 趨勢<b>同向</b> + ADX <code class="k">≥{{ p.s2.premium_adx }}</code>。只有精選會<b>即時推播</b>。</li>
                     <li>計畫：停損 <code class="k">{{ p.s2.sl_mult }}×ATR</code> · TP1 <code class="k">{{ p.s2.tp1_r }}R</code> · TP2 <code class="k">{{ p.s2.tp2_r }}R</code>。</li>
                     <li>其餘訊號進 30 分鐘匯總欄與網頁，不打擾。</li>
+                    <li><b>沒有下單路徑。</b> 原本可選的實盤下單層已於 2026-09-27 移除 —— 右邊的紀錄就是原因。</li>
                 </ul>
                 <div class="disclaimer">
                     <b>誠實勝率</b>：60 天實測回放 — 全部訊號約 <b>49%</b> 先到 TP1；⭐ 精選門檻約 <b>59%</b>。
                     扣手續費後<b>沒有穩定正期望值</b>，高勝率來自幾何（緊停利），不是預測力。當作參考、非投資建議。
                 </div>
+            </div>
+            <div class="card record">
+                <div class="card-h"><span class="ic">📏</span><h2>實測紀錄</h2><span class="scope">Measured</span></div>
+                <div id="rec-s2"><div class="empty">載入中…</div></div>
             </div>
             <div class="card">
                 <div class="card-h"><span class="ic">📡</span><h2>即時狀況</h2><span class="scope">Live now</span></div>
@@ -278,9 +349,10 @@
             <h2>策略三 · 旗標翻轉</h2>
             <span class="sbadge venue">Bybit 實盤</span>
             <span class="sbadge live">全自動 · 反手</span>
+            <span class="vp" id="vp-s3">—</span>
         </div>
         <div class="grid">
-            <div class="card">
+            <div class="card rules">
                 <div class="card-h"><span class="ic">📋</span><h2>規則</h2><span class="scope">Rules</span></div>
                 <ul class="rules">
                     <li>引擎：<b>旗標翻轉</b> — TV.pine 共振旗標決定方向，持倉直到<b>相反旗標</b>出現才反手 <span class="en">(stop-and-reverse)</span>。</li>
@@ -288,10 +360,15 @@
                     <li>出場：等<b>相反旗標</b> — 贏單不設固定停利，讓利潤奔跑。</li>
                     <li>緊急停損 <code class="k">{{ p.s3.emergency_sl }}%</code>（僅防崩盤，非策略規則）；HYPE 有防震盪保本（+<code class="k">{{ p.s3.be_trigger }}%</code> 後停損移到成本）。</li>
                     <li>手動平倉會被尊重：該標的暫停到下一個旗標。</li>
+                    <li>每日斷路器：24 小時內虧損 <b>2 筆</b>或淨虧超過上限就停止新單，直到管理員 /resume。</li>
                     <li>標的 &amp; 週期：
                         {% for s in p.s3.symbols %}<b>{{ s.base }}</b> <span class="muted">({{ s.tf }}·{{ s.leverage }}x)</span>{% if not loop.last %} · {% endif %}{% endfor %}
                     </li>
                 </ul>
+            </div>
+            <div class="card record">
+                <div class="card-h"><span class="ic">📏</span><h2>實測紀錄</h2><span class="scope">Measured</span></div>
+                <div id="rec-s3"><div class="empty">載入中…</div></div>
             </div>
             <div class="card">
                 <div class="card-h"><span class="ic">📡</span><h2>即時狀況</h2><span class="scope">Live now</span></div>
@@ -309,9 +386,10 @@
             <span class="sbadge tf">{{ s4.tf }}</span>
             {% if s4.exec_on %}<span class="sbadge venue">Bybit 實盤</span>
             {% else %}<span class="sbadge alert">僅發訊號</span>{% endif %}
+            <span class="vp" id="vp-s4">—</span>
         </div>
         <div class="grid">
-            <div class="card">
+            <div class="card rules">
                 <div class="card-h"><span class="ic">📋</span><h2>規則</h2><span class="scope">Rules</span></div>
                 <ul class="rules">
                     <li>掃描範圍：Bybit <b>美股 / 商品永續</b>（最多 <code class="k">{{ s4.max_tradfi }}</code> 檔）+ <b>加密永續</b>（最多 <code class="k">{{ s4.max_crypto }}</code> 檔），24h 成交額需 <code class="k">≥${{ '{:,}'.format(s4.min_turnover) }}</code>。</li>
@@ -327,12 +405,14 @@
                         —— 全部同時打到最大停損也只有 <b>{{ s4.worst_case }}U</b>。已有持倉的幣<b>直接跳過</b>，不會併倉。</li>
                     {% endif %}
                 </ul>
-                <!-- Stated on the rules card, not hidden in a tooltip: this is
-                     the newest engine and the only one whose book was reset. -->
                 <p class="muted" style="font-size:.7rem;line-height:1.6;margin:8px 0 0">
                     ⚠️ 這是最新、也最沒有把握的一套。多數美股永續上市不到兩個月，資料量根本不夠做前向測試。
                     本專案量過 48 組高勝率設定有 46 組在賠錢 —— 圖上看起來對，不等於有優勢。
                 </p>
+            </div>
+            <div class="card record">
+                <div class="card-h"><span class="ic">📏</span><h2>實測紀錄</h2><span class="scope">Measured</span></div>
+                <div id="rec-s4"><div class="empty">載入中…</div></div>
             </div>
             <div class="card">
                 <div class="card-h"><span class="ic">📡</span><h2>即時狀況</h2><span class="scope">Live now</span></div>
@@ -342,17 +422,39 @@
         </div>
     </section>
     {% endif %}
+
+    <!-- ══════════════ RETIRED ══════════════ -->
+    <section class="retired">
+        <div class="card">
+            <div class="card-h"><span class="ic">🪦</span><h2>已淘汰的策略</h2><span class="scope">Retired · 淘汰原因附上數字</span></div>
+            <p class="rec-sub" style="margin:0 0 12px">這裡是被自己的紀錄殺掉的東西。留著是因為「為什麼不做」和「做什麼」一樣重要 —— 每一條都附上把它淘汰的那個數字。</p>
+            <div class="rlist">
+                {% for r in (retired or []) %}
+                <div class="ritem">
+                    <div class="rwhen">{{ r.when }}</div>
+                    <div class="rname">{{ r.name_zh }}<small>{{ r.name }}</small></div>
+                    <div class="rwhy">{{ r.why_zh }}<small>{{ r.why }}</small></div>
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+    </section>
 </div>
 
 <script>
 var S = {{ status|tojson }};
+var IS_ADMIN = {{ 'true' if user.is_admin else 'false' }};
 
 /* ── tab switching (remembers last tab) ── */
 (function () {
     var tabs = document.querySelectorAll('.tab');
     function show(id) {
         document.querySelectorAll('.panel').forEach(function (pl) { pl.classList.toggle('active', pl.id === 'panel-' + id); });
-        tabs.forEach(function (t) { t.classList.toggle('active', t.dataset.tab === id); });
+        tabs.forEach(function (t) {
+            var on = t.dataset.tab === id;
+            t.classList.toggle('active', on);
+            t.setAttribute('aria-selected', on ? 'true' : 'false');
+        });
         try { localStorage.setItem('wolf_strat_tab', id); } catch (e) {}
     }
     tabs.forEach(function (t) { t.addEventListener('click', function () { show(t.dataset.tab); }); });
@@ -368,9 +470,25 @@ function fmt(v) {
     var a = Math.abs(n), d = a >= 1000 ? 2 : a >= 1 ? 3 : a >= 0.01 ? 5 : 8;
     return n.toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: d });
 }
+function fmtR(x, d) { if (x == null || !isFinite(Number(x))) return '—'; var n = Number(x); return (n > 0 ? '+' : '') + n.toFixed(d == null ? 3 : d) + 'R'; }
+function sgn(x) { return x == null ? '' : (Number(x) < 0 ? 'neg' : (Number(x) > 0 ? 'pos' : '')); }
 function dirTag(d) { d = String(d).toLowerCase(); return '<span class="dir ' + d + '">' + (d === 'long' ? '做多' : '做空') + '</span>'; }
 function chip(k, v, cls) { return '<div class="chip"><div class="k">' + k + '</div><div class="v ' + (cls || '') + '">' + v + '</div></div>'; }
 function kv(k, v) { return '<div class="kv"><span class="k">' + k + '</span><span class="v">' + v + '</span></div>'; }
+function tile(k, v, cls) { return '<div class="rt"><div class="k">' + k + '</div><div class="v ' + (cls || '') + '">' + v + '</div></div>'; }
+function rrow(lab, sub, nums) { return '<div class="rrow"><span class="lab">' + lab + (sub ? '<small>' + sub + '</small>' : '') + '</span><span class="nums">' + nums + '</span></div>'; }
+/* one verdict, two places: the strategy header and its tab */
+function setVerdict(key, cls, text) {
+    ['vp-' + key, 'tv-' + key].forEach(function (id) {
+        var el = document.getElementById(id); if (!el) return;
+        el.className = 'vp ' + (cls || ''); el.textContent = text;
+    });
+}
+/* the /reality tag → a pill class + 中文 */
+var TAG_ZH = { 'negative': ['neg', '確定為負'], 'probably negative': ['neg', '很可能為負'],
+               'no edge': ['warn', '看不出優勢'], 'too few': ['', '樣本太少'],
+               'positive': ['pos', '確定為正'], 'probably positive': ['warn', '可能為正，未證明'] };
+function tagPill(tag) { var t = TAG_ZH[tag] || ['', tag || '—']; return '<span class="vp ' + t[0] + '">' + esc(t[1]) + '</span>'; }
 
 /* ── S1 ── */
 function renderS1(d) {
@@ -395,6 +513,40 @@ function renderS1(d) {
     var dot = document.getElementById('dot-s1'); if (dot) dot.className = 'tdot' + (d.queued > 0 ? ' on' : '');
 }
 
+var VARIANT_ZH = { s1_full: ['現行規則', 'live rules, longs + shorts'], s1_longs_only: ['只做多', 'control'],
+                   s1_lowvol: ['低波動濾網', 'ATR% ceiling'], s1_lowvol_3r: ['低波動 + 單一 3R 目標', 'the best candidate so far'] };
+function renderRec1(r) {
+    var el = document.getElementById('rec-s1'); if (!el) return;
+    if (!r || r.error) { el.innerHTML = '<div class="empty">紀錄暫時無法讀取。</div>'; return; }
+    var wf = r.walk_forward || {};
+    var h = '<div class="rec-big"><span class="v neg">' + fmtR(wf.exp) + '</span><span class="u">每筆 · 360 天樣本外驗證</span></div>' +
+        '<div class="rec-sub">' + esc(wf.verdict_zh || '') + '。只有 <b>' + wf.folds_positive + '/' + wf.folds + '</b> 段為正（最近兩段）；' +
+        '修正倖存者偏差後 <b>' + fmtR(wf.exp_pit) + '</b>；' + esc(wf.date_2) + ' 重跑 <b>' + fmtR(wf.exp_2) + '</b>（' + wf.n_2 + ' 筆）。</div>';
+    h += '<div class="rec-h">前向紙上測試 · paper_tracker</div>';
+    var best = null;
+    (r.paper || []).forEach(function (v) {
+        var z = VARIANT_ZH[v.key] || [v.key, ''];
+        if (!v.n) { h += rrow(esc(z[0]), z[1], '<span class="muted">尚無平倉</span>'); return; }
+        h += rrow(esc(z[0]), z[1], '<b class="' + sgn(v.exp) + '">' + fmtR(v.exp) + '</b> · ' + v.n + ' 筆 · WR ' + (v.wr == null ? '—' : Number(v.wr).toFixed(0) + '%') +
+                  (v.payoff != null ? ' · 賠率 ' + Number(v.payoff).toFixed(2) : ''));
+        if (v.key === 's1_lowvol_3r') best = v;
+    });
+    var iv = r.intervention || {};
+    if (iv.total) {
+        h += '<div class="rec-h">實盤（帳本）</div>' +
+             rrow('手動平倉比例', 'the record measures the operator when this is high',
+                  '<b>' + iv.manual + '/' + iv.total + '</b>（' + iv.manual_pct + '%）');
+    }
+    h += '<div class="rec-note">低波動變體來自 s1_regime_lab（期望值隨 ATR 天花板收緊而<b>單調</b>上升，31 檔、多空皆轉正）；' +
+         '出場變體來自 s1_exit_lab（S1 的贏單被 1.5R 封頂、輸單卻要付 1.07R）。' +
+         (best && best.n >= 30 && best.exp > 0
+            ? '前向紀錄已有 ' + best.n + ' 筆且為正 —— 值得考慮把 <code>S1_MAX_ATR_PCT=' + r.paper_lowvol_ceiling + '</code> 打開。'
+            : '在前向紀錄累積到 30 筆以上且為正之前，<code>S1_MAX_ATR_PCT</code> 維持關閉。') +
+         ' 樣本外驗證的細節見 <a href="/reality">Reality Check</a>。</div>';
+    el.innerHTML = h;
+    setVerdict('s1', 'warn', '未證明有優勢 · 樣本外淨負');
+}
+
 /* ── S2 ── */
 function renderS2(d) {
     var el = document.getElementById('live-s2'); if (!el) return;
@@ -404,7 +556,6 @@ function renderS2(d) {
         chip('本輪訊號', fmt(d.count)) +
         chip('⭐ 精選', fmt(d.premium_count), 'gold') +
         '</div>';
-    h += kv('掃描器', d.live ? '<span class="reg-pill reg-bull">實盤下單</span>' : '<span class="reg-pill reg-neutral">僅發訊號</span>');
     h += kv('最近掃描', (stale ? '<span class="muted">(逾時) </span>' : '') + esc(d.last_scan || '—'));
     if (d.premium && d.premium.length) {
         d.premium.forEach(function (s) {
@@ -416,9 +567,35 @@ function renderS2(d) {
         h += '<div class="empty">本輪沒有 ⭐ 精選訊號。</div>';
     }
     el.innerHTML = h;
-    var badge = document.getElementById('s2-mode-badge');
-    if (badge) { badge.textContent = d.live ? '實盤下單' : '僅發訊號'; badge.className = 'sbadge ' + (d.live ? 'live' : 'alert'); }
     var dot = document.getElementById('dot-s2'); if (dot) dot.className = 'tdot' + (d.premium_count > 0 ? ' alert' : '');
+}
+
+function renderRec2(r) {
+    var el = document.getElementById('rec-s2'); if (!el) return;
+    if (!r || r.error) { el.innerHTML = '<div class="empty">紀錄暫時無法讀取。</div>'; setVerdict('s2', '', '無紀錄'); return; }
+    var b = r.hold;
+    if (!b || !b.n) {
+        el.innerHTML = '<div class="empty">還沒有訊號完成 48 小時的評估視窗。每一筆訊號都會在 48 小時後對真實 K 線重播、記分。</div>';
+        setVerdict('s2', '', '尚無紀錄'); return;
+    }
+    var h = '<div class="rec-big"><span class="v ' + sgn(b.exp) + '">' + fmtR(b.exp) + '</span><span class="u">每筆 · ' + Number(b.n).toLocaleString() + ' 筆訊號 · 抱到底規則</span></div>' +
+        '<div class="rec-sub">' + (b.ci ? '信賴區間 <b>' + fmtR(b.ci[0]) + ' … ' + fmtR(b.ci[1]) + '</b>' + (b.straddles_zero ? '（含 0）' : '（不含 0）') : '') +
+        ' ' + tagPill(b.tag) + '</div>';
+    h += '<div class="rec-tiles">' +
+        tile('淨損益', fmtR(b.net, 0), sgn(b.net)) +
+        tile('勝率', Number(b.wr).toFixed(1) + '%') +
+        tile('獲利因子', b.pf == null ? '—' : Number(b.pf).toFixed(2), b.pf != null && b.pf < 1 ? 'neg' : '') +
+        '</div>';
+    h += '<div class="rec-h">分群 · 同一條出場規則</div>';
+    [['premium', '⭐ 精選', 'the only tier that alerts'], ['long', '做多', ''], ['short', '做空', '']].forEach(function (c) {
+        var x = r[c[0]]; if (!x || !x.n) return;
+        h += rrow(c[1], c[2], '<b class="' + sgn(x.exp) + '">' + fmtR(x.exp) + '</b> · ' + Number(x.n).toLocaleString() + ' 筆 · WR ' + Number(x.wr).toFixed(0) + '% ' + tagPill(x.tag));
+    });
+    h += '<div class="rec-note">六種出場規則全部為負（抱到底、保本、減半、TP1 全出、移動停利…）—— 這就是 S2 沒有下單路徑的原因。' +
+         '「很可能」是有意義的：舊帳只存總和，區間是最窄的可能值。<a href="/reality">看完整記分板 →</a></div>';
+    el.innerHTML = h;
+    var t = TAG_ZH[b.tag] || ['', b.tag];
+    setVerdict('s2', t[0], t[1] + ' · ' + fmtR(b.exp) + '/筆');
 }
 
 /* ── S3 ── */
@@ -445,6 +622,59 @@ function renderS3(d) {
     });
     el.innerHTML = h;
     var dot = document.getElementById('dot-s3'); if (dot) dot.className = 'tdot' + (anyPos ? ' on' : '');
+}
+
+function renderRec3(r) {
+    var el = document.getElementById('rec-s3'); if (!el) return;
+    if (!r || r.error) { el.innerHTML = '<div class="empty">紀錄暫時無法讀取。</div>'; return; }
+    var h = '<div class="rec-sub">S3 的損益在 Bybit 的<b>已平倉紀錄</b>裡，由帳本按「誰開的倉」歸屬（S1 鏡單、S3、手動共用一個子帳戶，交易所不知道是誰下的）。</div>';
+    h += '<div class="rec-tiles">' +
+        tile('帳本紀錄', fmt(r.ledger_rows) + ' 筆') +
+        tile('持有中', fmt(r.open_rows)) +
+        tile('手動平倉', (r.intervention && r.intervention.total) ? r.intervention.manual + '/' + r.intervention.total : '—') +
+        '</div>';
+    h += '<div id="rec-s3-ledger">' + (IS_ADMIN ? '<div class="empty">正在讀 Bybit 已平倉紀錄…</div>' : '<div class="empty">實盤損益只有管理員看得到。</div>') + '</div>';
+    h += '<div class="rec-note">每週一的日報用真實獲利因子判定每個引擎：10 筆以上且 PF &lt; 1 會印「不值得它承擔的風險」。手動平倉比例高時，這個數字量的是人、不是策略。</div>';
+    el.innerHTML = h;
+    if (!IS_ADMIN) setVerdict('s3', '', '看實盤紀錄');
+}
+
+/* the owner's realised P&L per engine — admin only, cached server-side */
+function renderLedger(L) {
+    var box = document.getElementById('rec-s3-ledger');
+    if (!L || !L.ok) {
+        if (box) box.innerHTML = '<div class="empty">' + esc((L && L.error) || 'Bybit 紀錄暫時無法讀取') + '</div>';
+        setVerdict('s3', '', '實盤紀錄無法讀取'); return;
+    }
+    var by = L.by_strategy || {};
+    function line(key, label) {
+        var s = by[key]; if (!s) return rrow(label, '', '<span class="muted">尚無已平倉</span>');
+        var pf = s.profit_factor == null ? '—' : Number(s.profit_factor).toFixed(2);
+        return rrow(label, s.n < 30 ? 'too few to judge' : '', '<b class="' + sgn(s.net) + '">' + (s.net > 0 ? '+' : '') + Number(s.net).toFixed(2) + ' USDT</b> · ' +
+                    s.n + ' 筆 · WR ' + Number(s.win_rate).toFixed(0) + '% · PF ' + pf);
+    }
+    if (box) box.innerHTML = '<div class="rec-h">Bybit 實盤 · 依帳本歸屬</div>' + line('S3', 'S3 翻轉引擎') + line('S1', 'S1 鏡單') + line('S4', 'S4 掃描') + line('manual', '手動交易');
+    var s3 = by.S3;
+    if (!s3 || s3.n < 10) setVerdict('s3', '', '樣本太少（' + (s3 ? s3.n : 0) + ' 筆）');
+    else if (s3.profit_factor != null && s3.profit_factor < 1) setVerdict('s3', 'neg', 'PF ' + Number(s3.profit_factor).toFixed(2) + ' · 不值得它的風險');
+    else setVerdict('s3', s3.n >= 30 ? 'pos' : 'warn', 'PF ' + (s3.profit_factor == null ? '—' : Number(s3.profit_factor).toFixed(2)) + ' · ' + s3.n + ' 筆');
+    // the S1 mirror's own live line, in S1's card
+    var s1box = document.getElementById('rec-s1');
+    var s1 = by.S1;
+    if (s1box && s1 && !document.getElementById('rec-s1-live')) {
+        var pf1 = s1.profit_factor == null ? '—' : Number(s1.profit_factor).toFixed(2);
+        var div = document.createElement('div'); div.id = 'rec-s1-live';
+        div.innerHTML = '<div class="rec-h">Bybit 實盤 · 鏡單（帳本歸屬）</div>' +
+            rrow('S1 鏡單', s1.n < 30 ? 'too few to judge' : '', '<b class="' + sgn(s1.net) + '">' + (s1.net > 0 ? '+' : '') + Number(s1.net).toFixed(2) + ' USDT</b> · ' + s1.n + ' 筆 · WR ' + Number(s1.win_rate).toFixed(0) + '% · PF ' + pf1);
+        var note = s1box.querySelector('.rec-note');
+        if (note) s1box.insertBefore(div, note); else s1box.appendChild(div);
+    }
+}
+function loadLedger() {
+    if (!IS_ADMIN) return;
+    fetch('/api/strategies/ledger').then(function (r) { return r.ok ? r.json() : null; })
+        .then(function (d) { renderLedger(d || { ok: false, error: 'unavailable' }); })
+        .catch(function () { renderLedger({ ok: false, error: 'unavailable' }); });
 }
 
 /* The scanner names its rejections in English for the logs. This page is in
@@ -516,16 +746,6 @@ function renderS4(d) {
             }).join(' · ') + '</span></div>';
         }
     }
-
-    var r = d.record || {};
-    h += '<div class="srow"><span class="b">實盤紀錄</span>' +
-         '<span class="eng">' + (r.n ? r.n + ' 筆已結算' : '2026-08-19 重新開始計算') + '</span>' +
-         '<span class="st">' + (r.n && r.exp != null
-            ? '<span class="' + (r.exp > 0 ? 'dir long' : 'dir short') + '">' +
-              (r.exp > 0 ? '+' : '') + (+r.exp).toFixed(3) + 'R</span>'
-            : '<span class="muted">尚無</span>') + '</span></div>';
-    if (r.verdict) h += '<div class="swhy"><span class="muted">' + esc(r.verdict) + '</span></div>';
-
     if (d.exec_on) {
         h += '<div class="srow"><span class="b">自動下單</span>' +
              '<span class="eng">Bybit 實單</span>' +
@@ -540,18 +760,46 @@ function renderS4(d) {
     if (dot) dot.className = 'tdot' + (d.count ? ' on' : (d.fresh ? '' : ' alert'));
 }
 
-function renderAll(x) { renderS1(x.s1); renderS2(x.s2); renderS3(x.s3); renderS4(x.s4); }
+function renderRec4(d) {
+    var el = document.getElementById('rec-s4'); if (!el) return;
+    if (!d || d.error) { el.innerHTML = '<div class="empty">紀錄暫時無法讀取。</div>'; return; }
+    var r = d.record || {};
+    var h;
+    if (!r.n) {
+        h = '<div class="empty">2026-08-19 重新開始計算（改記淨 R、扣手續費與滑價、且只在有槽位時才收訊號）。舊帳是毛的、不可比較，所以不顯示。</div>';
+        setVerdict('s4', '', '尚無新紀錄');
+    } else {
+        h = '<div class="rec-big"><span class="v ' + sgn(r.exp) + '">' + fmtR(r.exp) + '</span><span class="u">每筆 · ' + r.n + ' 筆已結算 · 淨 R</span></div>' +
+            '<div class="rec-tiles">' + tile('勝率', r.wr == null ? '—' : Number(r.wr).toFixed(1) + '%') +
+            tile('獲利因子', r.pf == null ? '—' : Number(r.pf).toFixed(2), r.pf != null && r.pf < 1 ? 'neg' : '') +
+            tile('樣本', r.n + ' 筆', r.n < 30 ? 'neg' : '') + '</div>' +
+            (r.verdict ? '<div class="rec-sub">' + esc(r.verdict) + '</div>' : '');
+        if (r.n < 30) setVerdict('s4', '', '樣本太少（' + r.n + ' 筆）');
+        else if (r.exp < 0) setVerdict('s4', 'neg', fmtR(r.exp) + '/筆 · 負');
+        else setVerdict('s4', 'warn', fmtR(r.exp) + '/筆 · 未證明');
+    }
+    h += '<div class="rec-note">之前的版本量了 90 筆：−0.022R ± 0.282，區間含 0。做空那一側從沒被量過，是應要求加上去的。' +
+         '每一筆訊號和它之後發生的事都記在 <a href="/s4">S4 頁</a>。</div>';
+    el.innerHTML = h;
+}
+
+function renderAll(x) {
+    renderS1(x.s1); renderS2(x.s2); renderS3(x.s3); renderS4(x.s4);
+    renderRec1(x.s1 && x.s1.record); renderRec2(x.s2 && x.s2.record);
+    renderRec3(x.s3 && x.s3.record); renderRec4(x.s4);
+    if (window.wolfApplyLang) window.wolfApplyLang();
+}
 renderAll(S);
+loadLedger();
 
 function load(btn) {
     if (btn) { btn.disabled = true; }
     fetch('/api/strategies').then(function (r) { return r.ok ? r.json() : null; })
-        .then(function (d) { if (d) renderAll(d); })
+        .then(function (d) { if (d) { renderAll(d); loadLedger(); } })
         .catch(function () {})
         .finally(function () { if (btn) btn.disabled = false; });
 }
-setInterval(function () { if (!document.hidden) load(); }, 30000);
-document.addEventListener('visibilitychange', function () { if (!document.hidden) load(); });
+wolfPoll(load, 30000);
 </script>
 </body>
 </html>

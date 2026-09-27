@@ -117,9 +117,14 @@ def test_join_redirects_to_the_live_invite(monkeypatch):
 
 def test_join_url_has_nothing_a_webview_can_mangle(monkeypatch):
     """The whole point: no '+', no query string, no reserved characters."""
+    import telegram_utils
     import threads_post as T
     monkeypatch.setenv("PUBLIC_BASE_URL", "https://example.test")
     monkeypatch.delenv("THREADS_LINK", raising=False)
+    # The invite is resolved LIVE; without a real bot token (CI, a clean
+    # checkout) the lookup is empty and the link falls back to /welcome, which
+    # is correct behaviour and not what this test is about.
+    monkeypatch.setattr(telegram_utils, "group_invite_link", lambda *a, **k: "https://t.me/+abc")
     link = T.post_link()
     assert link.endswith("/join")
     assert "+" not in link and "?" not in link

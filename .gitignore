@@ -17,6 +17,9 @@
 *.key
 
 # ── Flask instance: user logins (users.db) + signal DBs + session secrets ──
+# The persisted Flask session secret (_resolve_secret_key writes app/.secret_key).
+# It was NOT ignored: one `git add -A` away from committing the cookie-signing key.
+.secret_key
 instance/
 *.db
 *.db.*
@@ -80,6 +83,7 @@ copy_followers.json
 paper_tracker_state.json
 s1_regime_lab_trades.json
 s1_exit_lab_trades.json
+thrust_state.json
 copy_status.json
 app/backups/
 

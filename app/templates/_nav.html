@@ -33,6 +33,8 @@
   <g id="wi-coins"><ellipse cx="12" cy="6.5" rx="8" ry="3.2"/><path d="M4 6.5v5c0 1.8 3.6 3.2 8 3.2s8-1.4 8-3.2v-5"/><path d="M4 11.5v5c0 1.8 3.6 3.2 8 3.2s8-1.4 8-3.2v-5"/></g>
   <g id="wi-shield"><path d="M12 2.5l8 3v6c0 5-3.4 9-8 10.5C7.4 20.5 4 16.5 4 11.5v-6z"/><path d="M9 12l2.2 2.2L15.5 10"/></g>
   <g id="wi-heart"><path d="M2.5 12.5h4l2-4 3 8 2.5-5 1.5 2.5h6"/><path d="M20.5 8.5a4.6 4.6 0 0 0-8.5-2.4A4.6 4.6 0 0 0 3.5 8.5"/></g>
+  <g id="wi-search"><circle cx="10.5" cy="10.5" r="6.5"/><path d="M15.5 15.5L21 21"/><path d="M8 10.5h5M10.5 8v5"/></g>
+  <g id="wi-ledger"><rect x="4" y="3" width="16" height="18" rx="2"/><path d="M8 8h8M8 12h8M8 16h5"/></g>
 </defs></svg>
 
 <aside class="wsb" id="wolf-sidebar" aria-label="Main navigation">
@@ -50,7 +52,7 @@
     <a href="/market" class="wsb-item{% if request.endpoint == 'market' %} on{% endif %}"><svg class="wsb-ico" viewBox="0 0 24 24"><use href="#wi-pulse"/></svg><span>Market Pulse</span></a>
     {# Hardcoded href like its neighbours — url_for on a route the running
        process has not imported yet would 500 the whole nav (see line 15). #}
-    <a href="/coin" class="wsb-item{% if request.endpoint == 'coin_page' %} on{% endif %}"><svg class="wsb-ico" viewBox="0 0 24 24"><use href="#wi-pulse"/></svg><span>幣種分析</span></a>
+    <a href="/coin" class="wsb-item{% if request.endpoint == 'coin_page' %} on{% endif %}"><svg class="wsb-ico" viewBox="0 0 24 24"><use href="#wi-search"/></svg><span>幣種分析</span></a>
     <a href="/universe" class="wsb-item{% if request.endpoint == 'universe_page' %} on{% endif %}"><svg class="wsb-ico" viewBox="0 0 24 24"><use href="#wi-cube"/></svg><span>3D Universe</span></a>
 
     <div class="wsb-group">Strategy</div>
@@ -64,7 +66,7 @@
     {% endif %}
     <a href="/s4" class="wsb-item{% if request.endpoint == 's4_page' %} on{% endif %}"><svg class="wsb-ico" viewBox="0 0 24 24"><use href="#wi-target"/></svg><span>S4 Radar</span></a>
     <a href="/reality" class="wsb-item{% if request.endpoint == 'reality_page' %} on{% endif %}"><svg class="wsb-ico" viewBox="0 0 24 24"><use href="#wi-sliders"/></svg><span>Reality Check</span></a>
-    <a href="/trades" class="wsb-item{% if request.endpoint == 'trades_page' %} on{% endif %}"><svg class="wsb-ico" viewBox="0 0 24 24"><use href="#wi-sliders"/></svg><span>Trade Log</span></a>
+    <a href="/trades" class="wsb-item{% if request.endpoint == 'trades_page' %} on{% endif %}"><svg class="wsb-ico" viewBox="0 0 24 24"><use href="#wi-ledger"/></svg><span>Trade Log</span></a>
 
     <div class="wsb-group">Stocks</div>
     <a href="/tw" class="wsb-item{% if request.endpoint == 'tw_page' %} on{% endif %}"><svg class="wsb-ico" viewBox="0 0 24 24"><use href="#wi-bank"/></svg><span>TW Stocks</span></a>
@@ -106,11 +108,11 @@
    the bar and the drawer identify the page identically. #}
 {% set _wsb_titles = {
     'index': ('Overview', 'wi-grid'), 'market': ('Market Pulse', 'wi-pulse'),
-    'coin_page': ('幣種分析', 'wi-pulse'), 'universe_page': ('3D Universe', 'wi-cube'),
+    'coin_page': ('幣種分析', 'wi-search'), 'universe_page': ('3D Universe', 'wi-cube'),
     'strategies': ('Strategies', 'wi-layers'), 'strategy2': ('Strategies', 'wi-layers'),
     'funnel': ('Signal Funnel', 'wi-filter'), 'performance': ('Performance', 'wi-bars'),
     's4_page': ('S4 Radar', 'wi-target'), 'reality_page': ('Reality Check', 'wi-sliders'),
-    'trades_page': ('交易紀錄', 'wi-sliders'),
+    'trades_page': ('交易紀錄', 'wi-ledger'),
     'tw_page': ('TW Stocks', 'wi-bank'), 'us_page': ('US Stocks', 'wi-flag'),
     'stocks_page': ('Market Board', 'wi-line'), 'copy_page': ('Copy Trading', 'wi-users'),
     'account': ('Binance', 'wi-wallet'), 'bybit_page': ('Bybit', 'wi-coins'),

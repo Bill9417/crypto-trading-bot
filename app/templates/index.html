@@ -34,9 +34,8 @@
 
 
 
-            --long: #16a34a;
+            /* --long / --short come from app.css (the vivid pair, lifted clear of the ground) */
             --long-bg: rgba(22, 163, 74, 0.14);
-            --short: #dc2626;
             --short-bg: rgba(220, 38, 38, 0.14);
             --radius: 14px;
             --shadow: 0 8px 24px rgba(0, 0, 0, 0.26);
@@ -762,8 +761,8 @@
             transition: width .3s ease;
         }
         .fill-blue { background: linear-gradient(90deg, #0ea5e9, #67e8f9); }
-        .fill-green { background: linear-gradient(90deg, #16a34a, #4ade80); }
-        .fill-red { background: linear-gradient(90deg, #dc2626, #fb7185); }
+        .fill-green { background: linear-gradient(90deg, var(--long), #86efac); }
+        .fill-red { background: linear-gradient(90deg, var(--short), #fda4af); }
         .fill-gold { background: linear-gradient(90deg, #d97706, #facc15); }
         .progress-value {
             font-size: 0.72rem;
@@ -840,9 +839,9 @@
         }
         .score-high { background: rgba(255,77,77,.1); color: #ef4444; border: 1px solid rgba(255,77,77,.2); }
         .score-strong { background: rgba(255,153,51,.1); color: #f59e0b; border: 1px solid rgba(255,153,51,.2); }
-        .score-watch { background: rgba(22,163,74,.1); color: #16a34a; border: 1px solid rgba(22,163,74,.2); }
+        .score-watch { background: var(--long-bg); color: var(--long); border: 1px solid rgba(46,232,138,.25); }
 
-        .price-up { color: #16a34a; font-weight: 700; }
+        .price-up { color: var(--long); font-weight: 700; }
         .price-down { color: #ef4444; font-weight: 700; }
 
         .symbol-tag {
@@ -862,8 +861,8 @@
         /* Filled = passed (glows) · hollow = missed (outline, recedes) · violet = SMC bonus. */
 
         /* ── SMC ── */
-        .smc-support { color: #16a34a; font-weight: 700; }
-        .smc-resistance { color: #dc2626; font-weight: 700; }
+        .smc-support { color: var(--long); font-weight: 700; }
+        .smc-resistance { color: var(--short); font-weight: 700; }
         .smc-equilibrium { color: #94a3b8; font-weight: 700; }
         .smc-neutral { color: #94a3b8; font-weight: 600; }
         .smc-zone-pill {
@@ -906,9 +905,9 @@
         .plan-entry .plan-label,
         .plan-entry .plan-value { color: #2563eb; }
         .plan-tp .plan-label,
-        .plan-tp .plan-value { color: #16a34a; }
+        .plan-tp .plan-value { color: var(--long); }
         .plan-sl .plan-label,
-        .plan-sl .plan-value { color: #dc2626; }
+        .plan-sl .plan-value { color: var(--short); }
         .plan-meta {
             font-size: 0.65rem;
             color: var(--wolf-blue);
@@ -2415,18 +2414,6 @@
                         </a>
                     </div>
                 </div>
-                <!-- Live strategy switcher — what the bot trades with REAL money -->
-                <div class="ls-row">
-                    <span style="font-size:.7rem;font-weight:800;letter-spacing:.04em;text-transform:uppercase;color:var(--wolf-muted,#8a99ad);">⚙ Live strategy</span>
-                    <span style="font-size:.78rem;color:var(--wolf-muted,#8a99ad);">Now: <b style="color:var(--wolf-text,#e6ecf5);" id="ds-ls-running">{{ live_strategy.running_name or '—' }}</b></span>
-                    {% if live_strategy.diverged %}<span style="font-size:.66rem;color:var(--wolf-gold,#ffcf4b);font-weight:700;">⚠ saved “{{ live_strategy.saved_name }}” — restart bot to apply</span>{% endif %}
-                    <select id="ds-ls-select" style="background:rgba(255,255,255,.04);border:1px solid var(--wolf-border,#262c3d);color:var(--wolf-text,#e6ecf5);font-size:.76rem;font-weight:600;padding:6px 9px;border-radius:8px;cursor:pointer;margin-left:auto;min-width:0;max-width:60%;">
-                        {% for s in live_strategy.strategies %}
-                        <option value="{{ s.key }}" {% if s.key == live_strategy.saved %}selected{% endif %}>{{ s.name }}</option>
-                        {% endfor %}
-                    </select>
-                    <button class="btn btn-wolf" id="ds-ls-save" onclick="dsSaveStrategy()">Save</button>
-                </div>
             </div>
             {% endif %}
         </div>
@@ -2465,7 +2452,7 @@
                 var up = m.chg_1h >= 0;
                 var col = up ? 'var(--long, #4ade80)' : 'var(--short, #f87171)';
                 var border = m.hot ? col : 'rgba(255,255,255,.09)';
-                var flame = m.hot ? (up ? ' 🚀' : ' 📉') : '';
+                var flame = m.hot ? ' 🚀' : '';   // only pumps are alert-grade; a dump is information, not a short
                 var px = m.price >= 1000 ? m.price.toLocaleString('en-US', {maximumFractionDigits: 1})
                        : m.price.toPrecision(4);
                 return '<a href="' + m.tv_url + '" target="_blank" rel="noopener" style="' +
@@ -2494,7 +2481,7 @@
                         var hot = movers.filter(function (m) { return m.hot; }).length;
                         document.getElementById('radar-sub').textContent =
                             'Coins moving right now — 1h change with volume confirmation · ' +
-                            (hot ? hot + ' HOT (alerted on Telegram)' : 'no alert-grade movers at the moment');
+                            (hot ? hot + ' HOT (alerted on Telegram)' : 'no alert-grade pumps at the moment · dumps are shown, never alerted');
                     })
                     .catch(function () {});
             }
@@ -4193,23 +4180,6 @@
     <script id="initial-dashboard-summary" type="application/json">{{ dashboard_summary|tojson }}</script>
     <script>
         // Live strategy switcher (admin) — saves to .env; takes effect on bot restart.
-        function dsSaveStrategy() {
-            const sel = document.getElementById('ds-ls-select');
-            if (!sel) return;
-            const name = sel.options[sel.selectedIndex].textContent;
-            if (!confirm('Set the LIVE bot strategy to "' + name + '"?\n\n' +
-                'This controls what trades REAL money and takes effect only after you ' +
-                'restart the bot (./run_all.sh) — a running bot is not hot-reloaded.')) return;
-            const tok = "{{ csrf_token() }}";
-            const btn = document.getElementById('ds-ls-save'); btn.disabled = true;
-            const body = new URLSearchParams(); body.set('csrf_token', tok); body.set('strategy', sel.value);
-            fetch('/api/account/live_strategy', { method: 'POST', headers: { 'X-CSRFToken': tok }, body })
-                .then(r => r.json()).then(d => {
-                    btn.disabled = false;
-                    alert(d.ok ? 'Saved. Restart the bot (./run_all.sh) to apply.' : (d.error || 'Save failed'));
-                }).catch(() => { btn.disabled = false; alert('Save failed'); });
-        }
-
         // Strategy Modal Functions
         function openStrategyModal() {
             document.getElementById('strategyModal').classList.add('active');

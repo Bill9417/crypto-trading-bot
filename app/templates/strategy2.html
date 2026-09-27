@@ -58,14 +58,24 @@
         .panel-title { font-size: .72rem; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; color: var(--wolf-muted); margin: 0 0 12px; }
         .s2pill { font-size: .68rem; font-weight: 800; letter-spacing: .04em; padding: 4px 10px; border-radius: 999px; white-space: nowrap; }
         .s2pill-off { color: var(--wolf-muted); background: rgba(255,255,255,.06); border: 1px solid var(--wolf-border); }
-        .s2pill-dry { color: #8fd0ff; background: rgba(0,160,255,.12); border: 1px solid rgba(0,160,255,.35); }
-        .s2pill-test { color: var(--wolf-gold); background: rgba(255,207,75,.12); border: 1px solid rgba(255,207,75,.4); }
-        .s2pill-live { color: #ff6b6b; background: rgba(255,80,80,.14); border: 1px solid rgba(255,80,80,.45); }
-        .s2warn { margin: 10px 0 0; font-size: .72rem; font-weight: 700; color: #ff9b6b; background: rgba(255,90,40,.10); border: 1px solid rgba(255,120,60,.4); border-radius: 9px; padding: 9px 12px; }
-        .s2rules { margin: 12px 0 4px; padding-left: 18px; }
-        .s2rules li { font-size: .78rem; line-height: 1.5; color: var(--wolf-text); margin: 0 0 8px; }
-        .s2rules li b { color: var(--wolf-text); }
-        .s2rules code, .s2-live-howto code { font-size: .72rem; background: rgba(255,255,255,.07); border: 1px solid var(--wolf-border); border-radius: 5px; padding: 1px 5px; }
+        .s2pill-neg { color: #fca5a5; background: rgba(248,113,113,.13); border: 1px solid rgba(248,113,113,.28); }
+        .s2pill-pos { color: #86efac; background: rgba(74,222,128,.13); border: 1px solid rgba(74,222,128,.28); }
+        /* ── the measured record ── */
+        .rec-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin-top: 12px; }
+        @media (min-width: 700px) { .rec-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
+        .rec { background: rgba(255,255,255,.03); border: 1px solid var(--wolf-border); border-radius: 12px; padding: 10px 12px; min-width: 0; }
+        .rec .k { font-size: .6rem; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--wolf-muted); }
+        .rec .v { font-size: 1.15rem; font-weight: 900; margin-top: 3px; font-variant-numeric: tabular-nums; color: var(--wolf-champagne); }
+        .rec .v.pos { color: var(--long); } .rec .v.neg { color: var(--short); }
+        .rec .n { font-size: .64rem; color: var(--wolf-muted); margin-top: 2px; }
+        .rec-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; padding: 9px 0; border-top: 1px solid rgba(255,255,255,.06); font-size: .78rem; }
+        .rec-row:first-of-type { border-top: none; }
+        .rec-row .lab { font-weight: 700; }
+        .rec-row .lab small { color: var(--wolf-muted); font-weight: 600; margin-left: 6px; }
+        .rec-row .nums { color: var(--wolf-muted); font-variant-numeric: tabular-nums; }
+        .rec-row .nums b { color: var(--wolf-text); }
+        .rec-foot { font-size: .68rem; color: var(--wolf-muted); line-height: 1.55; margin-top: 10px; }
+        .rec-foot a { color: var(--wolf-blue); font-weight: 700; text-decoration: none; }
         .price-line { font-size: .8rem; color: var(--wolf-muted); }
         .price-line b { color: var(--wolf-text); font-variant-numeric: tabular-nums; }
         .insuff {
@@ -204,21 +214,23 @@
             </div>
         </div>
 
-        <div class="panel" id="s2-rules-panel" style="margin-top:14px;border-left:4px solid var(--wolf-gold);">
+        <!-- The measured record. This slot used to hold the rules of an opt-in
+             order path. That path is gone: the signal it would have traded is
+             the most thoroughly measured thing in this repo and it loses — so
+             the space now shows the number that justified retiring it,
+             refreshed from the same tally /reality reads. -->
+        <div class="panel" id="s2-record-panel" style="margin-top:14px;border-left:4px solid var(--wolf-gold);">
             <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;">
-                <p class="panel-title" style="margin:0;">⚙️ Live Trading Rules · 25 USDT account</p>
-                <span id="s2-live-pill" class="s2pill s2pill-off">ALERT-ONLY</span>
+                <p class="panel-title" style="margin:0;">📏 Measured record · every fired signal, replayed</p>
+                <span id="s2-rec-pill" class="s2pill s2pill-off">loading…</span>
             </div>
-            <div id="s2-live-warn" class="s2warn" style="display:none;"></div>
-            <ul class="s2rules" id="s2-rules-list">
-                <li><b>Run ONE engine at a time.</b> S1 <i>or</i> S2 — never both on the same 25 USDT account. S2 live automatically skips every order while the S1 bot is running; stop S1 first to let S2 trade.</li>
-                <li><b>Best plan only.</b> A signal trades live only on high conviction — <b>long ≥ <span id="s2-rule-long">85</span></b> / <b>short ≤ <span id="s2-rule-short">15</span></b> on the 0–100 meter (stricter than the 70/30 alert threshold). No BTC-regime filter.</li>
-                <li><b>Liquid pairs only.</b> Just the top <span id="s2-rule-topn">150</span> most-traded USDT perps are eligible; everything thinner stays alert-only.</li>
-                <li><b>Fixed small size.</b> <span id="s2-rule-lev">4</span>× leverage · <span id="s2-rule-margin">1.5</span> USDT margin/trade (max <span id="s2-rule-maxmargin">2.3</span>) · max <span id="s2-rule-maxpos">10</span> concurrent positions — total exposure can never exceed the account.</li>
-                <li><b>Every position is bracketed.</b> A full stop-loss (ATR, capped 4%) + a single 100% take-profit at 2R rest on Binance, so the trade is protected even if the scanner is offline. No partials at this size.</li>
-                <li><b>Master switch.</b> Live orders need <code>STRATEGY2_LIVE=true</code> <i>and</i> the global <code>LIVE_TRADING=true</code>. With either off, signals are logged as a dry-run — no real order.</li>
-            </ul>
-            <p class="note" id="s2-live-howto">Currently alert-only. To go live: stop the S1 bot, set <code>STRATEGY2_LIVE=true</code> in <code>app/.env</code>, then start the scanner with <code>./run_strategy2.sh</code>.</p>
+            <div class="rec-grid" id="s2-rec-grid"></div>
+            <div id="s2-rec-rows" style="margin-top:12px;"></div>
+            <p class="rec-foot" id="s2-rec-foot">Every signal is replayed against the real candles that followed
+               (stop checked before target inside the same candle) under the published plan: hold for TP2, full
+               stop at SL. This is why the scanner has <b>no order path</b> — a signal that loses on its own
+               record is published with that record beside it, not wired to an account.
+               <a href="/reality">Full board with confidence intervals →</a></p>
         </div>
 
         <div class="panel" id="s2-heat-panel" style="margin-top:14px;display:none;">
@@ -228,7 +240,7 @@
             </div>
             <div id="s2-heatmap" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(86px,1fr));gap:6px;margin-top:10px;"></div>
             <p class="note">The meter score for the most-traded USDT perps, refreshed by the 15m scanner every sweep.
-               <b style="color:#4ade80;">Green ≥ 85</b> / <b style="color:#f87171;">red ≤ 15</b> are live-entry-grade conviction; click a tile to load it in the chart above.</p>
+               <b style="color:var(--long);">Green ≥ 85</b> / <b style="color:var(--short);">red ≤ 15</b> is ⭐ premium-grade conviction; click a tile to load it in the chart above.</p>
         </div>
 
         <div class="panel" style="margin-top:14px;">
@@ -475,60 +487,56 @@
                 .then(function (d) { if (d) { renderSignals(d); renderHeatmap(d.scores); } }).catch(function () {});
         }
 
-        // ── Live Trading Rules panel — reflects STRATEGY2_LIVE / LIVE_TRADING ──
-        function setText(id, v) { var el = document.getElementById(id); if (el) el.textContent = v; }
-        function renderLiveStatus(s) {
-            if (!s) return;
-            setText('s2-rule-long', s.min_score);
-            setText('s2-rule-short', s.short_ceiling);
-            setText('s2-rule-topn', s.top_n);
-            setText('s2-rule-lev', s.leverage);
-            setText('s2-rule-margin', s.margin_usdt);
-            setText('s2-rule-maxmargin', s.max_margin_usdt);
-            setText('s2-rule-maxpos', s.max_concurrent);
-            var pill = document.getElementById('s2-live-pill');
-            var warn = document.getElementById('s2-live-warn');
-            var howto = document.getElementById('s2-live-howto');
-            var panel = document.getElementById('s2-rules-panel');
-            if (!s.enabled) {
-                pill.className = 's2pill s2pill-off'; pill.textContent = 'ALERT-ONLY';
-                panel.style.borderLeftColor = 'var(--wolf-gold)';
-                howto.style.display = '';
-            } else if (!s.live_master) {
-                pill.className = 's2pill s2pill-dry'; pill.textContent = 'LIVE: DRY-RUN';
-                panel.style.borderLeftColor = '#00a0ff';
-                howto.style.display = 'none';
-            } else if (s.testnet) {
-                pill.className = 's2pill s2pill-test'; pill.textContent = 'LIVE: TESTNET';
-                panel.style.borderLeftColor = 'var(--wolf-gold)';
-                howto.style.display = 'none';
-            } else {
-                pill.className = 's2pill s2pill-live'; pill.textContent = '● LIVE: REAL MONEY';
-                panel.style.borderLeftColor = '#ff5050';
-                howto.style.display = 'none';
-            }
-            // One-engine-at-a-time warning: S2 live is armed but the S1 bot is running.
-            if (s.enabled && s.s1_running) {
-                warn.style.display = '';
-                warn.textContent = '⛔ The S1 bot is running — S2 will NOT place any live order until you stop S1. Run one engine at a time.';
-            } else {
-                warn.style.display = 'none';
-            }
+        // ── Measured record panel — the tally behind /reality ──
+        function fmtR(x) { return (x > 0 ? '+' : '') + Number(x).toFixed(3) + 'R'; }
+        function recTile(k, v, n, cls) {
+            return '<div class="rec"><div class="k">' + k + '</div><div class="v ' + (cls || '') + '">' + v + '</div>' +
+                   (n ? '<div class="n">' + n + '</div>' : '') + '</div>';
         }
-        function loadLiveStatus() {
-            fetch('/api/strategy2_live_status').then(function (r) { return r.ok ? r.json() : null; })
-                .then(function (d) { renderLiveStatus(d); }).catch(function () {});
+        function renderRecord(all) {
+            var grid = document.getElementById('s2-rec-grid');
+            var rows = document.getElementById('s2-rec-rows');
+            var pill = document.getElementById('s2-rec-pill');
+            if (!grid || !all || !all.ok) { if (pill) { pill.textContent = 'no record yet'; } return; }
+            var base = (all.rules || []).filter(function (r) { return r.key === 'hold'; })[0];
+            if (!base || !base.n) {
+                pill.textContent = 'no outcomes scored yet';
+                grid.innerHTML = '<div class="sig-empty">The outcome tracker scores each signal 48h after it fires. Nothing has completed a window yet.</div>';
+                return;
+            }
+            var neg = base.exp < 0;
+            pill.className = 's2pill ' + (neg ? 's2pill-neg' : 's2pill-pos');
+            pill.textContent = (base.tag || '').toUpperCase() + ' · n=' + base.n.toLocaleString();
+            grid.innerHTML =
+                recTile('Expectancy', fmtR(base.exp), base.ci ? 'range ' + fmtR(base.ci[0]) + ' … ' + fmtR(base.ci[1]) : '', neg ? 'neg' : 'pos') +
+                recTile('Net', (base.net > 0 ? '+' : '') + Math.round(base.net).toLocaleString() + 'R', base.n.toLocaleString() + ' signals', neg ? 'neg' : 'pos') +
+                recTile('Win rate', base.wr.toFixed(1) + '%', 'reached the target first') +
+                recTile('Profit factor', base.pf == null ? '—' : base.pf.toFixed(2), base.pf != null && base.pf < 1 ? 'losses exceed gains' : '');
+            var html = '';
+            (all.cohorts || []).forEach(function (c) {
+                if (!c.n) return;
+                html += '<div class="rec-row"><span class="lab">' + c.label + '<small>' + c.label_zh + '</small></span>' +
+                        '<span class="nums"><b class="' + (c.exp < 0 ? 'sig-dir short' : 'sig-dir long') + '">' + fmtR(c.exp) + '</b> · ' +
+                        c.n.toLocaleString() + ' · WR ' + c.wr.toFixed(0) + '%' + (c.pf != null ? ' · PF ' + c.pf.toFixed(2) : '') +
+                        ' · <span class="s2pill ' + (c.tag === 'too few' ? 's2pill-off' : (c.exp < 0 ? 's2pill-neg' : 's2pill-pos')) + '">' + c.tag + '</span></span></div>';
+            });
+            rows.innerHTML = html;
+            if (window.wolfApplyLang) window.wolfApplyLang();
+        }
+        function loadRecord() {
+            fetch('/api/reality').then(function (r) { return r.ok ? r.json() : null; })
+                .then(function (d) { renderRecord(d); }).catch(function () {});
         }
 
         buildLegend();             // EMA colour key (static)
         load();                    // gauge + factors first
         loadSignals();             // live-signals panel
-        loadLiveStatus();          // live-trading rules / mode pill
+        loadRecord();              // the measured record
         loadChart(currentSymbol);  // chart last (guarded; can't block the data above)
         updateTVLink(currentSymbol);
         pollTimer = wolfPoll(load, 30000);
         wolfPoll(loadSignals, 30000);
-        wolfPoll(loadLiveStatus, 30000);
+        wolfPoll(loadRecord, 300000);
         // refresh the 1h chart on a slow cadence so we don't tax the shared REST
         // client the live bot also uses (wolfPoll handles the visibility skip).
         wolfPoll(function () { loadChart(currentSymbol); }, 120000);

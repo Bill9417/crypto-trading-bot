@@ -12,12 +12,18 @@ master switch alone would have left the S1 mirror armed against a live account.
 import os
 import re
 
+import pytest
+
 import config
 
 ENV = os.path.join(os.path.dirname(os.path.abspath(config.__file__)), ".env")
 
 
 def _env(key):
+    # These assertions are about the OPERATOR's .env. A clean checkout (CI, a
+    # fresh clone) has none, and "no file" is not "an engine is armed".
+    if not os.path.exists(ENV):
+        pytest.skip(".env not present — nothing can be armed")
     with open(ENV, encoding="utf-8") as f:
         m = re.search(rf"^{re.escape(key)}=(.*)$", f.read(), re.M)
     return (m.group(1).strip() if m else None)
@@ -34,7 +40,6 @@ def test_every_order_path_is_disarmed():
         "S1 mirror / Bybit": bool(s1_bybit_mirror.enabled()),
         "S4 / Bybit": bool(strategy4_exec.enabled()),
         "S3 / Bybit": bool(config.STRATEGY3_LIVE),
-        "S2": bool(config.STRATEGY2_LIVE),
         "copy followers": bool(copy_engine.live()),
     }
     on = [k for k, v in armed.items() if v]

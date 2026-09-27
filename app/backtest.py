@@ -24,6 +24,8 @@ import config as C
 import bot
 import smc as smc_mod
 from indicators import (
+    atr_pct as _ind_atr_pct,
+    volatility_ceiling_ok,
     check_tsi_signal, check_macd_signal, check_volume_gate,
     check_stoch_rsi_signal,
     calculate_ema, calculate_vwap,
@@ -152,16 +154,9 @@ _VOL_OVERRIDE = None
 
 
 def _atr_pct(oh, period=14):
-    """Last-bar ATR as a % of close (mean true range). None on short history."""
-    if len(oh) < period + 1:
-        return None
-    trs = []
-    for i in range(1, len(oh)):
-        h, l, pc = oh[i][2], oh[i][3], oh[i - 1][4]
-        trs.append(max(h - l, abs(h - pc), abs(l - pc)))
-    atr = sum(trs[-period:]) / period
-    close = oh[-1][4]
-    return (atr / close * 100.0) if close else None
+    """Last-bar ATR as a % of close — the ONE implementation in indicators.py,
+    shared with the live bot's S1_MAX_ATR_PCT gate. None on short history."""
+    return _ind_atr_pct(oh, period)
 
 
 def evaluate(oh, ema50_4h, btc_regime):
@@ -283,12 +278,16 @@ def evaluate(oh, ema50_4h, btc_regime):
         # Can't compute ADX (short history) → leave adx_ok True (don't block on
         # degraded data) — mirrors the live bot's behaviour exactly.
 
-    # Backtest-only volatility-regime gate (experiment; off unless run_backtest(vol=...)).
+    # Volatility gate. run_backtest(vol=...) is the A/B experiment override;
+    # otherwise the SAME config knob the live bot reads (S1_MAX_ATR_PCT, 0 =
+    # off) applies here, so a backtest previews exactly what the bot would do.
     vol_ok = True
     if _VOL_OVERRIDE is not None:
         _atrp = _atr_pct(oh)
         if _atrp is not None:
             vol_ok = (_atrp >= _VOL_OVERRIDE.get("min", 0.0)) and (_atrp <= _VOL_OVERRIDE.get("max", 1e9))
+    else:
+        vol_ok = volatility_ceiling_ok(oh, getattr(C, "S1_MAX_ATR_PCT", 0) or 0)
 
     qualified = (eff_lights >= required and base_ok and trend_aligned and macro_ok and momentum_ok
                  and score_edge >= 2 and not smc_blocked and rsi_ok and btc_ok and not_extended

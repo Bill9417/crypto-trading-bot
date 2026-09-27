@@ -404,10 +404,82 @@ def unsafe_substrings(corpus) -> list:
     return bad
 
 
+# ── the Strategies hub (2026-09-27 redesign: rules · record · live) ─────────
+HUB = {
+    "四大策略 · 規則、實測紀錄與即時狀況": "Four strategies · rules, measured record, live status",
+    "每一套策略都有三張卡：": "Every strategy has three cards: ",
+    "它的規則": "its rules", "它量出來的紀錄": "the record it measured", "它現在在做什麼": "what it is doing now",
+    "紀錄是這個專案自己的實測 —— 勝率不等於優勢，只有期望值和它的信賴區間算數。":
+        "The record is this project's own measurement — win rate is not edge; only expectancy and its interval count.",
+    "完整記分板 Reality Check →": "Full scoreboard · Reality Check →",
+    "實測紀錄": " Measured record", "已淘汰的策略": "Retired strategies",
+    "淘汰原因附上數字": "each with the number that retired it",
+    "這裡是被自己的紀錄殺掉的東西。留著是因為「為什麼不做」和「做什麼」一樣重要 —— 每一條都附上把它淘汰的那個數字。":
+        "What its own record killed. Kept because \"why not\" matters as much as \"what\" — every entry carries the number that retired it.",
+    "僅發訊號 · 無下單路徑": "Alerts only · no order path",
+    "Bybit 鏡單": "Bybit mirror", "只發訊號": "alerts only",
+    "沒有下單路徑。": "No order path. ",
+    "原本可選的實盤下單層已於 2026-09-27 移除 —— 右邊的紀錄就是原因。":
+        "The opt-in live order layer was removed 2026-09-27 — the record beside this is the reason.",
+    "波動天花板": "Volatility ceiling ", "已啟用": "enabled",
+    "幣本身的 ATR 超過價格": "the symbol's own ATR above ", "就不進場。": " of price blocks the entry.",
+    "（預設）。這是實驗室找到的唯一一致改善，等右邊的前向紀錄證明再開。":
+        " (default). The one consistent improvement the labs found — switched on once the forward record beside this earns it.",
+    "每日斷路器：24 小時內虧損": "Daily circuit breaker: ", "筆或淨虧超過上限就停止新單，直到管理員 /resume。":
+        " losing trades in 24h or a net loss past the cap halts new entries until an admin sends /resume.",
+    "每筆 · 360 天樣本外驗證": "per trade · 360-day out-of-sample",
+    "沒有可持續的優勢 —— 兩次樣本外驗證都是淨負，只有最近兩段是正的":
+        "no durable edge — net negative out of sample both times, positive only in the two most recent folds",
+    "段為正（最近兩段）；": " folds positive (the two most recent); ",
+    "修正倖存者偏差後": "survivorship-corrected ", "重跑": " rerun ",
+    "前向紙上測試": "Forward paper test", "尚無平倉": "no closes yet", "賠率": "payoff",
+    "現行規則": "live rules", "只做多": "longs only", "低波動濾網": "low-volatility filter",
+    "低波動 + 單一 3R 目標": "low-volatility + single 3R target",
+    "實盤（帳本）": "Live (ledger)", "手動平倉比例": "Manual-close share",
+    "低波動變體來自 s1_regime_lab（期望值隨 ATR 天花板收緊而": "The low-vol variant comes from s1_regime_lab (expectancy rises ",
+    "單調": "monotonically", "上升，31 檔、多空皆轉正）；": " as the ATR ceiling tightens; 31 symbols, both sides turn positive); ",
+    "出場變體來自 s1_exit_lab（S1 的贏單被 1.5R 封頂、輸單卻要付 1.07R）。":
+        "the exit variant from s1_exit_lab (S1's winners are capped at 1.5R while a loser costs 1.07R). ",
+    "前向紀錄已有": "The forward record has ", "筆且為正 —— 值得考慮把": " closes and is positive — worth considering switching on ",
+    "打開。": ".", "在前向紀錄累積到 30 筆以上且為正之前，": "Until the forward record reaches 30+ closes and stays positive, ",
+    "維持關閉。": " stays off.", "樣本外驗證的細節見": " Out-of-sample details on ",
+    "未證明有優勢 · 樣本外淨負": "unproven edge · negative out of sample",
+    "筆訊號 · 抱到底規則": " signals · hold rule", "信賴區間": "interval ", "（含 0）": " (contains 0)", "（不含 0）": " (clear of 0)",
+    "淨損益": "Net", "獲利因子": "Profit factor", "分群 · 同一條出場規則": "Cohorts · same exit rule",
+    "六種出場規則全部為負（抱到底、保本、減半、TP1 全出、移動停利…）—— 這就是 S2 沒有下單路徑的原因。":
+        "All six exit rules are negative (hold, breakeven, half off, all at TP1, trailing…) — which is why S2 has no order path. ",
+    "「很可能」是有意義的：舊帳只存總和，區間是最窄的可能值。": "\"Probably\" is doing real work: the old tally stores totals only, so the range is the narrowest possible. ",
+    "看完整記分板 →": "Full scoreboard →",
+    "還沒有訊號完成 48 小時的評估視窗。每一筆訊號都會在 48 小時後對真實 K 線重播、記分。":
+        "No signal has completed its 48-hour window yet. Every signal is replayed against real candles 48h later and scored.",
+    "尚無紀錄": "no record yet", "無紀錄": "no record", "確定為負": "negative", "很可能為負": "probably negative",
+    "看不出優勢": "no edge", "樣本太少": "too few", "確定為正": "positive", "可能為正，未證明": "probably positive, unproven",
+    "紀錄暫時無法讀取。": "The record is temporarily unavailable.",
+    "S3 的損益在 Bybit 的": "S3's P&L lives in Bybit's ", "已平倉紀錄": "closed-P&L record",
+    "裡，由帳本按「誰開的倉」歸屬（S1 鏡單、S3、手動共用一個子帳戶，交易所不知道是誰下的）。":
+        ", attributed by the ledger by who opened the position (the S1 mirror, S3 and manual trades share one sub-account; the exchange does not know who ordered).",
+    "帳本紀錄": "Ledger rows", "持有中": "Open", "正在讀 Bybit 已平倉紀錄…": "Reading Bybit closed P&L…",
+    "實盤損益只有管理員看得到。": "Live P&L is visible to the admin only.",
+    "每週一的日報用真實獲利因子判定每個引擎：10 筆以上且 PF &lt; 1 會印「不值得它承擔的風險」。手動平倉比例高時，這個數字量的是人、不是策略。":
+        "Every Monday the daily report judges each engine by its real profit factor: 10+ trades with PF &lt; 1 prints \"not paying for its risk\". A high manual-close share means this number measures the operator, not the strategy.",
+    "看實盤紀錄": "see live record", "實盤紀錄無法讀取": "live record unavailable", "Bybit 紀錄暫時無法讀取": "Bybit record temporarily unavailable",
+    "Bybit 實盤 · 依帳本歸屬": "Bybit live · attributed by the ledger", "S3 翻轉引擎": "S3 flip engine", "S1 鏡單": "S1 mirror",
+    "S4 掃描": "S4 scan", "尚無已平倉": "no closes yet", "不值得它的風險": "not paying for its risk",
+    "Bybit 實盤 · 鏡單（帳本歸屬）": "Bybit live · mirror (ledger-attributed)",
+    "重新開始計算（改記淨 R、扣手續費與滑價、且只在有槽位時才收訊號）。舊帳是毛的、不可比較，所以不顯示。":
+        " the book restarted (net R, fees and slippage deducted, signals accepted only when a slot was free). The old book was gross and is not comparable, so it is not shown.",
+    "尚無新紀錄": "no new record yet", "筆已結算 · 淨 R": " settled · net R", "樣本": "Sample",
+    "之前的版本量了 90 筆：−0.022R ± 0.282，區間含 0。做空那一側從沒被量過，是應要求加上去的。":
+        "The previous version measured 90 trades: −0.022R ± 0.282, interval containing 0. The short side has never been measured; it was added on request. ",
+    "每一筆訊號和它之後發生的事都記在": "Every signal and what followed it is recorded on the ", "S4 頁": "S4 page",
+    "未證明": "unproven",
+}
+
+
 def table() -> dict:
     """The whole ZH → EN map."""
     out = {}
-    for part in (TITLES, SUBTITLES, VERDICTS, STATES, WORDS, SUB_OK):
+    for part in (TITLES, SUBTITLES, VERDICTS, STATES, WORDS, HUB, SUB_OK):
         out.update(part)
     return out
 

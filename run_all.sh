@@ -10,12 +10,12 @@
 #   ./run_all.sh status    show whether each process is running
 #
 # ── ONE ENGINE AT A TIME ─────────────────────────────────────────────────────
-# The live engine is chosen by STRATEGY2_LIVE / STRATEGY3_LIVE in app/.env, so
+# The live engine is chosen by STRATEGY3_LIVE in app/.env, so
 # the 25 USDT account is only ever driven by one strategy:
-#   both false (default)  → web + S1 bot (LIVE) + S2 + S3 scanners (alert-only)
-#   STRATEGY2_LIVE=true   → web + S2 scanner (LIVE engine) + S1 scan-only + S3 alert-only
+#   false (default)       → web + S1 bot (LIVE) + S2 + S3 scanners (alert-only)
 #   STRATEGY3_LIVE=true   → web + S3 flip engine (LIVE) + S1 scan-only + S2 alert-only
-#   BOTH true             → S2 wins; S3 refuses to arm (in code) and stays alert-only
+# The S2 scanner is alert-only by construction (its live layer was retired —
+# measured −0.081R over 22,631 signals); it always runs as a companion.
 # S3 (strategy3_scanner.py) runs TWO engines per symbol (config.STRATEGY3_SYMBOLS
 # / config.strategy3_params): "flagflip" — TV.pine flag + Vegas-line agreement,
 # flip on the opposite flag (XAUT 30m; pine/strategies/TV_strategy_XAUT_30min.pine) — and
@@ -155,33 +155,21 @@ status_all() {
 }
 
 # --- choose the live engine from app/.env ----------------------------------
-# Precedence: S2 > S3 > S1. The S3 scanner ALWAYS runs (alert-only unless it is
-# the armed engine — it self-gates in code, incl. refusing when S2 is also live).
+# Precedence: S3 > S1. The S3 scanner ALWAYS runs (alert-only unless it is the
+# armed engine — it self-gates in code). The S2 scanner ALWAYS runs and can
+# only alert: it has no order path.
 START_S3_COMPANION=1
-if read_env_bool STRATEGY2_LIVE; then
-    ENGINE_NAME="Strategy 2 scanner (LIVE)"
-    ENGINE_CMD="strategy2_scanner.py"
-    ENGINE_LOG="$LOG_DIR/strategy2.log"
-    START_ALERT_SCANNER=0           # the scanner IS the engine; don't start a 2nd one
-    START_SCANONLY_S1=1            # S1 scan-only companion → keeps the main dashboard
-                                    # refreshing hourly WITHOUT trading (no lock, no orders)
-    if read_env_bool STRATEGY3_LIVE; then
-        echo "WARNING: STRATEGY2_LIVE and STRATEGY3_LIVE are BOTH true — one live"
-        echo "         engine at a time. S2 stays live; S3 will refuse to arm and"
-        echo "         runs alert-only. Set STRATEGY2_LIVE=false to hand over to S3."
-    fi
-elif read_env_bool STRATEGY3_LIVE; then
+START_ALERT_SCANNER=1               # the S2 scanner — alerts + /strategy2, never orders
+if read_env_bool STRATEGY3_LIVE; then
     ENGINE_NAME="Strategy 3 Vegas Flag Flip (LIVE)"
     ENGINE_CMD="strategy3_scanner.py"
     ENGINE_LOG="$LOG_DIR/strategy3.log"
     START_S3_COMPANION=0            # the flip scanner IS the engine
-    START_ALERT_SCANNER=1           # S2 keeps alerting (its live gate is false here)
     START_SCANONLY_S1=1
 else
     ENGINE_NAME="S1 bot (LIVE)"
     ENGINE_CMD="bot.py"
     ENGINE_LOG="$LOG_DIR/bot.log"
-    START_ALERT_SCANNER=1           # run the S2 scanner alongside S1, alert-only
     START_SCANONLY_S1=0            # S1 is already the live engine here
 fi
 
@@ -326,12 +314,12 @@ echo "Starting web dashboard..."
 "$PYTHON" -u app.py >> "$LOG_DIR/app.log" 2>&1 &
 APP_PID=$!
 
-# --- start the live engine (S1 bot or S2 scanner) --------------------------
+# --- start the live engine (S1 bot or S3 flip) -----------------------------
 echo "Starting live engine: $ENGINE_NAME"
 "$PYTHON" -u "$ENGINE_CMD" >> "$ENGINE_LOG" 2>&1 &
 ENGINE_PID=$!
 
-# --- optionally start the S2 scanner alongside S1 (alert-only) -------------
+# --- the S2 scanner: alert-only companion, on every launch -----------------
 SCANNER_PID=""
 if [ "$START_ALERT_SCANNER" = "1" ]; then
     echo "Starting S2 scanner (alert-only companion)..."
@@ -347,9 +335,9 @@ if [ "$START_S3_COMPANION" = "1" ]; then
     S3_PID=$!
 fi
 
-# --- optionally start the S1 scan-only companion (S2-engine mode) ----------
+# --- optionally start the S1 scan-only companion (S3-engine mode) ----------
 # Scans + refreshes the main dashboard hourly, but holds no lock and places no
-# orders, so S2 stays the sole live engine.
+# Binance orders, so S3 stays the sole live engine.
 SCANONLY_PID=""
 if [ "$START_SCANONLY_S1" = "1" ]; then
     echo "Starting $S1_COMPANION_DESC..."

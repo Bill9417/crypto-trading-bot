@@ -314,12 +314,12 @@ def test_s1_mode_falls_back_to_the_lock_not_to_binance(monkeypatch):
     bot lock is the one unambiguous signal, because SCAN_ONLY and S1_EXEC=bybit
     both deliberately skip acquiring it."""
     import app as APP
-    import strategy2_live as S2L
+    import proc_util
     monkeypatch.setattr(APP, "_s1_runtime", lambda: {"strategy": "default"})
-    monkeypatch.setattr(S2L, "s1_bot_running", lambda: True)
+    monkeypatch.setattr(proc_util, "bot_lock_held", lambda: True)
     assert APP._s1_mode() == "binance"
 
-    monkeypatch.setattr(S2L, "s1_bot_running", lambda: False)
+    monkeypatch.setattr(proc_util, "bot_lock_held", lambda: False)
     import config as _config
     monkeypatch.setattr(_config, "read_env_var", lambda k, d=None: "true")
     assert APP._s1_mode() == "bybit"          # no lock + mirror armed
@@ -330,7 +330,6 @@ def test_s1_mode_falls_back_to_the_lock_not_to_binance(monkeypatch):
 def test_a_dead_process_is_never_counted_as_trading(monkeypatch):
     import app as APP
     monkeypatch.setattr(APP, "_s1_mode", lambda: "binance")
-    monkeypatch.setattr(APP, "_scanner_live_engine", lambda: True)
     assert APP._live_engines(set()) == []
 
 
@@ -383,7 +382,6 @@ def test_the_regression_two_bybit_engines_are_both_reported(monkeypatch):
     monkeypatch.setattr(APP, "_s1_runtime", lambda: {"strategy": "default"})
     monkeypatch.setattr(s1_bybit_mirror, "enabled", lambda: True)
     monkeypatch.setattr(S3, "mode_string", lambda: "LIVE on BYBIT")
-    monkeypatch.setattr(APP, "_scanner_live_engine", lambda: False)
     got = APP._live_engines({"bot", "s2", "s3"})
     assert {e["key"] for e in got} == {"bot", "s3"}
     assert {e["venue"] for e in got} == {"Bybit"}

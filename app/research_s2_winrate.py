@@ -177,7 +177,7 @@ def replay_symbol(args):
     base, rank, regimes = args
     import indicators
     import signal_outcomes
-    import strategy2_live as S2L
+    import s2_plan as S2L
     import strategy2_meter as S2
 
     path = os.path.join(CACHE_DIR, f"{base}_15m.json")
@@ -203,7 +203,7 @@ def replay_symbol(args):
         price = float(rows[i][4])
         try:
             entry, sl, tp1, tp2 = S2L.trade_levels(
-                price, direction == "long", S2L._atr(window))
+                price, direction == "long", S2L.atr(window))
         except Exception:  # noqa: BLE001
             continue
         if i + EVAL_BARS >= n:                   # 48h window would be censored
@@ -464,7 +464,7 @@ def _geometry_eval(rows, i, is_long, sl_mult, tp_r, atr, window_bars):
 
 
 def cmd_geometry():
-    import strategy2_live as S2L
+    import s2_plan as S2L
     with open(FIRES_FILE, "r", encoding="utf-8") as f:
         fires = json.load(f)
     candles, atrs = {}, {}
@@ -500,7 +500,7 @@ def cmd_geometry():
                             continue
                         key = (f_["base"], i)
                         if key not in atrs:
-                            atrs[key] = S2L._atr(rows[i - WARMUP + 1:i + 1])
+                            atrs[key] = S2L.atr(rows[i - WARMUP + 1:i + 1])
                         out = _geometry_eval(rows, i, f_["direction"] == "long",
                                              sm, tr, atrs[key], window_bars)
                         if out:

@@ -64,6 +64,22 @@ chunking, and honest delivery logging. The linter added the same week caught
 a real `NameError` I introduced during the fix — infrastructure paying for
 itself immediately.
 
+### 5. Retiring on the record (2026-09)
+Two years of instrumentation left the repo holding strategies its own
+numbers had already condemned: an opt-in path that could put real money on
+the S2 triangle (−0.081R ± 0.018 over 22,631 scored outcomes, interval clear
+of zero, all six exit rules negative), a momentum-short alert measured at
+−0.211R with the interval clear of zero, and a Pine script kept as an
+exhibit of a losing idea. Each was removed, and the removal itself became
+data: the `/strategies` hub now shows every engine's measured record beside
+its rules — the walk-forward verdict, the forward paper variants, the
+outcome tally with its confidence interval — and a retired list that names
+the figure that killed each entry. The one improvement the labs did find
+(a symbol-level volatility ceiling under which S1's expectancy rises
+monotonically) shipped as a knob that defaults OFF, read identically by the
+bot and the backtester, to be switched on only once the forward record
+earns it.
+
 ## Architecture
 
 ```

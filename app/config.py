@@ -499,6 +499,20 @@ ENABLE_FUNDING_FILTER = _env_bool("ENABLE_FUNDING_FILTER", False)
 FUNDING_MAX_LONG = float(os.getenv("FUNDING_MAX_LONG", "0.001"))     # block longs above this
 FUNDING_MIN_SHORT = float(os.getenv("FUNDING_MIN_SHORT", "-0.001"))  # block shorts below this
 
+# Volatility ceiling — the symbol's OWN ATR(14) as a % of its price at entry.
+# s1_regime_lab (2026-07-28: 360d, 6 folds, 135 trades) found S1's expectancy
+# rising MONOTONICALLY as this ceiling tightens — +0.03R at <1.5% → +0.13R at
+# <1.2% → +0.17R at <1.0% → +0.28R at <0.8% — a plateau rather than one lucky
+# threshold, across 31 symbols, and BOTH directions turn positive under it.
+# s1_exit_lab then found every tested exit rule positive on that subset.
+# paper_tracker forward-tests the pair as s1_lowvol / s1_lowvol_3r.
+#
+# 0 = OFF (the default): the live bot trades exactly as before. This is the
+# knob to turn once the FORWARD record has earned it — 1.0 is the middle of
+# the tested plateau, deliberately not its best-scoring edge. The backtester
+# reads the same value, so a run previews exactly what the bot would do.
+S1_MAX_ATR_PCT = float(os.getenv("S1_MAX_ATR_PCT", "0") or 0)
+
 # Correlation / same-direction cap — 10 alt LONGs that all move with BTC is one
 # leveraged BTC bet, not 10 independent ones. When ON, cap how many live+queued
 # positions may share a direction (0 = unlimited). Complements
@@ -548,33 +562,12 @@ TOP_SYMBOL_LIMIT = 150    # of those, only the top-N (by volume) are tradeable
 # let them scan/trade like any other perp.
 EXCLUDE_TRADFI_PERPS = _env_bool("EXCLUDE_TRADFI_PERPS", True)
 
-# ── Strategy 2 LIVE execution (opt-in, OFF by default) ───────────────────────
-# Strategy 2 is the stand-alone 15m TV.pine confluence scanner. By DEFAULT it is
-# alert-only (sends a Telegram note + shows the signal on /strategy2, never an
-# order). Flip STRATEGY2_LIVE=true to let a NEW high-conviction signal place a
-# REAL bracketed market order through the shared executor.
-#
-# SAFETY MODEL for the ~25 USDT account — run ONE engine at a time:
-#   • S2 live REFUSES to place orders while the S1 bot (bot.lock) is running, so
-#     the tiny account is only ever driven by one strategy. Stop S1 to run S2.
-#   • It shares the executor's MAX_CONCURRENT_POSITIONS + MAX_MARGIN ceilings.
-#   • Only the most liquid pairs (STRATEGY2_LIVE_TOP_N by volume) are eligible.
-#   • The global LIVE_TRADING gate still applies — with LIVE_TRADING=false the
-#     S2 order is logged as a dry-run, exactly like S1.
-STRATEGY2_LIVE = _env_bool("STRATEGY2_LIVE", False)
-# "Best plan" conviction gate — only the strongest meter reads fire a live order.
-# A LONG needs score ≥ this; a SHORT needs score ≤ (100 − this). 85 ⇒ long ≥85 /
-# short ≤15 (stricter than the meter's own 70/30 signal threshold). No BTC-regime
-# filter is applied here by design — a strong signal trades even against Bitcoin.
-STRATEGY2_LIVE_MIN_SCORE = int(os.getenv("STRATEGY2_LIVE_MIN_SCORE", "85"))
-# Conviction → size: (lights, aligned) handed to executor.position_scale. 5 ⇒ 1.0×
-# the FIXED_MARGIN_USDT base (1.5 USDT margin → 6 USDT notional at 4× — clears the
-# ~5 USDT Binance min-order floor). 6 ⇒ 1.5× (2.25 USDT margin, the MAX ceiling).
-STRATEGY2_LIVE_LIGHTS = int(os.getenv("STRATEGY2_LIVE_LIGHTS", "5"))
-# Only the top-N most-liquid USDT perps (by 24h volume rank) may place a live S2
-# order. Defaults to the same tradeable tier S1 uses; pairs outside it stay
-# alert-only no matter how strong the signal.
-STRATEGY2_LIVE_TOP_N = int(os.getenv("STRATEGY2_LIVE_TOP_N", str(TOP_SYMBOL_LIMIT)))
+# ── Strategy 2 is ALERT-ONLY by construction ──────────────────────────────
+# The S2 scanner publishes signals (Telegram + /strategy2) and records what
+# happened to each one; nothing can turn one into an order. The opt-in live
+# layer (STRATEGY2_LIVE) was retired 2026-09-27: the S2 triangle measures
+# −0.081R ± 0.018 over 22,631 scored outcomes — an interval that excludes
+# zero — and all six replayed exit rules are negative (see /reality).
 
 # ── Strategy 2 ⭐ PREMIUM signal gate (2026-07-16) ───────────────────────────
 # The Signals topic's real win rate was finally MEASURED (research_s2_winrate:
@@ -598,8 +591,8 @@ STRATEGY2_LIVE_TOP_N = int(os.getenv("STRATEGY2_LIVE_TOP_N", str(TOP_SYMBOL_LIMI
 # 50.0% at conv≥80) and the highest managed expectancy of the grid (+0.113R vs
 # +0.076R). At the ⭐ plan geometry (SL 2×ATR, TP1 0.75R) that gate reaches its
 # first target 58.7% of the time. So MIN_SCORE 80→85: fewer signals (~13/day
-# over 60 symbols), higher win rate, better expectancy. (Alert-only tier —
-# STRATEGY2_LIVE is false — so this changes which alerts fire, not live orders.)
+# over 60 symbols), higher win rate, better expectancy. This changes which
+# alerts fire; S2 places no orders.
 STRATEGY2_PREMIUM_MIN_SCORE = int(os.getenv("STRATEGY2_PREMIUM_MIN_SCORE", "85"))
 STRATEGY2_PREMIUM_REQUIRE_ALIGNED = _env_bool("STRATEGY2_PREMIUM_REQUIRE_ALIGNED", True)
 STRATEGY2_PREMIUM_MIN_ADX = float(os.getenv("STRATEGY2_PREMIUM_MIN_ADX", "20"))

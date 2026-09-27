@@ -688,3 +688,33 @@ def check_macd_signal(prices):
         hint = None
 
     return True, ", ".join(details), hint
+
+
+# ── volatility ceiling (S1_MAX_ATR_PCT) ──────────────────────────────────────
+# ONE implementation for the live bot and the backtester, so the simulation
+# and the account can never disagree about which symbols the gate admits.
+def atr_pct(ohlcv, period: int = 14):
+    """Last-bar ATR(period) as a % of the last close — the mean true range,
+    the same arithmetic as bot.calculate_atr. None when the history is too
+    short to compute it."""
+    if not ohlcv or len(ohlcv) < period + 1:
+        return None
+    trs = []
+    for i in range(1, len(ohlcv)):
+        h, l, pc = float(ohlcv[i][2]), float(ohlcv[i][3]), float(ohlcv[i - 1][4])
+        trs.append(max(h - l, abs(h - pc), abs(l - pc)))
+    atr = sum(trs[-period:]) / period
+    close = float(ohlcv[-1][4] or 0)
+    return (atr / close * 100.0) if close else None
+
+
+def volatility_ceiling_ok(ohlcv, ceiling_pct: float, period: int = 14) -> bool:
+    """True when the ceiling is OFF (<= 0), when the history is too short to
+    say (never block on degraded data — same rule as the ADX gate), or when
+    the symbol's own ATR% sits at or under the ceiling."""
+    if not ceiling_pct or ceiling_pct <= 0:
+        return True
+    pct = atr_pct(ohlcv, period)
+    if pct is None:
+        return True
+    return pct <= ceiling_pct

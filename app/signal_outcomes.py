@@ -470,10 +470,15 @@ def tick(client) -> int:
         if res is None:
             res = {"outcome": "none", "hours": None}
         import config
+        # "High conviction" = the ⭐ conviction bar (85) on its own, before the
+        # BTC-alignment and ADX gates that make a signal premium. It used to
+        # read the retired live layer's threshold — the same number, but a
+        # cohort must not depend on a switch that no longer exists.
+        hc_bar = config.STRATEGY2_PREMIUM_MIN_SCORE
         hc = ((sig.get("direction") == "long"
-               and (sig.get("score") or 0) >= config.STRATEGY2_LIVE_MIN_SCORE)
+               and (sig.get("score") or 0) >= hc_bar)
               or (sig.get("direction") == "short"
-                  and (sig.get("score") or 100) <= 100 - config.STRATEGY2_LIVE_MIN_SCORE))
+                  and (sig.get("score") or 100) <= 100 - hc_bar))
         evaluated[key] = {**res, "base": sig.get("base"), "score": sig.get("score"),
                           "direction": sig.get("direction"), "hc": hc,
                           "premium": bool(sig.get("premium")),

@@ -59,14 +59,54 @@ def _render(is_admin):
             "strategies.html", user=u,
             params=app._strategies_params(),
             status=app._json_safe(app.build_strategies_status()),
+            retired=app.RETIRED_STRATEGIES,
         )
 
 
 def test_template_renders_all_sections():
     html = _render(is_admin=False)
-    for must in ("策略一", "策略二", "策略三", "規則", "即時狀況",
-                 "精選 PREMIUM", "誠實勝率", "/funnel", "/strategy2"):
+    for must in ("策略一", "策略二", "策略三", "規則", "即時狀況", "實測紀錄",
+                 "精選 PREMIUM", "誠實勝率", "/funnel", "/strategy2", "已淘汰"):
         assert must in html, f"missing section: {must}"
+
+
+# ── the measured record (2026-09-27) ─────────────────────────────────────────
+# The hub showed rules and live status and never the verdict. Each engine now
+# carries its record; every branch reads disk only and degrades to a dict.
+def test_every_engine_carries_a_record():
+    st = app.build_strategies_status()
+    for k in ("s1", "s2", "s3", "s4"):
+        assert isinstance(st[k].get("record"), dict), f"{k} has no record"
+    s1 = st["s1"]["record"]
+    assert s1["walk_forward"]["exp"] < 0 and s1["walk_forward"]["folds_positive"] < s1["walk_forward"]["folds"]
+    assert [v["key"] for v in s1["paper"]] == list(__import__("paper_tracker").VARIANTS)
+    assert "hold" in st["s2"]["record"] and "premium" in st["s2"]["record"]
+    assert "intervention" in st["s3"]["record"]
+
+
+def test_the_retired_list_names_the_number_that_killed_each_one():
+    for r in app.RETIRED_STRATEGIES:
+        assert r["when"] and r["name"] and r["name_zh"]
+        assert any(ch.isdigit() for ch in r["why"]), f"{r['name']}: no measurement in the reason"
+        assert r["why_zh"]
+    names = " ".join(r["name"] for r in app.RETIRED_STRATEGIES)
+    assert "S2 live" in names and "RSI2" in names and "dump" in names.lower()
+
+
+def test_the_retired_card_renders_every_entry():
+    html = _render(is_admin=False)
+    for r in app.RETIRED_STRATEGIES:
+        assert r["name_zh"] in html
+
+
+def test_the_ledger_endpoint_is_admin_only_and_never_500s(monkeypatch):
+    import strategy3_exec
+    monkeypatch.setattr(strategy3_exec, "closed_pnl_summary",
+                        lambda *a, **k: {"ok": False, "error": "no keys"})
+    app._LEDGER_CACHE.update(ts=0.0, data=None)
+    with app.app.test_client() as c:
+        r = c.get("/api/strategies/ledger")
+        assert r.status_code in (302, 401, 403), "the ledger is the owner's money"
 
 
 def test_bybit_deeplink_is_admin_only():

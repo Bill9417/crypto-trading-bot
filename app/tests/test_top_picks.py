@@ -48,27 +48,22 @@ def test_a_contradicting_engine_is_shown_not_subtracted():
     assert out["buy"][0]["agree"] == 1
 
 
-def test_mover_shorts_are_listed_but_never_counted():
+def test_mover_dumps_are_not_listed_at_all(monkeypatch):
     """Chasing a mover short is the ONE signal here measured confidently
-    negative (-0.211R, CI excludes 0). It stays visible and stays out of the
-    vote."""
-    import json
-    import time
-    import os
-    now = time.time()
-    d = os.path.dirname(os.path.abspath(T.__file__))
-    raw = json.load(open(os.path.join(d, "strategy2_signals.json"), encoding="utf-8"))
-    movers = [m for m in (raw.get("movers") or []) if (m.get("chg_1h") or 0) < 0]
-    if not movers:
-        return                       # no falling movers right now
+    negative (-0.211R, CI excludes 0). It used to be listed-but-not-counted;
+    a "sell" row beside a record that says "this loses" is an invitation, so
+    a dump now produces no row. The pump still votes long."""
+    now = 1_000_000.0
+    files = {"strategy2_signals.json": {"signals": [], "movers": [
+        {"base": "PUMP", "chg_1h": 7.5, "vol_mult": 4.0, "ts": now - 60},
+        {"base": "DUMP", "chg_1h": -9.0, "vol_mult": 6.0, "ts": now - 60},
+    ]}}
+    monkeypatch.setattr(T, "_load", lambda name: files.get(name, {}))
     v = T.collect(now)
-    for m in movers:
-        row = v.get(m.get("base"))
-        if not row:
-            continue
-        for x in row["short"]:
-            if x["src"] == "mover":
-                assert x["counts"] is False, "a mover short was counted as a vote"
+    assert "DUMP" not in v, "a falling mover produced a row"
+    assert [x["src"] for x in v["PUMP"]["long"]] == ["mover"]
+    assert v["PUMP"]["short"] == []
+    assert v["PUMP"]["long"][0]["counts"] is True
 
 
 def test_every_row_carries_the_record_of_every_engine_that_voted():

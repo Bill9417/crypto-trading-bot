@@ -13,7 +13,7 @@ import time
 
 import config
 import signal_outcomes as SO
-import strategy2_live as S2L
+import s2_plan as S2L
 import strategy2_scanner as S2S
 import tg_commands as TGC
 

@@ -74,9 +74,15 @@ def _resolve_secret_key() -> str:
 
 app = Flask(__name__)
 app.config['SECRET_KEY'] = _resolve_secret_key()
-app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///users.db'
+# The auth DB and the signal DB live in instance/. The two env overrides exist
+# for the test suite ONLY: page tests sign in as user 1, and on a clean checkout
+# (CI, a fresh clone) there is no instance DB at all — every signed-in page
+# test died with "no such table: user". tests/conftest.py points both at a
+# throwaway directory before this module is imported, so a test can never open
+# the real users.db. Production never sets them.
+app.config['SQLALCHEMY_DATABASE_URI'] = os.getenv("WOLF_USERS_DB_URI") or 'sqlite:///users.db'
 app.config['SQLALCHEMY_BINDS'] = {
-    'signals': 'sqlite:///signals.db'
+    'signals': os.getenv("WOLF_SIGNALS_DB_URI") or 'sqlite:///signals.db'
 }
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 # Re-read templates from disk on each request so HTML/CSS/JS edits show up on a
@@ -767,7 +773,7 @@ def sync_record_states_in_scan_data() -> None:
 # this ONE value whenever app.css / i18n.js change and every template busts its
 # cache — no more hunting down 10 hardcoded copies (which once shipped an
 # unstyled page to users). Templates reference it as ?v={{ asset_ver }}.
-ASSET_VER = "20260820"
+ASSET_VER = "20260927"
 
 
 @app.context_processor
@@ -1356,17 +1362,15 @@ def delete_user(user_id):
 
 def _perf_selected_strategy():
     """Which strategy the Performance page scopes its stats to: ?strategy=<key|all>,
-    defaulting to the strategy the live bot is RUNNING (the 'dashboard strategy')."""
+    defaulting to the strategy the S1 bot recorded at startup."""
     import backtest as BT
     arg = (request.args.get("strategy") or "").strip()
     if arg == "all" or arg in BT.STRATEGIES:
         return arg
-    st = _live_strategy_state()
-    cand = st.get("running") or st.get("saved") or "default"
-    # The live engine may be a key that NO SignalRecord is tagged with (e.g.
-    # 'strategy2_live' when S2 is the live engine and the S1 companion only scans),
-    # which would silently scope the page to zero trades. Clamp to a real records
-    # strategy so the page always shows the tracked track record.
+    cand = _s1_runtime().get("strategy") or "default"
+    # A marker key that NO SignalRecord is tagged with would silently scope the
+    # page to zero trades. Clamp to a real records strategy so the page always
+    # shows the tracked track record.
     return cand if cand in BT.STRATEGIES else "all"
 
 
@@ -1565,31 +1569,16 @@ def performance():
         
         analytics = build_performance_analytics(records)
 
-        # Which engine is the live account actually trading? Frames the page +
-        # the risk-model card around Strategy 2 when it's the armed live engine.
-        import config as _config
-        s2_live = (_config.read_env_var("STRATEGY2_LIVE", "false") or "false").strip().lower() \
-            in ("1", "true", "yes", "on")
-        if s2_live:
-            try:
-                _ms = int(_config.read_env_var("STRATEGY2_LIVE_MIN_SCORE", "85") or 85)
-            except (TypeError, ValueError):
-                _ms = 85
-            live_engine = {
-                "key": "strategy2_live",
-                "name": "Strategy 2 — TV.pine Confluence (15m)",
-                "tp": "Single TP 2R (100%)",
-                "sl": "SL: ATR (≤4%)",
-                "note": f"Live only on high conviction · long ≥{_ms} / short ≤{100 - _ms}",
-            }
-        else:
-            live_engine = {
-                "key": "default",
-                "name": "Strategy 1 — Wolf Confluence (1h)",
-                "tp": "TP1 1R · TP2 2R",
-                "sl": "SL: ATR (≤4%)",
-                "note": "5+ light confluence + BTC regime",
-            }
+        # The engine whose trades this page scores. S1 is the only engine that
+        # writes SignalRecords — the S2 live layer was retired (measured
+        # −0.081R over 22,631 signals, interval clear of zero).
+        live_engine = {
+            "key": "default",
+            "name": "Strategy 1 — Wolf Confluence (1h)",
+            "tp": "TP1 1R · TP2 2R",
+            "sl": "SL: ATR (≤4%)",
+            "note": "5+ light confluence + BTC regime",
+        }
 
         # Reconciliation against the exchanges' own records. Computed here
         # (not in the browser) so the page states the gap rather than leaving
@@ -2115,7 +2104,6 @@ def index():
         circuit=circuit,
         funnel_summary=funnel_summary,
         top_entries=top_entries,
-        live_strategy=_live_strategy_state(),
     )
 
 @app.route("/api/dashboard_layout", methods=["GET", "POST", "DELETE"])
@@ -2316,32 +2304,6 @@ def get_top_entries():
     return jsonify(build_top_entries(load_data()))
 
 
-# The stand-alone Strategy-2 scanner is a SECOND live engine, selectable in the
-# same admin switcher. It is not a backtest.STRATEGIES entry (it's a separate
-# process armed by STRATEGY2_LIVE), so it gets a synthetic key here.
-S2_ENGINE_KEY = "strategy2_live"
-S2_ENGINE_NAME = "Strategy 2 — TV.pine Confluence (15m live)"
-S2_ENGINE_DESC = ("Stand-alone 15m TV.pine confluence scanner. Trades only the "
-                  "highest-conviction signals (long ≥85 / short ≤15) on the 25 USDT "
-                  "account. Runs INSTEAD of S1 — one engine at a time (./run_all.sh).")
-
-
-def _scanner_live_engine(max_age_sec=900):
-    """True only if the S2 scanner is running AS THE LIVE ENGINE — it rewrote its
-    signals file within max_age_sec (every sweep, ~5 min) AND that file reports
-    live execution armed. An alert-only scanner (live=false, running alongside S1)
-    does NOT count as the live engine."""
-    import time
-    try:
-        path = os.path.join(os.path.dirname(__file__), "strategy2_signals.json")
-        with open(path) as f:
-            data = json.load(f) or {}
-        fresh = (time.time() - float(data.get("generated_at", 0))) <= max_age_sec
-        return bool(fresh and data.get("live"))
-    except Exception:  # noqa: BLE001
-        return False
-
-
 def _s1_runtime() -> dict:
     """What the S1 bot process recorded about ITSELF at startup —
     {'exec': 'binance'|'bybit'|'scan_only', 'strategy': key}. Empty when the
@@ -2359,16 +2321,15 @@ def _s1_mode() -> str:
     The bot records this at startup. A marker without the field (any bot
     started before it existed) falls back to the bot LOCK, which is the one
     unambiguous signal available: bot.py acquires it ONLY in Binance-trading
-    mode — SCAN_ONLY and S1_EXEC=bybit both skip it deliberately, so that the
-    S2 engine's "refuse to trade while S1 holds the lock" rule stays correct.
-    Defaulting a missing field to 'binance' instead would keep printing the
-    exact false claim this replaced."""
+    mode — SCAN_ONLY and S1_EXEC=bybit both skip it deliberately. Defaulting a
+    missing field to 'binance' instead would keep printing the exact false
+    claim this replaced."""
     mode = (_s1_runtime().get("exec") or "").strip()
     if mode in ("binance", "bybit", "scan_only"):
         return mode
     try:
-        import strategy2_live as S2L
-        if S2L.s1_bot_running():
+        import proc_util
+        if proc_util.bot_lock_held():
             return "binance"          # holding the lock means Binance, always
     except Exception:  # noqa: BLE001
         pass
@@ -2382,23 +2343,19 @@ def _s1_mode() -> str:
 
 # The set of things ACTUALLY placing real orders, across BOTH accounts.
 #
-# Deliberately NOT _live_strategy_state(). That function answers the admin
-# SWITCHER's question — S1 or S2, on the Binance account — and answering "none"
-# is correct there when neither is armed. /health was printing that answer under
-# the heading "live engine", so with STRATEGY3_LIVE=true and the S1 Bybit mirror
-# on, the page said "no live engine detected" directly above a process list that
-# marked S1 LIVE and S3 "LIVE on BYBIT". Two contradictory claims, both wrong:
-# the real answer is that S3 and S1-via-mirror are both trading, on Bybit, and
-# Binance is not being traded at all.
+# Process ground truth, not the .env. The old admin switcher answered "S1 or
+# S2, on the Binance account" and said "none" when neither was armed; /health
+# printed that under the heading "live engine", so with STRATEGY3_LIVE=true and
+# the S1 Bybit mirror on, the page said "no live engine detected" directly
+# above a process list that marked S1 LIVE and S3 "LIVE on BYBIT". The real
+# answer is that S3 and S1-via-mirror are both trading, on Bybit, and Binance
+# is not being traded at all.
 def _live_engines(running: set = None) -> list:
     """[{key, name, venue}] — every engine placing real orders right now.
     `running` is the set of process keys known to be alive (from /health's own
     ps pass); a configured-but-dead engine trades nothing."""
     out = []
     running = running if running is not None else set()
-
-    if "s2" in running and _scanner_live_engine():
-        out.append({"key": "s2", "name": S2_ENGINE_NAME, "venue": "Binance"})
 
     if "bot" in running:
         import backtest as BT
@@ -2426,73 +2383,6 @@ def _live_engines(running: set = None) -> list:
     return out
 
 
-def _live_strategy_state():
-    """Saved (.env) vs running live ENGINE for the admin switcher.
-
-    Two engines can be the live one, and only ONE runs at a time (see run_all.sh):
-      • a backtest.STRATEGIES entry (currently just 'default' = S1 Wolf bot),
-        selected via LIVE_STRATEGY; the S1 bot reads it at startup.
-      • the stand-alone Strategy-2 scanner ('strategy2_live'), armed via
-        STRATEGY2_LIVE. Picking it makes S2 the live engine instead of S1.
-    'saved' can lead 'running' until a restart (./run_all.sh) — shown as a
-    divergence banner."""
-    import backtest as BT
-    import config as _config
-    import strategy2_live as S2L
-
-    s2_armed = (_config.read_env_var("STRATEGY2_LIVE", "false") or "false").strip().lower() \
-        in ("1", "true", "yes", "on")
-
-    # Saved (configured) engine.
-    if s2_armed:
-        saved, saved_name = S2_ENGINE_KEY, S2_ENGINE_NAME
-    else:
-        saved = _config.read_env_var("LIVE_STRATEGY", "default")
-        if saved not in BT.STRATEGIES:
-            saved = "default"
-        saved_name = BT.STRATEGIES[saved]["name"]
-
-    # Running engine — the one ACTUALLY placing trades right now, by process
-    # ground-truth (not the saved .env), so a pending switch shows as divergence:
-    #   • S1 = the bot holds its PID lock.
-    #   • S2 = the scanner is alive AND reports itself as the live engine.
-    try:
-        s1_running = S2L.s1_bot_running()
-    except Exception:  # noqa: BLE001
-        s1_running = False
-
-    bot_marker = None
-    try:
-        marker = os.path.join(os.path.dirname(__file__), "bot_strategy.json")
-        if os.path.exists(marker):
-            with open(marker) as f:
-                bot_marker = (json.load(f) or {}).get("strategy")
-    except Exception:  # noqa: BLE001
-        bot_marker = None
-
-    if s1_running:
-        running = bot_marker if bot_marker in BT.STRATEGIES else "default"
-        running_name = (BT.STRATEGIES.get(running) or {}).get("name")
-    elif _scanner_live_engine():
-        running, running_name = S2_ENGINE_KEY, S2_ENGINE_NAME
-    else:
-        running, running_name = None, None
-
-    strategies = [{"key": k, "name": v["name"], "desc": v["desc"], "manage": "bracket"}
-                  for k, v in BT.STRATEGIES.items()]
-    strategies.append({"key": S2_ENGINE_KEY, "name": S2_ENGINE_NAME,
-                       "desc": S2_ENGINE_DESC, "manage": "bracket"})
-
-    return {
-        "saved": saved,
-        "saved_name": saved_name,
-        "running": running,
-        "running_name": running_name,
-        "diverged": bool(running and running != saved),
-        "strategies": strategies,
-    }
-
-
 @app.route("/account")
 @admin_required
 def account():
@@ -2510,36 +2400,7 @@ def account():
             "partial_tp": LIVE_PARTIAL_TP,
             "tp_target": LIVE_TP_TARGET,
         },
-        live_strategy=_live_strategy_state(),
     )
-
-
-@app.route("/api/account/live_strategy", methods=["GET", "POST"])
-@admin_required
-def api_account_live_strategy():
-    """GET: current saved/running live strategy. POST: persist a new LIVE_STRATEGY
-    to .env (takes effect only after the bot is restarted)."""
-    import backtest as BT
-    import config as _config
-    if request.method == "GET":
-        return jsonify(_live_strategy_state())
-    validate_csrf()
-    key = (request.form.get("strategy") or "").strip()
-    try:
-        if key == S2_ENGINE_KEY:
-            # Make Strategy 2 the live engine. run_all.sh sees STRATEGY2_LIVE=true
-            # and starts the S2 scanner INSTEAD of the S1 bot — one at a time.
-            _config.set_env_var("STRATEGY2_LIVE", "true")
-        elif key in BT.STRATEGIES:
-            # An S1-bot strategy: disarm S2 and select it for the bot.
-            _config.set_env_var("STRATEGY2_LIVE", "false")
-            _config.set_env_var("LIVE_STRATEGY", key)
-        else:
-            return jsonify({"ok": False, "error": f"unknown strategy {key!r}"}), 400
-    except Exception as exc:  # noqa: BLE001
-        return jsonify({"ok": False, "error": str(exc)}), 500
-    state = _live_strategy_state()
-    return jsonify({"ok": True, "saved": state["saved"], "restart_required": True, "state": state})
 
 
 @app.route("/api/account")
@@ -3056,18 +2917,14 @@ def build_health():
     """Full stack snapshot for /health — JSON-safe primitives only."""
     import re
     import shutil
-    import config as _config
 
     base = os.path.dirname(__file__)
     now = datetime.now()
-    s2_is_engine = (_config.read_env_var("STRATEGY2_LIVE", "false") or "false") \
-        .strip().lower() in ("1", "true", "yes", "on")
-
-    # The S1 role comes from what the bot process recorded about itself, not
-    # from STRATEGY2_LIVE. Branching on S2 alone had exactly two answers for
-    # three modes, so whenever S3 was the armed engine the page described the
-    # S1 mirror as "LIVE engine — places real orders", which reads as Binance —
-    # the one exchange that mode deliberately never touches.
+    # The S1 role comes from what the bot process recorded about itself.
+    # Branching on an .env flag had exactly two answers for three modes, so
+    # whenever S3 was the armed engine the page described the S1 mirror as
+    # "LIVE engine — places real orders", which reads as Binance — the one
+    # exchange that mode deliberately never touches.
     s1_mode = _s1_mode()
     s1_role = {
         "scan_only": "scan-only companion — refreshes the dashboard, places NO orders",
@@ -3078,10 +2935,7 @@ def build_health():
     labels = {
         "web": ("Web dashboard", f"serves this site on :{os.getenv('FLASK_PORT', '4000')}"),
         "bot": ("S1 bot", s1_role),
-        "s2": ("S2 scanner",
-               "LIVE engine — trades TV.pine confluence on 15m"
-               if s2_is_engine else
-               "alert-only companion — feeds /strategy2, places NO orders"),
+        "s2": ("S2 scanner", "alert-only companion — feeds /strategy2, places NO orders"),
         "s3": ("S3 flip", f"Vegas Flag Flip on Bybit — {strategy3_scanner.mode_string()}"),
     }
 
@@ -3208,20 +3062,8 @@ def build_health():
                                    "— expected a fresh one every ~24h.",
                            "fix": "tail -50 app/logs/strategy2.log"})
 
-    # Which engine is trading vs which one .env selects (divergence = pending
-    # restart), reusing the admin switcher's ground truth.
-    try:
-        st = _live_strategy_state()
-        engine = {"saved_name": st["saved_name"], "running_name": st["running_name"],
-                  "diverged": st["diverged"], "live": live_engines}
-        if st["diverged"]:
-            issues.append({"sev": "warn",
-                           "text": f"Engine divergence — .env selects \"{st['saved_name']}\" "
-                                   f"but \"{st['running_name']}\" is the one trading.",
-                           "fix": "./run_all.sh bg"})
-    except Exception:  # noqa: BLE001
-        engine = {"saved_name": None, "running_name": None, "diverged": False,
-                  "live": live_engines}
+    # Everything placing real orders right now, by process ground truth.
+    engine = {"live": live_engines}
 
     overall = "ok"
     for i in issues:
@@ -3300,6 +3142,13 @@ def api_restart():
     CSRF is handled by the global protect_post_requests() hook, not here."""
     ok, note = restart_ctl.request("web /health button")
     return jsonify({"ok": ok, "note": note})
+
+
+@app.route("/favicon.ico")
+def favicon():
+    """Browsers request this path unprompted; it 404'd on every visit. The
+    manifest icons already exist, so point the legacy path at one of them."""
+    return redirect(url_for("static", filename="icon-192.png"), code=302)
 
 
 @app.route("/sw.js")
@@ -3524,18 +3373,6 @@ def api_strategy2_signals():
                         "timeframe": "15m", "signals": []})
 
 
-@app.route("/api/strategy2_live_status")
-@login_required
-def api_strategy2_live_status():
-    """Live-execution status for the /strategy2 'Live Trading Rules' panel. Reads
-    the .env fresh so the toggle reflects what the scanner will do on next start."""
-    import strategy2_live
-    try:
-        return jsonify(strategy2_live.status())
-    except Exception as exc:  # noqa: BLE001 — never 500 the dashboard
-        return jsonify({"error": str(exc), "enabled": False})
-
-
 # ── Strategies hub (📊 one page, three tabs: S1/S2/S3 rules + live状況) ────────
 def _strategies_params() -> dict:
     """Live rule NUMBERS pulled from config so the /strategies rules stay honest
@@ -3555,6 +3392,9 @@ def _strategies_params() -> dict:
             "leverage": config.LEVERAGE,
             "margin": config.FIXED_MARGIN_USDT,
             "notional": round(config.FIXED_MARGIN_USDT * config.LEVERAGE, 1),
+            "mirror_usdt": config.S1_BYBIT_ORDER_USDT,
+            "mirror_on": bool(config.S1_BYBIT_MIRROR),
+            "vol_ceiling": config.S1_MAX_ATR_PCT,
             "sl_mult": config.ATR_SL_MULTIPLIER,
             "max_sl_pct": round(config.MAX_SL_PCT * 100, 1),
             "tp1_r": config.ATR_TP1_MULTIPLIER,
@@ -3616,10 +3456,102 @@ def _s4_params() -> dict:
     }
 
 
+# ── What the record says about each engine ──────────────────────────────────
+# Every number here is read off disk — state files the engines already write —
+# so rendering the hub costs no exchange call. The live Bybit book (which needs
+# the network) is fetched separately by /api/strategies/ledger, admin-only.
+#
+# The hub used to show rules and live status and never the verdict, which is
+# the one thing a person deciding whether to trust an engine needs first.
+S1_WALK_FORWARD = {
+    # walk_forward.py, run twice on S1's locked params (360d, 6 out-of-sample
+    # folds); the survivorship-corrected rerun moved the number by 0.013R.
+    "exp": -0.086, "exp_pit": -0.099, "folds_positive": 2, "folds": 6,
+    "exp_2": -0.097, "n_2": 78, "date_1": "2026-06-22", "date_2": "2026-07-27",
+    "verdict": "no durable edge — net negative out of sample both times, positive only in the two most recent folds",
+    "verdict_zh": "沒有可持續的優勢 —— 兩次樣本外驗證都是淨負，只有最近兩段是正的",
+}
+
+RETIRED_STRATEGIES = [
+    {"when": "2026-09-27", "name": "S2 live execution layer", "name_zh": "S2 實盤下單層",
+     "why": "S2 triangle: −0.081R ± 0.018 over 22,631 scored outcomes, interval clear of zero; all six replayed exit rules negative",
+     "why_zh": "S2 三角訊號 22,631 筆實測 −0.081R ± 0.018，信賴區間不含 0；六種出場規則全部為負"},
+    {"when": "2026-09-27", "name": "Momentum-dump shorts (Pump Radar 📉 alerts, top-picks sell rows)",
+     "name_zh": "動能急殺做空（📉 警報、綜合前三賣方列）",
+     "why": "−0.211R per trade, interval clear of zero — the one signal measured confidently negative",
+     "why_zh": "每筆 −0.211R，信賴區間不含 0 —— 本專案唯一「確定會賠」的訊號"},
+    {"when": "2026-09-27", "name": "ETH_HighWinRate_RSI2.pine", "name_zh": "RSI-2 高勝率 ETH 策略",
+     "why": "~69% win rate and still a net loss after fees (PF 0.87) — the lesson lives in the case study, not in the strategies folder",
+     "why_zh": "勝率約 69% 但扣費後淨虧（PF 0.87）—— 教訓寫在 case study，不必留在策略資料夾"},
+    {"when": "2026-07-09", "name": "TV_strategy_V2 / TV_strategy_TP / ETH_SOL_30min (Pine)",
+     "name_zh": "TV_strategy_V2 / TP / ETH_SOL_30min（Pine）",
+     "why": "13-month replay: high win rate, net loss; the 78% win-rate backtest was lookahead repainting",
+     "why_zh": "13 個月回放：高勝率、淨虧；78% 勝率的回測是未收盤偷看（repaint）"},
+    {"when": "2026-06-28", "name": "Backtest-registry strategies 2–5 (Donchian breakout, TTM squeeze, trailing, adaptive trend)",
+     "name_zh": "回測登錄表的策略 2–5（唐奇安突破、TTM 擠壓、移動停利、自適應趨勢）",
+     "why": "the Donchian breakout lost 201R in 90 days over 760 trades; its squeeze replacement was still net negative; nothing but S1 beat costs and S1 then failed walk-forward",
+     "why_zh": "唐奇安突破 90 天 760 筆虧 201R；換成擠壓突破仍是淨負；只有 S1 打敗成本，而 S1 之後沒通過樣本外驗證"},
+]
+
+
+def _s1_record() -> dict:
+    """S1: the out-of-sample verdict, the paper variants' forward records, and
+    how many of its live closes a human made (a record with many manual
+    closes is measuring the operator, not the strategy)."""
+    import paper_tracker
+    import strategy_ledger
+    variants = []
+    for v in paper_tracker.VARIANTS:
+        try:
+            st = paper_tracker.stats(v) or {}
+            shape = paper_tracker.exit_shape(v) or {}
+        except Exception:  # noqa: BLE001 — one variant's file must not blank the card
+            st, shape = {}, {}
+        variants.append({"key": v, "n": st.get("total", 0) or 0,
+                         "exp": st.get("expectancy_r"), "wr": st.get("win_rate"),
+                         "net_r": st.get("total_r"), "payoff": shape.get("payoff")})
+    try:
+        intervention = strategy_ledger.intervention_stats("S1")
+    except Exception:  # noqa: BLE001
+        intervention = {}
+    return {"walk_forward": S1_WALK_FORWARD, "paper": variants,
+            "paper_lowvol_ceiling": paper_tracker.LOWVOL_MAX_ATR_PCT,
+            "paper_single_target_r": paper_tracker.SINGLE_TARGET_R,
+            "intervention": intervention}
+
+
+def _s2_record() -> dict:
+    """S2: the outcome tally behind /reality — the base rule on every signal,
+    and the ⭐ premium cohort, each with the verdict its interval licenses."""
+    import reality
+    b = reality.board()
+    hold = next((r for r in (b.get("rules") or []) if r.get("key") == "hold"), None)
+    cohorts = {c["key"]: c for c in (b.get("cohorts") or [])}
+    return {"headline": b.get("headline"), "hold": hold,
+            "premium": cohorts.get("premium"), "long": cohorts.get("long"),
+            "short": cohorts.get("short"), "basis_note": b.get("basis_note")}
+
+
+def _s3_record() -> dict:
+    """S3: what the ledger holds on disk. The realised P&L itself lives in the
+    Bybit closed-P&L feed (network) and arrives via /api/strategies/ledger."""
+    import strategy_ledger
+    try:
+        rows = [r for r in (strategy_ledger._load().get("rows") or [])
+                if r.get("strategy") == "S3"]
+        intervention = strategy_ledger.intervention_stats("S3")
+    except Exception:  # noqa: BLE001
+        rows, intervention = [], {}
+    return {"ledger_rows": len(rows),
+            "open_rows": sum(1 for r in rows if not r.get("closed")),
+            "intervention": intervention}
+
+
 def build_strategies_status() -> dict:
-    """Consolidated LIVE snapshot of all three strategies for the hub. Every
-    branch is failure-safe — one strategy's data source being down must not blank
-    the others or 500 the page."""
+    """Consolidated LIVE snapshot of all four strategies for the hub, each
+    with its MEASURED RECORD beside it. Every branch is failure-safe — one
+    strategy's data source being down must not blank the others or 500 the
+    page."""
     import config
     out = {"s1": {}, "s2": {}, "s3": {}, "s4": {}}
 
@@ -3637,6 +3569,10 @@ def build_strategies_status() -> dict:
         }
     except Exception as exc:  # noqa: BLE001
         out["s1"] = {"error": str(exc)}
+    try:
+        out["s1"]["record"] = _s1_record()
+    except Exception as exc:  # noqa: BLE001
+        out["s1"]["record"] = {"error": str(exc)}
 
     # ── S2 — the 15m scanner's most recent sweep ──
     try:
@@ -3665,6 +3601,10 @@ def build_strategies_status() -> dict:
         }
     except Exception as exc:  # noqa: BLE001
         out["s2"] = {"error": str(exc), "count": 0, "premium": []}
+    try:
+        out["s2"]["record"] = _s2_record()
+    except Exception as exc:  # noqa: BLE001
+        out["s2"]["record"] = {"error": str(exc)}
 
     # ── S3 — flag-flip / OCC per-symbol position state ──
     try:
@@ -3695,6 +3635,10 @@ def build_strategies_status() -> dict:
         out["s3"] = {"symbols": syms}
     except Exception as exc:  # noqa: BLE001
         out["s3"] = {"error": str(exc), "symbols": []}
+    try:
+        out["s3"]["record"] = _s3_record()
+    except Exception as exc:  # noqa: BLE001
+        out["s3"]["record"] = {"error": str(exc)}
 
     # ── S4 — last sweep, what it is tracking, and what it has actually done ──
     try:
@@ -3765,7 +3709,8 @@ def strategies():
     pages into a single overview; each tab links out to its detailed page."""
     return render_template("strategies.html", user=current_user,
                            params=_strategies_params(),
-                           status=_json_safe(build_strategies_status()))
+                           status=_json_safe(build_strategies_status()),
+                           retired=RETIRED_STRATEGIES)
 
 
 @app.route("/api/strategies")
@@ -3773,6 +3718,35 @@ def strategies():
 def api_strategies():
     """Live status for the hub's auto-refresh (rules are static, only状況 moves)."""
     return jsonify(_json_safe(build_strategies_status()))
+
+
+# The one hub number that needs the network: realised P&L on the shared Bybit
+# sub-account, attributed per engine by strategy_ledger. Admin-only (it is the
+# owner's money) and cached, because the hub polls.
+_LEDGER_CACHE = {"ts": 0.0, "data": None}
+LEDGER_CACHE_SEC = 600
+
+
+@app.route("/api/strategies/ledger")
+@admin_required
+def api_strategies_ledger():
+    import strategy_ledger
+    now = time.time()
+    if _LEDGER_CACHE["data"] is not None and now - _LEDGER_CACHE["ts"] < LEDGER_CACHE_SEC:
+        return jsonify(_LEDGER_CACHE["data"])
+    try:
+        pnl = strategy3_exec.closed_pnl_summary()
+        trades = pnl.get("trades") or []
+        data = {"ok": bool(pnl.get("ok")), "error": pnl.get("error"),
+                "by_strategy": strategy_ledger.split_summary(trades) if pnl.get("ok") else {},
+                "intervention": {k: strategy_ledger.intervention_stats(k)
+                                 for k in strategy_ledger.STRATEGIES},
+                "fee_drag": strategy_ledger.fee_drag(trades) if pnl.get("ok") else None,
+                "ts": now}
+    except Exception as exc:  # noqa: BLE001 — the hub degrades, never 500s
+        data = {"ok": False, "error": str(exc)[:200], "by_strategy": {}, "ts": now}
+    _LEDGER_CACHE.update(ts=now, data=_json_safe(data))
+    return jsonify(_LEDGER_CACHE["data"])
 
 
 @app.route("/api/price_alerts")

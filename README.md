@@ -40,6 +40,7 @@ Wolf Scanner watches the whole Binance perpetuals market on a schedule, scores e
 - 🥇 **Second live engine (S3)** — Vegas flag-flip on XAUT (gold), signals *and* orders on Bybit.
 - 📈 **S4 perp radar** — Bybit's stock/commodity perps (AAPL, NVDA, gold…) alongside crypto, five gates, **long and short**. Alert-only by design: it never places an order.
 - 🔬 **Measurement tooling** — walk-forward, a rotation-null factor lab, and a `/reality` scoreboard built to *disprove* edges rather than advertise them.
+- 🪦 **Strategies retire on their own numbers** — the `/strategies` hub puts each engine's measured record beside its rules, and lists what was removed and the figure that removed it (see [Retired strategies](#-retired-strategies)).
 - 📱 **Telegram topics group** — 📊 signals with Entry/SL/TP plans, 🔔 price alerts, 🌍 event radar, 💻 tech digest, 📈 daily report, 🇹🇼 台股 daily scan, 💥 BTC/ETH liquidation-cascade alerts, plus a command bot (`/winrate /positions /s4 /tw /liq /whales …`).
 
 ---
@@ -90,7 +91,7 @@ The Flask app (default `http://127.0.0.1:4000`) serves a mobile-friendly PWA wit
 |---|---|
 | **Dashboard** | Live scan results, both account strips, price alerts, 🚀 pump radar |
 | **Funnel** | Why each coin passed or was rejected, gate by gate + best-trade hero |
-| **Strategies** | S1 / S2 / S3 rules and their live situation, one tab each |
+| **Strategies** | S1 / S2 / S3 / S4 — rules, **measured record** and live situation, one tab each, plus the retired list |
 | **Strategy 2** | Confluence meter (mirrors All-in-One ULTIMATE Pro), EMA chart, score heatmap |
 | **S4** | The perp radar: qualifying setups, the gate that rejected the rest, and the recorded outcome of every alert it has fired |
 | **Reality** | The measured scoreboard — ~19k scored outcomes, and which exit rules actually cleared zero |
@@ -149,6 +150,7 @@ Everything is driven by `app/.env` (see `app/.env.example`). Key settings:
 | `USE_RESTING_ORDERS` | `true` | Book LIMIT entry + bracket the moment a setup queues |
 | `USE_POST_ONLY_ENTRY` | `true` | Maker-only (GTX) entry for the lower fee |
 | `PLACE_BRACKET_ORDERS` | `true` | Attach exchange-side SL/TP to every entry |
+| `S1_MAX_ATR_PCT` | `0` (off) | S1 volatility ceiling: skip a symbol whose own ATR(14) exceeds this % of price. The one gate the labs found to improve expectancy monotonically; forward-tested by `paper_tracker` before it is switched on. Read by the bot **and** the backtester. |
 
 > 🔒 **Secrets never leave your machine.** `.env`, databases, logs and cache files are all in `.gitignore`. Only `.env.example` (with placeholders) is committed.
 
@@ -168,10 +170,26 @@ Only then does the executor place a resting maker-limit entry with its SL/TP bra
 
 ---
 
+## 🪦 Retired strategies
+
+Everything below was removed by its own measured record, not by taste. The full list, bilingual, sits at the bottom of `/strategies`.
+
+| When | What | The number that retired it |
+|---|---|---|
+| 2026-09-27 | **S2 live-execution layer** (`strategy2_live.py`, `STRATEGY2_LIVE`) | The S2 triangle scores **−0.081R ± 0.018 over 22,631 outcomes** — an interval clear of zero — and all six replayed exit rules are negative. S2 still alerts and is measured on `/reality`; it simply has no order path any more. |
+| 2026-09-27 | **Momentum-dump shorts** (📉 Pump Radar alerts, top-picks sell rows) | **−0.211R per trade, interval clear of zero** — the one signal this repo measured as confidently negative. Dumps stay on the dashboard strip as information; only pumps are alert-grade. |
+| 2026-09-27 | `ETH_HighWinRate_RSI2.pine` | ~69% win rate and still a **net loss after fees (PF 0.87)**. The lesson lives in the case study. |
+| 2026-07-09 | `TV_strategy_V2` / `TV_strategy_TP` / `ETH_SOL_30min` (Pine) | 13-month replay: high win rate, net loss; the 78% win-rate backtest was **lookahead repainting**. |
+| 2026-06-28 | Backtest-registry strategies 2–5 (Donchian breakout, TTM squeeze, trailing, adaptive trend) | The Donchian breakout lost **201R in 90 days** over 760 trades; its squeeze replacement was still net negative. |
+
+What stays is not "proven": S1 has failed walk-forward twice and runs live as an experiment with its paper variants forward-tested beside it. The hub says so on the tab.
+
+---
+
 ## 🧪 Testing
 
 ```bash
-pytest                      # full suite — 1,371 tests across 79 files
+pytest                      # full suite — 2,189 tests across 127 files
 pytest app/tests/test_strategy4.py -q       # one module
 cd app && ./run_tests.sh    # convenience wrapper
 ```
@@ -203,6 +221,7 @@ crypto/
 │   ├── config.py               #   all thresholds & flags (from app/.env)
 │   ├── indicators.py / smc.py / market_intel.py    # signal stack
 │   ├── strategy2_meter.py      #   confluence meter — mirrors All-in-One_ULTIMATE_Pro.pine
+│   ├── s2_plan.py              #   S2 Entry/SL/TP plan maths (alert-only — there is no S2 order path)
 │   ├── copy_engine.py / copy_store.py / copy_vault.py   # self-hosted copy trading
 │   ├── walk_forward.py / factor_lab.py            # measurement, not marketing
 │   ├── paper_tracker.py        #   forward-tests variants with no money
@@ -215,7 +234,7 @@ crypto/
 │   ├── stocks_data.py / us_market.py    # TW50 + US100 + US close digest
 │   ├── line_push.py            #   LINE OA broadcast (family-facing)
 │   ├── templates/ + static/    #   dashboard pages, CSS, PWA assets
-│   └── tests/                  #   pytest suite (1,371 tests / 79 files)
+│   └── tests/                  #   pytest suite (2,189 tests / 127 files)
 ├── pine/
 │   ├── strategies/             # backtestable strategy() scripts (live + research)
 │   ├── indicators/             # chart indicator() scripts (All-in-One ULTIMATE Pro, Sykes…)

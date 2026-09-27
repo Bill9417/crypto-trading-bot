@@ -116,31 +116,6 @@
             <div class="stat"><div class="stat-label">Open orders</div><div class="stat-value num" id="s-ord">—</div><div class="stat-note">resting + brackets</div></div>
         </div>
 
-        <div class="panel" style="border-left:4px solid var(--wolf-gold);">
-            <div class="panel-title">
-                <span>⚙ Live strategy <span class="dim" style="font-size:.66rem;font-weight:600;">what the bot trades with REAL money — change it here</span></span>
-            </div>
-            {% if live_strategy.diverged %}
-            <div class="errbar" style="background:rgba(255,207,75,.12);border:1px solid rgba(255,207,75,.35);color:var(--wolf-gold);font-size:.78rem;padding:10px 14px;border-radius:11px;margin-bottom:12px;">
-                Running bot is on <b>{{ live_strategy.running_name or live_strategy.running }}</b> but the saved setting is <b>{{ live_strategy.saved_name }}</b>. Restart the bot (<code>./run_all.sh</code>) to apply.
-            </div>
-            {% endif %}
-            <div class="meta-row" style="align-items:center;">
-                <span>Saved: <b id="ls-saved">{{ live_strategy.saved_name }}</b></span>
-                <span>Running: <b id="ls-running">{{ live_strategy.running_name or '—' }}</b></span>
-                <label style="display:flex;align-items:center;gap:8px;margin-left:auto;max-width:100%;min-width:0;">
-                    <select id="ls-select" style="background:rgba(255,255,255,.04);border:1px solid var(--wolf-border);color:var(--wolf-text);font-size:.82rem;font-weight:600;padding:8px 10px;border-radius:9px;cursor:pointer;min-width:0;flex:1 1 auto;">
-                        {% for s in live_strategy.strategies %}
-                        <option value="{{ s.key }}" data-manage="{{ s.manage }}" data-desc="{{ s.desc }}" {% if s.key == live_strategy.saved %}selected{% endif %}>{{ s.name }}</option>
-                        {% endfor %}
-                    </select>
-                    <button class="btn-wolf" id="ls-save" onclick="saveLiveStrategy()">Save</button>
-                </label>
-            </div>
-            <div class="note" id="ls-desc" style="margin-top:8px;"></div>
-            <div class="note"><b>Changing this trades real money.</b> It takes effect only after you restart the bot (<code>./run_all.sh</code>) — a running bot is never hot-reloaded. S3/S4 manage the position with a trailing stop (no fixed take-profit).</div>
-        </div>
-
         <div class="panel">
             <div class="panel-title">
                 <span><span class="live-dot"></span>Open positions</span>
@@ -207,27 +182,6 @@
             const body=new URLSearchParams(); body.set('csrf_token',CSRF);
             Object.entries(fields).forEach(([k,v])=>{ if(v!==undefined&&v!==null&&v!=='') body.set(k,v); });
             return fetch(url,{method:'POST',headers:{'X-CSRFToken':CSRF},body}).then(r=>r.json());
-        }
-
-        function lsDescUpdate(){
-            const sel=document.getElementById('ls-select'); if(!sel) return;
-            const o=sel.options[sel.selectedIndex];
-            document.getElementById('ls-desc').textContent =
-                (o.dataset.desc||'') + '  ·  management: ' + (o.dataset.manage||'bracket');
-        }
-        function saveLiveStrategy(){
-            const sel=document.getElementById('ls-select');
-            const o=sel.options[sel.selectedIndex];
-            if(!confirm('Set the LIVE bot strategy to "'+o.textContent+'"?\n\n'+
-                        'This controls what trades REAL money. It takes effect only after you '+
-                        'restart the bot (./run_all.sh) — a running bot is not hot-reloaded.')) return;
-            const btn=document.getElementById('ls-save'); btn.disabled=true;
-            post('/api/account/live_strategy',{strategy:sel.value}).then(d=>{
-                btn.disabled=false;
-                if(d.ok){ document.getElementById('ls-saved').textContent=(d.state&&d.state.saved_name)||sel.value;
-                          toast('Saved. Restart the bot (./run_all.sh) to apply.'); }
-                else toast(d.error||'Save failed', false);
-            }).catch(()=>{ btn.disabled=false; toast('Save failed', false); });
         }
 
         function sidePill(s){ const k = s==='LONG'||s==='BUY'?'long':'short'; return `<span class="pill ${k}">${s||'—'}</span>`; }
@@ -480,8 +434,6 @@
             });
         }
 
-        const _lsSel=document.getElementById('ls-select');
-        if(_lsSel){ _lsSel.addEventListener('change', lsDescUpdate); lsDescUpdate(); }
         refresh();
         loadHistory();
         // Real Binance account endpoints — never poll them from a hidden tab.
