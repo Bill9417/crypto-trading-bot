@@ -225,3 +225,24 @@ def test_the_tick_settles_after_the_sweep(monkeypatch, tmp_path):
     out = C.tick(now=T0 + 25 * 3600, force=True)
     assert out["book"]["closed"] == 1
     assert C.load()["book"]["n_lifetime"] == 1
+
+
+def test_the_book_is_written_and_settled_by_the_radars_own_tick():
+    """The dry-run audit looks for note/tick pairs in the sweep. This book
+    is both written and settled one level down, inside crowd_radar.tick —
+    which the sweep calls — so the same "records but never settles" failure
+    the zone book had for weeks is checked here, at the level it lives."""
+    import ast
+    import os
+    app_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+    def calls(module):
+        with open(os.path.join(app_dir, module + ".py"), encoding="utf-8") as f:
+            tree = ast.parse(f.read())
+        return {f"{n.func.value.id}.{n.func.attr}" for n in ast.walk(tree)
+                if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)
+                and isinstance(n.func.value, ast.Name)}
+    radar = calls("crowd_radar")
+    assert "crowd_outcomes.note" in radar, "the radar never records a pile-up"
+    assert "crowd_outcomes.settle" in radar, "the radar records but never settles"
+    assert "crowd_radar.tick" in calls("strategy2_scanner"), "the sweep never runs the radar"

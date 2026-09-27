@@ -37,7 +37,11 @@ def _sweep_calls():
 # Every book that a live scanner writes into. Adding an engine without adding
 # it here does not fail — but the completeness test below fails if a module
 # named *_outcomes exists and is not listed.
-BOOKS = ["flip_outcomes", "zone_outcomes", "vegas_outcomes", "thrust_outcomes"]
+# crowd_outcomes is written AND settled inside crowd_radar.tick (which the
+# sweep calls) rather than from the sweep itself, so the record/settle check
+# below is trivially satisfied for it; test_crowd_outcomes pins that wiring.
+BOOKS = ["flip_outcomes", "zone_outcomes", "vegas_outcomes", "thrust_outcomes",
+         "crowd_outcomes"]
 
 
 @pytest.mark.parametrize("book", BOOKS)
