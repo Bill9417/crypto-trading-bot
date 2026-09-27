@@ -26,6 +26,8 @@ import smc as smc_mod
 from indicators import (
     atr_pct as _ind_atr_pct,
     volatility_ceiling_ok,
+    btc_regime_series_from_closes,
+    macd_hist_last,
     check_tsi_signal, check_macd_signal, check_volume_gate,
     check_stoch_rsi_signal,
     calculate_ema, calculate_vwap,
@@ -109,22 +111,12 @@ def ema_series_4h(ohlcv_4h, period=50):
 
 
 def btc_regime_series(btc_1h):
-    """Per-1h-bar regime (bull/bear/neutral) using EMA50 + slope, like the live bot."""
-    import pandas as pd
-    closes = [c[4] for c in btc_1h]
-    ema = pd.Series(closes).ewm(span=C.BTC_REGIME_EMA, adjust=False).mean().tolist()
-    lb = C.BTC_REGIME_SLOPE_LOOKBACK
-    out = []
-    for i in range(len(btc_1h)):
-        reg = "neutral"
-        if i >= C.BTC_REGIME_EMA + lb:
-            now, prev, price = ema[i], ema[i - lb], closes[i]
-            if price > now and now > prev:
-                reg = "bull"
-            elif price < now and now < prev:
-                reg = "bear"
-        out.append((btc_1h[i][0], reg))
-    return out
+    """Per-1h-bar regime (bull/bear/neutral) — the ONE rule in indicators.py
+    that the live bot and the S2 scanner read, so a backtest can never grade a
+    bar's regime differently from the bot that traded it."""
+    regs = btc_regime_series_from_closes([c[4] for c in btc_1h],
+                                         C.BTC_REGIME_EMA, C.BTC_REGIME_SLOPE_LOOKBACK)
+    return [(btc_1h[i][0], regs[i]) for i in range(len(btc_1h))]
 
 
 def as_of(series, ts, default):
@@ -289,9 +281,17 @@ def evaluate(oh, ema50_4h, btc_regime):
     else:
         vol_ok = volatility_ceiling_ok(oh, getattr(C, "S1_MAX_ATR_PCT", 0) or 0)
 
+    # MACD-against gate — the SAME flag and helper as bot.py (S1_MACD_GATE).
+    macd_ok = True
+    if getattr(C, "S1_MACD_GATE", False):
+        _hist = macd_hist_last(prices)
+        if _hist is not None and ((_hist < 0) if is_long else (_hist > 0)):
+            macd_ok = False
+
     qualified = (eff_lights >= required and base_ok and trend_aligned and macro_ok and momentum_ok
                  and score_edge >= 2 and not smc_blocked and rsi_ok and btc_ok and not_extended
-                 and volume_ok and trend_4h_aligned and adx_ok and vol_ok and entry is not None)
+                 and volume_ok and trend_4h_aligned and adx_ok and vol_ok and macd_ok
+                 and entry is not None)
     if not qualified:
         return None
     return (is_long, entry, sl, tp1, tp2, eff_lights)

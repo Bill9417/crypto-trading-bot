@@ -31,14 +31,18 @@ import time
 
 import requests
 
+import config
 import strategy2_meter as S2
+from indicators import adx_components, atr_pct, btc_regime_from_closes, calculate_ema
 
 # DERIVED from the meter, never a bare literal. _strategies() runs
 # S2.compute_signal on these candles; at the old 400 it took the
 # `n < SIGNAL_MIN_CANDLES` early return on every coin, so the S2 row read
 # "no signal" for reasons that had nothing to do with the market.
-# See the same note on strategy2_scanner.CANDLES.
-K15_CANDLES = max(400, S2.SIGNAL_MIN_CANDLES + 20)
+# See the same note on strategy2_scanner.CANDLES. +21 rather than +20: the
+# S4 gates and the zone read run on the CLOSED slice (one bar fewer), and at
+# +20 S4 answered "not enough history" on every coin for the same non-reason.
+K15_CANDLES = max(400, S2.SIGNAL_MIN_CANDLES + 21)
 
 BASE = "https://fapi.binance.com"
 TIMEOUT = 12
@@ -55,6 +59,11 @@ FUNDING_HOT_MULT = 3.0
 # a worse expression of the same move.
 RS_WEAK_PCT = -5.0
 RS_STRONG_PCT = 5.0
+# Volume: the last hour against the previous 24h, on the 15m bars already
+# fetched. 2× is "a loud hour". The vegas gate that measured +0.12R asks for
+# ≥3× on 1h bars against a 20-bar mean — a different base, which the note on
+# the flag says rather than borrowing the number.
+VOL_SURGE_MULT = float(os.getenv("COIN_VOL_SURGE_MULT", "2.0"))
 
 
 def _get(path, **params):
@@ -211,6 +220,183 @@ def read_structure(ohlcv: list) -> dict:
             "note": f"上方最近壓力還有 {room['room_pct']:.1f}%"}
 
 
+# ── precision context: the factors this repo has actually MEASURED ──────────
+# 2026-09-27. The eight readings above are conventional: exact numbers, read
+# by convention. These four vote too, but each one carries a number this repo
+# measured on its own signals, and the note says which — so "more precise"
+# means "more of the things that were shown to matter", not more dials.
+def read_regime(btc_closes: list) -> dict:
+    """BTC's 1h regime — the SAME rule the S1 bot, the S2 scanner and the
+    backtester read. Measured on real S2 fires: signals aligned with it reach
+    TP1 first 57% of the time, counter-regime ones 41% — the single biggest
+    win-rate lever found, and the reason the ⭐ tier requires alignment."""
+    regime = btc_regime_from_closes(btc_closes)
+    if regime == "bull":
+        return {"regime": regime, "read": LONG,
+                "note": "BTC 1h 站在上升的 EMA50 之上 —— 順勢做多。實測：與大盤同向的訊號 57% 先到 TP1，逆勢只有 41%"}
+    if regime == "bear":
+        return {"regime": regime, "read": SHORT,
+                "note": "BTC 1h 跌破下降的 EMA50 —— 順勢做空。實測：與大盤同向的訊號 57% 先到 TP1，逆勢只有 41%"}
+    return {"regime": regime, "read": NEUTRAL,
+            "note": "BTC 盤整 —— 沒有方向濾網；⭐ 精選要求與大盤同向，所以此刻不會發"}
+
+
+def read_frames(price, ema50_4h, ema200_1h) -> dict:
+    """The two higher-timeframe gates the engines already use — S1's 4H EMA50
+    filter and S2/S4's 1H EMA200 side — asked whether they agree."""
+    if price is None or ema50_4h is None or ema200_1h is None:
+        return {"read": NEUTRAL, "note": "K 線不足以算 4H EMA50 / 1H EMA200"}
+    above = (float(price) > float(ema50_4h), float(price) > float(ema200_1h))
+    if all(above):
+        return {"read": LONG, "note": "4H EMA50 與 1H EMA200 之上 —— S1 的 4H 濾網和 S2/S4 的 EMA200 門檻都同意做多"}
+    if not any(above):
+        return {"read": SHORT, "note": "4H EMA50 與 1H EMA200 之下 —— 兩個時框都同意做空"}
+    return {"read": NEUTRAL,
+            "note": f"時框不一致（4H 在{'上' if above[0] else '下'}、1H 在{'上' if above[1] else '下'}）—— S1 的 4H 濾網會擋掉其中一邊"}
+
+
+def read_adx(k1h_closed: list) -> dict:
+    """Trend strength on 1h. Below the ⭐ tier's bar the reading is 'chop' and
+    takes no side — a confluence signal in chop is where this repo's signals
+    have measured worst."""
+    comp = adx_components(k1h_closed, 14) if k1h_closed else None
+    if not comp or comp.get("adx") is None:
+        return {"adx": None, "read": NEUTRAL, "note": "K 線不足以算 ADX"}
+    adx, th = float(comp["adx"]), float(config.STRATEGY2_PREMIUM_MIN_ADX)
+    if adx < th:
+        return {"adx": adx, "read": NEUTRAL,
+                "note": f"ADX {adx:.1f} < {th:g} —— 盤整；共振訊號在這裡最常失準（⭐ 精選要求 ≥{th:g}）"}
+    bull = float(comp.get("plus_di") or 0) > float(comp.get("minus_di") or 0)
+    return {"adx": adx, "read": LONG if bull else SHORT,
+            "note": f"ADX {adx:.1f} 有趨勢（≥{th:g}）· {'+DI 領先' if bull else '−DI 領先'}"
+                    f"{'、還在增強' if comp.get('rising') else ''}"}
+
+
+def read_zone(k15_closed: list) -> dict:
+    """Is price INSIDE a fresh supply / demand zone — the 供需區 engine's own
+    definition, same pivots, same freshness rule — and if not, how far away
+    the nearest fresh ones sit."""
+    import zones as Z
+    if not k15_closed or len(k15_closed) < 60:
+        return {"read": NEUTRAL, "note": "K 線不足"}
+    rec = "實測順勢 +0.175R / 逆勢 −0.032R（3,653 筆重播），帳本 2026-08-20 重算中"
+    if Z.at_zone(k15_closed, "long"):
+        return {"read": LONG, "in_zone": "demand", "note": f"價格正在新鮮的需求區內 —— 供需區引擎的 LONG 條件。{rec}"}
+    if Z.at_zone(k15_closed, "short"):
+        return {"read": SHORT, "in_zone": "supply", "note": f"價格正在新鮮的供給區內 —— 供需區引擎的 SELL 條件。{rec}"}
+    price = float(k15_closed[-1][4])
+    fresh = [z for z in Z.build(k15_closed) if z.get("fresh")]
+    above = [z for z in fresh if z["kind"] == "supply" and z["bottom"] > price]
+    below = [z for z in fresh if z["kind"] == "demand" and z["top"] < price]
+    parts = []
+    if above:
+        parts.append(f"上方供給區 +{_pct(above[0]['bottom'], price):.1f}%")
+    if below:
+        parts.append(f"下方需求區 −{_pct(price, below[0]['top']):.1f}%")
+    return {"read": NEUTRAL, "in_zone": None,
+            "note": ("不在任何新鮮區間內 · " + " · ".join(parts)) if parts else "附近沒有新鮮的供需區"}
+
+
+# Quality flags: they do NOT vote. A volatile coin is not bearish and a loud
+# hour is not bullish; they say whether the conditions the engines were
+# measured under hold right now.
+def read_volatility(k1h_closed: list) -> dict:
+    """The symbol's own 1h ATR as a % of price, against the ceiling
+    s1_regime_lab found (config.LOWVOL_ATR_PCT — the same number paper_tracker
+    and the S2 outcome cohort use)."""
+    pct = atr_pct(k1h_closed) if k1h_closed else None
+    ceiling = float(config.LOWVOL_ATR_PCT)
+    if pct is None:
+        return {"ok": None, "value": "—", "atr_pct": None, "note": "K 線不足以算 ATR"}
+    if pct <= ceiling:
+        return {"ok": True, "value": f"{pct:.2f}%", "atr_pct": pct,
+                "note": f"1h ATR 是價格的 {pct:.2f}%，在 {ceiling:g}% 天花板之下 —— S1 實驗室唯一一致的改善："
+                        f"天花板越緊期望值越高（31 檔、多空皆轉正）"}
+    return {"ok": False, "value": f"{pct:.2f}%", "atr_pct": pct,
+            "note": f"1h ATR 是價格的 {pct:.2f}%，高於 {ceiling:g}% —— S1 的訊號在高波動幣種上歷史上是虧的"}
+
+
+def read_volume(k15_closed: list) -> dict:
+    """The last hour's volume against the previous 24h, per hour, on closed
+    15m bars — the same arithmetic as the Pump Radar."""
+    vols = [float(c[5]) for c in (k15_closed or [])]
+    if len(vols) < 100:
+        return {"ok": None, "value": "—", "mult": None, "note": "K 線不足以比較量能"}
+    last = sum(vols[-4:])
+    prior = vols[-100:-4]
+    avg = sum(prior) / len(prior) * 4
+    mult = (last / avg) if avg > 0 else 0.0
+    if mult >= VOL_SURGE_MULT:
+        return {"ok": True, "value": f"{mult:.1f}×", "mult": mult,
+                "note": f"最近一小時成交量是過去 24h 平均的 {mult:.1f} 倍 —— 量能是隧道翻多唯一有效的濾網（+0.12R，以 1h ≥3× 量）；"
+                        f"但單獨追量能實測 −0.054R，它是確認、不是理由"}
+    return {"ok": False, "value": f"{mult:.1f}×", "mult": mult,
+            "note": f"最近一小時成交量是過去 24h 平均的 {mult:.1f} 倍 —— 沒有量能確認"}
+
+
+def premium_gate(score, regime: str, adx) -> dict:
+    """The ⭐ premium tier's three gates on this coin right now — the best
+    combination the 60-day replay found (conviction ≥85 + BTC-aligned + ADX
+    ≥20 → 58.7% first to TP1 at the ⭐ geometry, against ~49% for the raw
+    feed). Not a prediction: it says whether the conditions that were
+    measured best are present."""
+    if score is None:
+        return {"ok": False, "direction": None, "conviction": None, "gates": [],
+                "note": "儀表沒有讀數"}
+    direction = LONG if float(score) >= 50 else SHORT
+    conv = float(score) if direction == LONG else 100 - float(score)
+    min_conv = int(config.STRATEGY2_PREMIUM_MIN_SCORE)
+    min_adx = float(config.STRATEGY2_PREMIUM_MIN_ADX)
+    aligned = (direction == LONG and regime == "bull") or (direction == SHORT and regime == "bear")
+    gates = [
+        {"key": "conv", "label": f"信心 ≥ {min_conv}", "ok": conv >= min_conv, "value": f"{conv:.0f}"},
+        {"key": "aligned", "label": "與 BTC 同向", "ok": bool(aligned),
+         "value": {"bull": "牛", "bear": "熊"}.get(regime, "盤整")},
+        {"key": "adx", "label": f"ADX ≥ {min_adx:g}", "ok": adx is not None and float(adx) >= min_adx,
+         "value": f"{float(adx):.1f}" if adx is not None else "—"},
+    ]
+    ok = all(g["ok"] for g in gates)
+    return {"ok": ok, "direction": direction, "conviction": conv, "gates": gates,
+            "note": ("三關全過 —— 本專案 60 天回放量到最好的組合：58.7% 先到 TP1（原始訊號約 49%）" if ok else
+                     "沒過的關：" + "、".join(g["label"] for g in gates if not g["ok"]) + " —— 不到 ⭐ 精選等級")}
+
+
+# The S4 scan names its rejections in English for the logs; the page reads
+# in 中文. Unknown keys pass through unchanged so a new gate shows as itself.
+S4_REJ_ZH = {
+    "no long triangle": "沒有做多三角", "no short triangle": "沒有做空三角",
+    "EMA200 not rising": "EMA200 沒上升", "EMA200 not falling": "EMA200 沒下降",
+    "no support below": "下方沒有支撐", "no resistance above": "上方沒有壓力",
+    "stop distance out of range": "停損距離不合格", "not enough history": "K 線不足",
+    "no OI data": "前四關通過 · 未平倉未查", "OI not supportive": "未平倉方向相反",
+    "no side enabled": "多空都關閉",
+}
+
+
+def s4_reason_zh(reason) -> str:
+    import re
+    r = str(reason or "")
+    if r in S4_REJ_ZH:
+        return S4_REJ_ZH[r]
+    m = re.match(r"^no recent (bullish|bearish) divergence$", r)
+    if m:
+        return "沒有多頭背離" if m.group(1) == "bullish" else "沒有空頭背離"
+    m = re.match(r"^only (\d+) of (\d+) divergence sources$", r)
+    if m:
+        return f"背離只有 {m.group(1)}/{m.group(2)} 個"
+    m = re.match(r"^stop ([\d.]+)% under the ([\d.]+)% fee floor$", r)
+    if m:
+        return f"停損 {m.group(1)}% 低於手續費下限"
+    return r
+
+
+def _meter_score(k15: list):
+    try:
+        return S2.compute_signal(k15).get("score")
+    except Exception:  # noqa: BLE001
+        return None
+
+
 # ── assembly ─────────────────────────────────────────────────────────────────
 def _factor(key, label, value, r: dict):
     return {"key": key, "label": label, "value": value,
@@ -240,7 +426,9 @@ def analyse(query: str, now: float = None) -> dict:
 
 def _build(sym: str) -> dict:
     base = sym[:-4]
-    k1h = _get("/fapi/v1/klines", symbol=sym, interval="1h", limit=48)
+    # 1h deep enough for EMA200 + ADX warm-up; 4h for S1's EMA50 filter.
+    k1h = _get("/fapi/v1/klines", symbol=sym, interval="1h", limit=260)
+    k4h = _get("/fapi/v1/klines", symbol=sym, interval="4h", limit=120)
     k15 = _get("/fapi/v1/klines", symbol=sym, interval="15m", limit=K15_CANDLES)
     tick = _get("/fapi/v1/ticker/24hr", symbol=sym)
     prem = _get("/fapi/v1/premiumIndex", symbol=sym)
@@ -251,7 +439,7 @@ def _build(sym: str) -> dict:
                    symbol=sym, period="1h", limit=1)
     except Exception:  # noqa: BLE001 — a missing ratio is not a failed page
         lsr = []
-    btc = _get("/fapi/v1/klines", symbol="BTCUSDT", interval="1h", limit=48)
+    btc = _get("/fapi/v1/klines", symbol="BTCUSDT", interval="1h", limit=120)
 
     closes = [float(c[4]) for c in k1h]
     price = float(tick["lastPrice"])
@@ -282,11 +470,34 @@ def _build(sym: str) -> dict:
                  if len(btc_closes) > 24 else 0.0)
     struct = read_structure(k15)
 
+    # The measured context. Closed bars only — the forming candle still moves.
+    k1h_closed, k4h_closed, k15_closed = k1h[:-1], k4h[:-1], k15[:-1]
+    closes_1h = [float(c[4]) for c in k1h_closed]
+    closes_4h = [float(c[4]) for c in k4h_closed]
+    ema200_1h = calculate_ema(closes_1h, 200) if len(closes_1h) >= 200 else None
+    ema50_4h = calculate_ema(closes_4h, 50) if len(closes_4h) >= 50 else None
+    regime = read_regime(btc_closes)
+    frames = read_frames(price, ema50_4h, ema200_1h)
+    adx = read_adx(k1h_closed)
+    zone = read_zone(k15_closed)
+    vol = read_volatility(k1h_closed)
+    volume = read_volume(k15_closed)
+    gate = premium_gate(_meter_score(k15), regime["regime"], adx["adx"])
+
     factors = [
+        _factor("regime", "大盤 · BTC 趨勢",
+                {"bull": "牛", "bear": "熊", "neutral": "盤整"}.get(regime["regime"], "—"), regime),
+        _factor("frames", "時框一致性 · 4H/1H",
+                (f"4H {'上' if ema50_4h is not None and price > ema50_4h else '下'} · "
+                 f"1H {'上' if ema200_1h is not None and price > ema200_1h else '下'}")
+                if ema50_4h is not None and ema200_1h is not None else "—", frames),
+        _factor("adx", "趨勢強度 · ADX",
+                f"{adx['adx']:.1f}" if adx.get("adx") is not None else "—", adx),
         _factor("oi", "市場結構 · 未平倉", f"{oi_pct:+.2f}% (1h)", oi),
         _factor("taker", "主動買賣 · 誰在追價",
                 f"買 {taker.get('share') or 0:.1f}%", taker),
         _factor("structure", "價格結構", struct.get("note", ""), struct),
+        _factor("zone", "供需區", {"demand": "需求區內", "supply": "供給區內"}.get(zone.get("in_zone"), "區間外"), zone),
         _factor("m1", "動能 1H", f"{m1:+.2f}%" if m1 is not None else "—",
                 {"read": m1r, "note": "近一小時價格方向"}),
         _factor("m24", "動能 24H", f"{m24:+.2f}%" if m24 is not None else "—",
@@ -317,9 +528,18 @@ def _build(sym: str) -> dict:
         "mcap": mcap, "oi_share": oi_share,
         "funding": fr["value"], "funding_median": fr.get("median"),
         "factors": factors,
+        "factor_count": len(factors),
         "long_count": longs, "short_count": shorts,
         "neutral_count": len(factors) - longs - shorts,
         "lean": lean,
+        "regime": regime["regime"],
+        # Quality flags do NOT vote — they say whether the conditions the
+        # engines were measured under hold right now.
+        "quality": [
+            {"key": "volatility", "label": "波動 · 1h ATR / 價格", **vol},
+            {"key": "volume", "label": "量能 · 最近一小時 vs 24h", **volume},
+        ],
+        "premium_gate": gate,
         "spark": [float(c[4]) for c in k15[-48:]],
         "strategies": _strategies(k15),
         "ts": time.time(),
@@ -349,13 +569,31 @@ def _strategies(k15: list) -> list:
                     "note": f"回測 {B.MEASURED['n']} 筆，信賴區間仍含 0 —— 未驗證"})
     except Exception:  # noqa: BLE001
         pass
+    # S4's five gates on Binance candles: the open-interest gate needs Bybit's
+    # OI history, which this page does not fetch, so "front four passed" is
+    # the most it can honestly say. Every rejection is named, like the scan.
+    try:
+        import strategy4 as S4
+        res = S4.evaluate_sides(k15[:-1]) or {}
+        side = res.get("side")
+        if res.get("pass"):
+            out.append({"name": "S4 五道關卡", "value": "通過 · " + ("做多" if side == "long" else "做空"),
+                        "read": LONG if side == "long" else SHORT,
+                        "note": "流動性→三角→EMA200 斜率→結構位→背離 全過；紀錄自 2026-08-19 重新累積，尚無把握"})
+        else:
+            out.append({"name": "S4 五道關卡", "value": "卡在 · " + s4_reason_zh(res.get("reason")),
+                        "read": NEUTRAL,
+                        "note": "五道關卡由便宜到昂貴依序檢查，第一道沒過的就是答案（未平倉那關需 Bybit 資料，此處未查）"})
+    except Exception:  # noqa: BLE001
+        pass
     return out
 
 
 DISCLAIMER = ("⚠️ 這頁是「現在的條件」，不是預測。每個因子都是實際量到的數字，"
               "但把它們加權成一個分數等於宣稱知道哪個因子比較重要 —— "
               "本專案沒有量過，所以這裡只數「幾項偏多、幾項偏空」。"
-              "本專案量過 48 組高勝率設定有 46 組在賠錢。")
+              "前三項（大盤趨勢、時框一致、ADX）和品質旗標是本專案量過確實有差的條件；"
+              "其餘是慣例讀法。本專案量過 48 組高勝率設定有 46 組在賠錢。")
 
 _universe: tuple = (0.0, [])
 UNIVERSE_TTL = 600

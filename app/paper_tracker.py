@@ -85,7 +85,7 @@ VARIANTS = ("s1_full", "s1_longs_only", "s1_lowvol", "s1_lowvol_3r")
 # price at entry. 1.0 sits in the middle of the tested plateau (0.8-1.2 all
 # improved 4/6 folds) rather than at its best-scoring edge (0.6 scored
 # highest but on only 10 trades) — deliberately not tuned to the peak.
-LOWVOL_MAX_ATR_PCT = 1.0
+LOWVOL_MAX_ATR_PCT = float(getattr(__import__('config'), 'LOWVOL_ATR_PCT', 1.0))
 
 # s1_lowvol_3r's single target, in multiples of the trade's own risk
 # (|entry - stop|). From s1_exit_lab: on low-vol entries EVERY tested exit

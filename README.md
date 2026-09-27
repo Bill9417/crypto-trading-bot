@@ -97,6 +97,7 @@ The Flask app (default `http://127.0.0.1:4000`) serves a mobile-friendly PWA wit
 | **Reality** | The measured scoreboard — ~19k scored outcomes, and which exit rules actually cleared zero |
 | **Universe** | 246 coins plotted in 3D by percentile |
 | **Market** | Market regime, breadth, liquidations, news sentiment, recent big events |
+| **幣種分析** | One coin, twelve measured factors counted by direction (BTC regime, 4H/1H agreement, ADX, supply/demand zone, OI, taker flow, structure, momentum, funding, positioning, relative strength), two quality flags that never vote (1h ATR%, volume), the ⭐ premium-gate checklist, and what S2, the flip detector and S4's five gates say |
 | **Performance** | Trade history, win rate, P&L (tabbed, real exchange records) |
 | **Bybit** | The S3 sub-account: balance, positions, closed P&L |
 | **Copy** | Self-hosted copy trading: follower keys (encrypted vault), approval, mirror status |
@@ -150,6 +151,8 @@ Everything is driven by `app/.env` (see `app/.env.example`). Key settings:
 | `USE_RESTING_ORDERS` | `true` | Book LIMIT entry + bracket the moment a setup queues |
 | `USE_POST_ONLY_ENTRY` | `true` | Maker-only (GTX) entry for the lower fee |
 | `PLACE_BRACKET_ORDERS` | `true` | Attach exchange-side SL/TP to every entry |
+| `S1_MACD_GATE` | `false` | Block an S1 entry whose MACD histogram sign is against the trade. The regime lab measured counter-MACD entries at −0.234R (n=49) against +0.065R with it (n=86, 4 of 6 folds). Read by the bot **and** the backtester. |
+| `LOWVOL_ATR_PCT` | `1.0` | The one low-volatility line shared by the paper variants, the S2 outcome cohort on `/reality`, and the coin page's quality flag. |
 | `S1_MAX_ATR_PCT` | `0` (off) | S1 volatility ceiling: skip a symbol whose own ATR(14) exceeds this % of price. The one gate the labs found to improve expectancy monotonically; forward-tested by `paper_tracker` before it is switched on. Read by the bot **and** the backtester. |
 
 > 🔒 **Secrets never leave your machine.** `.env`, databases, logs and cache files are all in `.gitignore`. Only `.env.example` (with placeholders) is committed.

@@ -473,6 +473,25 @@ HUB = {
         "The previous version measured 90 trades: −0.022R ± 0.282, interval containing 0. The short side has never been measured; it was added on request. ",
     "每一筆訊號和它之後發生的事都記在": "Every signal and what followed it is recorded on the ", "S4 頁": "S4 page",
     "未證明": "unproven",
+    # ── the coin page's measured context (2026-09-27) ──
+    "🎯 精準度 · 品質旗標與 ⭐ 精選門檻": "🎯 Precision · quality flags and the ⭐ premium gate",
+    "項因子的方向統計 —— 不是加權分數，也不是預測": " factors, counted by direction — not a weighted score, not a prediction",
+    "大盤 · BTC 趨勢": "Market · BTC regime", "時框一致性 · 4H/1H": "Timeframe agreement · 4H/1H",
+    "趨勢強度 · ADX": "Trend strength · ADX", "波動 · 1h ATR / 價格": "Volatility · 1h ATR / price",
+    "量能 · 最近一小時 vs 24h": "Volume · last hour vs 24h", "S4 五道關卡": "S4 five gates",
+    "⭐ 精選門檻": "⭐ Premium gate", "與 BTC 同向": "aligned with BTC", "三關全過": "all three gates pass",
+    "沒過的關：": "failed gates: ", "不到 ⭐ 精選等級": "below the ⭐ premium tier",
+    "需求區內": "in demand zone", "供給區內": "in supply zone", "區間外": "outside zones",
+    "順勢做多。": "trade with it, long. ", "順勢做空。": "trade with it, short. ",
+    "實測：與大盤同向的訊號 57% 先到 TP1，逆勢只有 41%": "Measured: signals aligned with it reach TP1 first 57% of the time, counter-regime 41%",
+    "BTC 盤整 —— 沒有方向濾網；⭐ 精選要求與大盤同向，所以此刻不會發": "BTC is ranging — no directional filter; the ⭐ tier requires alignment, so nothing fires now",
+    "K 線不足以算": "not enough candles for ", "時框不一致": "timeframes disagree",
+    "有趨勢": " trending", "盤整；共振訊號在這裡最常失準": "ranging; confluence signals fail most often here",
+    "本專案 60 天回放量到最好的組合：58.7% 先到 TP1（原始訊號約 49%）": "the best combination in this project's 60-day replay: 58.7% first to TP1 (raw feed ~49%)",
+    "前四關通過 · 未平倉未查": "first four gates passed · OI not checked", "通過 · ": "passed · ", "卡在 · ": "stopped at · ",
+    "價格正在新鮮的需求區內": "price is inside a fresh demand zone", "價格正在新鮮的供給區內": "price is inside a fresh supply zone",
+    "不在任何新鮮區間內": "outside every fresh zone", "附近沒有新鮮的供需區": "no fresh supply/demand zone nearby",
+    "沒有量能確認": "no volume confirmation",
 }
 
 

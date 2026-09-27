@@ -67,6 +67,18 @@ body { background: var(--wolf-slate); background-image: var(--page-bg-glow);
 .tag.long { background: rgba(52,211,153,.16); color: #86efac; }
 .tag.short { background: rgba(248,113,113,.16); color: #fca5a5; }
 .tag.neutral { background: rgba(255,255,255,.07); color: var(--wolf-muted); }
+/* precision panel: quality flags + the ⭐ gate checklist */
+.card-t { font-size: .74rem; font-weight: 800; opacity: .75; letter-spacing: .06em; margin-bottom: 6px; }
+.gate { margin-top: 10px; padding: 10px 12px; border-radius: 12px; border: 1px solid var(--wolf-border);
+        background: rgba(255,255,255,.025); }
+.gate.ok { border-color: rgba(255,210,87,.45); background: rgba(255,210,87,.07); }
+.gate-h { font-size: .82rem; font-weight: 800; margin-bottom: 7px; }
+.gate-row { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 6px; }
+.gchip { font-size: .68rem; font-weight: 700; padding: 4px 9px; border-radius: 999px;
+         border: 1px solid var(--wolf-border); color: var(--wolf-muted); background: rgba(255,255,255,.03); }
+.gchip b { color: var(--wolf-text); margin-left: 3px; }
+.gchip.ok { color: #86efac; border-color: rgba(46,232,138,.35); background: rgba(46,232,138,.09); }
+.gchip.no { color: #fca5a5; border-color: rgba(255,77,109,.3); background: rgba(255,77,109,.08); }
 
 .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px,1fr)); gap: 8px; }
 .stat { background: rgba(255,255,255,.03); border: 1px solid var(--wolf-border);
@@ -237,7 +249,7 @@ body { background: var(--wolf-slate); background-image: var(--page-bg-glow);
 
         h += '<div class="lean ' + leanCls + '">' +
              '<div><div style="font-size:.9rem;font-weight:800;">綜合傾向 · ' + esc(d.lean) + '</div>' +
-             '<div class="lean-l">八項因子的方向統計 —— 不是加權分數，也不是預測</div></div>' +
+             '<div class="lean-l">' + (d.factor_count || (d.factors || []).length) + ' 項因子的方向統計 —— 不是加權分數，也不是預測</div></div>' +
              '<div style="text-align:right;"><div class="lean-n">' +
                 d.long_count + ' / ' + d.short_count + '</div>' +
              '<div class="lean-l">偏多 / 偏空（中性 ' + d.neutral_count + '）</div></div></div>';
@@ -252,6 +264,30 @@ body { background: var(--wolf-slate); background-image: var(--page-bg-glow);
                  '<div class="f-note">' + esc(f.note) + '</div></div></div>';
         });
         h += '</div>';
+
+        // 🎯 Precision: the conditions the engines were MEASURED under, and
+        // the ⭐ tier's three gates on this coin right now. Flags do not vote.
+        if ((d.quality || []).length || d.premium_gate) {
+            h += '<div class="card"><div class="card-t">🎯 精準度 · 品質旗標與 ⭐ 精選門檻</div>';
+            (d.quality || []).forEach(function (q) {
+                var ok = q.ok === true ? 'up' : q.ok === false ? 'dn' : 'muted';
+                h += '<div class="f"><div class="f-mark ' + ok + '">' + (q.ok === true ? '✓' : q.ok === false ? '✗' : '·') + '</div>' +
+                     '<div class="f-body"><div class="f-top"><span>' + esc(q.label) + '</span>' +
+                     '<span class="num">' + esc(q.value) + '</span></div>' +
+                     '<div class="f-note">' + esc(q.note) + '</div></div></div>';
+            });
+            var g = d.premium_gate;
+            if (g) {
+                h += '<div class="gate' + (g.ok ? ' ok' : '') + '"><div class="gate-h">⭐ 精選門檻' +
+                     (g.direction ? ' · ' + (g.direction === 'long' ? '做多' : '做空') : '') +
+                     (g.conviction != null ? ' <span class="muted" style="font-weight:600">信心 ' + Math.round(g.conviction) + '</span>' : '') + '</div>' +
+                     '<div class="gate-row">' + (g.gates || []).map(function (x) {
+                         return '<span class="gchip ' + (x.ok ? 'ok' : 'no') + '">' + (x.ok ? '✓ ' : '✗ ') + esc(x.label) + '<b>' + esc(x.value) + '</b></span>';
+                     }).join('') + '</div>' +
+                     '<div class="f-note">' + esc(g.note) + '</div></div>';
+            }
+            h += '</div>';
+        }
 
         h += '<div class="card"><div class="stats">' +
              '<div class="stat"><span>未平倉量</span><b class="num">' + usd(d.oi_usd) + '</b>' +

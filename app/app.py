@@ -3395,6 +3395,7 @@ def _strategies_params() -> dict:
             "mirror_usdt": config.S1_BYBIT_ORDER_USDT,
             "mirror_on": bool(config.S1_BYBIT_MIRROR),
             "vol_ceiling": config.S1_MAX_ATR_PCT,
+            "macd_gate": bool(config.S1_MACD_GATE),
             "sl_mult": config.ATR_SL_MULTIPLIER,
             "max_sl_pct": round(config.MAX_SL_PCT * 100, 1),
             "tp1_r": config.ATR_TP1_MULTIPLIER,

@@ -513,6 +513,21 @@ FUNDING_MIN_SHORT = float(os.getenv("FUNDING_MIN_SHORT", "-0.001"))  # block sho
 # reads the same value, so a run previews exactly what the bot would do.
 S1_MAX_ATR_PCT = float(os.getenv("S1_MAX_ATR_PCT", "0") or 0)
 
+# The low-volatility line every measurement in this repo shares: the middle of
+# the plateau s1_regime_lab found (0.8–1.2 all improved 4/6 folds), read by
+# paper_tracker's lowvol variants, the S2 outcome tracker's "lowvol" cohort
+# and the coin page's quality flag — so the same word means the same number.
+LOWVOL_ATR_PCT = float(os.getenv("LOWVOL_ATR_PCT", "1.0") or 1.0)
+
+# MACD-against gate — block an S1 entry whose MACD histogram sign disagrees
+# with the trade. s1_regime_lab (2026-08-17: 360d, 6 folds): entries WITH the
+# histogram +0.065R over 86 trades (4/6 folds), AGAINST it −0.234R over 49.
+# The lab's own reading: the against-half is the informative one, so
+# "drop counter-MACD entries" is the smaller claim and the one the data
+# leans toward. OFF by default like every gate here; the backtester reads
+# the same flag, so a run previews exactly what the bot would do.
+S1_MACD_GATE = _env_bool("S1_MACD_GATE", False)
+
 # Correlation / same-direction cap — 10 alt LONGs that all move with BTC is one
 # leveraged BTC bet, not 10 independent ones. When ON, cap how many live+queued
 # positions may share a direction (0 = unlimited). Complements

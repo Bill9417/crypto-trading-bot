@@ -78,6 +78,9 @@ COHORT_LABEL = {
     "short":   ("Shorts only", "做空"),
     "hc":      ("High conviction", "高信心"),
     "premium": ("Premium ⭐", "⭐ 精選"),
+    # 2026-09-27: the low-volatility cut s1_regime_lab found for S1, applied
+    # to S2's signals as a COHORT — measured going forward, not assumed.
+    "lowvol":  ("Low volatility · ATR ≤ 1%", "低波動"),
 }
 
 

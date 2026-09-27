@@ -1,7 +1,8 @@
 import numpy as np
 import pandas as pd
 from ta.momentum import RSIIndicator
-from config import RSI_PERIOD, RSI_UPPER_THRESHOLD, RSI_LOWER_THRESHOLD
+from config import (RSI_PERIOD, RSI_UPPER_THRESHOLD, RSI_LOWER_THRESHOLD,
+                    BTC_REGIME_EMA, BTC_REGIME_SLOPE_LOOKBACK)
 
 # TSI defaults from TV/pine/TSI.pine
 TSI_LONG_LENGTH = 5
@@ -718,3 +719,70 @@ def volatility_ceiling_ok(ohlcv, ceiling_pct: float, period: int = 14) -> bool:
     if pct is None:
         return True
     return pct <= ceiling_pct
+
+
+# ── BTC regime — ONE rule, three callers ─────────────────────────────────────
+# bot.check_btc_regime, strategy2_scanner._btc_regime and backtest.btc_regime_
+# series each carried their own copy of "price above a RISING EMA50 = bull,
+# below a FALLING one = bear, else neutral". Three copies of the single most
+# important gate in the system (aligned S2 signals reach TP1 57% of the time
+# against 41% counter-regime) is three chances for them to disagree about the
+# same hour. They now read this.
+def btc_regime_series_from_closes(closes, ema_period=None, slope_lookback=None):
+    """Per-bar 'bull' | 'bear' | 'neutral' for a close series, same length."""
+    ema_period = int(ema_period or BTC_REGIME_EMA)
+    lb = int(slope_lookback or BTC_REGIME_SLOPE_LOOKBACK)
+    closes = [float(c) for c in (closes or [])]
+    if not closes:
+        return []
+    ema = pd.Series(closes).ewm(span=ema_period, adjust=False).mean().tolist()
+    out = []
+    for i in range(len(closes)):
+        reg = "neutral"
+        if i >= ema_period + lb:
+            now, prev, price = ema[i], ema[i - lb], closes[i]
+            if price > now and now > prev:
+                reg = "bull"
+            elif price < now and now < prev:
+                reg = "bear"
+        out.append(reg)
+    return out
+
+
+def btc_regime_from_closes(closes, ema_period=None, slope_lookback=None) -> str:
+    """The regime on the LAST bar; 'neutral' when the history is too short."""
+    series = btc_regime_series_from_closes(closes, ema_period, slope_lookback)
+    return series[-1] if series else "neutral"
+
+
+# ── MACD histogram sign (the S1_MACD_GATE reading) ───────────────────────────
+def macd_hist_last(prices, fast=12, slow=26, signal=9):
+    """The last MACD histogram value, or None when it cannot be computed.
+
+    s1_regime_lab (360d, 6 folds): entries WITH the histogram's sign made
+    +0.065R (n=86, 4/6 folds), entries AGAINST it −0.234R (n=49). The lab's
+    honest reading was that the against-half is the informative one, so the
+    gate this feeds blocks counter-MACD entries rather than requiring a
+    confirmation — the smaller claim, and the one the data leans toward."""
+    _, _, hist = calculate_macd(prices, fast, slow, signal)
+    if hist is None or len(hist) == 0:
+        return None
+    last = float(hist[-1])
+    return None if np.isnan(last) else last
+
+
+# ── resampling ───────────────────────────────────────────────────────────────
+def resample_ohlcv(ohlcv, factor: int):
+    """Aggregate consecutive groups of `factor` candles into one (4 × 15m →
+    1h). An incomplete trailing group is dropped, never emitted as a bar."""
+    factor = int(factor)
+    if not ohlcv or factor <= 1:
+        return list(ohlcv or [])
+    out = []
+    n = (len(ohlcv) // factor) * factor
+    for i in range(0, n, factor):
+        grp = ohlcv[i:i + factor]
+        out.append([grp[0][0], float(grp[0][1]),
+                    max(float(c[2]) for c in grp), min(float(c[3]) for c in grp),
+                    float(grp[-1][4]), sum(float(c[5]) for c in grp)])
+    return out

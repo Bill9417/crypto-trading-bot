@@ -281,3 +281,135 @@ def test_a_dead_ticker_call_reports_instead_of_raising(monkeypatch):
                         lambda *a, **k: (_ for _ in ()).throw(RuntimeError("down")))
     out = A.overview()
     assert out["ok"] is False and out["rows"] == []
+
+
+# ── the measured context (2026-09-27) ───────────────────────────────────────
+# Four more factors that vote and two flags that do not. Each carries a number
+# this repo measured on its own signals; that is what "more precise" means
+# here, as opposed to more dials.
+def _bars(n, start=100.0, step=0.2, rng=0.5, vol=1000.0):
+    out = []
+    for i in range(n):
+        c = start + i * step
+        out.append([i * 900_000, c - step, c + rng, c - rng, c, vol, 0, 0, 0, vol * 0.55, 0, 0])
+    return out
+
+
+def test_regime_factor_reads_the_shared_rule():
+    import config as C
+    n = C.BTC_REGIME_EMA + C.BTC_REGIME_SLOPE_LOOKBACK + 20
+    assert A.read_regime([100 + i for i in range(n)])["read"] == A.LONG
+    assert A.read_regime([200 - i for i in range(n)])["read"] == A.SHORT
+    flat = A.read_regime([100.0] * n)
+    assert flat["read"] == A.NEUTRAL and flat["regime"] == "neutral"
+
+
+def test_trend_frames_need_both_timeframes_to_agree():
+    assert A.read_frames(100, 90, 95)["read"] == A.LONG
+    assert A.read_frames(100, 110, 105)["read"] == A.SHORT
+    assert A.read_frames(100, 90, 105)["read"] == A.NEUTRAL       # mixed
+    assert A.read_frames(100, None, 95)["read"] == A.NEUTRAL      # unknown, not a side
+
+
+def test_adx_takes_no_side_in_chop(monkeypatch):
+    import config as C
+    th = C.STRATEGY2_PREMIUM_MIN_ADX
+    monkeypatch.setattr(A, "adx_components",
+                        lambda oh, p: {"adx": th - 1, "plus_di": 30, "minus_di": 10, "rising": True})
+    assert A.read_adx([[0, 1, 1, 1, 1, 1]] * 40)["read"] == A.NEUTRAL
+    monkeypatch.setattr(A, "adx_components",
+                        lambda oh, p: {"adx": th + 5, "plus_di": 30, "minus_di": 10, "rising": True})
+    assert A.read_adx([[0, 1, 1, 1, 1, 1]] * 40)["read"] == A.LONG
+    monkeypatch.setattr(A, "adx_components",
+                        lambda oh, p: {"adx": th + 5, "plus_di": 10, "minus_di": 30, "rising": False})
+    assert A.read_adx([[0, 1, 1, 1, 1, 1]] * 40)["read"] == A.SHORT
+    monkeypatch.setattr(A, "adx_components", lambda oh, p: None)
+    assert A.read_adx([[0, 1, 1, 1, 1, 1]] * 40)["read"] == A.NEUTRAL
+
+
+def test_volatility_flag_uses_the_shared_ceiling():
+    import config as C
+    calm = [[i, 100, 100.25, 99.75, 100, 1] for i in range(30)]         # ATR 0.5%
+    wild = [[i, 100, 102.0, 98.0, 100, 1] for i in range(30)]           # ATR 4%
+    assert A.read_volatility(calm)["ok"] is True
+    assert A.read_volatility(wild)["ok"] is False
+    assert A.read_volatility(calm[:5])["ok"] is None                    # too short → no claim
+    assert f"{C.LOWVOL_ATR_PCT:g}%" in A.read_volatility(calm)["note"]
+
+
+def test_volume_flag_compares_the_last_hour_to_the_day():
+    quiet = _bars(120, vol=100.0)
+    loud = _bars(116, vol=100.0) + [[0, 1, 1, 1, 1, 300.0, 0, 0, 0, 0, 0, 0]] * 4
+    assert A.read_volume(quiet)["ok"] is False
+    assert A.read_volume(loud)["ok"] is True and A.read_volume(loud)["mult"] > 2
+    assert A.read_volume(quiet[:50])["ok"] is None
+
+
+def test_zone_read_is_neutral_outside_any_zone(monkeypatch):
+    import zones
+    monkeypatch.setattr(zones, "at_zone", lambda oh, side, at=None: False)
+    monkeypatch.setattr(zones, "build", lambda oh, at=None: [])
+    assert A.read_zone(_bars(80))["read"] == A.NEUTRAL
+    monkeypatch.setattr(zones, "at_zone", lambda oh, side, at=None: side == "long")
+    assert A.read_zone(_bars(80))["read"] == A.LONG
+    monkeypatch.setattr(zones, "at_zone", lambda oh, side, at=None: side == "short")
+    assert A.read_zone(_bars(80))["read"] == A.SHORT
+
+
+def test_the_premium_gate_is_the_measured_triple():
+    import config as C
+    g = A.premium_gate(90, "bull", C.STRATEGY2_PREMIUM_MIN_ADX + 5)
+    assert g["ok"] is True and g["direction"] == A.LONG and g["conviction"] == 90
+    assert A.premium_gate(90, "bear", 30)["ok"] is False          # fights BTC
+    assert A.premium_gate(10, "bear", 30)["ok"] is True           # a short, conviction 90
+    assert A.premium_gate(90, "bull", None)["ok"] is False         # ADX unknown ≠ ADX ok
+    assert A.premium_gate(70, "bull", 30)["ok"] is False           # conviction 70 < 85
+    assert A.premium_gate(None, "bull", 30)["gates"] == []
+    assert "58.7%" in g["note"]
+
+
+def test_s4_rejections_read_in_chinese():
+    assert A.s4_reason_zh("no long triangle") == "沒有做多三角"
+    assert A.s4_reason_zh("only 1 of 2 divergence sources") == "背離只有 1/2 個"
+    assert A.s4_reason_zh("stop 0.30% under the 0.5% fee floor") == "停損 0.30% 低於手續費下限"
+    assert A.s4_reason_zh("something new") == "something new"      # passes through, never vanishes
+
+
+def test_analyse_carries_the_precision_context(monkeypatch):
+    """One fake exchange, every path answered, and the page's contract: the
+    twelve voting factors, the two flags that do not vote, and the gate."""
+    def fake_get(path, **params):
+        if path == "/fapi/v1/klines":
+            n = int(params.get("limit") or 100)
+            return _bars(n, start=100.0, step=0.05)
+        if path == "/fapi/v1/ticker/24hr":
+            return {"lastPrice": "125.0", "priceChangePercent": "2.5", "quoteVolume": "5e7"}
+        if path == "/fapi/v1/premiumIndex":
+            return {"lastFundingRate": "0.0001"}
+        if path == "/fapi/v1/fundingRate":
+            return [{"fundingRate": "0.0001"}] * 30
+        if path == "/futures/data/openInterestHist":
+            return [{"sumOpenInterest": "1000", "sumOpenInterestValue": "125000",
+                     "CMCCirculatingSupply": "1000000"}] * 100
+        if path == "/futures/data/topLongShortPositionRatio":
+            return [{"longShortRatio": "1.1"}]
+        raise AssertionError(f"unexpected path {path}")
+
+    monkeypatch.setattr(A, "_get", fake_get)
+    A._cache.clear()
+    out = A.analyse("TEST")
+    assert out["ok"], out
+    keys = [f["key"] for f in out["factors"]]
+    assert keys[:3] == ["regime", "frames", "adx"] and "zone" in keys
+    assert out["factor_count"] == len(out["factors"]) == 12
+    assert out["long_count"] + out["short_count"] + out["neutral_count"] == 12
+    assert [q["key"] for q in out["quality"]] == ["volatility", "volume"]
+    assert all(q["ok"] in (True, False, None) for q in out["quality"])
+    g = out["premium_gate"]
+    assert {x["key"] for x in g["gates"]} == {"conv", "aligned", "adx"}
+    assert out["regime"] in ("bull", "bear", "neutral")
+    names = [s["name"] for s in out["strategies"]]
+    assert "S4 五道關卡" in names
+    # the flags are not in the vote
+    for f in out["factors"]:
+        assert f["key"] not in ("volatility", "volume")

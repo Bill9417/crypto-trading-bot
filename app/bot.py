@@ -88,11 +88,14 @@ from config import (
     ENABLE_DIRECTION_CAP,
     MAX_SAME_DIRECTION,
     S1_MAX_ATR_PCT,
+    S1_MACD_GATE,
     EXCLUDE_TRADFI_PERPS,
 )
 from indicators import (
     atr_pct,
     volatility_ceiling_ok,
+    btc_regime_from_closes,
+    macd_hist_last,
     check_tsi_signal,
     check_macd_signal,
     check_volume_gate,
@@ -1233,15 +1236,8 @@ def check_btc_regime() -> str:
         need = BTC_REGIME_EMA + BTC_REGIME_SLOPE_LOOKBACK + 5
         ohlcv, _ = get_symbol_ohlcv(BTC_REGIME_SYMBOL, BTC_REGIME_TIMEFRAME, limit=need)
         closes = [x[4] for x in ohlcv]
-        if len(closes) >= BTC_REGIME_EMA + BTC_REGIME_SLOPE_LOOKBACK:
-            ema = pd.Series(closes).ewm(span=BTC_REGIME_EMA, adjust=False).mean()
-            ema_now = ema.iloc[-1]
-            ema_prev = ema.iloc[-1 - BTC_REGIME_SLOPE_LOOKBACK]
-            price = closes[-1]
-            if price > ema_now and ema_now > ema_prev:
-                regime = "bull"
-            elif price < ema_now and ema_now < ema_prev:
-                regime = "bear"
+        # ONE rule, shared with the S2 scanner and the backtester (indicators).
+        regime = btc_regime_from_closes(closes, BTC_REGIME_EMA, BTC_REGIME_SLOPE_LOOKBACK)
     except Exception as e:  # noqa: BLE001 — never let the regime check break a scan
         print(f"BTC regime check error: {e}")
     _btc_regime_state = regime
@@ -2358,6 +2354,21 @@ def run_bot() -> None:
                                 f"⚠ Volatility: ATR {_atrp:.2f}% of price is above the "
                                 f"{S1_MAX_ATR_PCT:g}% ceiling (S1_MAX_ATR_PCT)")
 
+                        # MACD-against gate (optional, default OFF). s1_regime_lab:
+                        # entries against the histogram's sign made −0.234R
+                        # (n=49) while entries with it made +0.065R (n=86,
+                        # 4/6 folds). Blocks the counter-MACD half only — the
+                        # smaller claim, the one the data leans toward. Same
+                        # helper + flag in backtest.evaluate.
+                        macd_ok = True
+                        if S1_MACD_GATE:
+                            _hist = macd_hist_last(closed_prices)
+                            if _hist is not None and ((_hist < 0) if is_long else (_hist > 0)):
+                                macd_ok = False
+                                details.append(
+                                    f"⚠ MACD histogram {_hist:+.4g} is against this "
+                                    f"{'LONG' if is_long else 'SHORT'} (S1_MACD_GATE)")
+
                         trade_qualified = (
                             effective_lights >= required_lights
                             and base_lights_ok
@@ -2377,6 +2388,7 @@ def run_bot() -> None:
                             and trend_4h_aligned
                             and adx_ok
                             and vol_ok
+                            and macd_ok
                             and entry_price is not None
                             and not check_circuit_breaker()
                             and is_tradeable   # watch-only pairs (rank > TOP_SYMBOL_LIMIT) never trade

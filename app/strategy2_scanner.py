@@ -171,21 +171,14 @@ def _tv_url(symbol: str) -> str:
 # signals + a 60d replay: trading WITH this regime was the single biggest
 # win-rate lever, so it gates the ⭐ premium tier below.
 def _btc_regime(client) -> str:
-    import pandas as pd
     try:
         need = config.BTC_REGIME_EMA + config.BTC_REGIME_SLOPE_LOOKBACK + 5
         rows = client.call("fetch_ohlcv", config.BTC_REGIME_SYMBOL,
                            config.BTC_REGIME_TIMEFRAME, None, need)
         closes = [float(r[4]) for r in rows or []]
-        if len(closes) < config.BTC_REGIME_EMA + config.BTC_REGIME_SLOPE_LOOKBACK:
-            return "neutral"
-        ema = pd.Series(closes).ewm(span=config.BTC_REGIME_EMA, adjust=False).mean()
-        ema_now = ema.iloc[-1]
-        ema_prev = ema.iloc[-1 - config.BTC_REGIME_SLOPE_LOOKBACK]
-        if closes[-1] > ema_now and ema_now > ema_prev:
-            return "bull"
-        if closes[-1] < ema_now and ema_now < ema_prev:
-            return "bear"
+        # ONE rule, shared with bot.check_btc_regime and the backtester.
+        return indicators.btc_regime_from_closes(
+            closes, config.BTC_REGIME_EMA, config.BTC_REGIME_SLOPE_LOOKBACK)
     except Exception as exc:  # noqa: BLE001 — regime is a filter, not a dependency
         print(f"[strategy2] BTC regime check failed: {exc}")
     return "neutral"
@@ -650,6 +643,15 @@ def scan_once(client, recent: list, last_alert: dict, pending: list) -> list:
                 sig.update({"adx": round(adx, 1) if adx is not None else None,
                             "btc_regime": btc_regime, "aligned": tier["aligned"],
                             "against": tier["against"], "premium": tier["premium"]})
+                # The symbol's own 1h ATR% (4 × 15m closed bars → 1h), so the
+                # outcome tracker can cohort this signal as "lowvol" and
+                # /reality can say whether S1's low-volatility finding holds
+                # for S2 too. Recorded, never gated on.
+                try:
+                    _a = indicators.atr_pct(indicators.resample_ohlcv(ohlcv[:-1], 4))
+                    sig["atr_pct_1h"] = round(_a, 3) if _a is not None else None
+                except Exception:  # noqa: BLE001 — a missing reading is not a missing signal
+                    sig["atr_pct_1h"] = None
                 # Trade plan attached to every fired signal, so the Telegram
                 # alert/digest and the /strategy2 page show a complete
                 # Entry/SL/TP plan, not just a naked price. ⭐ signals publish

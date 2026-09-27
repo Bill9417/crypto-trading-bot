@@ -344,7 +344,7 @@ def summarize(outcomes: list, title: str = "📋 訊號成績單 (7天)",
 
 # ── orchestration ────────────────────────────────────────────────────────────
 _SNAP_KEYS = ("symbol", "base", "direction", "score", "ts",
-              "entry", "sl", "tp1", "tp2", "premium")
+              "entry", "sl", "tp1", "tp2", "premium", "atr_pct_1h")
 
 
 def _snapshot(state: dict, signals: list, now: float) -> None:
@@ -383,7 +383,19 @@ def cohorts_of(rec: dict) -> list:
         out.append("premium")
     if rec.get("hc"):
         out.append("hc")
+    # The low-volatility cut s1_regime_lab found for S1 (expectancy rising
+    # monotonically under a tighter ATR% ceiling). Whether it holds for S2's
+    # signals is a question for THIS tally, not an assumption — so it is a
+    # cohort, judged on /reality with its own interval, and gates nothing.
+    a = rec.get("atr_pct_1h")
+    if isinstance(a, (int, float)) and a <= _lowvol_ceiling():
+        out.append("lowvol")
     return out
+
+
+def _lowvol_ceiling() -> float:
+    import config
+    return float(getattr(config, "LOWVOL_ATR_PCT", 1.0) or 1.0)
 
 
 def _accumulate(state: dict, res: dict) -> None:
@@ -482,6 +494,7 @@ def tick(client) -> int:
         evaluated[key] = {**res, "base": sig.get("base"), "score": sig.get("score"),
                           "direction": sig.get("direction"), "hc": hc,
                           "premium": bool(sig.get("premium")),
+                          "atr_pct_1h": sig.get("atr_pct_1h"),
                           "sig_ts": sig.get("ts"), "eval_ts": now}
         _accumulate(state, evaluated[key])
         done += 1
